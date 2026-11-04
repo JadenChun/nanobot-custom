@@ -237,6 +237,7 @@ export class NanobotClient {
   // Frames queued while the socket is not yet OPEN
   private sendQueue: Outbound[] = [];
   private reconnectAttempts = 0;
+  private authRetryFailures = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly shouldReconnect: boolean;
   private readonly maxBackoffMs: number;
@@ -793,10 +794,31 @@ export class NanobotClient {
     this.setStatus("connecting");
     const sock = this.socketFactory(this.currentUrl);
     this.socket = sock;
-    sock.onopen = () => this.handleOpen();
-    sock.onmessage = (ev) => this.handleMessage(ev);
-    sock.onerror = () => this.setStatus("error");
-    sock.onclose = (ev) => this.handleClose(ev);
+    sock.onopen = () => this.handleOpen(sock);
+    sock.onmessage = (ev) => this.handleMessage(sock, ev);
+    sock.onerror = () => {
+      if (this.socket === sock) this.setStatus("error");
+    };
+    sock.onclose = (ev) => this.handleClose(sock, ev);
+  }
+
+  async retry(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.intentionallyClosed = false;
+    this.reconnectAttempts = 0;
+    this.authRetryFailures = 0;
+    if (this.options.onReauth) {
+      try {
+        const refreshed = await this.options.onReauth();
+        if (refreshed) this.currentUrl = refreshed;
+      } catch {
+        // Keep the current URL; the notice remains actionable.
+      }
+    }
+    this.connect();
   }
 
   close(): void {
@@ -983,6 +1005,10 @@ export class NanobotClient {
       sessionMentions?: SessionMention[];
       quotedContext?: string;
       workspaceScope?: WorkspaceScopePayload | null;
+      sourceToken?: string;
+      requestIntent?: "new" | "steer";
+      targetTurnId?: string;
+      fullConfirmationId?: string;
       turnId?: string;
       /** False for side-channel or injected messages that do not own a lifecycle. */
       startsNewRun?: boolean;
@@ -990,6 +1016,9 @@ export class NanobotClient {
   ): void {
     const temporary = this.temporaryChatIds.has(chatId);
     if (!temporary) this.knownChats.add(chatId);
+    const systemCommand = options?.turnId
+      ? isSystemCommandTurnId(options.turnId)
+      : false;
     const frame: Outbound = {
       type: "message",
       chat_id: chatId,
@@ -1002,7 +1031,19 @@ export class NanobotClient {
         : {}),
       ...(options?.quotedContext?.trim() ? { quoted_context: options.quotedContext.trim() } : {}),
       ...(options?.workspaceScope ? { workspace_scope: options.workspaceScope } : {}),
+      ...(options?.sourceToken ? { source_token: options.sourceToken } : {}),
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
+      // System commands are internal chat controls, not workspace requests.
+      ...(systemCommand
+        ? {}
+        : {
+            request_settings_version: 1,
+            request_intent: options?.requestIntent ?? "new",
+            ...(options?.targetTurnId ? { target_turn_id: options.targetTurnId } : {}),
+            ...(options?.fullConfirmationId
+              ? { full_confirmation_id: options.fullConfirmationId }
+              : {}),
+          }),
       webui: true,
     };
     if (!this.frameFitsTransport(frame)) {
@@ -1067,9 +1108,11 @@ export class NanobotClient {
     for (const chatId of chatIds) this.emitRunStatus(chatId, null);
   }
 
-  private handleOpen(): void {
+  private handleOpen(sock: WebSocket): void {
+    if (this.socket !== sock) return;
     this.setStatus("open");
     this.reconnectAttempts = 0;
+    this.authRetryFailures = 0;
     // Re-attach every known chat_id so deliveries continue routing after a drop.
     for (const chatId of this.knownChats) {
       this.rawSend({ type: "attach", chat_id: chatId });
@@ -1082,7 +1125,8 @@ export class NanobotClient {
     for (const frame of queued) this.rawSend(frame);
   }
 
-  private handleMessage(ev: MessageEvent): void {
+  private handleMessage(sock: WebSocket, ev: MessageEvent): void {
+    if (this.socket !== sock) return;
     let parsed: InboundEvent;
     try {
       parsed = JSON.parse(typeof ev.data === "string" ? ev.data : "") as InboundEvent;
@@ -1335,7 +1379,8 @@ export class NanobotClient {
     }
   }
 
-  private handleClose(event?: { code?: number }): void {
+  private handleClose(sock: WebSocket, event?: { code?: number }): void {
+    if (this.socket !== sock) return;
     this.socket = null;
     this.clearTemporaryChats();
     const willReconnect = !this.intentionallyClosed && this.shouldReconnect;
@@ -1468,6 +1513,10 @@ export class NanobotClient {
 
   private scheduleReconnect(): void {
     this.clearRunStatusesForReconnect();
+    if (this.reconnectAttempts >= 8) {
+      this.setStatus("error");
+      return;
+    }
     this.setStatus("reconnecting");
     const attempt = this.reconnectAttempts++;
     // Exponential backoff: 0.5s, 1s, 2s, 4s, capped.
@@ -1477,9 +1526,22 @@ export class NanobotClient {
       if (this.options.onReauth) {
         try {
           const refreshed = await this.options.onReauth();
-          if (refreshed) this.currentUrl = refreshed;
+          if (refreshed) {
+            this.currentUrl = refreshed;
+            this.authRetryFailures = 0;
+          } else {
+            this.authRetryFailures += 1;
+            if (this.authRetryFailures >= 3) {
+              this.setStatus("error");
+              return;
+            }
+          }
         } catch {
-          // fall through to retry with current URL
+          this.authRetryFailures += 1;
+          if (this.authRetryFailures >= 3) {
+            this.setStatus("error");
+            return;
+          }
         }
       }
       this.connect();

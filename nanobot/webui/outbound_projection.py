@@ -19,6 +19,7 @@ from nanobot.bus.outbound_events import (
     TurnEndEvent,
     TurnModelUpdatedEvent,
     UserInputEvent,
+    WebUIAdmissionRejectedEvent,
 )
 from nanobot.session.webui_turns import clear_websocket_turn_if_current
 from nanobot.webui.metadata import (
@@ -70,6 +71,15 @@ class WebUIOutboundTransport(Protocol):
         content: str,
         created_at_ms: int,
         provenance: dict[str, Any],
+    ) -> None: ...
+
+    async def send_admission_rejected(
+        self,
+        chat_id: str,
+        *,
+        detail: str,
+        reason: str,
+        turn_id: str | None = None,
     ) -> None: ...
 
     async def send_payload(
@@ -167,6 +177,7 @@ class WebUIOutboundProjector:
                 GoalStatusEvent,
                 GoalStateSyncEvent,
                 ContextCompactionEvent,
+                WebUIAdmissionRejectedEvent,
             )
             log = (
                 logger.debug
@@ -192,6 +203,15 @@ class WebUIOutboundProjector:
                     content=event.content,
                     created_at_ms=event.created_at_ms,
                     provenance=event.provenance,
+                )
+            return
+        if isinstance(event, WebUIAdmissionRejectedEvent):
+            if conns:
+                await self._transport.send_admission_rejected(
+                    msg.chat_id,
+                    detail=event.detail,
+                    reason=event.reason,
+                    turn_id=event.turn_id,
                 )
             return
         notification = project_notification(msg.chat_id, event, msg.metadata)

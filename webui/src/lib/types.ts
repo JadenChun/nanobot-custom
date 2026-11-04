@@ -450,6 +450,7 @@ export interface WorkspacePermissionProjection {
   state: "active" | "retiring";
   can_enable_full: boolean;
   full_access_unavailable_reason: PermissionFullUnavailableReason | null;
+  source_token?: string;
   task_access: {
     task_turn_id: string;
     state: TaskAccessState;
@@ -693,11 +694,16 @@ export interface WorkspaceModeActionInput {
   mode: WorkspaceAccessMode;
   expected_runtime_id: string;
   expected_permission_revision: number;
+  request_settings_version?: 1;
+  source_token?: string;
+  full_confirmation_id?: string;
 }
 
 export interface WorkspaceModeActionResult {
   workspace_scope: WorkspaceScopePayload;
   workspace_permissions: WorkspacePermissionProjection;
+  source_token?: string;
+  full_confirmation_id?: string;
 }
 
 export interface WorkspaceModeConflict {
@@ -1891,6 +1897,11 @@ export type Outbound =
       quoted_context?: string;
       workspace_scope?: WorkspaceScopePayload;
       turn_id?: string;
+      request_settings_version?: 1;
+      source_token?: string;
+      request_intent?: "new" | "steer";
+      target_turn_id?: string;
+      full_confirmation_id?: string;
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;

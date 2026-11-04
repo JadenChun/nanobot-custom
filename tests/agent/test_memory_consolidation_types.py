@@ -234,7 +234,7 @@ async def test_source_summary_validates_bounded_output_cap(tmp_path, cap):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cap", [0, -1, 2049, 8192, True])
+@pytest.mark.parametrize("cap", [0, -1, True])
 async def test_invalid_summary_output_cap_has_zero_transport(tmp_path, cap):
     MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
     before = file_snapshot(tmp_path)

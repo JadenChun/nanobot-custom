@@ -38,6 +38,7 @@ from nanobot.bus.outbound_events import (
     TurnEndEvent,
     TurnModelUpdatedEvent,
     UserInputEvent,
+    WebUIAdmissionRejectedEvent,
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.websocket.runtime import (
@@ -372,8 +373,8 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
             "media": [{"data_url": "data:text/plain;base64,cHJpdmF0ZQ=="}],
             "cli_apps": [{"name": "drawio"}],
             "workspace_scope": {
-                "project_path": str(selected_project),
-                "access_mode": "full",
+                "project_path": str(tmp_path),
+                "access_mode": "restricted",
             },
             "turn_id": "turn-1",
             "webui": True,
@@ -1861,7 +1862,7 @@ async def test_webui_scope_rejects_missing_project_path(bus: MagicMock, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_webui_scope_rejects_running_scope_change(
+async def test_webui_message_scope_change_while_running_uses_submitted_snapshot(
     bus: MagicMock, tmp_path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     default_workspace = tmp_path / "default"
@@ -1913,12 +1914,14 @@ async def test_webui_scope_rejects_running_scope_change(
         wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
 
     payload = json.loads(conn.send.await_args.args[0])
-    assert payload["event"] == "error"
-    assert payload["detail"] == "workspace_scope_rejected"
-    assert payload["reason"] == "chat_running"
+    assert payload["event"] == "message_accepted"
     assert payload["chat_id"] == "chat-running"
     assert payload["turn_id"] == "turn-scope-rejected"
-    bus.publish_inbound.assert_not_awaited()
+    bus.publish_inbound.assert_awaited_once()
+    inbound = bus.publish_inbound.await_args.args[0]
+    assert inbound.workspace_scope is not None
+    assert inbound.workspace_scope.project_path == other.resolve()
+    assert inbound.workspace_scope.access_mode == "restricted"
 
 
 @pytest.mark.asyncio
@@ -2928,6 +2931,33 @@ async def test_send_turn_end_emits_turn_end_event() -> None:
         {"event": "turn_end", "chat_id": "chat-1"},
         {"event": "session_updated", "chat_id": "chat-1", "scope": "thread"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_send_admission_rejected_emits_correlated_error_frame() -> None:
+    bus = MagicMock()
+    channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
+    mock_ws = AsyncMock()
+    channel._attach(mock_ws, "chat-1")
+
+    await channel.send(OutboundMessage(
+        channel="websocket",
+        chat_id="chat-1",
+        content="",
+        event=WebUIAdmissionRejectedEvent(
+            detail="not_admitted",
+            reason="steering_target_changed",
+            turn_id="guidance-1",
+        ),
+    ))
+
+    assert _sent_ws_payloads(mock_ws) == [{
+        "event": "error",
+        "chat_id": "chat-1",
+        "detail": "not_admitted",
+        "reason": "steering_target_changed",
+        "turn_id": "guidance-1",
+    }]
 
 
 @pytest.mark.asyncio
@@ -6514,3 +6544,679 @@ async def test_raw_mobile_frames_revalidate_before_plain_text() -> None:
     assert await channel._revalidate_raw_mobile_frame(
         SimpleNamespace(mobile_identity=object())
     ) is True
+
+
+@pytest.mark.asyncio
+async def test_webui_message_rejects_missing_version_before_effects(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:version-required"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("version-required")
+    assert token is not None
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "version-required",
+            "content": "hello",
+            "webui": True,
+            "request_intent": "new",
+            "source_token": token,
+        },
+    )
+
+    payload = json.loads(conn.send.await_args.args[0])
+    assert payload["event"] == "error"
+    assert payload["detail"] == "update_required"
+    assert payload["reason"] == "request_settings_version"
+    bus.publish_inbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webui_message_rejects_stale_source_and_accepts_current_source(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:source-token"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("source-token")
+    assert token is not None
+    envelope = {
+        "type": "message",
+        "chat_id": "source-token",
+        "content": "hello",
+        "webui": True,
+        "request_settings_version": 1,
+        "request_intent": "new",
+    }
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {**envelope, "source_token": "tok-stale"},
+    )
+    payload = json.loads(conn.send.await_args.args[0])
+    assert payload["detail"] == "source_changed"
+    assert payload["reason"] == "source_token"
+    bus.publish_inbound.assert_not_awaited()
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {**envelope, "source_token": token},
+    )
+    bus.publish_inbound.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_webui_message_source_reset_during_hydration_is_rejected_before_effects(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.webui.transcript import read_transcript_lines
+
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:source-hydration-race"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("source-hydration-race")
+    assert token is not None
+    source = sessions._jsonl_store.source
+
+    async def reset_during_hydration(_chat_id: str) -> None:
+        snapshot = source.load_source_snapshot(key)
+        source.reset_source_session(key, snapshot.state, [])
+
+    channel.webui_hydrate = AsyncMock(side_effect=reset_during_hydration)
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "source-hydration-race",
+            "content": "hello",
+            "webui": True,
+            "turn_id": "turn-source-race",
+            "request_settings_version": 1,
+            "request_intent": "new",
+            "source_token": token,
+        },
+    )
+
+    payloads = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+    errors = [payload for payload in payloads if payload.get("event") == "error"]
+    assert len(errors) == 1
+    assert errors[0]["detail"] == "source_changed"
+    assert errors[0]["reason"] == "source_token"
+    assert errors[0]["turn_id"] == "turn-source-race"
+    assert not any(payload.get("event") == "message_accepted" for payload in payloads)
+    assert read_transcript_lines(key) == []
+    bus.publish_inbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webui_new_request_rejected_when_chat_becomes_busy_during_hydration(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.webui.transcript import read_transcript_lines
+
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    waiting_conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, waiting_conn)
+    key = "websocket:busy-hydration-race"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("busy-hydration-race")
+    assert token is not None
+    waiting_workspace = tmp_path / "waiting-workspace"
+    waiting_workspace.mkdir()
+    waiting_scope = default_workspace_scope(waiting_workspace, True)
+    real_hydrate = channel.webui_hydrate
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated_hydrate(chat_id: str) -> None:
+        entered.set()
+        await release.wait()
+        await real_hydrate(chat_id)
+
+    channel.webui_hydrate = gated_hydrate
+    envelope = {
+        "type": "message",
+        "chat_id": "busy-hydration-race",
+        "content": "waiting N",
+        "webui": True,
+        "turn_id": "submission-N",
+        "request_settings_version": 1,
+        "request_intent": "new",
+        "source_token": token,
+        "workspace_scope": waiting_scope.metadata(),
+    }
+    waiting_task = asyncio.create_task(
+        channel._dispatch_envelope(waiting_conn, "waiting-client", envelope)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        channel.webui_hydrate = real_hydrate
+        active_conn = AsyncMock()
+        _authenticate_local_webui_connection(channel, active_conn)
+        await channel._dispatch_envelope(
+            active_conn,
+            "active-client",
+            {
+                **envelope,
+                "turn_id": "admitted-R",
+                "content": "active R",
+                "workspace_scope": scope.metadata(),
+            },
+        )
+        release.set()
+        await waiting_task
+
+        waiting_payloads = [
+            json.loads(call.args[0]) for call in waiting_conn.send.await_args_list
+        ]
+        errors = [payload for payload in waiting_payloads if payload.get("event") == "error"]
+        assert len(errors) == 1
+        assert errors[0]["detail"] == "not_admitted"
+        assert errors[0]["reason"] == "busy_new_request"
+        assert errors[0]["turn_id"] == "submission-N"
+        assert not any(
+            payload.get("event") == "message_accepted" for payload in waiting_payloads
+        )
+        assert [row["text"] for row in read_transcript_lines(key)] == ["active R"]
+        assert bus.publish_inbound.await_count == 1
+        assert wth.websocket_turn_id("busy-hydration-race") == "admitted-R"
+    finally:
+        release.set()
+        if not waiting_task.done():
+            await waiting_task
+
+
+@pytest.mark.asyncio
+async def test_webui_steer_rejects_target_replaced_during_hydration_before_effects(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.webui.transcript import read_transcript_lines
+
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:steer-hydration-race"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("steer-hydration-race")
+    assert token is not None
+    first_owner = wth.register_queued_websocket_turn_if_idle(
+        "steer-hydration-race",
+        "turn-1",
+        workspace_scope=scope.metadata(),
+    )
+    assert first_owner is not None
+
+    async def replace_target(_chat_id: str) -> None:
+        wth.clear_websocket_turn_if_current("steer-hydration-race", first_owner)
+        wth.register_queued_websocket_turn_if_idle(
+            "steer-hydration-race",
+            "turn-2",
+            workspace_scope=scope.metadata(),
+        )
+
+    channel.webui_hydrate = AsyncMock(side_effect=replace_target)
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "steer-hydration-race",
+            "content": "guidance",
+            "webui": True,
+            "turn_id": "guidance-1",
+            "request_settings_version": 1,
+            "request_intent": "steer",
+            "target_turn_id": "turn-1",
+            "source_token": token,
+            "workspace_scope": scope.metadata(),
+        },
+    )
+
+    payloads = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+    errors = [payload for payload in payloads if payload.get("event") == "error"]
+    assert len(errors) == 1
+    assert errors[0]["detail"] == "not_admitted"
+    assert errors[0]["reason"] == "steering_target_changed"
+    assert errors[0]["turn_id"] == "guidance-1"
+    assert not any(payload.get("event") == "message_accepted" for payload in payloads)
+    assert read_transcript_lines(key) == []
+    bus.publish_inbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_webui_message_without_v1_fields_still_admits(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:legacy-envelope"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "legacy-envelope",
+            "content": "hello",
+            "webui": True,
+        },
+    )
+
+    bus.publish_inbound.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_busy_new_request_is_not_admitted_but_matching_steer_is(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    default_workspace.mkdir()
+    project_a.mkdir()
+    project_b.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:busy-intent"
+    scope_a = default_workspace_scope(project_a, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope_a.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("busy-intent")
+    assert token is not None
+    turn_owner = wth.register_queued_websocket_turn_if_idle(
+        "busy-intent",
+        "turn-active",
+        workspace_scope=scope_a.metadata(),
+    )
+    assert turn_owner is not None
+    channel.gateway.media.store_inbound_attachments = MagicMock()
+    try:
+        await channel._dispatch_envelope(
+            conn,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": "busy-intent",
+                "content": "new work in B",
+                "webui": True,
+                "turn_id": "turn-busy",
+                "request_settings_version": 1,
+                "request_intent": "new",
+                "source_token": token,
+                "workspace_scope": scope_b_payload(project_b),
+                "media": [{"data_url": "data:text/plain;base64,aGVsbG8="}],
+            },
+        )
+        payload = json.loads(conn.send.await_args.args[0])
+        assert payload["event"] == "error"
+        assert payload["detail"] == "not_admitted"
+        assert payload["reason"] == "busy_new_request"
+        bus.publish_inbound.assert_not_awaited()
+        channel.gateway.media.store_inbound_attachments.assert_not_called()
+
+        await channel._dispatch_envelope(
+            conn,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": "busy-intent",
+                "content": "guide A",
+                "webui": True,
+                "turn_id": "turn-steer",
+                "request_settings_version": 1,
+                "request_intent": "steer",
+                "target_turn_id": "turn-active",
+                "source_token": token,
+                "workspace_scope": scope_a.metadata(),
+            },
+        )
+        bus.publish_inbound.assert_awaited_once()
+
+        await channel._dispatch_envelope(
+            conn,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": "busy-intent",
+                "content": "wrong context",
+                "webui": True,
+                "turn_id": "turn-steer-wrong",
+                "request_settings_version": 1,
+                "request_intent": "steer",
+                "target_turn_id": "turn-active",
+                "source_token": token,
+                "workspace_scope": scope_b_payload(project_b),
+            },
+        )
+        rejected = json.loads(conn.send.await_args.args[0])
+        assert rejected["detail"] == "not_admitted"
+        assert rejected["reason"] == "steering_context_changed"
+        assert bus.publish_inbound.await_count == 1
+    finally:
+        wth.clear_websocket_turn_if_current("busy-intent", turn_owner)
+
+
+def scope_b_payload(project: Path) -> dict[str, object]:
+    return {
+        "project_path": str(project),
+        "access_mode": "restricted",
+        "restrict_to_workspace": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_remote_owner_full_message_requires_own_device_consent(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.remote.edge import AccessIdentity
+
+    default_workspace = tmp_path / "default"
+    project = tmp_path / "project"
+    default_workspace.mkdir()
+    project.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    conn.remote_address = ("203.0.113.5", 50123)
+    conn.mobile_identity = AccessIdentity(
+        "install-a",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    channel.revalidate_mobile_connection = AsyncMock(return_value=True)
+    key = "websocket:remote-owner-full"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    workspaces = channel.gateway.workspaces
+    owner = sessions.desktop_permissions
+    source = workspaces._source_binding(key)
+    assert source is not None
+    token = workspaces.source_token("remote-owner-full")
+    assert token is not None
+    current = workspaces._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    enabled = workspaces.set_permission_mode(
+        {
+            "chat_id": "remote-owner-full",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": current["revision"],
+        },
+        local_ui=False,
+        owner_authorized=True,
+        owner_installation_id="install-a",
+    )
+    assert "error" not in enabled
+
+    def envelope(turn_id: str) -> dict[str, object]:
+        return {
+            "type": "message",
+            "chat_id": "remote-owner-full",
+            "content": "full work",
+            "webui": True,
+            "turn_id": turn_id,
+            "request_settings_version": 1,
+            "request_intent": "new",
+            "source_token": token,
+            "workspace_scope": {
+                "project_path": str(project),
+                "access_mode": "full",
+                "restrict_to_workspace": False,
+            },
+        }
+
+    await channel._dispatch_envelope(conn, "webui-client", envelope("turn-a"))
+    bus.publish_inbound.assert_awaited_once()
+    wth.clear_websocket_turns("remote-owner-full")
+
+    conn.mobile_identity = AccessIdentity(
+        "install-b",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    await channel._dispatch_envelope(conn, "webui-client", envelope("turn-b-denied"))
+    denied = json.loads(conn.send.await_args.args[0])
+    assert denied["detail"] == "workspace_scope_rejected"
+    assert denied["reason"] == "full_access_unavailable"
+    assert bus.publish_inbound.await_count == 1
+
+    current = workspaces._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    confirmed = workspaces.set_permission_mode(
+        {
+            "chat_id": "remote-owner-full",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": current["revision"],
+        },
+        local_ui=False,
+        owner_authorized=True,
+        owner_installation_id="install-b",
+    )
+    assert "error" not in confirmed
+    await channel._dispatch_envelope(conn, "webui-client", envelope("turn-b"))
+    assert bus.publish_inbound.await_count == 2
+    from nanobot.security.desktop_permissions import full_permission_from_message
+
+    assert full_permission_from_message(bus.publish_inbound.await_args.args[0]) is not None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_new_webui_submissions_reserve_only_one_turn(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:concurrent-new"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("concurrent-new")
+    assert token is not None
+
+    def envelope(turn_id: str) -> dict[str, object]:
+        return {
+            "type": "message",
+            "chat_id": "concurrent-new",
+            "content": "work",
+            "webui": True,
+            "turn_id": turn_id,
+            "request_settings_version": 1,
+            "request_intent": "new",
+            "source_token": token,
+        }
+
+    await asyncio.gather(
+        channel._dispatch_envelope(conn, "webui-client", envelope("turn-one")),
+        channel._dispatch_envelope(conn, "webui-client", envelope("turn-two")),
+    )
+    assert bus.publish_inbound.await_count == 1
+    payloads = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+    assert any(
+        payload.get("detail") == "not_admitted"
+        and payload.get("reason") == "busy_new_request"
+        for payload in payloads
+    )

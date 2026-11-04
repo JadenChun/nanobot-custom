@@ -124,6 +124,14 @@ Java_ai_nanobot_mobile_network_NativeNetwork_wsClose(JNIEnv *env, jobject thiz, 
     return (jint)nanobot_network_ws_close((int64_t)handle, (uint64_t)ws_id);
 }
 
+JNIEXPORT jint JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_wsPing(JNIEnv *env, jobject thiz, jlong handle,
+                                                    jlong ws_id) {
+    (void)env;
+    (void)thiz;
+    return (jint)nanobot_network_ws_ping((int64_t)handle, (uint64_t)ws_id);
+}
+
 JNIEXPORT jbyteArray JNICALL
 Java_ai_nanobot_mobile_network_NativeNetwork_pollEvent(JNIEnv *env, jobject thiz, jlong handle) {
     (void)thiz;

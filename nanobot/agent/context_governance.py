@@ -42,6 +42,7 @@ from nanobot.providers.request_budget import (
     BackendContextOverflow,
     LocalUsageAnchor,
     PreparedRequestBudgetPreview,
+    PreparedRequestRoute,
     ProviderRequestRejected,
     RequestPayloadBytesExceeded,
     TransportIdentity,
@@ -250,6 +251,9 @@ class SourceCompactionMetrics:
     completion_reserve: int | None = None
     safety_buffer: int | None = None
     measurement_source: str | None = None
+    summary_generation_allowance: int | None = None
+    summary_retained_tokens: int | None = None
+    summary_reserve_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +285,10 @@ class SourceCompactionState:
     attempts: list[SourceCompactionMetrics] = field(default_factory=list)
     idle_timeout_seconds: float = 300.0
     overall_timeout_seconds: float = 900.0
+    pressure_trigger_ratio: float = 0.9
+    target_ratio: float = 0.6
+    summary_generation_tokens: int | None = None
+    summary_retained_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -498,6 +506,7 @@ class ContextGovernor:
     def publish_source_compaction(self, state: ModelRequestState, attempt: SourceCompactionAttempt, *,
                                   boundary: int, summary: str,
                                   auxiliary_usage: dict[str, int] | None,
+                                  retained_text_tokens: int | None = None,
                                   proof: SummaryDependencyProof | None = None,
                                   stream: bool = False,
                                   tool_choice: str | dict[str, Any] | None = None,
@@ -517,8 +526,11 @@ class ContextGovernor:
                 or compaction.raw_messages != candidate.transcript.messages()
                 or compaction.stream_id != candidate.stream_id):
             raise SourceValidationError('Source projection changed during compaction')
-        if (not isinstance(cast(object, summary), str) or not summary.strip() or len(summary) > 64_000
-                or truncate_text_to_tokens(summary, 2048) != summary):
+        retained = 2048 if retained_text_tokens is None else retained_text_tokens
+        if (type(retained) is not int or retained <= 0
+                or not isinstance(cast(object, summary), str) or not summary.strip()
+                or len(summary) > 64_000
+                or truncate_text_to_tokens(summary, retained) != summary):
             raise SourceValidationError('Invalid bounded source summary')
         if auxiliary_usage is not None and (not auxiliary_usage or any(
                 type(value) is not int or value < 0 for value in auxiliary_usage.values())):
@@ -693,6 +705,64 @@ class ContextGovernor:
             return False
         return True
 
+    @staticmethod
+    def _summary_generation_allowance(
+        compaction: SourceCompactionState,
+        budget: int,
+    ) -> int:
+        """Resolve a summary-route generation budget from declared capability."""
+        runtime = compaction.runtime
+        requested = compaction.summary_generation_tokens
+        if requested is None:
+            requested = runtime.generation.max_tokens
+        if type(requested) is not int or requested <= 0:
+            requested = GenerationSettings().max_tokens
+        declared = runtime.resolved_capabilities.max_output_tokens
+        if type(declared) is int and declared > 0:
+            requested = min(requested, declared)
+        ceiling = runtime.context_window_tokens
+        if type(ceiling) is not int or ceiling <= 0:
+            return max(1, requested)
+        if budget > 0:
+            ceiling = min(ceiling, budget)
+        return max(1, min(requested, max(1, ceiling - SNIP_SAFETY_BUFFER)))
+
+    @staticmethod
+    def _summary_envelope_tokens(compaction: SourceCompactionState) -> int:
+        """Measure the fixed summary instruction and JSON envelope conservatively."""
+        from nanobot.agent.memory import Consolidator
+
+        payload = Consolidator.source_summary_messages(
+            [{'role': 'user', 'content': ''}],
+            None,
+        )
+        estimate, _ = estimate_prompt_tokens_chain(
+            compaction.runtime.provider,
+            compaction.runtime.model,
+            payload,
+            None,
+        )
+        return max(1, estimate)
+
+    @classmethod
+    def _summary_reserve(
+        cls,
+        config: ContextGovernanceConfig,
+        compaction: SourceCompactionState,
+        budget: int,
+    ) -> int:
+        """Reserve room for a complete summary plus likely next-step growth."""
+        if budget <= 0:
+            return 0
+        allowance = cls._summary_generation_allowance(compaction, budget)
+        envelope = cls._summary_envelope_tokens(compaction)
+        max_tool_chars = config.max_tool_result_chars
+        if type(max_tool_chars) is not int or max_tool_chars < 0:
+            max_tool_chars = 0
+        growth = min(max_tool_chars, max(1, budget // 8))
+        reserve = envelope + allowance + SNIP_SAFETY_BUFFER + growth
+        return min(reserve, max(0, budget - 1))
+
     async def compact_source_request(self, state: ModelRequestState, view: SourceTranscript, *,
                                      tool_definitions: list[dict[str, Any]] | None,
                                      force: bool = False,
@@ -746,7 +816,13 @@ class ContextGovernor:
         if main_preview is None and not budget:
             budget = self.input_budget(state.config)
         check_deadline()
-        if not force and estimated < budget * 0.9:
+        generation_allowance = self._summary_generation_allowance(compaction, budget)
+        summary_reserve = self._summary_reserve(state.config, compaction, budget)
+        if (
+            not force
+            and estimated < budget * compaction.pressure_trigger_ratio
+            and estimated + summary_reserve < budget
+        ):
             return view
         attempt = self.capture_source_compaction(state, view, tool_definitions=tool_definitions)
         check_deadline()
@@ -767,7 +843,7 @@ class ContextGovernor:
             # checkpoint. Keep canonical source and let the final main budget
             # guard decide whether the request can proceed.
             return view
-        target = int(budget * 0.6)
+        target = int(budget * compaction.target_ratio)
         preview = candidate.rebuild(final_boundary, CheckpointNode('preview', 'x')).with_runtime(*attempt.request_notes)
         fixed_preview = self._prepared_budget_preview(
             state.config,
@@ -801,7 +877,12 @@ class ContextGovernor:
                 'No room for a bounded source summary',
                 reason='fixed_prefix_exceeds_auxiliary_budget',
             )
-        allowance = min(2048, max(1, (target if fixed_tokens < target else budget) - fixed_tokens))
+        headroom = max(1, (target if fixed_tokens < target else budget) - fixed_tokens)
+        retained_tokens = max(
+            1,
+            min(generation_allowance, headroom),
+        )
+        allowance = retained_tokens
         prepared_payloads: dict[tuple[int, int, str | None], list[dict[str, Any]]] = {}
 
         def prepared_payload(evidence: SummaryEvidence,
@@ -945,6 +1026,9 @@ class ContextGovernor:
             payload_bytes=(
                 main_preview.measurement.measured_bytes if main_preview is not None else None
             ),
+            summary_generation_allowance=generation_allowance,
+            summary_retained_tokens=retained_tokens,
+            summary_reserve_tokens=summary_reserve,
         )
         compaction.attempts.append(metrics)
         started = monotonic()
@@ -1032,6 +1116,8 @@ class ContextGovernor:
                 group_start = boundary
                 check_deadline()
 
+            truncated_boundaries: set[int] = set()
+            truncated_failure: str | None = None
             for fold_index in range(4):
                 chosen = None
                 evidence = None
@@ -1062,7 +1148,7 @@ class ContextGovernor:
                 chunk_rejection_reason: str | None = None
                 if prepared is None:
                     for boundary in reversed(candidate.boundaries):
-                        if boundary <= cursor:
+                        if boundary <= cursor or boundary in truncated_boundaries:
                             continue
                         selected = candidate.summary_evidence(boundary, after=cursor)
                         if not selected.nodes:
@@ -1103,6 +1189,11 @@ class ContextGovernor:
                                 chosen, evidence, prepared = boundary, selected, payload
                                 break
                 if chosen is None or evidence is None or prepared is None:
+                    if truncated_failure is not None:
+                        raise SourceCompactionUnavailableError(
+                            'Bounded source summary failed: invalid_response',
+                            reason=truncated_failure,
+                        )
                     raise SourceCompactionUnavailableError(
                         'Eligible source chunk exceeds auxiliary budget',
                         reason=(chunk_rejection_reason
@@ -1125,6 +1216,7 @@ class ContextGovernor:
                             prepared,
                             runtime=compaction.runtime,
                             max_output_tokens=allowance,
+                            retained_text_tokens=retained_tokens,
                             request_deadline_monotonic=deadline,
                             stream_idle_timeout_seconds=compaction.idle_timeout_seconds,
                             source_summary_mode=call_mode,
@@ -1145,6 +1237,16 @@ class ContextGovernor:
                     metrics.usage = result.usage if metrics.usage is None else metrics.usage + result.usage
                 if result.summary is None or result.status != 'complete':
                     failure_reason = result.failure_reason or 'summary_provider_error'
+                    if (
+                        failure_reason == 'summary_truncated'
+                        and fold_index < 3
+                    ):
+                        # Discard the truncated candidate and retry the same
+                        # evidence cursor with the next smaller closed chunk.
+                        truncated_boundaries.add(chosen)
+                        truncated_failure = failure_reason
+                        check_deadline()
+                        continue
                     raise SourceCompactionUnavailableError(
                         'Bounded source summary failed: ' + result.status,
                         reason=failure_reason,
@@ -1188,6 +1290,7 @@ class ContextGovernor:
             check_deadline()
             published = self.publish_source_compaction(state, attempt, boundary=cursor,
                                                       summary=summary, auxiliary_usage=usage,
+                                                      retained_text_tokens=retained_tokens,
                                                       proof=SummaryDependencyProof(candidate, tuple(consumed)),
                                                       stream=stream,
                                                       tool_choice=tool_choice,
@@ -1237,7 +1340,8 @@ class ContextGovernor:
                 'measurement_source={} selected_capacity={} completion_reserve={} safety_buffer={} '
                 'payload_bytes={} latency_ms={} root_reason={} failure_reason={} prefix_mode={} '
                 'prefix_fallback_reason={} prefix_source_nodes={} prefix_estimated_tokens={} '
-                'converted_prefix_match={}',
+                'converted_prefix_match={} summary_generation_allowance={} '
+                'summary_retained_tokens={} summary_reserve_tokens={}',
                 state.config.provider.provider_name,
                 state.config.model,
                 metrics.scope,
@@ -1265,6 +1369,9 @@ class ContextGovernor:
                 metrics.prefix_source_nodes,
                 metrics.prefix_estimated_tokens,
                 metrics.converted_prefix_match,
+                metrics.summary_generation_allowance,
+                metrics.summary_retained_tokens,
+                metrics.summary_reserve_tokens,
             )
         if asyncio.get_running_loop().time() < deadline:
             await emit_phase('succeeded')
@@ -1661,7 +1768,44 @@ class ContextGovernor:
             )
         ):
             return None
+        route = preview.route
+        if route is not None:
+            if type(route) is not PreparedRequestRoute:
+                return None
+            if (
+                route.provider != identity.provider
+                or route.model != identity.model
+                or route.transport != identity.transport
+                or route.accounting_policy != measurement.policy
+                or route.context_window_tokens != measurement.total_limit_tokens
+                or route.completion_reserve_tokens != measurement.completion_reserve_tokens
+                or route.envelope_binding != preview.envelope_binding
+            ):
+                return None
         return preview
+
+    def _attach_route_selection(
+        self,
+        config: ContextGovernanceConfig,
+        messages: list[dict[str, Any]],
+        *,
+        tool_definitions: list[dict[str, Any]] | None,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None,
+        provider_context: ProviderCallContext,
+    ) -> ProviderCallContext:
+        """Bind the exact prepared request to the leaf dispatch will use."""
+        preview = self._prepared_budget_preview(
+            config,
+            messages,
+            tool_definitions=tool_definitions,
+            stream=stream,
+            tool_choice=tool_choice,
+            provider_context=provider_context,
+        )
+        if preview is None or preview.route is None:
+            return provider_context
+        return replace(provider_context, selected_route=preview.route)
 
     @classmethod
     def _prepared_budget_preview(
@@ -2115,11 +2259,20 @@ class ContextGovernor:
                 resume_state=False,
                 binding=None,
             )
-            return prepared, replace(
+            final_context = replace(
                 provider_context or ProviderCallContext(),
                 events=state.events,
                 local_usage_anchor=state.local_usage_anchor,
             )
+            final_context = self._attach_route_selection(
+                state.config,
+                prepared,
+                tool_definitions=tool_definitions,
+                stream=stream,
+                tool_choice=tool_choice,
+                provider_context=final_context,
+            )
+            return prepared, final_context
         prepared = self.prepare_messages_for_model(state.config, messages)
         image_view_changed = recent_image_messages(messages) != messages
         if image_view_changed:
@@ -2224,6 +2377,14 @@ class ContextGovernor:
             provider_context or ProviderCallContext(),
             events=state.events,
             local_usage_anchor=state.local_usage_anchor,
+        )
+        provider_context = self._attach_route_selection(
+            state.config,
+            prepared,
+            tool_definitions=tool_definitions,
+            stream=stream,
+            tool_choice=tool_choice,
+            provider_context=provider_context,
         )
         state.messages = deepcopy(prepared)
         state.tool_definitions = deepcopy(tool_definitions)

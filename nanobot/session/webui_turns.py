@@ -83,6 +83,7 @@ _WEBSOCKET_TURN_OWNERS: dict[str, str] = {}
 class _WebsocketTurn:
     started_at: float
     turn_id: str | None
+    workspace_scope: dict[str, Any] | None = None
     transcript_persistence_failed: bool = False
     continuation_reference: WorkspaceAccessContinuationReference | None = None
     continuation_admitted: bool = False
@@ -365,19 +366,64 @@ def websocket_turn_id(chat_id: str) -> str | None:
     return _WEBSOCKET_TURN_IDS.get(chat_id)
 
 
+def bind_queued_websocket_turn_scope(
+    chat_id: str,
+    owner: str | None,
+    workspace_scope: dict[str, Any],
+) -> bool:
+    """Bind the submitted scope before media or transcript work begins."""
+    if not owner:
+        return False
+    turns = _WEBSOCKET_ACTIVE_TURNS.get(chat_id)
+    if turns is None or owner not in turns:
+        return False
+    turns[owner] = replace(
+        turns[owner],
+        workspace_scope=dict(workspace_scope),
+    )
+    return True
+
+
+def websocket_turn_reserved(chat_id: str) -> bool:
+    """Whether an accepted turn already holds this chat's admission slot."""
+    return bool(_WEBSOCKET_ACTIVE_TURNS.get(chat_id))
+
+
+def activate_queued_websocket_turn(chat_id: str, owner: str | None) -> bool:
+    """Publish a reserved turn only after its full admission checks pass."""
+    if not owner or owner not in _WEBSOCKET_ACTIVE_TURNS.get(chat_id, {}):
+        return False
+    _sync_websocket_turn_projection(chat_id)
+    return True
+
+
+def websocket_turn_scope(chat_id: str) -> dict[str, Any] | None:
+    """Return the captured workspace scope of the active WebUI turn."""
+    owner = _WEBSOCKET_TURN_OWNERS.get(chat_id)
+    turn = _WEBSOCKET_ACTIVE_TURNS.get(chat_id, {}).get(owner) if owner else None
+    if turn is None or turn.workspace_scope is None:
+        return None
+    return dict(turn.workspace_scope)
+
+
 def register_queued_websocket_turn_if_idle(
     chat_id: str,
     turn_id: str | None,
+    *,
+    workspace_scope: dict[str, Any] | None = None,
+    publish: bool = True,
 ) -> str | None:
     """Track an accepted WebUI turn while it waits for AgentLoop admission."""
-    if websocket_turn_wall_started_at(chat_id) is not None:
+    if websocket_turn_reserved(chat_id):
         return None
     owner = uuid4().hex
     _WEBSOCKET_ACTIVE_TURNS.setdefault(chat_id, {})[owner] = _WebsocketTurn(
         started_at=time.time(),
         turn_id=turn_id,
+        workspace_scope=dict(workspace_scope) if workspace_scope is not None else None,
     )
-    _sync_websocket_turn_projection(chat_id)
+    if publish:
+        _sync_websocket_turn_projection(chat_id)
     return owner
 
 

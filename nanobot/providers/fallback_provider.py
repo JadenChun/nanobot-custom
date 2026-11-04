@@ -22,6 +22,7 @@ from nanobot.providers.base import (
     ProviderCallContext,
     ProviderConversationState,
     ProviderRequestRejected,
+    ProviderRouteChanged,
     RetryEventCallback,
     RetryStatusCallback,
     track_stream_delivery,
@@ -172,6 +173,11 @@ class FallbackProvider(LLMProvider):
     def supports_native_compaction(self, model: str | None = None) -> bool:
         return self._primary.supports_native_compaction(model)
 
+    @property
+    def supports_source_summary(self) -> bool:
+        """Auxiliary summaries stay on the captured primary leaf."""
+        return self._primary.supports_source_summary
+
     @staticmethod
     def _strip_bound_continuation(response: LLMResponse) -> LLMResponse:
         """Prevent a routing wrapper from exposing a leaf-bound receipt."""
@@ -225,10 +231,129 @@ class FallbackProvider(LLMProvider):
             return True
         return False
 
+    def _fallback_call_context(
+        self,
+        fallback: Any,
+        fallback_provider: LLMProvider,
+        provider_context: ProviderCallContext,
+        fallback_model: str,
+    ) -> ProviderCallContext:
+        """Reprice one fallback leaf exactly as its dispatch will be prepared."""
+        state = provider_context.conversation_state
+        if state is not None and not fallback_provider.can_resume_conversation_state(
+            state,
+            fallback_model,
+        ):
+            state = None
+        context_window_tokens = (
+            fallback.context_window_tokens
+            if fallback_provider.supports_native_compaction(fallback_model)
+            else None
+        )
+        request_limits = provider_context.request_limits
+        if request_limits is not None:
+            request_limits = replace(
+                request_limits,
+                completion_reserve_tokens=fallback.max_tokens,
+            )
+            if fallback.context_window_tokens is not None:
+                request_limits = request_limits.for_model_window(
+                    fallback.context_window_tokens,
+                )
+        return replace(
+            provider_context,
+            conversation_state=state,
+            request_limits=request_limits,
+            context_window_tokens=context_window_tokens,
+            local_usage_anchor=None,
+        )
+
+    def _preview_candidate(
+        self,
+        provider_context: ProviderCallContext,
+        model: str | None,
+        generation: GenerationSettings,
+    ) -> tuple[
+        LLMProvider,
+        ProviderCallContext,
+        str | None,
+        GenerationSettings,
+        int,
+    ] | None:
+        """Select the same leaf and generation facts the next dispatch will use."""
+        if not self._has_fallbacks or self._primary_available():
+            return (
+                self._primary,
+                self._primary_call_context(provider_context, model),
+                model,
+                generation,
+                0,
+            )
+        for index, fallback in enumerate(self._fallback_presets):
+            try:
+                fallback_provider = self._provider_factory(fallback)
+            except Exception:
+                continue
+            fallback_model = str(fallback.model)
+            fallback_generation = replace(
+                generation,
+                max_tokens=fallback.max_tokens,
+                temperature=fallback.temperature,
+            )
+            if fallback.reasoning_effort is None:
+                fallback_generation = replace(fallback_generation, reasoning_effort=None)
+            else:
+                fallback_generation = replace(
+                    fallback_generation,
+                    reasoning_effort=fallback.reasoning_effort,
+                )
+            return (
+                fallback_provider,
+                self._fallback_call_context(
+                    fallback,
+                    fallback_provider,
+                    provider_context,
+                    fallback_model,
+                ),
+                fallback_model,
+                fallback_generation,
+                index + 1,
+            )
+        return None
+
+    @staticmethod
+    def _verify_route(
+        provider: LLMProvider,
+        provider_context: object,
+        model: str | None,
+        fallback_index: int,
+    ) -> None:
+        if not isinstance(provider_context, ProviderCallContext):
+            return
+        selected = provider_context.selected_route
+        if selected is None:
+            return
+        actual_model = model or provider.get_default_model()
+        if (
+            selected.fallback_index != fallback_index
+            or selected.provider != provider.provider_name
+            or selected.model != actual_model
+        ):
+            raise ProviderRouteChanged(
+                expected=selected.route_token,
+                actual=f"{provider.provider_name}:{actual_model}:{fallback_index}",
+            )
+
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
         """Keep bounded auxiliary work on its captured primary model."""
         provider_context = kwargs.get("provider_context")
         if isinstance(provider_context, ProviderCallContext):
+            self._verify_route(
+                self._primary,
+                provider_context,
+                kwargs.get("model"),
+                0,
+            )
             kwargs["provider_context"] = self._primary_call_context(
                 provider_context,
                 kwargs.get("model"),
@@ -239,6 +364,12 @@ class FallbackProvider(LLMProvider):
         """Stream one auxiliary request through the captured primary only."""
         provider_context = kwargs.get("provider_context")
         if isinstance(provider_context, ProviderCallContext):
+            self._verify_route(
+                self._primary,
+                provider_context,
+                kwargs.get("model"),
+                0,
+            )
             kwargs["provider_context"] = self._primary_call_context(
                 provider_context,
                 kwargs.get("model"),
@@ -258,19 +389,49 @@ class FallbackProvider(LLMProvider):
         stream: bool,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> PreparedRequestBudgetPreview | None:
-        """Delegate only when this wrapper has one unambiguous primary route."""
-        if self._has_fallbacks:
+        """Preview the actual selected leaf, including its fallback repricing.
+
+        Auxiliary work remains bound to the captured primary exactly like
+        ``chat_once``/``chat_stream_once``; main requests use the next attempt
+        decision so a circuit-open primary does not silently certify another
+        leaf's quote.
+        """
+        auxiliary = (
+            provider_context.single_attempt
+            or provider_context.source_summary_mode is not None
+        )
+        if auxiliary:
+            selected = (
+                self._primary,
+                self._primary_call_context(provider_context, model),
+                model,
+                generation,
+                0,
+            )
+        else:
+            selected = self._preview_candidate(provider_context, model, generation)
+        if selected is None:
             return None
-        context = self._primary_call_context(provider_context, model)
-        return self._primary.preview_request_budget(
+        provider, context, selected_model, selected_generation, fallback_index = selected
+        preview = provider.preview_request_budget(
             messages=messages,
             tools=tools,
-            model=model,
-            generation=generation,
+            model=selected_model,
+            generation=selected_generation,
             provider_context=context,
             stream=stream,
             tool_choice=tool_choice,
         )
+        if preview is not None and preview.route is not None:
+            preview = replace(
+                preview,
+                route=replace(
+                    preview.route,
+                    purpose="source_summary" if auxiliary else "main",
+                    fallback_index=fallback_index,
+                ),
+            )
+        return preview
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         kwargs["messages"] = messages
@@ -511,6 +672,12 @@ class FallbackProvider(LLMProvider):
 
         if self._primary_available():
             primary_was_attempted = True
+            self._verify_route(
+                self._primary,
+                kwargs.get("provider_context"),
+                kwargs.get("model"),
+                0,
+            )
             response, primary_exception = await self._call_provider(
                 call, self._primary, kwargs
             )
@@ -598,27 +765,18 @@ class FallbackProvider(LLMProvider):
             }
             provider_context = fallback_kwargs.get("provider_context")
             if isinstance(provider_context, ProviderCallContext):
-                state = provider_context.conversation_state
-                if state is not None and not fallback_provider.can_resume_conversation_state(
-                    state,
-                    fallback_model,
-                ):
-                    state = None
-                context_window_tokens = (
-                    fallback.context_window_tokens
-                    if fallback_provider.supports_native_compaction(fallback_model)
-                    else None
-                )
-                request_limits = provider_context.request_limits
-                if request_limits is not None and fallback.context_window_tokens is not None:
-                    request_limits = request_limits.for_model_window(fallback.context_window_tokens)
-                fallback_kwargs["provider_context"] = replace(
+                fallback_kwargs["provider_context"] = self._fallback_call_context(
+                    fallback,
+                    fallback_provider,
                     provider_context,
-                    conversation_state=state,
-                    request_limits=request_limits,
-                    context_window_tokens=context_window_tokens,
-                    local_usage_anchor=None,
+                    fallback_model,
                 )
+            self._verify_route(
+                fallback_provider,
+                fallback_kwargs.get("provider_context"),
+                fallback_model,
+                idx + 1,
+            )
             if fallback.reasoning_effort is None:
                 fallback_kwargs.pop("reasoning_effort", None)
             else:

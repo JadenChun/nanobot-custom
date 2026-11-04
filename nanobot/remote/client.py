@@ -201,6 +201,14 @@ class RemoteAccessClient:
             require_admin=True,
         )
 
+    def renew_pairing(self, pairing_id: str) -> dict[str, Any]:
+        return self._call(
+            "pair_renew",
+            {"pairing_id": pairing_id},
+            role="admin",
+            require_admin=True,
+        )
+
     def approve_pairing(
         self,
         *,

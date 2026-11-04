@@ -21,15 +21,22 @@ class NativeNetworkRefreshInstrumentedTest {
         path: String,
         access: String? = null,
         headers: Map<String, String> = emptyMap(),
+        body: JSONObject? = null,
     ): Pair<Int, JSONObject> {
         val encodedHeaders = JSONObject()
         headers.forEach { (key, value) -> encodedHeaders.put(key, value) }
         if (access != null) encodedHeaders.put("Authorization", "Bearer $access")
         val request = JSONObject()
             .put("operation", operation)
-            .put("method", "GET")
+            .put("method", if (body == null) "GET" else "POST")
             .put("path", path)
             .put("headers", encodedHeaders)
+        if (body != null) {
+            request.put(
+                "body_base64",
+                Base64.encodeToString(body.toString().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+            )
+        }
         val requestId = NativeNetwork.http(handle, request.toString())
         assertNotEquals(0L, requestId)
         val deadline = System.currentTimeMillis() + 30_000
@@ -101,6 +108,64 @@ class NativeNetworkRefreshInstrumentedTest {
                 request(handle, "mobile_handshake", "/mobile/v1/handshake", oldAccess).first,
             )
             Log.i("NanobotM21", "M21_REFRESH_OK access_rotated=true")
+        } finally {
+            NativeNetwork.stop(handle)
+        }
+    }
+
+    @Test
+    fun refreshesAccessThroughIndependentOwnerRoute() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val keyFile = File(context.filesDir, "nanobot-m05-authkey")
+        val tokenFile = File(context.filesDir, "nanobot-m21-tokens.json")
+        assumeTrue(keyFile.exists() && tokenFile.exists())
+        val tokens = JSONObject(tokenFile.readText())
+        val installation = tokens.getString("installation_id")
+        val custody = CustodyStore(context)
+        val record = custody.load() ?: throw AssertionError("custody target missing")
+        val config = JSONObject()
+            .put("origin", tokens.getString("origin"))
+            .put("installation_id", installation)
+            .put("hostname", "nanobot-owner-refresh-" + installation.takeLast(6))
+            .put("state_dir", File(context.filesDir, "network-state").resolve(installation).absolutePath)
+            .put("state_key_base64", record.stateKeyBase64)
+            .put("auth_key", keyFile.readText().trim())
+        val handle = NativeNetwork.start(config.toString())
+        assertNotEquals(0L, handle)
+        try {
+            val deadline = System.currentTimeMillis() + 90_000
+            while (System.currentTimeMillis() < deadline) {
+                val status = JSONObject(String(NativeNetwork.status(handle) ?: ByteArray(0)))
+                if (status.optString("state") == "ready") break
+                Thread.sleep(500)
+            }
+            val (statusCode, statusBody) = request(
+                handle,
+                "remote_status",
+                "/remote/v1/status",
+                tokens.getString("access_token"),
+            )
+            assertEquals(200, statusCode)
+            assertTrue(statusBody.has("enabled"))
+            val (devicesCode, devicesBody) = request(
+                handle,
+                "remote_devices",
+                "/remote/v1/devices",
+                tokens.getString("access_token"),
+            )
+            assertEquals(200, devicesCode)
+            assertTrue(devicesBody.has("devices"))
+            val (refreshStatus, refreshed) = request(
+                handle,
+                "remote_refresh",
+                "/remote/v1/refresh",
+                body = JSONObject()
+                    .put("installation_id", installation)
+                    .put("refresh_token", tokens.getString("refresh_token")),
+            )
+            assertEquals(200, refreshStatus)
+            assertTrue(refreshed.getString("access_token").startsWith("nbm_at_"))
+            Log.i("NanobotM21", "M21_OWNER_REFRESH_OK route=/remote/v1/refresh")
         } finally {
             NativeNetwork.stop(handle)
         }

@@ -496,6 +496,17 @@ class OwnerIPCServer:
                 }
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+        if method == "pair_renew":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            if pairing_id is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id is required"}}
+            try:
+                pending = self.pairing.renew(pairing_id)
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {"ok": True, "result": _pending_payload(pending)}
         if method == "pair_approve":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
@@ -872,6 +883,8 @@ def _pending_payload(pending: PairingPending) -> dict[str, Any]:
         # Kept for older internal callers; the desktop-facing name is pairing_code.
         "pairing_code": pending.pairing_code,
         "comparison_code": pending.comparison_code,
+        "created_at": pending.created_at,
+        "renewable": pending.renewable,
         "nonce": pending.nonce,
         "collector_secret": pending.collector_secret,
         "challenge": (

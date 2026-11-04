@@ -57,6 +57,8 @@ class NativeNetworkPlugin : Plugin() {
     private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
     private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
     @Volatile private var activePairing: PairingChallenge? = null
+    private val refreshLock = Any()
+    private var refreshInFlight: CompletableFuture<CustodyRecord>? = null
     private var pollTask: ScheduledFuture<*>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val custody by lazy { CustodyStore(context) }
@@ -81,50 +83,77 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("no refresh credential")
             return
         }
-        operationExecutor.execute {
-            try {
-                var active = record
-                val refreshed = try {
-                    requestRefresh(active)
-                } catch (first: Exception) {
-                    if (!isUnauthorized(first)) throw first
-                    // A concurrent refresh may have rotated the token between our
-                    // custody read and request. Retry once with the latest record
-                    // before treating the installation as revoked.
-                    val latest = custody.load()
-                    if (latest == null || latest.refreshToken == active.refreshToken) throw first
-                    active = latest
-                    requestRefresh(active)
-                }
-                custody.saveTokens(
-                    active.origin,
-                    active.installationId,
-                    refreshed.getString("access_token"),
-                    refreshed.getString("refresh_token"),
-                    refreshed.optInt("expires_in", 600),
-                    refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
-                )
-                mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
-            } catch (exception: Exception) {
-                val message = exception.message ?: "token refresh failed"
-                if (isUnauthorized(exception) && message.contains("device_revoked")) {
-                    // Only a confirmed owner revocation erases local custody. A
-                    // transient/raced invalid_refresh must not orphan the tsnet state.
+        val shared: CompletableFuture<CustodyRecord>
+        synchronized(refreshLock) {
+            val existing = refreshInFlight
+            if (existing != null) {
+                shared = existing
+            } else {
+                shared = CompletableFuture()
+                refreshInFlight = shared
+                operationExecutor.execute {
                     try {
-                        custody.logout(serverReachable = true)
-                        custody.purgeMedia()
-                    } catch (_: Exception) {
-                        // Custody may already be gone; the reload still resets UI.
+                        shared.complete(performRefresh())
+                    } catch (exception: Exception) {
+                        shared.completeExceptionally(exception)
+                    } finally {
+                        synchronized(refreshLock) {
+                            if (refreshInFlight === shared) refreshInFlight = null
+                        }
                     }
-                    mainHandler.post {
-                        call.reject("pairing was revoked")
-                        (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
-                    }
-                } else {
-                    mainHandler.post { call.reject(message) }
                 }
             }
         }
+        shared.whenComplete { _updated, error ->
+            if (error == null) {
+                mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
+                return@whenComplete
+            }
+            val failure = error as? Exception ?: Exception(error)
+            val message = failure.message ?: "token refresh failed"
+            if (isUnauthorized(failure) && message.contains("device_revoked")) {
+                // Only a confirmed owner revocation erases local custody. A
+                // transient/raced invalid_refresh must not orphan the tsnet state.
+                try {
+                    custody.logout(serverReachable = true)
+                    custody.purgeMedia()
+                } catch (_: Exception) {
+                    // Custody may already be gone; the reload still resets UI.
+                }
+                mainHandler.post {
+                    call.reject("pairing was revoked")
+                    (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
+                }
+            } else {
+                mainHandler.post { call.reject(message) }
+            }
+        }
+    }
+
+    private fun performRefresh(): CustodyRecord {
+        var active = custody.load() ?: throw CustodyException("no refresh credential")
+        if (active.refreshToken.isBlank() || active.revocationPending) {
+            throw CustodyException("no refresh credential")
+        }
+        val refreshed = try {
+            requestRefresh(active)
+        } catch (first: Exception) {
+            if (!isUnauthorized(first)) throw first
+            // Another device may have rotated the token. Retry once with the
+            // latest live record before treating the installation as revoked.
+            val latest = custody.load()
+            if (latest == null || latest.refreshToken == active.refreshToken) throw first
+            active = latest
+            requestRefresh(active)
+        }
+        return custody.saveRefreshedTokens(
+            active.origin,
+            active.installationId,
+            refreshed.getString("access_token"),
+            refreshed.getString("refresh_token"),
+            refreshed.optInt("expires_in", 600),
+            refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
+        )
     }
 
     @PluginMethod
@@ -232,6 +261,17 @@ class NativeNetworkPlugin : Plugin() {
                         "X-Nanobot-Label" to label,
                     ),
                 )
+                try {
+                    custody.savePendingPairing(
+                        origin,
+                        installationId,
+                        challenge.pairingId,
+                        PairingChallengeCodec.encode(challenge),
+                    )
+                } catch (exception: Exception) {
+                    // Pairing itself is still valid; native custody is retried on
+                    // the next foreground/poll boundary.
+                }
                 val result = JSObject(collected.toString())
                     .put("origin", origin)
                     .put("installationId", installationId)
@@ -347,6 +387,38 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun pendingPairing(call: PluginCall) {
+        val pending = try {
+            custody.loadPendingPairing()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable")
+            return
+        }
+        if (pending == null) {
+            call.resolve(JSObject().put("pending", false))
+            return
+        }
+        val challenge = try {
+            PairingChallengeCodec.decode(pending.challenge).also { activePairing = it }
+        } catch (exception: Exception) {
+            try {
+                custody.clearPendingPairing()
+            } catch (_: Exception) {
+                // Corrupt pending state is discarded; a new scan is required.
+            }
+            call.resolve(JSObject().put("pending", false))
+            return
+        }
+        call.resolve(
+            JSObject()
+                .put("pending", true)
+                .put("origin", pending.origin)
+                .put("pairingId", challenge.pairingId)
+                .put("challenge", pending.challenge)
+        )
+    }
+
+    @PluginMethod
     fun pairPoll(call: PluginCall) {
         val pairingId = call.getString("pairingId")
         if (pairingId.isNullOrBlank()) {
@@ -376,7 +448,7 @@ class NativeNetworkPlugin : Plugin() {
                 }
                 val record = custody.load()
                     ?: throw IllegalStateException("custody target is missing")
-                custody.saveTokens(
+                custody.saveRefreshedTokens(
                     record.origin,
                     record.installationId,
                     polled.getString("access_token"),
@@ -385,6 +457,11 @@ class NativeNetworkPlugin : Plugin() {
                     polled.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
                 )
                 activePairing = null
+                try {
+                    custody.clearPendingPairing()
+                } catch (_: Exception) {
+                    // Approved credentials are already persisted.
+                }
                 mainHandler.post {
                     call.resolve(
                         JSObject()
@@ -455,6 +532,59 @@ class NativeNetworkPlugin : Plugin() {
                 .put("hasAccess", record.accessToken.isNotBlank())
                 .put("hasRefresh", record.refreshToken.isNotBlank())
         )
+    }
+
+    @PluginMethod
+    fun remoteStatus(call: PluginCall) {
+        ownerRequest(call, "remote_status", "/remote/v1/status", null)
+    }
+
+    @PluginMethod
+    fun remoteDevices(call: PluginCall) {
+        ownerRequest(call, "remote_devices", "/remote/v1/devices", null)
+    }
+
+    @PluginMethod
+    fun remoteRevoke(call: PluginCall) {
+        val installationId = call.getString("installationId")
+        if (
+            installationId.isNullOrBlank() ||
+            !Regex("^[A-Za-z0-9._-]{1,128}$").matches(installationId)
+        ) {
+            call.reject("invalid installation id")
+            return
+        }
+        ownerRequest(
+            call,
+            "remote_device_revoke",
+            "/remote/v1/devices/$installationId/revoke",
+            JSONObject(),
+        )
+    }
+
+    private fun ownerRequest(
+        call: PluginCall,
+        operation: String,
+        path: String,
+        body: JSONObject?,
+    ) {
+        operationExecutor.execute {
+            try {
+                val record = custody.load()
+                val accessToken = record?.accessToken.orEmpty()
+                val headers = if (accessToken.isNotBlank()) {
+                    mapOf("Authorization" to "Bearer $accessToken")
+                } else {
+                    emptyMap()
+                }
+                val result = jsonRequest(operation, path, body = body, headers = headers)
+                mainHandler.post { call.resolve(JSObject(result.toString())) }
+            } catch (exception: Exception) {
+                mainHandler.post {
+                    call.reject(exception.message ?: "owner request failed")
+                }
+            }
+        }
     }
 
     @PluginMethod
@@ -674,6 +804,22 @@ class NativeNetworkPlugin : Plugin() {
             return
         }
         call.resolve()
+    }
+
+    @PluginMethod
+    fun wsPing(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        if (current == 0L || wsId == null) {
+            call.reject("transport and wsId are required")
+            return
+        }
+        val status = NativeNetwork.wsPing(current, wsId)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve(JSObject().put("ok", true))
     }
 
     @PluginMethod
@@ -970,13 +1116,11 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     private fun requestRefresh(record: CustodyRecord): JSONObject = jsonRequest(
-        "mobile_refresh_get",
-        "/mobile/v1/refresh",
-        body = null,
-        headers = mapOf(
-            "X-Nanobot-Installation" to record.installationId,
-            "X-Nanobot-Refresh-Token" to record.refreshToken,
-        ),
+        "remote_refresh",
+        "/remote/v1/refresh",
+        body = JSONObject()
+            .put("installation_id", record.installationId)
+            .put("refresh_token", record.refreshToken),
     )
 
     private fun isUnauthorized(exception: Exception): Boolean =

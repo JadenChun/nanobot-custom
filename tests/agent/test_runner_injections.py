@@ -663,6 +663,68 @@ async def test_loop_injected_followup_preserves_image_media(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_stale_webui_steering_is_rejected_at_pending_injection(tmp_path):
+    """Queued guidance for an ended turn must not be injected into its successor."""
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.outbound_events import WebUIAdmissionRejectedEvent
+    from nanobot.bus.queue import MessageBus
+    from nanobot.session import webui_turns as wth
+    from nanobot.webui.metadata import (
+        WEBUI_REQUEST_INTENT_METADATA_KEY,
+        WEBUI_TARGET_TURN_METADATA_KEY,
+        WEBUI_TURN_METADATA_KEY,
+    )
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+        content="first answer",
+        tool_calls=[],
+        usage=None,
+    ))
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=tmp_path,
+        model="test-model",
+    )
+    loop.tools.get_definitions = MagicMock(return_value=[])
+
+    pending_queue = asyncio.Queue()
+    await pending_queue.put(InboundMessage(
+        channel="websocket",
+        sender_id="u",
+        chat_id="steer-drain",
+        content="guidance",
+        metadata={
+            WEBUI_REQUEST_INTENT_METADATA_KEY: "steer",
+            WEBUI_TARGET_TURN_METADATA_KEY: "turn-ended",
+            WEBUI_TURN_METADATA_KEY: "guidance-drain",
+        },
+    ))
+
+    runtime = loop.llm_runtime()
+    result = await loop._run_agent_loop(
+        TranscriptInput(history=[{"role": "user", "content": "hello"}], current_message=None),
+        runtime=runtime,
+        request_context=RequestContext(channel="websocket", chat_id="steer-drain", runtime=runtime),
+        pending_queue=pending_queue,
+        run_context=_offline_run_context(loop, "websocket:steer-drain"),
+    )
+
+    assert result.final_content == "first answer"
+    assert provider.chat_with_retry.await_count == 1
+    rejected = await asyncio.wait_for(loop.bus.consume_outbound(), timeout=2)
+    assert isinstance(rejected.event, WebUIAdmissionRejectedEvent)
+    assert rejected.event.detail == "not_admitted"
+    assert rejected.event.reason == "steering_target_changed"
+    assert rejected.event.turn_id == "guidance-drain"
+    assert pending_queue.empty()
+    assert wth.websocket_turn_id("steer-drain") is None
+
+
+@pytest.mark.asyncio
 async def test_pending_injection_resolves_its_own_runtime_context(tmp_path):
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.events import InboundMessage
@@ -2088,3 +2150,84 @@ async def test_injection_cycle_cap_on_error_path():
     assert result.had_injections is True
     # Should cap: _MAX_INJECTION_CYCLES drained rounds + 1 final round that breaks
     assert call_count["n"] == _MAX_INJECTION_CYCLES + 1
+
+
+@pytest.mark.asyncio
+async def test_webui_steering_target_change_is_rejected_before_bus_dispatch(tmp_path):
+    """A steer whose original turn ended must not run as a later new turn."""
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.outbound_events import WebUIAdmissionRejectedEvent
+    from nanobot.webui.metadata import (
+        WEBUI_REQUEST_INTENT_METADATA_KEY,
+        WEBUI_TARGET_TURN_METADATA_KEY,
+        WEBUI_TURN_METADATA_KEY,
+    )
+
+    loop = _make_loop(tmp_path)
+    loop._dispatch = AsyncMock()  # type: ignore[method-assign]
+    run_task = asyncio.create_task(loop.run())
+
+    try:
+        await loop.bus.publish_inbound(InboundMessage(
+            channel="websocket",
+            sender_id="u",
+            chat_id="steer-chat",
+            content="guidance",
+            metadata={
+                WEBUI_REQUEST_INTENT_METADATA_KEY: "steer",
+                WEBUI_TARGET_TURN_METADATA_KEY: "turn-old",
+                WEBUI_TURN_METADATA_KEY: "guidance-1",
+            },
+        ))
+        rejected = await asyncio.wait_for(loop.bus.consume_outbound(), timeout=2)
+
+        assert isinstance(rejected.event, WebUIAdmissionRejectedEvent)
+        assert rejected.event.detail == "not_admitted"
+        assert rejected.event.reason == "steering_target_changed"
+        assert rejected.event.turn_id == "guidance-1"
+        loop._dispatch.assert_not_awaited()
+    finally:
+        loop.stop()
+        await asyncio.wait_for(run_task, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_webui_steering_matching_target_still_dispatches(tmp_path):
+    """The rejection gate must not block guidance for the live target."""
+    from nanobot.bus.events import InboundMessage
+    from nanobot.session import webui_turns as wth
+    from nanobot.webui.metadata import (
+        WEBUI_REQUEST_INTENT_METADATA_KEY,
+        WEBUI_TARGET_TURN_METADATA_KEY,
+        WEBUI_TURN_METADATA_KEY,
+    )
+
+    owner = wth.register_queued_websocket_turn_if_idle("steer-live", "turn-live")
+    assert owner is not None
+    loop = _make_loop(tmp_path)
+    loop._dispatch = AsyncMock()  # type: ignore[method-assign]
+    run_task = asyncio.create_task(loop.run())
+
+    try:
+        await loop.bus.publish_inbound(InboundMessage(
+            channel="websocket",
+            sender_id="u",
+            chat_id="steer-live",
+            content="guidance",
+            metadata={
+                WEBUI_REQUEST_INTENT_METADATA_KEY: "steer",
+                WEBUI_TARGET_TURN_METADATA_KEY: "turn-live",
+                WEBUI_TURN_METADATA_KEY: "guidance-2",
+            },
+        ))
+        for _ in range(100):
+            if loop._dispatch.await_count:
+                break
+            await asyncio.sleep(0.01)
+
+        assert loop._dispatch.await_count == 1
+        assert loop.bus.outbound_size == 0
+    finally:
+        wth.clear_websocket_turn_if_current("steer-live", owner)
+        loop.stop()
+        await asyncio.wait_for(run_task, timeout=2)

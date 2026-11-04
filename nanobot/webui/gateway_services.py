@@ -139,6 +139,10 @@ def build_gateway_services(
         workspaces=workspaces,
         logger=logger,
     )
+    workspaces.set_temporary_owners(
+        binding=lambda chat_id: temporary_chats.binding(None, chat_id),
+        set_mode=lambda chat_id, mode: temporary_chats.set_access_mode(chat_id, mode),
+    )
     session_projection = WebUISessionProjection(session_manager, log=logger)
     http = GatewayHTTPHandler(
         config=config,

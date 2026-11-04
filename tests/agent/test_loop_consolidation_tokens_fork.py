@@ -31,7 +31,8 @@ admitted_async = p6_admitted_fixtures.admitted_async
 async def test_canonical_pressure_threshold_preserves_source_and_current_input(store, offset):
     async with acquire_execution(store, "test:compact", run_id="run") as owner:
         state = pressure_state(SourceTurnWriter(store.source, owner, run_id="run"))
-        trigger = int(ContextGovernor.input_budget(state.config) * 0.9)
+        budget = ContextGovernor.input_budget(state.config)
+        trigger = int(budget * state.source_compaction.pressure_trigger_ratio)
 
         def count(messages, tools, model):
             auxiliary = messages[0]["content"].startswith("Summarize historical evidence")
@@ -44,15 +45,36 @@ async def test_canonical_pressure_threshold_preserves_source_and_current_input(s
         after = owner.read_snapshot()
         assert after.events == before.events
         assert messages[-1]["content"] == "current instruction"
-        assert len(state.config.provider.calls) == (0 if offset < 0 else 1)
-        if offset < 0:
-            assert after == before and not state.source_compaction.attempts
-            assert messages == state.source.transcript.messages()
-        else:
-            assert after.checkpoint["boundary"] == len(before.events) - 1
-            assert after.checkpoint["summary"] == "retained facts"
-            assert "chunk-" not in str(messages)
-            assert state.source_compaction.attempts[-1].status == "succeeded"
+        assert len(state.config.provider.calls) == 1
+        assert after.checkpoint["boundary"] == len(before.events) - 1
+        assert after.checkpoint["summary"] == "retained facts"
+        assert "chunk-" not in str(messages)
+        assert state.source_compaction.attempts[-1].status == "succeeded"
+
+
+async def test_pressure_below_summary_reserve_does_not_compact(store):
+    async with acquire_execution(store, "test:compact", run_id="run") as owner:
+        state = pressure_state(SourceTurnWriter(store.source, owner, run_id="run"))
+        budget = ContextGovernor.input_budget(state.config)
+        reserve = ContextGovernor._summary_reserve(
+            state.config, state.source_compaction, budget,
+        )
+        estimate = min(
+            max(1, budget - reserve - 1),
+            max(1, int(budget * state.source_compaction.pressure_trigger_ratio) - 1),
+        )
+
+        def count(messages, tools, model):
+            auxiliary = messages[0]["content"].startswith("Summarize historical evidence")
+            return (100 if auxiliary or "chunk-" not in str(messages) else estimate,
+                    "boundary fixture")
+
+        state.config.provider.estimate_prompt_tokens = count
+        before = owner.read_snapshot()
+        messages, _ = await prepare(state)
+        after = owner.read_snapshot()
+        assert after == before and not state.source_compaction.attempts
+        assert messages == state.source.transcript.messages()
 
 
 async def test_pressure_keeps_call_and_result_together_and_excludes_new_user(store):

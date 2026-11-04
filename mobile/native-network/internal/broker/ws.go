@@ -86,7 +86,6 @@ func (c *Core) WSOpen(input WSRequest) (uint64, error) {
 
 	sessionContext, cancel := context.WithCancel(baseContext)
 	session := &wsSession{
-		id:     1,
 		core:   c,
 		conn:   conn,
 		ctx:    sessionContext,
@@ -100,6 +99,8 @@ func (c *Core) WSOpen(input WSRequest) (uint64, error) {
 		conn.Close(websocket.StatusPolicyViolation, "another WebSocket is active")
 		return 0, ErrBusy
 	}
+	c.nextWSID++
+	session.id = c.nextWSID
 	c.ws = session
 	c.mu.Unlock()
 
@@ -148,6 +149,22 @@ func (c *Core) WSClose(wsID uint64) error {
 	c.ws = nil
 	c.mu.Unlock()
 	session.close(websocket.StatusNormalClosure, "client closed")
+	return nil
+}
+
+// WSPing sends one protocol ping and waits for its pong within five seconds.
+func (c *Core) WSPing(wsID uint64) error {
+	c.mu.Lock()
+	session := c.ws
+	c.mu.Unlock()
+	if session == nil || session.id != wsID {
+		return ErrNotFound
+	}
+	ctx, cancel := context.WithTimeout(session.ctx, 5*time.Second)
+	defer cancel()
+	if err := session.conn.Ping(ctx); err != nil {
+		return fmt.Errorf("%w: WebSocket ping failed", ErrUnavailable)
+	}
 	return nil
 }
 

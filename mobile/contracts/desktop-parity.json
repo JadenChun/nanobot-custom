@@ -6490,7 +6490,7 @@
       "id": "devices_entry",
       "label": "Remote access devices, pairing, entry, lifecycle",
       "required": true,
-      "row_count": 8,
+      "row_count": 13,
       "rows": [
         {
           "id": "devices.remote.status",
@@ -6922,6 +6922,267 @@
             ]
           },
           "exception": "Operator-running step, not a phone action.",
+          "notes": ""
+        },
+        {
+          "id": "devices.remote.pairing_deny",
+          "category": "devices_entry",
+          "feature": "Remote access",
+          "action": "Deny new-device pairing",
+          "desktop": {
+            "source": [
+              "nanobot/webui/settings_remote.py"
+            ],
+            "tests": [
+              "tests/webui/test_remote_access_settings.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "POST",
+            "path": "/api/settings/remote-access/pairing/deny",
+            "mutation_action": "settings.remote_access.pairing.deny"
+          },
+          "ui": {
+            "entry": "Settings > Remote access QR"
+          },
+          "auth": {
+            "owner": "admin",
+            "legacy": "none",
+            "local_only": true,
+            "current_local_only": true
+          },
+          "native": null,
+          "dependency": [
+            "M30",
+            "M39"
+          ],
+          "checks": {
+            "positive": [
+              "local browser denies a pending request"
+            ],
+            "negative": [
+              "remote owner cannot deny",
+              "denied offer cannot authorize"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "absent",
+            "evidence": [
+              "plan exception; current handler lacks explicit local check (gap)"
+            ]
+          },
+          "exception": "New-device comparison approval is a local-only safety exception.",
+          "notes": ""
+        },
+        {
+          "id": "devices.remote.pairing_cancel",
+          "category": "devices_entry",
+          "feature": "Remote access",
+          "action": "Cancel new-device pairing",
+          "desktop": {
+            "source": [
+              "nanobot/webui/settings_remote.py"
+            ],
+            "tests": [
+              "tests/webui/test_remote_access_settings.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "POST",
+            "path": "/api/settings/remote-access/pairing/cancel",
+            "mutation_action": "settings.remote_access.pairing.cancel"
+          },
+          "ui": {
+            "entry": "Settings > Remote access QR"
+          },
+          "auth": {
+            "owner": "admin",
+            "legacy": "none",
+            "local_only": true,
+            "current_local_only": true
+          },
+          "native": null,
+          "dependency": [
+            "M30",
+            "M39"
+          ],
+          "checks": {
+            "positive": [
+              "local browser cancels an offer"
+            ],
+            "negative": [
+              "cancelled offer cannot be polled or renewed"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "absent",
+            "evidence": [
+              "plan exception; current handler lacks explicit local check (gap)"
+            ]
+          },
+          "exception": "New-device comparison approval is a local-only safety exception.",
+          "notes": ""
+        },
+        {
+          "id": "devices.remote.pairing_renew",
+          "category": "devices_entry",
+          "feature": "Remote access",
+          "action": "Renew pending pairing setup",
+          "desktop": {
+            "source": [
+              "nanobot/webui/settings_remote.py"
+            ],
+            "tests": [
+              "tests/webui/test_remote_access_settings.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "POST",
+            "path": "/api/settings/remote-access/pairing/renew",
+            "mutation_action": "settings.remote_access.pairing.renew"
+          },
+          "ui": {
+            "entry": "Settings > Remote access QR"
+          },
+          "auth": {
+            "owner": "admin",
+            "legacy": "none",
+            "local_only": true,
+            "current_local_only": true
+          },
+          "native": null,
+          "dependency": [
+            "M30",
+            "M39"
+          ],
+          "checks": {
+            "positive": [
+              "local browser extends an expired eligible offer within the setup limit"
+            ],
+            "negative": [
+              "denied/approved/consumed offer cannot renew",
+              "expired beyond 30 minutes cannot renew",
+              "remote owner cannot renew"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "absent",
+            "evidence": [
+              "plan exception; current handler lacks explicit local check (gap)"
+            ]
+          },
+          "exception": "New-device comparison approval is a local-only safety exception.",
+          "notes": ""
+        },
+        {
+          "id": "devices.remote.pairing_pending",
+          "category": "devices_entry",
+          "feature": "Remote access",
+          "action": "Read pending pairing setup",
+          "desktop": {
+            "source": [
+              "nanobot/webui/settings_remote.py"
+            ],
+            "tests": [
+              "tests/webui/test_remote_access_settings.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/settings/remote-access/pairing/pending"
+          },
+          "ui": {
+            "entry": "Settings > Remote access QR"
+          },
+          "auth": {
+            "owner": "admin",
+            "legacy": "none",
+            "local_only": true,
+            "current_local_only": true
+          },
+          "native": null,
+          "dependency": [
+            "M30",
+            "M39"
+          ],
+          "checks": {
+            "positive": [
+              "local browser restores pending setup after dialog reopen"
+            ],
+            "negative": [
+              "remote owner cannot list local pending setup"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "absent",
+            "evidence": [
+              "plan exception; current handler lacks explicit local check (gap)"
+            ]
+          },
+          "exception": "New-device comparison approval is a local-only safety exception.",
+          "notes": ""
+        },
+        {
+          "id": "devices.remote.tailscale_status",
+          "category": "devices_entry",
+          "feature": "Remote access",
+          "action": "Read Tailscale readiness",
+          "desktop": {
+            "source": [
+              "nanobot/webui/settings_remote.py"
+            ],
+            "tests": [
+              "tests/webui/test_remote_access_settings.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/settings/remote-access/tailscale"
+          },
+          "ui": {
+            "entry": "Settings > Remote access QR"
+          },
+          "auth": {
+            "owner": "admin",
+            "legacy": "none",
+            "local_only": true,
+            "current_local_only": true
+          },
+          "native": null,
+          "dependency": [
+            "M30",
+            "M39"
+          ],
+          "checks": {
+            "positive": [
+              "local browser reads Tailscale serve readiness"
+            ],
+            "negative": [
+              "remote owner cannot read local Tailscale state"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "absent",
+            "evidence": [
+              "plan exception; current handler lacks explicit local check (gap)"
+            ]
+          },
+          "exception": "New-device comparison approval is a local-only safety exception.",
           "notes": ""
         }
       ]

@@ -300,7 +300,9 @@ describe("NanobotClient", () => {
         chat_id: chatId,
         content: "hello",
         turn_id: "turn-1",
-        webui: true,
+        request_settings_version: 1,
+      request_intent: "new",
+      webui: true,
       },
     ]);
 
@@ -1807,7 +1809,9 @@ describe("NanobotClient", () => {
         chat_id: "fresh-id",
         content: "hello",
         workspace_scope: workspaceScope,
-        webui: true,
+        request_settings_version: 1,
+      request_intent: "new",
+      webui: true,
       }),
     );
   });
@@ -1880,7 +1884,7 @@ describe("NanobotClient", () => {
     // Attach is sent first because sendMessage adds to knownChats, which
     // handleOpen re-attaches; then the queued message follows.
     expect(lastSocket().sent).toContain(
-      JSON.stringify({ type: "message", chat_id: "chat-x", content: "hello", webui: true }),
+      JSON.stringify({ type: "message", chat_id: "chat-x", content: "hello", request_settings_version: 1, request_intent: "new", webui: true }),
     );
   });
 
@@ -1898,6 +1902,8 @@ describe("NanobotClient", () => {
       chat_id: "chat-x",
       content: "hello",
       turn_id: "turn-1",
+      request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -1921,6 +1927,8 @@ describe("NanobotClient", () => {
       content: "/model fast",
       webui: true,
     });
+    expect(frame).not.toHaveProperty("request_settings_version");
+    expect(frame).not.toHaveProperty("request_intent");
     expect(frame.turn_id).toMatch(/^webui-system:/);
 
     lastSocket().fakeMessage({
@@ -1965,6 +1973,8 @@ describe("NanobotClient", () => {
       chat_id: "chat-x",
       content: "What does this mean?",
       quoted_context: "selected answer excerpt",
+      request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -2007,7 +2017,9 @@ describe("NanobotClient", () => {
           logo_url: null,
           brand_color: "#F08705",
         }],
-        webui: true,
+        request_settings_version: 1,
+      request_intent: "new",
+      webui: true,
       }),
     );
   });
@@ -2054,7 +2066,9 @@ describe("NanobotClient", () => {
           logo_url: "https://example.invalid/browserbase.svg",
           brand_color: "#111827",
         }],
-        webui: true,
+        request_settings_version: 1,
+      request_intent: "new",
+      webui: true,
       }),
     );
   });
@@ -2085,6 +2099,8 @@ describe("NanobotClient", () => {
         session_key: "websocket:pricing",
         title: "Pricing",
       }],
+      request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     }));
   });
@@ -2165,6 +2181,8 @@ describe("NanobotClient", () => {
       chat_id: "chat-x",
       content: "look",
       media: [{ data_url: "data:image/png;base64,AAAA", name: "shot.png" }],
+      request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -2184,6 +2202,8 @@ describe("NanobotClient", () => {
       type: "message",
       chat_id: "chat-x",
       content: "hello",
+      request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -2301,5 +2321,84 @@ describe("NanobotClient", () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(seen).toContain("reconnecting");
     expect(FakeSocket.instances.length).toBeGreaterThan(1);
+  });
+});
+
+describe("versioned request settings", () => {
+  it("sends source, new intent and no steer target for a normal message", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-x", "hello", undefined, {
+      turnId: "turn-new",
+      sourceToken: "tok-live",
+    });
+    expect(JSON.parse(lastSocket().sent.at(-1) as string)).toEqual({
+      type: "message",
+      chat_id: "chat-x",
+      content: "hello",
+      turn_id: "turn-new",
+      source_token: "tok-live",
+      request_settings_version: 1,
+      request_intent: "new",
+      webui: true,
+    });
+  });
+
+  it("sends exact steer target identity for guidance", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-x", "guide", undefined, {
+      turnId: "turn-steer",
+      sourceToken: "tok-live",
+      requestIntent: "steer",
+      targetTurnId: "turn-active",
+    });
+    expect(JSON.parse(lastSocket().sent.at(-1) as string)).toMatchObject({
+      request_settings_version: 1,
+      request_intent: "steer",
+      target_turn_id: "turn-active",
+      source_token: "tok-live",
+    });
+  });
+});
+
+describe("bounded mobile recovery", () => {
+  it("stops silent retrying and exposes an actionable retry after repeated reauth failure", async () => {
+    const reauth = vi.fn().mockResolvedValue(null);
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: true,
+      maxBackoffMs: 2_000,
+      onReauth: reauth,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      lastSocket().fakeCloseWithCode(1008);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    expect(client.status).toBe("error");
+    const socketsBeforeRetry = FakeSocket.instances.length;
+
+    reauth.mockResolvedValue("ws://refreshed");
+    await client.retry();
+    expect(FakeSocket.instances.length).toBe(socketsBeforeRetry + 1);
+    expect(lastSocket().url).toBe("ws://refreshed");
+    expect(client.status).toBe("connecting");
+    lastSocket().fakeOpen();
+    expect(client.status).toBe("open");
   });
 });

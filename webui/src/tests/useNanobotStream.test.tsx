@@ -76,6 +76,7 @@ function fakeClient() {
   const unsettledRunByChatId = new Map<string, boolean>();
   const goalStateByChatId = new Map<string, GoalStateWsPayload>();
   const requestMutation = vi.fn().mockResolvedValue({});
+  const runTurnIdByChatId = new Map<string, string>();
   let status: ConnectionStatus = "open";
 
   function recordGoalStatusForRunStrip(chatId: string, ev: InboundEvent) {
@@ -125,8 +126,8 @@ function fakeClient() {
         const v = runStartedAtByChatId.get(chatId);
         return v === undefined ? null : v;
       },
-      getRunTurnId() {
-        return null;
+      getRunTurnId(chatId: string) {
+        return runTurnIdByChatId.get(chatId) ?? null;
       },
       getGoalState(chatId: string) {
         return goalStateByChatId.get(chatId);
@@ -143,7 +144,11 @@ function fakeClient() {
         set.add(h);
         return () => set!.delete(h);
       },
-      sendMessage: vi.fn(),
+      sendMessage: vi.fn((chatId: string, _content: string, _media: unknown, options?: { turnId?: string; startsNewRun?: boolean }) => {
+        if (options?.turnId && options.startsNewRun !== false) {
+          runTurnIdByChatId.set(chatId, options.turnId);
+        }
+      }),
       requestMutation,
       finishRunLocally: vi.fn(),
       newChat: vi.fn(),
@@ -3020,7 +3025,11 @@ describe("useNanobotStream", () => {
 
     const guideCall = fake.client.sendMessage.mock.calls.at(-1)!;
     expect(guideCall[3]).not.toHaveProperty("continueActiveTurn");
-    expect(guideCall[3]).toMatchObject({ startsNewRun: false });
+    expect(guideCall[3]).toMatchObject({
+      startsNewRun: false,
+      requestIntent: "steer",
+      targetTurnId: activeTurnId,
+    });
     expect(result.current.messages.map((message) => message.content)).toEqual([
       "research this",
       "Initial findings",

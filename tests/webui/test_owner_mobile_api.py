@@ -8,6 +8,7 @@ import pytest
 from nanobot.remote.edge import AccessIdentity
 from nanobot.webui.inbound_commands import _mobile_mutation_allowed
 from nanobot.webui.ws_http import GatewayHTTPHandler
+from tests.webui.mobile_mutation_helper import mobile_mutation_payload
 
 
 def mobile_connection(identity: AccessIdentity | None):
@@ -47,21 +48,18 @@ def test_webui_connection_without_mobile_identity_is_not_mobile_allowed() -> Non
 async def test_mobile_mutation_payload_denies_non_owner_and_local_only() -> None:
     stub = SimpleNamespace()
     legacy = AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
-    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
-        stub, legacy, "settings.agent.update", {}
+    status, payload = await mobile_mutation_payload(stub, legacy, "settings.agent.update", {}
     )
     assert status == 403
     assert payload["error"] == "owner_required"
 
     owner = AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1)
-    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
-        stub, owner, "settings.remote_access.enable", {}
+    status, payload = await mobile_mutation_payload(stub, owner, "settings.remote_access.enable", {}
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"
 
-    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
-        stub, owner, "unregistered.action", {}
+    status, payload = await mobile_mutation_payload(stub, owner, "unregistered.action", {}
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"
@@ -71,8 +69,7 @@ async def test_mobile_mutation_payload_denies_non_owner_and_local_only() -> None
 async def test_owner_mutation_payload_enforces_request_bound() -> None:
     stub = SimpleNamespace()
     owner = AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1)
-    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
-        stub,
+    status, payload = await mobile_mutation_payload(stub,
         owner,
         "settings.agent.update",
         {"blob": "x" * (1024 * 1024 + 1)},

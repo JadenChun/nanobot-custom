@@ -1,6 +1,6 @@
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
-import { getMobileRuntime, mobileOwnerCapability } from "./mobile-runtime";
+import { getMobileRuntime, mobileOwnerCapability, mobileStandardDispatchCapability } from "./mobile-runtime";
 
 export async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -115,11 +115,26 @@ function isStandardReadPath(path: string): boolean {
   return path.startsWith("/api/");
 }
 
+async function mobileStandardDispatch(
+  runtime: ReturnType<typeof getMobileRuntime> & object,
+  path: string,
+): Promise<Awaited<ReturnType<typeof runtime.request>> | null> {
+  if (!mobileOwnerCapability() || !mobileStandardDispatchCapability()) return null;
+  const response = await runtime.request({
+    operation: "mobile_dispatch",
+    method: "GET",
+    path: `/mobile/v1/dispatch?path=${encodeURIComponent(path)}`,
+  });
+  if ([400, 404, 405, 503].includes(response.status)) return null;
+  return response;
+}
+
 async function mobileFeatureRequest(
   runtime: ReturnType<typeof getMobileRuntime> & object,
   path: string,
 ): Promise<Response> {
-  const response = await runtime.request({
+  const dispatched = await mobileStandardDispatch(runtime, path);
+  const response = dispatched ?? await runtime.request({
     operation: "mobile_feature",
     method: "GET",
     path: `/mobile/v1/feature?path=${encodeURIComponent(path)}`,
@@ -148,7 +163,8 @@ async function mobileApiRequest(
   runtime: ReturnType<typeof getMobileRuntime> & object,
   path: string,
 ): Promise<Response> {
-  const response = await runtime.request({
+  const dispatched = await mobileStandardDispatch(runtime, path);
+  const response = dispatched ?? await runtime.request({
     operation: "mobile_api",
     method: "GET",
     path: `/mobile/v1/api?path=${encodeURIComponent(path)}`,

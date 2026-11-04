@@ -95,7 +95,11 @@ import {
 import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import type { SendAttachment, SendOptions } from "@/hooks/useNanobotStream";
+import type {
+  SendAttachment,
+  SendOptions,
+  SubmittedTurn,
+} from "@/hooks/useNanobotStream";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
 import { getMobileRuntime } from "@/lib/mobile-runtime";
 import type {
@@ -145,6 +149,14 @@ function formatBytes(n: number): string {
 
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+function isSubmittedTurn(value: unknown): value is SubmittedTurn {
+  return (
+    typeof value === "object"
+    && value !== null
+    && typeof (value as { turnId?: unknown }).turnId === "string"
+  );
 }
 
 function isVoiceShortcutDown(event: KeyboardEvent): boolean {
@@ -200,7 +212,10 @@ interface ThreadComposerProps {
     content: string,
     images?: SendAttachment[],
     options?: SendOptions,
-  ) => boolean | void | Promise<boolean | void>;
+  ) => SubmittedTurn | null | boolean | void | Promise<boolean | void>;
+  /** A queued send lost its admission and should return to the waiting stack. */
+  admissionRejectedTurn?: { turnId: string } | null;
+  onAdmissionRejectedPromptRestored?: (turnId: string) => void;
   disabled?: boolean;
   placeholder?: string;
   inputAriaLabel?: string;
@@ -334,6 +349,7 @@ interface QueuedPrompt {
   images?: QueuedPromptImage[];
   quotedContext?: string;
   sessionMentions?: SessionMention[];
+  workspaceScope?: WorkspaceScopePayload | null;
 }
 
 interface QueuedPromptImage {
@@ -913,6 +929,8 @@ function GoalStateStrip({
 
 export function ThreadComposer({
   onSend,
+  admissionRejectedTurn = null,
+  onAdmissionRejectedPromptRestored,
   disabled,
   placeholder,
   inputAriaLabel,
@@ -996,6 +1014,8 @@ export function ThreadComposer({
   // Only the prompt queued by the immediately preceding Enter can use the second-Enter shortcut.
   const secondEnterPromptIdRef = useRef<string | null>(null);
   const draggedQueuedPromptIdRef = useRef<string | null>(null);
+  const queuedSendSnapshotsRef = useRef(new Map<string, QueuedPrompt>());
+  const heldQueuedPromptIdsRef = useRef(new Set<string>());
   const previousPendingQueueKeyRef = useRef(pendingQueueKey);
   const wasStreamingRef = useRef(isStreaming);
   const skipNextQueuedFlushRef = useRef(false);
@@ -1019,6 +1039,8 @@ export function ThreadComposer({
   useEffect(() => {
     secondEnterPromptIdRef.current = null;
     skipQueuedPromptPersistRef.current = true;
+    heldQueuedPromptIdsRef.current.clear();
+    queuedSendSnapshotsRef.current.clear();
     setQueuedPrompts(queuedPromptStorageKey ? readQueuedPrompts(queuedPromptStorageKey) : []);
   }, [pendingQueueKey, queuedPromptStorageKey]);
 
@@ -1030,6 +1052,22 @@ export function ThreadComposer({
     }
     storeQueuedPrompts(queuedPromptStorageKey, queuedPrompts);
   }, [queuedPromptStorageKey, queuedPrompts]);
+
+  useEffect(() => {
+    const rejectedTurnId = admissionRejectedTurn?.turnId;
+    if (!rejectedTurnId) return;
+    const prompt = queuedSendSnapshotsRef.current.get(rejectedTurnId);
+    if (!prompt) return;
+    queuedSendSnapshotsRef.current.delete(rejectedTurnId);
+    // A busy target or replaced steering turn cannot accept this prompt yet.
+    // Keep its full settings in the waiting stack and only retry on an
+    // explicit user action, never on the next idle transition.
+    heldQueuedPromptIdsRef.current.add(prompt.id);
+    setQueuedPrompts((items) => (
+      items.some((item) => item.id === prompt.id) ? items : [...items, prompt]
+    ));
+    onAdmissionRejectedPromptRestored?.(rejectedTurnId);
+  }, [admissionRejectedTurn?.turnId, onAdmissionRejectedPromptRestored]);
 
   const resolvedPlaceholder = isStreaming
     ? t("thread.composer.placeholderStreaming")
@@ -1849,6 +1887,7 @@ export function ThreadComposer({
         ...(activeSessionMentions.length > 0
           ? { sessionMentions: activeSessionMentions }
           : {}),
+        ...(workspaceScope ? { workspaceScope } : {}),
       },
     ]);
     clear();
@@ -1858,6 +1897,7 @@ export function ThreadComposer({
     activeSessionMentions,
     canQueueGuidance,
     clear,
+    workspaceScope,
     clearComposerText,
     maxTextBytes,
     normalizedQuotedContext,
@@ -1869,12 +1909,14 @@ export function ThreadComposer({
 
   const removeQueuedPrompt = useCallback((id: string) => {
     secondEnterPromptIdRef.current = null;
+    heldQueuedPromptIdsRef.current.delete(id);
     setQueuedPrompts((items) => items.filter((item) => item.id !== id));
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
   const editQueuedPrompt = useCallback((prompt: QueuedPrompt) => {
     secondEnterPromptIdRef.current = null;
+    heldQueuedPromptIdsRef.current.delete(prompt.id);
     setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
     setValue(prompt.text);
     setSelectedSessionMentions(prompt.sessionMentions ?? []);
@@ -1911,17 +1953,28 @@ export function ThreadComposer({
     });
   }, []);
 
+  const rememberQueuedSend = useCallback((submitted: SubmittedTurn, prompt: QueuedPrompt) => {
+    const snapshots = queuedSendSnapshotsRef.current;
+    snapshots.set(submitted.turnId, prompt);
+    while (snapshots.size > 5) {
+      const oldest = snapshots.keys().next().value;
+      if (oldest === undefined) break;
+      snapshots.delete(oldest);
+    }
+  }, []);
+
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt) => {
       if (workspaceFullRetiring) return;
       secondEnterPromptIdRef.current = null;
+      heldQueuedPromptIdsRef.current.delete(prompt.id);
       const text = prompt.text.trim();
       const queuedImages = queuedImagesToSendImages(prompt.images);
-      setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
       if (text || queuedImages?.length) {
         const options: SendOptions | undefined = (
           prompt.quotedContext
           || prompt.sessionMentions?.length
+          || prompt.workspaceScope
           || isStreaming
         )
           ? {
@@ -1929,42 +1982,67 @@ export function ThreadComposer({
               ...(prompt.sessionMentions?.length
                 ? { sessionMentions: prompt.sessionMentions }
                 : {}),
+              ...(prompt.workspaceScope ? { workspaceScope: prompt.workspaceScope } : {}),
               ...(isStreaming ? { continueActiveTurn: true } : {}),
             }
           : undefined;
-        onSend(text, queuedImages, options);
+        const submitted = onSend(text, queuedImages, options);
+        if (submitted === false || submitted === null) {
+          heldQueuedPromptIdsRef.current.add(prompt.id);
+        } else {
+          setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
+          if (isSubmittedTurn(submitted)) rememberQueuedSend(submitted, prompt);
+        }
+      } else {
+        setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
       }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    [isStreaming, onSend, workspaceFullRetiring],
+    [isStreaming, onSend, rememberQueuedSend, workspaceFullRetiring],
   );
 
   const sendNextQueuedPrompt = useCallback(() => {
     if (workspaceFullRetiring) return;
     if (queuedPrompts.length === 0) return;
-    const nextPrompt = queuedPrompts.find((prompt) => prompt.text.trim());
-    if (!nextPrompt) {
-      setQueuedPrompts([]);
-      return;
-    }
-    setQueuedPrompts((items) => items.filter((item) => item.id !== nextPrompt.id));
+    const nextPrompt = queuedPrompts.find(
+      (prompt) => prompt.text.trim() && !heldQueuedPromptIdsRef.current.has(prompt.id),
+    );
+    if (!nextPrompt) return;
+    heldQueuedPromptIdsRef.current.delete(nextPrompt.id);
     const queuedImages = queuedImagesToSendImages(nextPrompt.images);
     const options: SendOptions | undefined = (
-      nextPrompt.quotedContext || nextPrompt.sessionMentions?.length
+      nextPrompt.quotedContext
+      || nextPrompt.sessionMentions?.length
+      || nextPrompt.workspaceScope
     )
       ? {
           ...(nextPrompt.quotedContext ? { quotedContext: nextPrompt.quotedContext } : {}),
           ...(nextPrompt.sessionMentions?.length
             ? { sessionMentions: nextPrompt.sessionMentions }
             : {}),
+          ...(nextPrompt.workspaceScope
+            ? { workspaceScope: nextPrompt.workspaceScope }
+            : {}),
         }
       : undefined;
-    if (queuedImages?.length && options) onSend(nextPrompt.text.trim(), queuedImages, options);
-    else if (queuedImages?.length) onSend(nextPrompt.text.trim(), queuedImages);
-    else if (options) onSend(nextPrompt.text.trim(), undefined, options);
-    else onSend(nextPrompt.text.trim());
+    let submitted: SubmittedTurn | null | boolean | void | Promise<boolean | void>;
+    if (queuedImages?.length && options) {
+      submitted = onSend(nextPrompt.text.trim(), queuedImages, options);
+    } else if (queuedImages?.length) {
+      submitted = onSend(nextPrompt.text.trim(), queuedImages);
+    } else if (options) {
+      submitted = onSend(nextPrompt.text.trim(), undefined, options);
+    } else {
+      submitted = onSend(nextPrompt.text.trim());
+    }
+    if (submitted === false || submitted === null) {
+      heldQueuedPromptIdsRef.current.add(nextPrompt.id);
+    } else {
+      setQueuedPrompts((items) => items.filter((item) => item.id !== nextPrompt.id));
+      if (isSubmittedTurn(submitted)) rememberQueuedSend(submitted, nextPrompt);
+    }
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [onSend, queuedPrompts, workspaceFullRetiring]);
+  }, [onSend, queuedPrompts, rememberQueuedSend, workspaceFullRetiring]);
 
   useEffect(() => {
     const wasStreaming = wasStreamingRef.current;
@@ -2552,6 +2630,7 @@ export function ThreadComposer({
                     )}
                   >
                     <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+                    <span className="sr-only">{t("thread.composer.attachImage")}</span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="start">
@@ -2579,6 +2658,7 @@ export function ThreadComposer({
                 )}
               >
                 <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+                <span className="sr-only">{t("thread.composer.attachImage")}</span>
               </Button>
             )}
             {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
@@ -2596,6 +2676,16 @@ export function ThreadComposer({
               />
             ) : !mobileComposer ? accessControl : null}
           </div>
+          {isStreaming ? (
+            <span
+              role="status"
+              className="mr-auto shrink-0 pl-1 text-[11px] leading-4 text-muted-foreground"
+            >
+              {t("thread.composer.nextMessage", {
+                defaultValue: "For the next message",
+              })}
+            </span>
+          ) : null}
           <div
             className={cn(
               "thread-composer-footer-actions ml-auto flex min-w-0 items-center justify-end",

@@ -41,6 +41,11 @@
       await plugin.start({ origin: origin, installationId: installationId, hostname: hostname });
     },
     status: async function () { return await plugin.status(); },
+    remoteStatus: async function () { return await plugin.remoteStatus(); },
+    remoteDevices: async function () { return await plugin.remoteDevices(); },
+    remoteRevoke: async function (installationId) {
+      return await plugin.remoteRevoke({ installationId: installationId });
+    },
     http: async function (request) {
       var result = await plugin.http(request);
       return result.requestId;
@@ -89,6 +94,10 @@
       }
     },
     wsClose: async function (wsId) { await plugin.wsClose({ wsId: wsId }); },
+    wsPing: async function (wsId) {
+      var result = await plugin.wsPing({ wsId: wsId });
+      return Boolean(result && result.ok);
+    },
     stop: async function () { await plugin.stop(); }
   };
   window.nanobotMobileTransport = transport;
@@ -271,6 +280,8 @@
     var stopped = false;
     var lastLink = null;
     var lastManual = null;
+    var pendingSetup = null;
+    var expiredRetries = 0;
     var identityRef = null;
     var identityPromise = null;
     var generation = 0;
@@ -332,6 +343,7 @@
     function finish() {
       if (stopped) return;
       stopped = true;
+      pendingSetup = null;
       stopTimers();
       ui.panel.remove();
       resolveReady();
@@ -412,6 +424,7 @@
           finish();
           return;
         }
+        expiredRetries = 0;
         ui.status.textContent = "Waiting for approval on the desktop.";
         ui.status.classList.remove("is-error");
         pollTimer = setTimeout(function () { void poll(pairingId, run); }, 2000);
@@ -420,6 +433,17 @@
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
           needLogin(run);
+          return;
+        }
+        if (message.indexOf("expired") >= 0 || message.indexOf("pairing_expired") >= 0) {
+          ui.status.textContent = "Continue setup on the desktop: renew the pairing code, then this phone resumes automatically.";
+          ui.status.classList.add("is-error");
+          if (expiredRetries < 60) {
+            expiredRetries += 1;
+            pollTimer = setTimeout(function () { void poll(pairingId, run); }, 5000);
+          } else {
+            fail("Pairing setup expired. Create a new pairing code on the desktop.");
+          }
           return;
         }
         fail(message);
@@ -450,6 +474,12 @@
       lastLink = link;
       lastManual = null;
       setState("connecting");
+      if (pendingSetup && pendingSetup.kind === "link" && pendingSetup.challenge === link.challenge) {
+        setState("waiting");
+        setPill(ui.server, hostLabel(link.origin), "is-ok");
+        void poll(pendingSetup.pairingId, run);
+        return;
+      }
       setPill(ui.server, hostLabel(link.origin), "is-ok");
       ui.server.title = link.origin || "";
       setPill(ui.node, "Starting", "is-warn");
@@ -473,6 +503,8 @@
           label: "android"
         });
         if (run !== generation || lastLink !== link || state !== "connecting") return;
+        pendingSetup = { kind: "link", challenge: link.challenge, pairingId: collected.pairing_id };
+        expiredRetries = 0;
         setState("waiting");
         setPill(ui.node, "Connected", "is-ok");
         ui.status.textContent = "Waiting for the desktop owner to approve this phone.";
@@ -494,6 +526,12 @@
       lastLink = null;
       lastManual = { origin: origin, code: code };
       setState("connecting");
+      if (pendingSetup && pendingSetup.kind === "code" && pendingSetup.origin === origin && pendingSetup.code === code) {
+        setState("waiting");
+        setPill(ui.server, hostLabel(origin), "is-ok");
+        void poll(pendingSetup.pairingId, run);
+        return;
+      }
       setPill(ui.server, hostLabel(origin), "is-ok");
       setPill(ui.node, "Starting", "is-warn");
       var identity;
@@ -516,6 +554,8 @@
           label: "android"
         });
         if (run !== generation || state !== "connecting") return;
+        pendingSetup = { kind: "code", origin: origin, code: code, pairingId: collected.pairing_id };
+        expiredRetries = 0;
         setState("waiting");
         setPill(ui.node, "Connected", "is-ok");
         ui.status.textContent = "Waiting for the desktop owner to approve this phone.";
@@ -592,8 +632,38 @@
       });
     });
 
+    async function restorePendingPairing(run) {
+      if (typeof plugin.pendingPairing !== "function") return false;
+      var pending = null;
+      try {
+        pending = await plugin.pendingPairing();
+      } catch (_) {
+        return false;
+      }
+      if (stopped || run !== generation || state !== "idle") return false;
+      if (!pending || pending.pending !== true || !pending.pairingId) return false;
+      pendingSetup = {
+        kind: "link",
+        challenge: pending.challenge,
+        pairingId: pending.pairingId
+      };
+      lastLink = { origin: pending.origin, challenge: pending.challenge };
+      setState("waiting");
+      setPill(ui.server, hostLabel(pending.origin), "is-ok");
+      setPill(ui.node, "Connected", "is-ok");
+      ui.status.textContent = "Waiting for the desktop owner to approve this phone.";
+      void poll(pending.pairingId, run);
+      return true;
+    }
+
     function retryPending() {
-      if (lastLink) {
+      if (pendingSetup) {
+        var run = ++generation;
+        stopTimers();
+        setState("waiting");
+        setPill(ui.node, "Connected", "is-ok");
+        void poll(pendingSetup.pairingId, run);
+      } else if (lastLink) {
         void begin(lastLink);
       } else if (lastManual) {
         void beginCode(lastManual.origin, lastManual.code);
@@ -610,6 +680,7 @@
       stopTimers();
       lastLink = null;
       lastManual = null;
+      pendingSetup = null;
       setState("idle");
       watchForLink();
     });
@@ -665,7 +736,9 @@
           setPill(ui.node, "Connects when pairing");
         }
       }
-      watchForLink();
+      if (!(await restorePendingPairing(startupGeneration))) {
+        watchForLink();
+      }
     })();
   }
 

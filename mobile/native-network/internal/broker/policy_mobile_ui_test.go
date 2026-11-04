@@ -20,6 +20,7 @@ func TestMobileUIReadRoutesAreAllowlisted(t *testing.T) {
 		{"mobile_workspaces", "/mobile/v1/workspaces"},
 		{"mobile_thread", "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2&direction=latest"},
 		{"mobile_api", "/mobile/v1/api?path=%2Fapi%2Fcommands"},
+		{"mobile_dispatch", "/mobile/v1/dispatch?path=%2Fapi%2Fsettings"},
 	}
 	for _, tc := range cases {
 		resolved, route, err := resolveRoute(cfg, origin, tc.operation, http.MethodGet, tc.path)
@@ -60,5 +61,38 @@ func TestMobileUIReadRoutesRejectWriteMethods(t *testing.T) {
 		"/mobile/v1/model-settings",
 	); err == nil {
 		t.Fatal("expected POST to be rejected")
+	}
+}
+
+func TestOwnerControlRoutesAreIndependentlyAllowlisted(t *testing.T) {
+	origin, _ := url.Parse("https://fedora.example.test")
+	cfg := &Config{}
+	cases := []struct {
+		operation string
+		method    string
+		path      string
+	}{
+		{"remote_status", http.MethodGet, "/remote/v1/status"},
+		{"remote_refresh", http.MethodPost, "/remote/v1/refresh"},
+		{"remote_devices", http.MethodGet, "/remote/v1/devices"},
+		{"remote_device_revoke", http.MethodPost, "/remote/v1/devices/install-0001/revoke"},
+	}
+	for _, tc := range cases {
+		resolved, route, err := resolveRoute(cfg, origin, tc.operation, tc.method, tc.path)
+		if err != nil {
+			t.Fatalf("%s rejected: %v", tc.operation, err)
+		}
+		if resolved == nil || route.method != tc.method {
+			t.Fatalf("%s resolved to %#v method=%s", tc.operation, resolved, route.method)
+		}
+	}
+	if _, _, err := resolveRoute(
+		cfg,
+		origin,
+		"remote_device_revoke",
+		http.MethodPost,
+		"/remote/v1/devices/../status/revoke",
+	); err == nil {
+		t.Fatal("expected a path escape to be rejected")
 	}
 }

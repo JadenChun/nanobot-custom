@@ -342,7 +342,7 @@ function parseEffectiveWorkspaceAccess(value: unknown): EffectiveWorkspaceAccess
 }
 
 export function normalizeWorkspacePermissionProjection(value: unknown): WorkspacePermissionProjection | null {
-  if (!isObjectRecord(value) || !hasExactKeys(value, [
+  const requiredKeys = [
     "version",
     "runtime_id",
     "revision",
@@ -352,7 +352,20 @@ export function normalizeWorkspacePermissionProjection(value: unknown): Workspac
     "full_access_unavailable_reason",
     "task_access",
     "retirement",
-  ])) return null;
+  ];
+  if (!isObjectRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (
+    requiredKeys.some((key) => !(key in value))
+    || keys.some((key) => key !== "source_token" && !requiredKeys.includes(key))
+  ) return null;
+  if (
+    value.source_token !== undefined
+    && (
+      typeof value.source_token !== "string"
+      || !/^[0-9a-f]{32}$/.test(value.source_token)
+    )
+  ) return null;
   if (
     value.version !== 1
     || typeof value.runtime_id !== "string"
@@ -436,6 +449,9 @@ export function normalizeWorkspacePermissionProjection(value: unknown): Workspac
     full_access_unavailable_reason: value.full_access_unavailable_reason as WorkspacePermissionProjection["full_access_unavailable_reason"],
     task_access: taskAccess,
     retirement,
+    ...(typeof value.source_token === "string"
+      ? { source_token: value.source_token }
+      : {}),
   };
 }
 
@@ -1101,6 +1117,11 @@ export async function setWorkspaceAccessMode(
       mode: input.mode,
       expected_runtime_id: input.expected_runtime_id,
       expected_permission_revision: input.expected_permission_revision,
+      request_settings_version: 1,
+      ...(input.source_token ? { source_token: input.source_token } : {}),
+      ...(input.full_confirmation_id
+        ? { full_confirmation_id: input.full_confirmation_id }
+        : {}),
     });
     const parsed = parseWorkspaceModeActionResult(response, input);
     if (!parsed) throw new ApiError(502, "Invalid workspace permission mode response");
@@ -1120,9 +1141,12 @@ export async function setWorkspaceAccessMode(
 export async function prepareWorkspaceFullAccess(
   transport: WebUIMutationTransport,
   chatId: string,
+  sourceToken?: string,
 ): Promise<WorkspaceModeActionResult> {
   const response = await mutation<unknown>(transport, "workspace.access.prepare_full", {
     chat_id: chatId,
+    request_settings_version: 1,
+    ...(sourceToken ? { source_token: sourceToken } : {}),
   });
   if (!isObjectRecord(response)) {
     throw new ApiError(502, "Invalid workspace Full preparation response");
@@ -1131,15 +1155,21 @@ export async function prepareWorkspaceFullAccess(
   const permissions = normalizeWorkspacePermissionProjection(
     response.workspace_permissions,
   );
-  if (
-    !scope
-    || !permissions
-    || permissions.mode !== "restricted"
-    || permissions.state !== "active"
-  ) {
+  if (!scope || !permissions || permissions.state !== "active") {
     throw new ApiError(502, "Invalid workspace Full preparation response");
   }
-  return { workspace_scope: scope, workspace_permissions: permissions };
+  const fullConfirmationId = typeof response.full_confirmation_id === "string"
+    ? response.full_confirmation_id
+    : undefined;
+  const preparedSourceToken = typeof response.source_token === "string"
+    ? response.source_token
+    : permissions.source_token;
+  return {
+    workspace_scope: scope,
+    workspace_permissions: permissions,
+    ...(preparedSourceToken ? { source_token: preparedSourceToken } : {}),
+    ...(fullConfirmationId ? { full_confirmation_id: fullConfirmationId } : {}),
+  };
 }
 
 export async function revokeWorkspaceGrant(

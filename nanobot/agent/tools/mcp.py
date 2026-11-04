@@ -585,8 +585,11 @@ def _mcp_image_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]
         "next_step": (
             "These images were returned by an MCP tool and saved as local artifacts. "
             "Call the message tool with the artifact 'path' values in the media "
-            "parameter to deliver the images to the user. Do not paste base64 or raw "
-            "paths into your reply unless the user asks for debug details."
+            "parameter to deliver the images to the user. To copy or inspect a saved "
+            "file inside a Sandbox command, pass its exact path in the exec tool's "
+            "'input_files' list and write only to an authorized workspace folder. "
+            "Do not paste base64 or raw paths into your reply unless the user asks "
+            "for debug details."
         ),
     }
     text = "\n".join(part for part in text_parts if part)

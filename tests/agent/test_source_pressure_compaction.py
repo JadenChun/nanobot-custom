@@ -404,7 +404,7 @@ async def test_local_manager_prefix_then_disjoint_canonical_fold_uses_real_sourc
         fixed_tokens = fixed_preview.measurement.input_tokens
         budget = fixed_preview.measurement.input_limit_tokens or 0
         target = int(budget * 0.6)
-        allowance = min(2048, max(1, (target if fixed_tokens < target else budget) - fixed_tokens))
+        allowance = min(generation.max_tokens, max(1, (target if fixed_tokens < target else budget) - fixed_tokens))
         prefix_generation = GenerationSettings(
             temperature=generation.temperature,
             max_tokens=allowance,
@@ -633,7 +633,7 @@ async def test_local_manager_prefix_uses_actual_body_for_quote_heavy_source(stor
         budget = fixed_preview.measurement.input_limit_tokens or 0
         fixed_tokens = fixed_preview.measurement.input_tokens
         target = int(budget * 0.6)
-        allowance = min(2048, max(1, (target if fixed_tokens < target else budget) - fixed_tokens))
+        allowance = min(generation.max_tokens, max(1, (target if fixed_tokens < target else budget) - fixed_tokens))
 
         prefix_payload = Consolidator.source_prefix_summary_messages(
             selected_prefix.transcript.messages(),
@@ -923,7 +923,7 @@ async def test_four_actual_auxiliary_folds_share_deadline_across_provider_pacing
         input_limit = fixed_preview.measurement.input_limit_tokens or 0
         target = int(input_limit * 0.6)
         allowance = min(
-            2048,
+            generation.max_tokens,
             max(
                 1,
                 (target if fixed_preview.measurement.input_tokens < target else input_limit)

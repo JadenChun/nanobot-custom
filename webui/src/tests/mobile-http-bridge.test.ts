@@ -5,6 +5,7 @@ import {
   installMobileRuntime,
   resetMobileRuntime,
   setMobileOwnerCapability,
+  setMobileStandardDispatchCapability,
   type MobileHttpResponse,
   type MobileRuntime,
 } from "@/lib/mobile-runtime";
@@ -28,6 +29,7 @@ function runtimeWith(
     read: async () => ({}),
     onEvent: async () => () => undefined,
     createWebSocket: () => ({}) as WebSocket,
+    recover: async () => undefined,
   };
   return { runtime, request };
 }
@@ -202,5 +204,51 @@ describe("owner mobile feature bridge", () => {
 
     const response = await fetchWithTimeout("/api/settings");
     await expect(response.json()).resolves.toEqual({ agent: {} });
+  });
+});
+
+describe("standard owner dispatcher bridge", () => {
+  it("uses the negotiated standard dispatch route for owner reads", async () => {
+    const dispatchPath = "/mobile/v1/dispatch?path=" + encodeURIComponent("/api/settings");
+    const { runtime, request } = runtimeWith({
+      [dispatchPath]: {
+        requestId: 1,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ standard: true }),
+      },
+    });
+    installMobileRuntime(runtime);
+    setMobileOwnerCapability(true);
+    setMobileStandardDispatchCapability(true);
+
+    const response = await fetchWithTimeout("/api/settings");
+    await expect(response.json()).resolves.toEqual({ standard: true });
+    expect(request).toHaveBeenCalledWith({
+      operation: "mobile_dispatch",
+      method: "GET",
+      path: dispatchPath,
+    });
+  });
+
+  it("falls back to the wrapper for an older server without dispatch", async () => {
+    const dispatchPath = "/mobile/v1/dispatch?path=" + encodeURIComponent("/api/settings");
+    const featurePath = "/mobile/v1/feature?path=" + encodeURIComponent("/api/settings");
+    const { runtime, request } = runtimeWith({
+      [dispatchPath]: { requestId: 1, status: 404, headers: {}, bodyBase64: encode({ error: "not_found" }) },
+      [featurePath]: {
+        requestId: 2,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ owners: true }),
+      },
+    });
+    installMobileRuntime(runtime);
+    setMobileOwnerCapability(true);
+    setMobileStandardDispatchCapability(true);
+
+    const response = await fetchWithTimeout("/api/settings");
+    await expect(response.json()).resolves.toEqual({ owners: true });
+    expect(request).toHaveBeenCalledTimes(2);
   });
 });

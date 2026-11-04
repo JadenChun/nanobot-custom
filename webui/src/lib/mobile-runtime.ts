@@ -47,10 +47,14 @@ export interface MobileTransport {
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
   openLogin(): Promise<void>;
   refresh(): Promise<boolean>;
+  remoteStatus?(): Promise<Record<string, unknown>>;
+  remoteDevices?(): Promise<Record<string, unknown>>;
+  remoteRevoke?(installationId: string): Promise<Record<string, unknown>>;
   pickCamera?(): Promise<MobilePickedCamera>;
   wsOpen(path: string, headers?: Record<string, string>): Promise<number>;
   wsSend(wsId: number, data: Uint8Array, kind?: "text" | "binary"): Promise<void>;
   wsClose(wsId: number): Promise<void>;
+  wsPing?(wsId: number): Promise<boolean>;
   stop(): Promise<void>;
 }
 
@@ -61,10 +65,13 @@ export interface MobileRuntime {
   read(path?: string): Promise<Record<string, unknown>>;
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
   createWebSocket(url: string): WebSocket;
+  /** Restore foreground connectivity once; no-op when no runtime is installed. */
+  recover(): Promise<void>;
 }
 
 let installedMobileRuntime: MobileRuntime | null = null;
 let ownerCapability = false;
+let standardDispatchCapability = false;
 
 /** Whether the paired device negotiated the owner capability (M30/M31). */
 export function mobileOwnerCapability(): boolean {
@@ -73,6 +80,15 @@ export function mobileOwnerCapability(): boolean {
 
 export function setMobileOwnerCapability(value: boolean): void {
   ownerCapability = value;
+}
+
+/** Whether the paired server advertises the standard owner dispatch route. */
+export function mobileStandardDispatchCapability(): boolean {
+  return standardDispatchCapability;
+}
+
+export function setMobileStandardDispatchCapability(value: boolean): void {
+  standardDispatchCapability = value;
 }
 
 export function installMobileRuntime(runtime: MobileRuntime): void {
@@ -87,9 +103,14 @@ export function isMobileRuntimeActive(): boolean {
   return installedMobileRuntime !== null;
 }
 
+export function recoverMobileRuntime(): Promise<void> {
+  return installedMobileRuntime?.recover() ?? Promise.resolve();
+}
+
 export function resetMobileRuntime(): void {
   installedMobileRuntime = null;
   ownerCapability = false;
+  standardDispatchCapability = false;
 }
 
 export function shouldRegisterServiceWorker(): boolean {
@@ -106,6 +127,8 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
   }>();
   const listeners = new Set<(event: MobileEvent) => void>();
   let listening: Promise<() => void> | null = null;
+  const sockets = new Set<MobileWebSocket>();
+  let recovery: Promise<void> | null = null;
 
   const ensureListener = (): Promise<() => void> => {
     if (listening === null) {
@@ -172,6 +195,14 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
           && capabilities !== null
           && (capabilities as Record<string, unknown>).owner === true,
       );
+      setMobileStandardDispatchCapability(
+        payload.request_settings_version === 1
+        || (
+          typeof capabilities === "object"
+          && capabilities !== null
+          && (capabilities as Record<string, unknown>).standard_dispatch === true
+        ),
+      );
       return payload;
     },
     async read(path = "/mobile/v1/read") {
@@ -185,7 +216,22 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
       return () => listeners.delete(listener);
     },
     createWebSocket(url) {
-      return new MobileWebSocket(runtime, url) as unknown as WebSocket;
+      const socket = new MobileWebSocket(runtime, url);
+      sockets.add(socket);
+      return socket as unknown as WebSocket;
+    },
+    async recover() {
+      if (recovery !== null) return recovery;
+      recovery = (async () => {
+        const active = [...sockets].filter((socket) => !socket.isRetired());
+        for (const socket of active) {
+          await socket.recover();
+          if (socket.isRetired()) sockets.delete(socket);
+        }
+      })().finally(() => {
+        recovery = null;
+      });
+      return recovery;
     },
   };
   return runtime;
@@ -201,6 +247,8 @@ class MobileWebSocket {
   readonly url: string;
   private wsId = 0;
   private unsubscribe: (() => void) | null = null;
+  private retired = false;
+  private closeEmitted = false;
 
   constructor(private runtime: MobileRuntime, url: string) {
     this.url = url;
@@ -211,14 +259,58 @@ class MobileWebSocket {
     void this.open();
   }
 
+  isRetired(): boolean {
+    return this.retired;
+  }
+
+  async recover(): Promise<void> {
+    if (this.retired) return;
+    if (this.readyState !== 1 || !this.wsId) {
+      // The owning client performs the reconnect; refreshing here makes a
+      // foreground return use the current access token without duplicating
+      // the socket.
+      await this.runtime.transport.refresh().catch(() => false);
+      return;
+    }
+    const ping = this.runtime.transport.wsPing;
+    if (!ping) return;
+    const healthy = await ping.call(this.runtime.transport, this.wsId).catch(() => false);
+    if (healthy && this.readyState === 1) return;
+    await this.runtime.transport.refresh().catch(() => false);
+    await this.reopen();
+  }
+
+  private async reopen(): Promise<void> {
+    const staleId = this.wsId;
+    this.wsId = 0;
+    this.readyState = 0;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    if (staleId) void this.runtime.transport.wsClose(staleId);
+    await this.open();
+  }
+
   private async open(): Promise<void> {
     try {
-      this.unsubscribe = await this.runtime.onEvent((event) => this.handleEvent(event));
-      this.wsId = await this.runtime.transport.wsOpen("/mobile/v1/ws");
+      const unsubscribe = await this.runtime.onEvent((event) => this.handleEvent(event));
+      if (this.retired) {
+        unsubscribe();
+        return;
+      }
+      this.unsubscribe = unsubscribe;
+      const wsId = await this.runtime.transport.wsOpen("/mobile/v1/ws");
+      if (this.retired) {
+        if (wsId) void this.runtime.transport.wsClose(wsId);
+        return;
+      }
+      if (!wsId) throw new Error("mobile socket was not admitted");
+      this.wsId = wsId;
       this.readyState = 1;
       this.onopen?.call(this as unknown as WebSocket, new Event("open"));
     } catch {
-      this.fail();
+      if (this.retired) return;
+      this.onerror?.call(this as unknown as WebSocket, new Event("error"));
+      this.emitClose(1006);
     }
   }
 
@@ -230,27 +322,38 @@ class MobileWebSocket {
   }
 
   close(): void {
+    if (this.retired) return;
+    this.retired = true;
     this.readyState = 2;
-    if (this.wsId) void this.runtime.transport.wsClose(this.wsId);
+    const wsId = this.wsId;
+    this.wsId = 0;
+    if (wsId) void this.runtime.transport.wsClose(wsId);
     this.unsubscribe?.();
     this.unsubscribe = null;
-    this.readyState = 3;
-    this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code: 1000 }));
+    this.emitClose(1000);
   }
 
   private handleEvent(event: MobileEvent): void {
+    if (this.retired || !this.wsId) return;
     if (event.type === "ws_frame" && event.ws_id === this.wsId) {
-      const raw = typeof event.data_base64 === "string" ? atob(event.data_base64) : "";
+      const raw = typeof event.data_base64 === "string" ? decodeBase64(event.data_base64) : "";
       this.onmessage?.call(this as unknown as WebSocket, new MessageEvent("message", { data: raw }));
     } else if (event.type === "ws_closed" && event.ws_id === this.wsId) {
-      this.readyState = 3;
-      this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code: Number(event.code ?? 1000) }));
+      this.wsId = 0;
+      this.emitClose(Number(event.code ?? 1000));
     }
   }
 
-  private fail(): void {
+  private emitClose(code: number): void {
+    if (this.closeEmitted) return;
+    this.closeEmitted = true;
+    this.retired = true;
+    this.wsId = 0;
     this.readyState = 3;
-    this.onerror?.call(this as unknown as WebSocket, new Event("error"));
+    const unsubscribe = this.unsubscribe;
+    this.unsubscribe = null;
+    unsubscribe?.();
+    this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code }));
   }
 }
 

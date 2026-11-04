@@ -111,6 +111,11 @@ class PooledProvider(LLMProvider):
     def supports_native_compaction(self, model: str | None = None) -> bool:
         return any(leaf.supports_native_compaction(model) for leaf in self._leaves)
 
+    @property
+    def supports_source_summary(self) -> bool:
+        """A pooled auxiliary call may use any slot, so every leaf must agree."""
+        return all(leaf.supports_source_summary for leaf in self._leaves)
+
     def _leaf_state(self, slot: int, state: ProviderConversationState | None,
                     model: str | None) -> ProviderConversationState | None:
         if state is None or state.payload.get(_OWNER) != self._owners[slot]:

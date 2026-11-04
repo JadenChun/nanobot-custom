@@ -34,6 +34,7 @@ import {
   fetchSettings,
   isCanonicalAbsolutePath,
   listSlashCommands,
+  prepareWorkspaceFullAccess,
   setWorkspaceAccessMode,
   WorkspaceModeConflictError,
 } from "@/lib/api";
@@ -1240,6 +1241,20 @@ export function ThreadShell({
     dismissStreamError,
   } = useNanobotStream(chatId, initial, hasPendingToolCalls, handleTurnEnd);
 
+  const admissionRejectedTurn = useMemo(() => {
+    if (
+      streamError?.kind !== "turn_rejected"
+      || streamError.detail !== "not_admitted"
+      || (
+        streamError.reason !== "busy_new_request"
+        && streamError.reason !== "steering_target_changed"
+      )
+    ) {
+      return null;
+    }
+    return { turnId: streamError.turnId };
+  }, [streamError]);
+
   useLayoutEffect(() => {
     if (currentUiMessagesRef.current === messages) return;
     currentUiMessagesRef.current = messages;
@@ -1449,13 +1464,16 @@ export function ThreadShell({
 
   const withWorkspaceScope = useCallback(
     (options?: SendOptions): SendOptions | undefined => {
-      if (!workspaceScope) return options;
+      const effective = options?.workspaceScope ?? workspaceScope;
+      const sourceToken = options?.sourceToken ?? workspacePermissions?.source_token;
+      if (!effective && !sourceToken) return options;
       return {
         ...(options ?? {}),
-        workspaceScope,
+        ...(effective ? { workspaceScope: effective } : {}),
+        ...(sourceToken ? { sourceToken } : {}),
       };
     },
-    [workspaceScope],
+    [workspacePermissions?.source_token, workspaceScope],
   );
 
   const refreshModelSettings = useCallback(async () => {
@@ -2116,9 +2134,17 @@ export function ThreadShell({
         activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
         setSubmittedViewportTurnId(submitted.turnId);
       }
+      return submitted;
     },
     [chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, send, withWorkspaceScope, workspaceAccessRequest],
   );
+
+  const handleAdmissionRejectedPromptRestored = useCallback((turnId: string) => {
+    setMessages((prev) => prev.filter(
+      (message) => !(message.role === "user" && message.turnId === turnId),
+    ));
+    dismissStreamError();
+  }, [dismissStreamError, setMessages]);
 
   const handleWorkspaceScopeChange = useCallback((scope: WorkspaceScopePayload) => {
     if (workspaceAccessRequest && chatId) {
@@ -2145,7 +2171,7 @@ export function ThreadShell({
       updateWorkspacePermissions(current);
       return;
     }
-    if (mode === "full" && (
+    if (mode === "full" && current.mode !== "full" && (
       current.mode !== "restricted"
       || current.state !== "active"
       || !current.can_enable_full
@@ -2154,11 +2180,19 @@ export function ThreadShell({
       throw new Error(current.full_access_unavailable_reason ?? "permission_state_changed");
     }
     try {
+      const prepared = mode === "full"
+        ? await prepareWorkspaceFullAccess(client, ownerChatId, current.source_token)
+        : null;
+      if (prepared && permissionOwnerChatIdRef.current !== ownerChatId) return;
       const result = await setWorkspaceAccessMode(client, {
         chat_id: ownerChatId,
         mode,
         expected_runtime_id: current.runtime_id,
         expected_permission_revision: current.revision,
+        source_token: current.source_token,
+        ...(prepared?.full_confirmation_id
+          ? { full_confirmation_id: prepared.full_confirmation_id }
+          : {}),
       });
       if (permissionOwnerChatIdRef.current !== ownerChatId || temporary) return;
       updateWorkspacePermissions(result.workspace_permissions);
@@ -2349,6 +2383,8 @@ export function ThreadShell({
         ) : null}
         <ThreadComposer
           onSend={handleThreadSend}
+          admissionRejectedTurn={admissionRejectedTurn}
+          onAdmissionRejectedPromptRestored={handleAdmissionRejectedPromptRestored}
           disabled={!chatId}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}

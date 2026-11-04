@@ -104,6 +104,36 @@ class LegacyFallbackProvider(FallbackProvider, Generic[_Preset]):
         # Capacity and state are resolved only after the destination is selected.
         return provider_context
 
+    def _preview_candidate(
+        self,
+        provider_context: ProviderCallContext,
+        model: str | None,
+        generation: GenerationSettings,
+    ) -> tuple[
+        LLMProvider,
+        ProviderCallContext,
+        str | None,
+        GenerationSettings,
+        int,
+    ] | None:
+        """Use the same ready/cooling order as one staged dispatch attempt."""
+        now = time.monotonic()
+        ready = [slot for slot, expiry in enumerate(self._cooldowns) if expiry <= now]
+        cooling = sorted(
+            (slot for slot, expiry in enumerate(self._cooldowns) if expiry > now),
+            key=lambda slot: (self._cooldowns[slot], slot),
+        )
+        for slot in (*ready, *cooling):
+            local = self._kwargs(slot, {
+                "provider_context": provider_context,
+                "model": model,
+            })
+            context = local.get("provider_context")
+            if not isinstance(context, ProviderCallContext):
+                continue
+            return self._candidates[slot], context, self._model(slot, model), generation, slot
+        return None
+
     def _kwargs(self, slot: int, kwargs: dict[str, Any]) -> dict[str, Any]:
         local = dict(kwargs)
         local['model'] = self._model(slot, kwargs.get('model'))
@@ -153,23 +183,46 @@ class LegacyFallbackProvider(FallbackProvider, Generic[_Preset]):
         stream: bool,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> PreparedRequestBudgetPreview | None:
-        if len(self._candidates) != 1:
-            return None
-        route = self._kwargs(0, {
-            "messages": messages,
-            "tools": tools,
-            "model": model,
+        """Bind auxiliary previews to the captured primary slot's own facts."""
+        auxiliary = (
+            provider_context.single_attempt
+            or provider_context.source_summary_mode is not None
+        )
+        if not auxiliary:
+            return super().preview_request_budget(
+                messages=messages,
+                tools=tools,
+                model=model,
+                generation=generation,
+                provider_context=provider_context,
+                stream=stream,
+                tool_choice=tool_choice,
+            )
+        local = self._kwargs(0, {
             "provider_context": provider_context,
+            "model": model,
         })
-        context = route.pop("provider_context")
-        return self._candidates[0].preview_request_budget(
+        context = local.get("provider_context")
+        if not isinstance(context, ProviderCallContext):
+            return None
+        preview = self._candidates[0].preview_request_budget(
             messages=messages,
             tools=tools,
-            model=route["model"],
+            model=self._model(0, model),
             generation=generation,
             provider_context=context,
             stream=stream,
             tool_choice=tool_choice,
+        )
+        if preview is None or preview.route is None:
+            return preview
+        return replace(
+            preview,
+            route=replace(
+                preview.route,
+                purpose="source_summary",
+                fallback_index=0,
+            ),
         )
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:

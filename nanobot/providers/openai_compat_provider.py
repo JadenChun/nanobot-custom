@@ -33,6 +33,7 @@ from nanobot.providers.base import (
     LLMResponse,
     LLMUsage,
     PreparedRequestBudgetPreview,
+    PreparedRequestRoute,
     ProviderCallContext,
     ProviderConversationState,
     ProviderConversationTransportReceipt,
@@ -1624,6 +1625,11 @@ class OpenAICompatProvider(LLMProvider):
         except Exception:
             pass
         identity = TransportIdentity(self.provider_name, transport, selected_model)
+        self._validate_auxiliary_output_cap(
+            body,
+            provider_context,
+            completion_reserve_tokens,
+        )
         try:
             measurement = measure_finalized_request(
                 identity,
@@ -1659,12 +1665,6 @@ class OpenAICompatProvider(LLMProvider):
                     measurement.measured_bytes,
                     byte_limit,
                 )
-        if (
-            provider_context is not None
-            and provider_context.source_summary_mode is not None
-            and measurement.completion_reserve_tokens > 2048
-        ):
-            raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
         return measurement
 
     def _request_byte_limit(self) -> int:
@@ -1683,7 +1683,7 @@ class OpenAICompatProvider(LLMProvider):
     ) -> None:
         if provider_context is None or provider_context.source_summary_mode is None:
             return
-        allowed_caps = [2048]
+        allowed_caps: list[int] = []
         for bound in (
             completion_reserve_tokens,
             (
@@ -1697,6 +1697,15 @@ class OpenAICompatProvider(LLMProvider):
             if type(bound) is not int or bound < 0:
                 raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
             allowed_caps.append(bound)
+        total = (
+            provider_context.request_limits.effective_total_tokens
+            if provider_context.request_limits is not None
+            else provider_context.context_window_tokens
+        )
+        if not allowed_caps or (
+            total is not None and max(allowed_caps) > total
+        ):
+            raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
         effective_caps: list[int] = []
         for name in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
             if name not in body:
@@ -2027,6 +2036,7 @@ class OpenAICompatProvider(LLMProvider):
             transport=transport,
             model=str(body.get("model") or ""),
             provider_context=provider_context,
+            completion_reserve_tokens=generation.max_tokens,
         )
         raw_messages = body.get("messages")
         raw_tools = body.get("tools")
@@ -2053,6 +2063,24 @@ class OpenAICompatProvider(LLMProvider):
             ),
             effective_body=deepcopy(body),
             sdk_kwargs=cast(dict[str, object], sdk_kwargs),
+            route=PreparedRequestRoute(
+                purpose=(
+                    "source_summary"
+                    if provider_context.source_summary_mode is not None
+                    else "main"
+                ),
+                provider=measurement.identity.provider,
+                model=measurement.identity.model,
+                transport=measurement.identity.transport,
+                accounting_policy=measurement.policy,
+                context_window_tokens=measurement.total_limit_tokens,
+                completion_reserve_tokens=measurement.completion_reserve_tokens,
+                native_compaction=self.supports_native_compaction(model),
+                envelope_binding=self._local_envelope_binding(
+                    body,
+                    provider_context.request_limits,
+                ),
+            ),
         )
 
     def _should_use_responses_api(

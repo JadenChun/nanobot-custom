@@ -1289,8 +1289,8 @@ describe("ThreadComposer", () => {
     const accessButton = screen.getByRole("button", {
       name: "Workspace access mode: Full access",
     });
-    const fullLabel = within(accessButton).getByText("Full access");
-    const shortLabel = within(accessButton).getByText("Full");
+    const fullLabel = accessButton.querySelector(".thread-composer-access-label-full");
+    const shortLabel = accessButton.querySelector(".thread-composer-access-label-short");
     expect(accessButton).toHaveAttribute("title", "Full access");
     expect(fullLabel).toHaveClass("thread-composer-access-label-full");
     expect(shortLabel).toHaveClass("thread-composer-access-label-short");
@@ -3423,6 +3423,52 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
   });
 
+  it("sends a queued prompt with its submitted workspace snapshot", async () => {
+    const onSend = vi.fn();
+    const submittedScope = {
+      project_path: "/tmp/submitted-project",
+      project_name: "submitted-project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const laterScope = {
+      project_path: "/tmp/later-project",
+      project_name: "later-project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        workspaceScope={submittedScope}
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "use the submitted project" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        workspaceScope={laterScope}
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend).toHaveBeenCalledWith(
+      "use the submitted project",
+      undefined,
+      expect.objectContaining({ workspaceScope: submittedScope }),
+    );
+  });
+
   it("lets users edit queued guidance before it is sent", async () => {
     const onSend = vi.fn();
     const { rerender } = render(
@@ -3804,7 +3850,7 @@ describe("ThreadComposer", () => {
 describe("ThreadComposer — mobile controls", () => {
   afterEach(() => resetMobileRuntime());
 
-  it("keeps the model chip in the footer and hides the access label on mobile", () => {
+  it("keeps the model chip in the footer and shows the compact access label on mobile", () => {
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
       request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
@@ -3860,6 +3906,283 @@ describe("ThreadComposer — mobile controls", () => {
     expect(container.querySelector(".thread-composer-mobile-project")).toBeNull();
     expect(
       within(footer as HTMLElement).getByLabelText(/Workspace access mode: Sandbox/).textContent,
-    ).toBe("");
+    ).toContain("Sandbox");
+  });
+});
+
+describe("next-message settings hint", () => {
+  it("labels editable selections as applying to the next message while running", () => {
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+      "For the next message",
+    );
+  });
+});
+
+describe("composer access control semantics", () => {
+  const scope = {
+    project_path: "/tmp/project",
+    project_name: "project",
+    access_mode: "restricted" as const,
+    restrict_to_workspace: true,
+  };
+
+  it("exposes the selected Full state and busy state to assistive tech", () => {
+    const fullScope = { ...scope, access_mode: "full" as const, restrict_to_workspace: false };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={fullScope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(fullScope)}
+        workspacePermissions={permissionProjection({ mode: "full", can_enable_full: false })}
+        persistentWorkspaceChat
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+    const access = screen.getByRole("button", { name: "Workspace access mode: Full access" });
+    expect(access).toHaveAttribute("aria-pressed", "true");
+    expect(access).toHaveAttribute("aria-busy", "false");
+  });
+
+  it("describes an unavailable reason and lets the user open the explanation", async () => {
+    const user = userEvent.setup();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={null}
+        persistentWorkspaceChat
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+    const access = screen.getByRole("button", { name: "Workspace access mode: Access unavailable" });
+    expect(access).toBeEnabled();
+    expect(access).toHaveAccessibleDescription(
+      /Full access is unavailable with the current local controls/,
+    );
+    await user.click(access);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Full access is unavailable with the current local controls.",
+    );
+  });
+
+  it("describes the loading state while permissions refresh", () => {
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection()}
+        workspacePermissionsLoading
+        persistentWorkspaceChat
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Workspace access mode: Sandbox" }),
+    ).toHaveAttribute("aria-busy", "true");
+  });
+});
+
+describe("settings during a running turn", () => {
+  it("keeps access and project controls usable while streaming", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const onWorkspaceAccessModeChange = vi.fn().mockResolvedValue(undefined);
+    const onWorkspaceScopeChange = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceDefaultScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection()}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
+        onWorkspaceScopeChange={onWorkspaceScopeChange}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("For the next message");
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
+    await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+    await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
+
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
+    fireEvent.change(screen.getByLabelText("Paste path"), {
+      target: { value: "/tmp/other" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(
+      expect.objectContaining({ project_path: "/tmp/other" }),
+    );
+  });
+});
+
+describe("mobile Full device confirmation", () => {
+  it("offers an explicit confirm action when Full is already active", async () => {
+    const user = userEvent.setup();
+    const runtime: MobileRuntime = {
+      transport: {} as MobileRuntime["transport"],
+      request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
+      handshake: async () => ({}),
+      read: async () => ({}),
+      onEvent: async () => () => undefined,
+      createWebSocket: () => ({}) as WebSocket,
+      recover: async () => undefined,
+    };
+    installMobileRuntime(runtime);
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "full" as const,
+      restrict_to_workspace: false,
+    };
+    const onWorkspaceAccessModeChange = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceDefaultScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({ mode: "full", can_enable_full: false })}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Full access" }));
+    await user.click(screen.getByRole("button", { name: "Confirm Full on this device" }));
+    await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
+  });
+});
+
+describe("queued prompt retention after busy admission rejection", () => {
+  it("restores the full queued snapshot and waits for an explicit retry", async () => {
+    const scope = {
+      project_path: "/tmp/submitted-project",
+      project_name: "submitted-project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const submitted = {
+      turnId: "turn-busy",
+      userMessageId: "user-busy",
+      sideChannel: false,
+    };
+    const onSend = vi.fn(() => submitted);
+    const onRestored = vi.fn();
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "queued follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith(
+        "queued follow-up",
+        undefined,
+        { workspaceScope: scope },
+      );
+    });
+    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={{ turnId: "turn-busy" }}
+        onAdmissionRejectedPromptRestored={onRestored}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onRestored).toHaveBeenCalledWith("turn-busy"));
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        admissionRejectedTurn={null}
+        onAdmissionRejectedPromptRestored={onRestored}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={null}
+        onAdmissionRejectedPromptRestored={onRestored}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend).toHaveBeenLastCalledWith(
+      "queued follow-up",
+      undefined,
+      { workspaceScope: scope },
+    );
+    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
   });
 });

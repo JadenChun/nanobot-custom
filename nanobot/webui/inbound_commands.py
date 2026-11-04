@@ -30,10 +30,14 @@ from nanobot.security.workspace_access import (
     WorkspaceScopeError,
 )
 from nanobot.session.webui_turns import (
+    activate_queued_websocket_turn,
+    bind_queued_websocket_turn_scope,
     clear_websocket_turn_if_current,
     clear_websocket_turns,
     register_queued_websocket_turn_if_idle,
     websocket_turn_id,
+    websocket_turn_reserved,
+    websocket_turn_scope,
     websocket_turn_wall_started_at,
 )
 from nanobot.utils.helpers import safe_filename
@@ -41,7 +45,13 @@ from nanobot.webui.cli_apps_api import normalize_cli_app_mentions
 from nanobot.webui.forking import handle_webui_fork_chat
 from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.mcp_presets_api import normalize_mcp_preset_mentions
-from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.metadata import (
+    WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_INSTALLATION_METADATA_KEY,
+    WEBUI_REQUEST_INTENT_METADATA_KEY,
+    WEBUI_SOURCE_TOKEN_METADATA_KEY,
+    WEBUI_TARGET_TURN_METADATA_KEY,
+)
 from nanobot.webui.replay_store import DurableWebUIReplay
 from nanobot.webui.session_access import (
     SessionMention,
@@ -75,7 +85,84 @@ _SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
 })
 
 
+REQUEST_SETTINGS_VERSION = 1
+
+
+_REQUEST_SETTINGS_FIELDS = frozenset({
+    "request_settings_version",
+    "source_token",
+    "request_intent",
+    "target_turn_id",
+    "full_confirmation_id",
+})
+
+
+def request_settings_error(
+    envelope: dict[str, Any],
+    *,
+    current_source_token: str | None,
+    active_turn_id: str | None,
+) -> tuple[str, str] | None:
+    """Validate the versioned request-settings envelope without side effects."""
+    version = envelope.get("request_settings_version")
+    negotiated = any(field in envelope for field in _REQUEST_SETTINGS_FIELDS)
+    if version is None:
+        # A bare legacy WebUI envelope remains compatible. Any client that
+        # submits a v1 field must also negotiate the version explicitly.
+        return ("update_required", "request_settings_version") if negotiated else None
+    if type(version) is not int or version != REQUEST_SETTINGS_VERSION:
+        return "update_required", "request_settings_version"
+    intent = envelope.get("request_intent")
+    if intent not in {"new", "steer"}:
+        return "invalid_request_settings", "request_intent"
+    target = envelope.get("target_turn_id")
+    if intent == "new":
+        if target is not None:
+            return "invalid_request_settings", "target_turn_id"
+    else:
+        if (
+            not isinstance(target, str)
+            or not active_turn_id
+            or target != active_turn_id
+        ):
+            return "not_admitted", "steering_target_changed"
+    source_token = envelope.get("source_token")
+    if current_source_token is not None:
+        if not isinstance(source_token, str):
+            return "invalid_request_settings", "source_token"
+        if source_token != current_source_token:
+            return "source_changed", "source_token"
+    elif source_token is not None:
+        if not isinstance(source_token, str):
+            return "invalid_request_settings", "source_token"
+        return "source_changed", "source_token"
+    confirmation = envelope.get("full_confirmation_id")
+    if confirmation is not None and not isinstance(confirmation, str):
+        return "invalid_request_settings", "full_confirmation_id"
+    return None
+
+
+def steering_target_error(
+    envelope: dict[str, Any],
+    *,
+    chat_id: str,
+    scope: WorkspaceScope,
+) -> tuple[str, str] | None:
+    """Reject guidance whose target turn or captured scope no longer matches."""
+    target_turn_id = envelope.get("target_turn_id")
+    if (
+        not isinstance(target_turn_id, str)
+        or websocket_turn_id(chat_id) != target_turn_id
+    ):
+        return "not_admitted", "steering_target_changed"
+    current_scope = websocket_turn_scope(chat_id)
+    if current_scope is None or scope.metadata() != current_scope:
+        return "not_admitted", "steering_context_changed"
+    return None
+
+
 @dataclass(frozen=True)
+
 class WebUIRequestResult:
     result: Any = None
     status: int | None = None
@@ -167,6 +254,17 @@ def _typed_mobile_identity(connection: Any) -> Any | None:
     if not isinstance(scopes, (tuple, list, set, frozenset)):
         return None
     return identity
+
+
+def _typed_owner_mobile_identity(connection: Any) -> Any | None:
+    """Return a real mobile identity carrying the owner scope."""
+    identity = _typed_mobile_identity(connection)
+    if identity is None:
+        return None
+    scopes = getattr(identity, "scopes", None)
+    if not isinstance(scopes, (tuple, list, set, frozenset)):
+        return None
+    return identity if "owner" in scopes else None
 
 
 def _mobile_denial_message(connection: Any, action: str) -> str:
@@ -606,6 +704,38 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        request_intent = envelope.get("request_intent")
+        temporary_owned = self._temporary_chats.owns(connection, chat_id)
+        current_source_token = (
+            None if temporary_owned else self._workspaces.source_token(chat_id)
+        )
+        settings_error = request_settings_error(
+            envelope,
+            current_source_token=current_source_token,
+            active_turn_id=websocket_turn_id(chat_id),
+        )
+        if settings_error is not None:
+            detail, reason = settings_error
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail=detail,
+                reason=reason,
+                **rejection_fields,
+            )
+            return
+        if request_intent == "new" and (
+            websocket_turn_wall_started_at(chat_id) is not None
+            or websocket_turn_reserved(chat_id)
+        ):
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="not_admitted",
+                reason="busy_new_request",
+                **rejection_fields,
+            )
+            return
         if not isinstance(content, str):
             await self._transport.webui_send_event(
                 connection,
@@ -640,220 +770,330 @@ class WebUICommandRouter:
             )
             return
 
-        raw_media = envelope.get("media")
-        media_paths: list[str] = []
-        media_names: list[str | None] = []
-        if raw_media is not None:
-            if not isinstance(raw_media, list):
-                await self._transport.webui_send_event(
-                    connection,
-                    "error",
-                    detail="attachment_rejected",
-                    reason="malformed",
-                    **rejection_fields,
-                )
-                return
-            media_paths, reason = self._media.store_inbound_attachments(
-                cast(list[Any], raw_media)
-            )
-            if reason is not None:
-                await self._transport.webui_send_event(
-                    connection,
-                    "error",
-                    detail="attachment_rejected",
-                    reason=reason,
-                    **rejection_fields,
-                )
-                return
-            for item in cast(list[Any], raw_media):
-                attachment = cast(dict[str, Any], item) if isinstance(item, dict) else {}
-                name = attachment.get("name")
-                media_names.append((safe_filename(name) or None) if isinstance(name, str) else None)
-            if temporary_policy is not None:
-                self._temporary_chats.register_media(connection, chat_id, media_paths)
-
-        if not content.strip() and not media_paths:
-            await self._transport.webui_send_event(
-                connection,
-                "error",
-                detail="missing content",
-                **rejection_fields,
-            )
-            return
         self._transport.webui_attach(connection, chat_id)
         if temporary_policy is None or temporary_policy.hydrate_transcript:
             await self._transport.webui_hydrate(chat_id)
-
-        scope = await self.workspace_scope_or_error(
-            connection,
-            lambda: (
-                temporary_policy.workspace_scope
-                if temporary_policy is not None
-                else self._workspaces.scope_for_message(
-                    envelope,
-                    chat_id=chat_id,
-                    chat_running=websocket_turn_wall_started_at(chat_id) is not None,
-                    controls_available=self.workspace_controls_available(connection),
-                )
-            ),
-            chat_id=chat_id,
-            turn_id=turn_id,
-        )
-        if scope is None:
-            return
-
-        permission_reference = None
-        if scope.access_mode == "full":
-            permission_reference = self._workspaces.ingress_full_reference(
-                chat_id,
-                local_ui=self.workspace_controls_available(connection),
-            )
-            if permission_reference is None:
-                await self._transport.webui_send_event(
-                    connection,
-                    "error",
-                    detail="workspace_scope_rejected",
-                    reason="full_access_unavailable",
-                    **rejection_fields,
-                )
-                return
-
-        if not self._transport.is_allowed(client_id):
+        if (
+            temporary_policy is None
+            and self._workspaces.source_token(chat_id) != current_source_token
+        ):
             await self._transport.webui_send_event(
                 connection,
                 "error",
-                detail="access_denied",
+                detail="source_changed",
+                reason="source_token",
                 **rejection_fields,
             )
             return
 
-        metadata: dict[str, Any] = {
-            "remote": getattr(connection, "remote_address", None)
-        }
-        if envelope.get("webui") is True:
-            metadata["webui"] = True
-            metadata.update(self._transcripts.client_turn_metadata(envelope.get("turn_id")))
-        trusted_webui = metadata.get("webui") is True and connection in self._webui_connections
+        is_webui = envelope.get("webui") is True
+        trusted_webui = is_webui and connection in self._webui_connections
         is_user_shell = (
-            trusted_webui
-            and envelope.get("user_shell") is True
-            and content.startswith("!")
+            trusted_webui and envelope.get("user_shell") is True and content.startswith("!")
         )
-        if is_user_shell:
-            metadata[INBOUND_META_USER_SHELL] = True
-        dispatch_content = (
-            f"{USER_SHELL_COMMAND} {content[1:].lstrip()}" if is_user_shell else content
-        )
-        cli_apps = normalize_cli_app_mentions(envelope.get("cli_apps"))
-        if cli_apps:
-            metadata["cli_apps"] = cli_apps
-        mcp_presets = normalize_mcp_preset_mentions(
-            envelope.get("mcp_presets"),
-            config_path=self.gateway.settings.config.path,
-        )
-        if mcp_presets:
-            metadata["mcp_presets"] = mcp_presets
-        session_mentions: list[SessionMention] = []
-        if trusted_webui and self._session_access is not None:
-            session_mentions = await asyncio.to_thread(
-                self._session_access.normalize_mentions,
-                envelope.get("session_mentions"),
-                exclude_session_key=webui_session_key(chat_id),
-            )
-            if session_mentions:
-                metadata["session_mentions"] = session_mentions
-        metadata[WORKSPACE_SCOPE_METADATA_KEY] = scope.metadata()
-        is_webui = metadata.get("webui") is True
         queued_owner = None
-        if is_webui and not is_user_shell and builtin_command_starts_agent_turn(content):
-            queued_owner = register_queued_websocket_turn_if_idle(chat_id, turn_id)
+        accepted = False
+        expects_agent_turn = (
+            is_webui and not is_user_shell and builtin_command_starts_agent_turn(content)
+        )
+        if expects_agent_turn:
+            queued_owner = register_queued_websocket_turn_if_idle(
+                chat_id,
+                turn_id,
+                publish=False,
+            )
+        if request_intent == "new" and expects_agent_turn and queued_owner is None:
+            # The chat may have become busy while hydration was waiting. A new
+            # v1 request must own the turn reservation before it can create any
+            # transcript, default or inbound effect.
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="not_admitted",
+                reason="busy_new_request",
+                **rejection_fields,
+            )
+            return
+        try:
+            raw_media = envelope.get("media")
+            media_paths: list[str] = []
+            media_names: list[str | None] = []
+            if raw_media is not None:
+                if not isinstance(raw_media, list):
+                    await self._transport.webui_send_event(
+                        connection,
+                        "error",
+                        detail="attachment_rejected",
+                        reason="malformed",
+                        **rejection_fields,
+                    )
+                    return
+                media_paths, reason = self._media.store_inbound_attachments(
+                    cast(list[Any], raw_media)
+                )
+                if reason is not None:
+                    await self._transport.webui_send_event(
+                        connection,
+                        "error",
+                        detail="attachment_rejected",
+                        reason=reason,
+                        **rejection_fields,
+                    )
+                    return
+                for item in cast(list[Any], raw_media):
+                    attachment = cast(dict[str, Any], item) if isinstance(item, dict) else {}
+                    name = attachment.get("name")
+                    media_names.append((safe_filename(name) or None) if isinstance(name, str) else None)
+                if temporary_policy is not None:
+                    self._temporary_chats.register_media(connection, chat_id, media_paths)
+
+            if not content.strip() and not media_paths:
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="missing content",
+                    **rejection_fields,
+                )
+                return
+            local_controls = self.workspace_controls_available(connection)
+            controls_available = local_controls or _typed_owner_mobile_identity(connection) is not None
+            scope = await self.workspace_scope_or_error(
+                connection,
+                lambda: (
+                    self._workspaces.scope_for_temporary_message(
+                        envelope,
+                        temporary_policy.workspace_scope,
+                    )
+                    if temporary_policy is not None
+                    else self._workspaces.scope_for_message(
+                        envelope,
+                        chat_id=chat_id,
+                        chat_running=websocket_turn_wall_started_at(chat_id) is not None,
+                        controls_available=controls_available,
+                    )
+                ),
+                chat_id=chat_id,
+                turn_id=turn_id,
+            )
+            if scope is None:
+                return
+            if queued_owner is not None:
+                bind_queued_websocket_turn_scope(chat_id, queued_owner, scope.metadata())
+            if request_intent == "steer":
+                error = steering_target_error(envelope, chat_id=chat_id, scope=scope)
+                if error is not None:
+                    detail, reason = error
+                    await self._transport.webui_send_event(
+                        connection,
+                        "error",
+                        detail=detail,
+                        reason=reason,
+                        **rejection_fields,
+                    )
+                    return
+            permission_reference = None
+            if scope.access_mode == "full":
+                mobile_identity = getattr(connection, "mobile_identity", None)
+                mobile_installation = getattr(mobile_identity, "installation_id", None)
+                if temporary_policy is not None:
+                    permission_reference = self._workspaces.temporary_full_reference(
+                        chat_id,
+                        temporary_policy.source_binding,
+                        request_turn_id=turn_id,
+                    )
+                else:
+                    permission_reference = self._workspaces.ingress_full_reference(
+                        chat_id,
+                        local_ui=local_controls,
+                        installation_id=(
+                            mobile_installation
+                            if isinstance(mobile_installation, str) and mobile_installation
+                            else None
+                        ),
+                        request_turn_id=turn_id,
+                    )
+                if permission_reference is None:
+                    await self._transport.webui_send_event(
+                        connection,
+                        "error",
+                        detail="workspace_scope_rejected",
+                        reason="full_access_unavailable",
+                        **rejection_fields,
+                    )
+                    return
+                if temporary_policy is None:
+                    self._workspaces.mark_full_request_admitted(chat_id)
+
+            if queued_owner is not None:
+                activate_queued_websocket_turn(chat_id, queued_owner)
+
+            if not self._transport.is_allowed(client_id):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="access_denied",
+                    **rejection_fields,
+                )
+                return
+
+            metadata: dict[str, Any] = {
+                "remote": getattr(connection, "remote_address", None)
+            }
+            if temporary_policy is None and current_source_token is not None:
+                metadata[WEBUI_SOURCE_TOKEN_METADATA_KEY] = current_source_token
+            mobile_identity = getattr(connection, "mobile_identity", None)
+            mobile_installation = getattr(mobile_identity, "installation_id", None)
+            if isinstance(mobile_installation, str) and mobile_installation:
+                metadata[WEBUI_INSTALLATION_METADATA_KEY] = mobile_installation
+            if envelope.get("webui") is True:
+                metadata["webui"] = True
+                metadata.update(self._transcripts.client_turn_metadata(envelope.get("turn_id")))
+            if isinstance(request_intent, str):
+                metadata[WEBUI_REQUEST_INTENT_METADATA_KEY] = request_intent
+            target_turn_id = envelope.get("target_turn_id")
+            if isinstance(target_turn_id, str):
+                metadata[WEBUI_TARGET_TURN_METADATA_KEY] = target_turn_id
+            if is_user_shell:
+                metadata[INBOUND_META_USER_SHELL] = True
+            dispatch_content = (
+                f"{USER_SHELL_COMMAND} {content[1:].lstrip()}" if is_user_shell else content
+            )
+            cli_apps = normalize_cli_app_mentions(envelope.get("cli_apps"))
+            if cli_apps:
+                metadata["cli_apps"] = cli_apps
+            mcp_presets = normalize_mcp_preset_mentions(
+                envelope.get("mcp_presets"),
+                config_path=self.gateway.settings.config.path,
+            )
+            if mcp_presets:
+                metadata["mcp_presets"] = mcp_presets
+            session_mentions: list[SessionMention] = []
+            if trusted_webui and self._session_access is not None:
+                session_mentions = await asyncio.to_thread(
+                    self._session_access.normalize_mentions,
+                    envelope.get("session_mentions"),
+                    exclude_session_key=webui_session_key(chat_id),
+                )
+                if session_mentions:
+                    metadata["session_mentions"] = session_mentions
+            metadata[WORKSPACE_SCOPE_METADATA_KEY] = scope.metadata()
             if queued_owner is not None:
                 metadata[WEBSOCKET_TURN_OWNER_METADATA_KEY] = queued_owner
 
-        accepted = False
-        try:
-            if is_webui and (
-                temporary_policy is None or temporary_policy.persist_transcript
+            if request_intent == "steer":
+                error = steering_target_error(envelope, chat_id=chat_id, scope=scope)
+                if error is not None:
+                    detail, reason = error
+                    await self._transport.webui_send_event(
+                        connection,
+                        "error",
+                        detail=detail,
+                        reason=reason,
+                        **rejection_fields,
+                    )
+                    return
+
+            if (
+                temporary_policy is None
+                and self._workspaces.source_token(chat_id) != current_source_token
             ):
-                self._transcripts.append_user_message(
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="source_changed",
+                    reason="source_token",
+                    **rejection_fields,
+                )
+                return
+
+            try:
+                if is_webui and (
+                    temporary_policy is None or temporary_policy.persist_transcript
+                ):
+                    self._transcripts.append_user_message(
+                        chat_id,
+                        content,
+                        metadata=metadata,
+                        media_paths=media_paths or None,
+                        cli_apps=cli_apps or None,
+                        mcp_presets=mcp_presets or None,
+                        session_mentions=session_mentions or None,
+                    )
+                if trusted_webui:
+                    context_blocks: list[RuntimeContextBlock] = []
+                    quote = webui_quote_runtime_context(
+                        {WEBUI_QUOTE_METADATA: envelope.get("quoted_context")}
+                    )
+                    if quote is not None:
+                        context_blocks.append(quote)
+                    session_context = session_mentions_runtime_context(session_mentions)
+                    if session_context is not None:
+                        context_blocks.append(session_context)
+                    if context_blocks:
+                        metadata[RUNTIME_CONTEXT_INPUT_META] = context_blocks
+                await self._transport.webui_dispatch_message(
+                    sender_id=client_id,
+                    chat_id=chat_id,
+                    content=dispatch_content,
+                    media=media_paths or None,
+                    metadata=metadata,
+                    is_dm=False,
+                    session_key=(
+                        temporary_policy.session_key if temporary_policy is not None else None
+                    ),
+                    require_existing_session=(
+                        temporary_policy.require_existing_session
+                        if temporary_policy is not None
+                        else False
+                    ),
+                    workspace_scope=scope,
+                    permission_reference=permission_reference,
+                )
+                if temporary_policy is None:
+                    self._workspaces.persist_scope(chat_id, scope)
+                    self._workspaces.remember_request_defaults(chat_id, scope)
+                accepted = True
+            finally:
+                if not accepted and queued_owner is not None:
+                    clear_websocket_turn_if_current(chat_id, queued_owner)
+
+            if is_webui:
+                await self.broadcast_user_message(
+                    connection,
                     chat_id,
                     content,
-                    metadata=metadata,
-                    media_paths=media_paths or None,
-                    cli_apps=cli_apps or None,
-                    mcp_presets=mcp_presets or None,
-                    session_mentions=session_mentions or None,
+                    turn_id=turn_id,
+                    starts_turn=queued_owner is not None,
+                    media_paths=media_paths,
+                    media_names=media_names,
+                    cli_apps=cli_apps,
+                    mcp_presets=mcp_presets,
+                    session_mentions=session_mentions,
                 )
-            if trusted_webui:
-                context_blocks: list[RuntimeContextBlock] = []
-                quote = webui_quote_runtime_context(
-                    {WEBUI_QUOTE_METADATA: envelope.get("quoted_context")}
+            if is_webui and turn_id:
+                active_turn_id = websocket_turn_id(chat_id)
+                started_at = websocket_turn_wall_started_at(chat_id)
+                await self._transport.webui_send_event(
+                    connection,
+                    "message_accepted",
+                    chat_id=chat_id,
+                    turn_id=turn_id,
+                    starts_turn=queued_owner is not None,
+                    **(
+                        {"active_turn_id": active_turn_id}
+                        if active_turn_id is not None
+                        else {}
+                    ),
+                    **(
+                        {"started_at": started_at}
+                        if active_turn_id is not None and started_at is not None
+                        else {}
+                    ),
                 )
-                if quote is not None:
-                    context_blocks.append(quote)
-                session_context = session_mentions_runtime_context(session_mentions)
-                if session_context is not None:
-                    context_blocks.append(session_context)
-                if context_blocks:
-                    metadata[RUNTIME_CONTEXT_INPUT_META] = context_blocks
-            await self._transport.webui_dispatch_message(
-                sender_id=client_id,
-                chat_id=chat_id,
-                content=dispatch_content,
-                media=media_paths or None,
-                metadata=metadata,
-                is_dm=False,
-                session_key=(
-                    temporary_policy.session_key if temporary_policy is not None else None
-                ),
-                require_existing_session=(
-                    temporary_policy.require_existing_session
-                    if temporary_policy is not None
-                    else False
-                ),
-                workspace_scope=scope,
-                permission_reference=permission_reference,
-            )
-            if temporary_policy is None:
-                self._workspaces.persist_scope(chat_id, scope)
-            accepted = True
+
         finally:
             if not accepted and queued_owner is not None:
                 clear_websocket_turn_if_current(chat_id, queued_owner)
-
-        if is_webui:
-            await self.broadcast_user_message(
-                connection,
-                chat_id,
-                content,
-                turn_id=turn_id,
-                starts_turn=queued_owner is not None,
-                media_paths=media_paths,
-                media_names=media_names,
-                cli_apps=cli_apps,
-                mcp_presets=mcp_presets,
-                session_mentions=session_mentions,
-            )
-        if is_webui and turn_id:
-            active_turn_id = websocket_turn_id(chat_id)
-            started_at = websocket_turn_wall_started_at(chat_id)
-            await self._transport.webui_send_event(
-                connection,
-                "message_accepted",
-                chat_id=chat_id,
-                turn_id=turn_id,
-                starts_turn=queued_owner is not None,
-                **(
-                    {"active_turn_id": active_turn_id}
-                    if active_turn_id is not None
-                    else {}
-                ),
-                **(
-                    {"started_at": started_at}
-                    if active_turn_id is not None and started_at is not None
-                    else {}
-                ),
-            )
 
     async def start_webui_request(
         self,

@@ -239,7 +239,7 @@ export function WorkspaceProjectPicker({
               className={cn(
                 compact
                   ? cn(
-                      "thread-composer-action touch-target inline-flex h-8 items-center justify-center rounded-full border border-transparent",
+                      "thread-composer-action touch-target inline-flex h-9 items-center justify-center rounded-full border border-transparent",
                       folderName
                         ? "max-w-[9rem] justify-start gap-1.5 border-border/55 bg-card/70 px-2.5"
                         : "w-8",
@@ -253,7 +253,7 @@ export function WorkspaceProjectPicker({
               {pickingFolder
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                 : <Folder className={cn("shrink-0", compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
-              <span className={cn("min-w-0 truncate", compact && !folderName && "sr-only")}>
+              <span className={cn("thread-composer-project-label min-w-0 truncate", compact && !folderName && "sr-only")}>
                 {compact && folderName ? folderName : pathAccessibleLabel}
               </span>
               {!compact ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden /> : null}
@@ -614,6 +614,7 @@ export function WorkspacePermissionV2Control({
 }) {
   const { t } = useTranslation();
   const mobile = isMobileRuntimeActive();
+  const reasonId = useId();
   const [confirmFull, setConfirmFull] = useState(false);
   const [pending, setPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
@@ -692,6 +693,14 @@ export function WorkspacePermissionV2Control({
       ? t("workspace.permissionV2.retiringActive", { defaultValue: "A command is still running with the previous access. Wait for it to finish or stop it, then retry." })
       : t("workspace.permissionV2.retiringFinished", { defaultValue: "Earlier work has finished. Retry to confirm Sandbox access." });
 
+  const unavailableCopy = unavailable
+    ? reasonCopy ?? t("workspace.permissionV2.unavailableDetail", {
+        defaultValue: "Full access is unavailable with the current local controls.",
+      })
+    : null;
+  const accessibleDescription = [label, unavailableCopy]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join(". ");
   const changeMode = async (mode: WorkspaceAccessMode) => {
     if (!permissions || !onModeChange || busy) return;
     setPending(true);
@@ -708,17 +717,20 @@ export function WorkspacePermissionV2Control({
   return (
     <div className="flex min-w-0 flex-col items-start">
       <DropdownMenu>
-        <DropdownMenuTrigger asChild disabled={busy || unavailable}>
+        <DropdownMenuTrigger asChild disabled={busy}>
           <Button
             type="button"
             variant="ghost"
             aria-label={`${t("thread.composer.workspace.accessAria", { defaultValue: "Access" })}: ${label}`}
-            title={label}
-            disabled={busy || unavailable}
+            aria-describedby={reasonId}
+            aria-busy={loading || pending}
+            aria-pressed={isFull}
+            title={unavailableCopy ? `${label}. ${unavailableCopy}` : label}
+            disabled={busy}
             className={cn(
               "thread-composer-access touch-target whitespace-nowrap rounded-control border border-transparent font-semibold shadow-none",
               mobile
-                ? "h-9 w-9 justify-center px-0"
+                ? "thread-composer-access-mobile h-9 w-auto max-w-[8.5rem] justify-center gap-1 rounded-full px-2"
                 : "min-w-0 max-w-[min(15rem,45vw)]",
               isHero ? "h-8 px-2.5 text-[12px]" : "h-9 px-3 text-[12.5px]",
               mobile && "px-0",
@@ -736,17 +748,29 @@ export function WorkspacePermissionV2Control({
             ) : (
               <ShieldCheck className={cn("shrink-0", mobile ? "h-4 w-4" : "mr-1.5 h-3.5 w-3.5")} aria-hidden />
             )}
-            {!mobile ? (
+            <span className="sr-only">{label}</span>
+            {mobile ? (
+              <span aria-hidden className="min-w-0 truncate text-[11.5px] font-semibold">
+                {compactLabel}
+              </span>
+            ) : (
               <>
                 <span aria-hidden className="thread-composer-access-label-full min-w-0 truncate">{label}</span>
                 <span aria-hidden className="thread-composer-access-label-short hidden min-w-0 truncate">{compactLabel}</span>
                 {loading ? <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />}
               </>
-            ) : null}
+            )}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[min(22rem,calc(100vw-1rem))]">
-          {isRetiring ? (
+          {unavailable ? (
+            <div role="status" className="space-y-1 px-3 py-2">
+              <p className="text-[13px] font-semibold text-foreground">{label}</p>
+              <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                {unavailableCopy}
+              </p>
+            </div>
+          ) : isRetiring ? (
             <div className="space-y-2 px-3 py-2">
               <p className="text-[13px] font-semibold text-foreground">
                 {t("workspace.permissionV2.fullEnding", { defaultValue: "Full access is ending" })}
@@ -774,6 +798,11 @@ export function WorkspacePermissionV2Control({
               <p className="text-[12px] font-semibold text-foreground">{t("workspace.permissionV2.fullIndicator", { defaultValue: "Full access" })}</p>
               <p className="text-[11.5px] leading-relaxed text-muted-foreground">{t("workspace.permissionV2.fullReach", { defaultValue: "Files and commands across this device under your OS account permissions." })}</p>
               {actionFailed ? <p role="alert" className="text-[11px] text-destructive">{t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}</p> : null}
+              {mobile ? (
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("full")} className="h-9 w-full rounded-control">
+                  {t("workspace.permissionV2.confirmThisDevice", { defaultValue: "Confirm Full on this device" })}
+                </Button>
+              ) : null}
               <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("restricted")} className="h-9 w-full rounded-control">
                 {t("workspace.permissionV2.returnRestricted", { defaultValue: "Return to Sandbox" })}
               </Button>
@@ -810,6 +839,9 @@ export function WorkspacePermissionV2Control({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      <span id={reasonId} className="sr-only">
+        {accessibleDescription}
+      </span>
       {!persistentChat && !draftFullAccess && !mobile ? (
         <span role="status" className="max-w-[min(19rem,65vw)] px-2 text-[10px] leading-tight text-muted-foreground">
           {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}

@@ -13,7 +13,7 @@ import secrets
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 from urllib.parse import urlencode
 
@@ -40,7 +40,8 @@ from nanobot.remote.protocol import (
 from nanobot.remote.store import RemoteAccessStore
 
 _CODE_RE = re.compile(r"^\d{8}$")
-_EXPIRED_RETENTION_SECONDS = 5 * 60
+_RENEWAL_WINDOW_SECONDS = 5 * 60
+_SETUP_LIMIT_SECONDS = 30 * 60
 
 
 class PairingError(RuntimeError):
@@ -133,6 +134,8 @@ class PairingPending:
     pairing_code: str = ""
     nonce: str = ""
     collector_secret: str = ""
+    created_at: int = 0
+    renewable: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,6 +175,7 @@ class _Challenge:
     delivered: bool = False
     result: IssuedPair | None = None
     attempts: list[float] = field(default_factory=list)
+    created_at: int = 0
 
 
 class PairingService:
@@ -275,6 +279,7 @@ class PairingService:
                 offer=offer,
                 scopes=tuple(scopes),
                 owner_only=owner_only,
+                created_at=now,
             )
         return offer
 
@@ -469,6 +474,52 @@ class PairingService:
                 scopes=challenge.result.scopes,
             )
 
+    def renew(self, pairing_id: str) -> PairingPending:
+        """Extend one pending desktop-local offer within the overall setup limit.
+
+        Never renews after deny/cancel/approval/consumption. The collector/device
+        binding, nonce, code and scopes are retained; only the deadline moves.
+        """
+        with self._lock:
+            challenge = self._challenges.get(pairing_id)
+            if challenge is None:
+                raise PairingNotFoundError("pairing challenge is not known")
+            if challenge.denied:
+                raise PairingDeniedError("pairing challenge was denied")
+            if (
+                challenge.state in {"approved", "consumed"}
+                or challenge.approved
+                or challenge.delivered
+                or challenge.result is not None
+            ):
+                raise PairingConsumedError("pairing challenge can no longer be renewed")
+            now = int(self.clock())
+            limit = challenge.created_at + _SETUP_LIMIT_SECONDS
+            if now >= limit:
+                raise PairingExpiredError("pairing setup limit has expired")
+            renewed_until = min(now + _RENEWAL_WINDOW_SECONDS, limit)
+            if renewed_until <= now:
+                raise PairingExpiredError("pairing setup limit has expired")
+            challenge.offer = replace(challenge.offer, expires_at=renewed_until)
+            if challenge.challenge is not None:
+                challenge.challenge = challenge.challenge.model_copy(
+                    update={"expires_at": renewed_until},
+                )
+            if challenge.state == "expired":
+                challenge.state = (
+                    "pending_approval"
+                    if challenge.pending_installation is not None
+                    else "offer_created"
+                )
+            return self._pending_payload(challenge)
+
+    def _renewable(self, challenge: _Challenge) -> bool:
+        if challenge.denied or challenge.approved or challenge.delivered:
+            return False
+        if challenge.state in {"approved", "consumed"} or challenge.result is not None:
+            return False
+        return int(self.clock()) < challenge.created_at + _SETUP_LIMIT_SECONDS
+
     def cancel(self, pairing_id: str) -> bool:
         with self._lock:
             return self._challenges.pop(pairing_id, None) is not None
@@ -531,6 +582,8 @@ class PairingService:
             pairing_code=challenge.offer.pairing_code,
             nonce=challenge.offer.nonce,
             collector_secret=challenge.offer.collector_secret,
+            created_at=challenge.created_at,
+            renewable=self._renewable(challenge),
         )
 
     def _new_code_locked(self) -> str:
@@ -570,7 +623,8 @@ class PairingService:
     def _prune_locked(self) -> None:
         now = self.clock()
         for pairing_id, challenge in list(self._challenges.items()):
-            if now <= challenge.offer.expires_at + _EXPIRED_RETENTION_SECONDS:
+            # Eligible expired offers remain only until the overall setup limit.
+            if now <= challenge.created_at + _SETUP_LIMIT_SECONDS:
                 continue
             self._challenges.pop(pairing_id, None)
         for origin, attempts in list(self._code_attempts.items()):

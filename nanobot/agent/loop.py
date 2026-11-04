@@ -100,6 +100,7 @@ from nanobot.bus.outbound_events import (
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
+    WebUIAdmissionRejectedEvent,
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -194,7 +195,12 @@ from nanobot.utils.progress_events import output_events
 from nanobot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
 )
-from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.metadata import (
+    WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_REQUEST_INTENT_METADATA_KEY,
+    WEBUI_TARGET_TURN_METADATA_KEY,
+    WEBUI_TURN_METADATA_KEY,
+)
 
 if TYPE_CHECKING:
     from nanobot.agent.busy_control import BusyControlRouter
@@ -570,6 +576,9 @@ class AgentLoop:
         idle_compact_check_interval_seconds: int = 0,
         source_compaction_idle_timeout_seconds: float = 300.0,
         source_compaction_overall_timeout_seconds: float = 900.0,
+        source_compaction_pressure_trigger_ratio: float = 0.9,
+        source_compaction_target_ratio: float = 0.6,
+        source_compaction_summary_generation_tokens: int | None = None,
         recovery_admission: RecoveryAdmission | None = None,
         fork_dependencies: ForkToolDependencies | None = None,
         _owns_fork_dependencies: bool = False,
@@ -793,6 +802,11 @@ class AgentLoop:
         self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
         self._source_compaction_idle_timeout_seconds = source_compaction_idle_timeout_seconds
         self._source_compaction_overall_timeout_seconds = source_compaction_overall_timeout_seconds
+        self._source_compaction_pressure_trigger_ratio = source_compaction_pressure_trigger_ratio
+        self._source_compaction_target_ratio = source_compaction_target_ratio
+        self._source_compaction_summary_generation_tokens = (
+            source_compaction_summary_generation_tokens
+        )
         self._next_idle_compact_check_at = time.monotonic()
         if model_preset:
             self.set_model_preset(model_preset, publish_update=False)
@@ -948,6 +962,13 @@ class AgentLoop:
             ),
             source_compaction_overall_timeout_seconds=(
                 defaults.source_compaction.overall_timeout_seconds
+            ),
+            source_compaction_pressure_trigger_ratio=(
+                defaults.source_compaction.pressure_trigger_ratio
+            ),
+            source_compaction_target_ratio=defaults.source_compaction.target_ratio,
+            source_compaction_summary_generation_tokens=(
+                defaults.source_compaction.summary_generation_tokens
             ),
             tools_config=config.tools,
             model_presets=preset_helpers.configured_model_presets(config),
@@ -2347,7 +2368,16 @@ class AgentLoop:
                     return binding
                 return row
 
-            async def convert(pending_msg: InboundMessage) -> SourceInjectionBinding | dict[str, object]:
+            async def convert(
+                pending_msg: InboundMessage,
+            ) -> SourceInjectionBinding | dict[str, object] | None:
+                steering_rejection = self._webui_steering_rejection(pending_msg)
+                if steering_rejection is not None:
+                    await self._reject_webui_steering(
+                        pending_msg,
+                        *steering_rejection,
+                    )
+                    return None
                 try:
                     return await _to_user_message(pending_msg)
                 except BaseException:
@@ -2357,12 +2387,16 @@ class AgentLoop:
 
             items: list[SourceInjectionBinding | dict[str, object]] = []
             if first_msg is not None:
-                items.append(await convert(first_msg))
+                first = await convert(first_msg)
+                if first is not None:
+                    items.append(first)
             while len(items) < limit:
                 try:
-                    items.append(await convert(pending_queue.get_nowait()))
+                    converted = await convert(pending_queue.get_nowait())
                 except asyncio.QueueEmpty:
                     break
+                if converted is not None:
+                    items.append(converted)
 
             return items
 
@@ -2552,6 +2586,15 @@ class AgentLoop:
                 source_compaction_overall_timeout_seconds=(
                     getattr(self, "_source_compaction_overall_timeout_seconds", 900.0)
                 ),
+                source_compaction_pressure_trigger_ratio=(
+                    getattr(self, "_source_compaction_pressure_trigger_ratio", 0.9)
+                ),
+                source_compaction_target_ratio=(
+                    getattr(self, "_source_compaction_target_ratio", 0.6)
+                ),
+                source_compaction_summary_generation_tokens=(
+                    getattr(self, "_source_compaction_summary_generation_tokens", None)
+                ),
                 consolidate_history=(
                     partial(
                         self.consolidator.summarize_transcript,
@@ -2682,6 +2725,10 @@ class AgentLoop:
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
+                steering_rejection = self._webui_steering_rejection(msg)
+                if steering_rejection is not None:
+                    await self._reject_webui_steering(msg, *steering_rejection)
+                    continue
                 continuation = workspace_access_continuation(msg, session_key=effective_key)
                 if effective_key in self._busy_consumers:
                     # No wire field is authentication or durable admission proof.
@@ -3053,6 +3100,43 @@ class AgentLoop:
             if cancelled:
                 raise asyncio.CancelledError()
 
+    @staticmethod
+    def _webui_steering_rejection(msg: InboundMessage) -> tuple[str, str] | None:
+        """Reject guidance whose original turn is no longer the active target."""
+        if msg.channel != "websocket":
+            return None
+        metadata = msg.metadata
+        if metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY) != "steer":
+            return None
+        target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+        if not isinstance(target_turn_id, str) or not target_turn_id:
+            return ("not_admitted", "steering_target_changed")
+        from nanobot.session.webui_turns import websocket_turn_id
+
+        if websocket_turn_id(msg.chat_id) != target_turn_id:
+            return ("not_admitted", "steering_target_changed")
+        return None
+
+    async def _reject_webui_steering(
+        self,
+        msg: InboundMessage,
+        detail: str,
+        reason: str,
+    ) -> None:
+        metadata = msg.metadata
+        turn_id = metadata.get(WEBUI_TURN_METADATA_KEY)
+        await self.bus.publish_outbound(OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content="",
+            metadata=dict(metadata),
+            event=WebUIAdmissionRejectedEvent(
+                detail=detail,
+                reason=reason,
+                turn_id=turn_id if isinstance(turn_id, str) and turn_id else None,
+            ),
+        ))
+
     async def _dispatch(
         self, msg: InboundMessage, *,
         _compact_settlement: _CompactDispatchSettlement | None = None,
@@ -3423,12 +3507,41 @@ class AgentLoop:
             not persistent or workspace_access_continuation.session_key != key
         ):
             raise RuntimeError("workspace continuation requires its existing persistent source")
+        temporary_full = bool(
+            workspace_full_reference is not None
+            and self.sessions.desktop_permissions.is_temporary_full_reference(
+                workspace_full_reference
+            )
+        )
         if workspace_full_reference is not None and (
-            not persistent
+            (not persistent and not temporary_full)
             or workspace_full_reference.session_key != key
             or workspace_access_continuation is not None
         ):
-            raise RuntimeError("workspace Full permission requires its existing persistent source")
+            raise RuntimeError("workspace Full permission requires its existing source")
+        current_turn_id: str | None = None
+        if workspace_full_reference is not None and context.request is not None:
+            from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
+
+            raw_turn_id = context.request.metadata.get(WEBUI_TURN_METADATA_KEY)
+            current_turn_id = raw_turn_id if isinstance(raw_turn_id, str) else None
+            if (
+                workspace_full_reference.request_turn_id is not None
+                and workspace_full_reference.request_turn_id != current_turn_id
+            ):
+                raise WorkspaceScopeError("full_access_unavailable", status=409)
+        if temporary_full and workspace_full_reference is not None:
+            owner = self.sessions.desktop_permissions
+            if not owner.authorizes_full(
+                workspace_full_reference,
+                session_key=key,
+                source_binding=workspace_full_reference.source_binding,
+                request_turn_id=current_turn_id,
+            ):
+                raise WorkspaceScopeError("full_access_unavailable", status=409)
+            context.workspace_full_reference = workspace_full_reference
+            yield
+            return
         if not persistent:
             if self.sessions.has_managed_authority:
                 resolved = self.sessions.resolve_session_mode(key)
@@ -3489,6 +3602,22 @@ class AgentLoop:
                      and context.request.content.strip().lower() == "/new")
             if owner.recovery_required and not reset:
                 raise RuntimeError("Source session requires recovery before execution")
+            if context.request is not None:
+                from nanobot.security.desktop_permissions import permission_source_token
+                from nanobot.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
+
+                expected_source_token = context.request.metadata.get(
+                    WEBUI_SOURCE_TOKEN_METADATA_KEY,
+                )
+                if isinstance(expected_source_token, str) and expected_source_token:
+                    state = owner.read_snapshot().state
+                    current_source_token = permission_source_token({
+                        "store_identity": state.store_identity,
+                        "incarnation": state.incarnation,
+                        "generation": state.generation,
+                    })
+                    if current_source_token != expected_source_token:
+                        raise WorkspaceScopeError("source_changed", status=409)
             if workspace_full_reference is not None:
                 state = owner.read_snapshot().state
                 source_binding: PermissionSourceBinding = {
@@ -3496,10 +3625,29 @@ class AgentLoop:
                     "incarnation": state.incarnation,
                     "generation": state.generation,
                 }
-                if not self.sessions.desktop_permissions.authorizes_full(
-                    workspace_full_reference,
-                    session_key=key,
-                    source_binding=source_binding,
+                from nanobot.webui.metadata import WEBUI_INSTALLATION_METADATA_KEY
+
+                installation_id = (
+                    context.request.metadata.get(WEBUI_INSTALLATION_METADATA_KEY)
+                    if context.request is not None
+                    else None
+                )
+                if (
+                    not self.sessions.desktop_permissions.authorizes_full(
+                        workspace_full_reference,
+                        session_key=key,
+                        source_binding=source_binding,
+                        request_turn_id=current_turn_id,
+                    )
+                    or (
+                        isinstance(installation_id, str)
+                        and installation_id
+                        and not self.sessions.desktop_permissions.authorizes_remote_full(
+                            installation_id=installation_id,
+                            session_key=key,
+                            source_binding=source_binding,
+                        )
+                    )
                 ):
                     raise WorkspaceScopeError("full_access_unavailable", status=409)
                 context.workspace_full_reference = workspace_full_reference
@@ -4216,6 +4364,19 @@ class AgentLoop:
                 local_private_workspace_authority = task_is_current or full_is_current
             except Exception:
                 local_private_workspace_authority = False
+        if (
+            not local_private_workspace_authority
+            and ctx.msg.channel == "websocket"
+            and run_context is not None
+            and run_context.request is not None
+            and run_context.request.source is TurnSource.GATEWAY
+        ):
+            full_reference = run_context.workspace_full_reference
+            owner = self.sessions.desktop_permissions
+            local_private_workspace_authority = bool(
+                owner.is_temporary_full_reference(full_reference)
+                and owner.is_current_full_reference(full_reference)
+            )
         if (
             ctx.msg.channel == "websocket"
             and grants is not None

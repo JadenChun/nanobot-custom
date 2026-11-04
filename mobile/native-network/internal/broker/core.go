@@ -35,6 +35,7 @@ type Core struct {
 
 	requests    map[uint64]context.CancelFunc
 	nextRequest uint64
+	nextWSID    uint64
 	ws          *wsSession
 
 	events  chan []byte

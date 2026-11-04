@@ -43,6 +43,7 @@ from nanobot.providers.base import (
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    ProviderCallContext,
     ProviderConversationState,
     ToolCallRequest,
 )
@@ -57,6 +58,7 @@ from nanobot.providers.request_budget import (
     LocalRequestUsageReceipt,
     LocalUsageAnchor,
     ProviderRequestRejected,
+    ProviderRouteChanged,
     RequestPayloadBytesExceeded,
 )
 from nanobot.session.source import SourceValidationError
@@ -212,6 +214,9 @@ class AgentRunSpec:
     source_isolated: bool = False
     source_compaction_idle_timeout_seconds: float = 300.0
     source_compaction_overall_timeout_seconds: float = 900.0
+    source_compaction_pressure_trigger_ratio: float = 0.9
+    source_compaction_target_ratio: float = 0.6
+    source_compaction_summary_generation_tokens: int | None = None
     artifact_read_allowed: bool = False
     conversation_binding: ConversationRequestBinding | None = field(default=None, repr=False)
     artifact_grants: ArtifactGrantSet | None = field(default=None, repr=False)
@@ -712,7 +717,10 @@ class AgentRunner:
             source_compaction=SourceCompactionState(spec.source_writer, spec.runtime, messages,
                 spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None,
                 idle_timeout_seconds=spec.source_compaction_idle_timeout_seconds,
-                overall_timeout_seconds=spec.source_compaction_overall_timeout_seconds)
+                overall_timeout_seconds=spec.source_compaction_overall_timeout_seconds,
+                pressure_trigger_ratio=spec.source_compaction_pressure_trigger_ratio,
+                target_ratio=spec.source_compaction_target_ratio,
+                summary_generation_tokens=spec.source_compaction_summary_generation_tokens)
                 if spec.source_writer is not None else None,
             source=SourceRequestLedger(spec.source_transcript,
                 initial_eligible_ids=spec.source_initial_eligible_ids)
@@ -1712,6 +1720,7 @@ class AgentRunner:
             else timeout_s
         )
         recovery_used = False
+        route_reprepared = False
         original_budget_error: FinalizedRequestBudgetExceeded | BackendContextOverflow | None = None
         recovery_failure_reason: str | None = None
         ticket: SourceRequestTicket | None = None
@@ -1817,6 +1826,29 @@ class AgentRunner:
                     recovery_failure_reason,
                 )
                 break
+            except ProviderRouteChanged:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                if route_reprepared:
+                    response = LLMResponse(
+                        content="Error: provider route changed during dispatch.",
+                        finish_reason="error",
+                        error_kind="invalid_request",
+                        error_should_retry=False,
+                    )
+                    break
+                if not isinstance(provider_context, ProviderCallContext):
+                    response = LLMResponse(
+                        content="Error: provider route changed during dispatch.",
+                        finish_reason="error",
+                        error_kind="invalid_request",
+                        error_should_retry=False,
+                    )
+                    break
+                route_reprepared = True
+                provider_context = replace(provider_context, selected_route=None)
+                continue
             except ProviderRequestRejected as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
@@ -2185,6 +2217,7 @@ class AgentRunner:
         source_view = self._source_view(request_state, messages, request_state.source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
         recovery_used = False
+        route_reprepared = False
         original_budget_error: FinalizedRequestBudgetExceeded | BackendContextOverflow | None = None
         recovery_failure_reason: str | None = None
         ticket: SourceRequestTicket | None = None
@@ -2258,6 +2291,29 @@ class AgentRunner:
                     recovery_failure_reason,
                 )
                 break
+            except ProviderRouteChanged:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                if route_reprepared:
+                    response = LLMResponse(
+                        content="Error: provider route changed during dispatch.",
+                        finish_reason="error",
+                        error_kind="invalid_request",
+                        error_should_retry=False,
+                    )
+                    break
+                if not isinstance(provider_context, ProviderCallContext):
+                    response = LLMResponse(
+                        content="Error: provider route changed during dispatch.",
+                        finish_reason="error",
+                        error_kind="invalid_request",
+                        error_should_retry=False,
+                    )
+                    break
+                route_reprepared = True
+                provider_context = replace(provider_context, selected_route=None)
+                continue
             except ProviderRequestRejected as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)

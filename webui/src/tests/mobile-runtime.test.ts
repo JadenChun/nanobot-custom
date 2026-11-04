@@ -142,3 +142,182 @@ describe("mobile owner capability", () => {
     expect(mobileOwnerCapability()).toBe(false);
   });
 });
+
+function socketTransportFixture() {
+  let listener: ((event: MobileEvent) => void) | null = null;
+  let nextId = 0;
+  const wsOpen = vi.fn(async () => {
+    nextId += 1;
+    return nextId;
+  });
+  const wsSend = vi.fn(async () => undefined);
+  const wsClose = vi.fn(async () => undefined);
+  const wsPing = vi.fn(async () => true);
+  const transport: MobileTransport = {
+    start: vi.fn(async () => undefined),
+    status: vi.fn(async () => ({})),
+    http: vi.fn(async () => 1),
+    cancel: vi.fn(async () => undefined),
+    onEvent: vi.fn(async (callback) => {
+      listener = callback;
+      return () => {
+        if (listener === callback) listener = null;
+      };
+    }),
+    openLogin: vi.fn(async () => undefined),
+    refresh: vi.fn(async () => true),
+    wsOpen,
+    wsSend,
+    wsClose,
+    wsPing,
+    stop: vi.fn(async () => undefined),
+  };
+  return {
+    transport,
+    wsOpen,
+    wsSend,
+    wsClose,
+    wsPing,
+    emit: (event: MobileEvent) => listener?.(event),
+    subscribed: () => listener !== null,
+  };
+}
+
+function base64Of(text: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+}
+
+describe("mobile socket lifecycle", () => {
+  it("emits one close and no open when the native open fails", async () => {
+    const fixture = socketTransportFixture();
+    fixture.wsOpen.mockRejectedValueOnce(new Error("open failed"));
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const opened = vi.fn();
+    const closed = vi.fn();
+    socket.onopen = opened;
+    socket.onclose = closed;
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1));
+    expect(opened).not.toHaveBeenCalled();
+    const messages = vi.fn();
+    socket.onmessage = messages;
+    fixture.emit({ type: "ws_frame", ws_id: 1, data_base64: base64Of("late") });
+    fixture.emit({ type: "ws_closed", ws_id: 1, code: 1000 });
+    expect(messages).not.toHaveBeenCalled();
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores late frames and closes after a remote close", async () => {
+    const fixture = socketTransportFixture();
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const messages: string[] = [];
+    const closed = vi.fn();
+    socket.onmessage = (event) => messages.push(String(event.data));
+    socket.onclose = closed;
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalled());
+    await vi.waitFor(() => expect(messages).toEqual([]));
+    fixture.emit({ type: "ws_frame", ws_id: 1, data_base64: base64Of("first") });
+    fixture.emit({ type: "ws_closed", ws_id: 1, code: 1000 });
+    expect(messages).toEqual(["first"]);
+    expect(closed).toHaveBeenCalledTimes(1);
+    fixture.emit({ type: "ws_frame", ws_id: 1, data_base64: base64Of("late") });
+    fixture.emit({ type: "ws_closed", ws_id: 1, code: 1000 });
+    expect(messages).toEqual(["first"]);
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes a late native open once after close during opening", async () => {
+    const fixture = socketTransportFixture();
+    let resolveOpen: ((id: number) => void) | null = null;
+    fixture.wsOpen.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveOpen = resolve;
+    }));
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const opened = vi.fn();
+    const closed = vi.fn();
+    socket.onopen = opened;
+    socket.onclose = closed;
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalled());
+    socket.close();
+    expect(closed).toHaveBeenCalledTimes(1);
+    resolveOpen?.(9);
+    await vi.waitFor(() => expect(fixture.wsClose).toHaveBeenCalledWith(9));
+    expect(fixture.wsClose).toHaveBeenCalledTimes(1);
+    expect(opened).not.toHaveBeenCalled();
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
+  it("decodes UTF-8 text frames without losing characters", async () => {
+    const fixture = socketTransportFixture();
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const messages: string[] = [];
+    socket.onmessage = (event) => messages.push(String(event.data));
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalled());
+    fixture.emit({ type: "ws_frame", ws_id: 1, data_base64: base64Of("你好 👋") });
+    expect(messages).toEqual(["你好 👋"]);
+  });
+
+  it("routes events only to the owning socket identity", async () => {
+    const fixture = socketTransportFixture();
+    const runtime = createMobileRuntime(fixture.transport);
+    const first = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const second = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const firstMessages: string[] = [];
+    const secondMessages: string[] = [];
+    first.onmessage = (event) => firstMessages.push(String(event.data));
+    second.onmessage = (event) => secondMessages.push(String(event.data));
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalledTimes(2));
+    fixture.emit({ type: "ws_frame", ws_id: 1, data_base64: base64Of("old") });
+    fixture.emit({ type: "ws_frame", ws_id: 2, data_base64: base64Of("new") });
+    expect(firstMessages).toEqual(["old"]);
+    expect(secondMessages).toEqual(["new"]);
+  });
+
+  it("keeps a healthy open socket during foreground recovery", async () => {
+    const fixture = socketTransportFixture();
+    fixture.wsPing.mockResolvedValue(true);
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const opened = vi.fn();
+    socket.onopen = opened;
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalledTimes(1));
+    await runtime.recover();
+    expect(fixture.wsPing).toHaveBeenCalledWith(1);
+    expect(fixture.wsClose).not.toHaveBeenCalled();
+    expect(fixture.wsOpen).toHaveBeenCalledTimes(1);
+    expect(opened).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews credentials and replaces a stale socket once", async () => {
+    const fixture = socketTransportFixture();
+    fixture.wsPing.mockResolvedValue(false);
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const opened = vi.fn();
+    socket.onopen = opened;
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalledTimes(1));
+    await Promise.all([runtime.recover(), runtime.recover()]);
+    expect(fixture.wsPing).toHaveBeenCalledTimes(1);
+    expect(fixture.transport.refresh).toHaveBeenCalledTimes(1);
+    expect(fixture.wsClose).toHaveBeenCalledWith(1);
+    expect(fixture.wsOpen).toHaveBeenCalledTimes(2);
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects sends before open and forwards text bytes after open", async () => {
+    const fixture = socketTransportFixture();
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    expect(() => socket.send("early")).toThrow("text frames only");
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalled());
+    socket.send("你好");
+    expect(fixture.wsSend).toHaveBeenCalledWith(
+      1,
+      new TextEncoder().encode("你好"),
+      "text",
+    );
+  });
+});

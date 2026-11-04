@@ -349,7 +349,10 @@ async def test_prune_old_images_keeps_only_most_recent() -> None:
     assert image_blocks[0]["_meta"]["path"] == "/c.png"
     assert len(placeholders) == 2
     assert all("/a.png" not in p and "/b.png" not in p for p in placeholders)
-    assert all("do not describe or reference" in p for p in placeholders)
+    assert all(
+        "no image bytes are present" in p and "read_file" in p
+        for p in placeholders
+    )
 
 
 @pytest.mark.asyncio

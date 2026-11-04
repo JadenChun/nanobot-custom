@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MobileConnectionNotice } from "@/components/MobileConnectionNotice";
 import {
@@ -35,6 +35,14 @@ describe("mobile shell", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
     rerender(<MobileConnectionNotice status="error" />);
     expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("offers an actionable retry after a failed mobile connection", () => {
+    installMobileRuntime(runtime());
+    const retry = vi.fn();
+    render(<MobileConnectionNotice status="error" onRetry={retry} />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 
   it("hides the notice when the socket is open", () => {

@@ -19,7 +19,6 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlencode, urlsplit, urlunsplit
 
@@ -221,6 +220,7 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.remote_access.pairing.approve": "/api/settings/remote-access/pairing/approve",
     "settings.remote_access.pairing.deny": "/api/settings/remote-access/pairing/deny",
     "settings.remote_access.pairing.cancel": "/api/settings/remote-access/pairing/cancel",
+    "settings.remote_access.pairing.renew": "/api/settings/remote-access/pairing/renew",
     "settings.mcp.enable": "/api/settings/mcp-presets/enable",
     "settings.mcp.disable": "/api/settings/mcp-presets/disable",
     "settings.mcp.remove": "/api/settings/mcp-presets/remove",
@@ -256,6 +256,7 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/settings/remote-access/pairing/approve",
     "/api/settings/remote-access/pairing/deny",
     "/api/settings/remote-access/pairing/cancel",
+    "/api/settings/remote-access/pairing/renew",
 })
 
 
@@ -498,6 +499,12 @@ class GatewayHTTPHandler:
                 bus,
             )
         self.settings = settings
+        if session_manager is not None:
+            settings.config.on_remote_device_revoked = (
+                lambda installation_id: session_manager.desktop_permissions.clear_remote_full_consents(
+                    installation_id=installation_id,
+                )
+            )
         from nanobot.webui.workspace_directories import WorkspaceDirectoryBrowser
 
         self.directory_browser = WorkspaceDirectoryBrowser(
@@ -662,47 +669,53 @@ class GatewayHTTPHandler:
             return 502, {"error": "invalid_response"}
         return response.status_code, cast(dict[str, Any], body)
 
-    async def mobile_mutation_payload(
+    async def mobile_standard_payload(
         self,
         identity: Any,
-        action: str,
-        payload: dict[str, Any],
-        *,
-        access_token: str | None = None,
+        method: str,
+        raw_path: str,
     ) -> tuple[int, dict[str, Any]]:
-        """Test helper: run an allowlisted mutation with an explicit owner token."""
-        from nanobot.remote.operations import OperationRegistryError, load_registry
-
-        try:
-            spec = load_registry().mutations.get(action)
-        except OperationRegistryError:
-            spec = None
-        if spec is None or not spec.enabled:
-            return 403, {"error": "operation_not_allowed"}
+        """Dispatch one authenticated standard read through the desktop handlers."""
+        if method != "GET":
+            return 405, {"error": "method_not_allowed"}
         if not getattr(identity, "is_owner", False):
             return 403, {"error": "owner_required"}
-        if spec.max_request_bytes is not None:
-            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            if len(encoded) > spec.max_request_bytes:
-                return 413, {"error": "request_too_large"}
-        connection = SimpleNamespace(
-            mobile_identity=identity,
-            mobile_access_token=access_token,
-        )
-        response = await self.dispatch_webui_mutation(connection, action, payload)
-        body: Any
+        from nanobot.remote.operations import load_registry
+
         try:
-            body = json.loads(response.body) if response.body else {}
+            spec = load_registry().match_read(raw_path)
+        except Exception:
+            spec = None
+        if spec is None or not spec.enabled:
+            return 400, {"error": "path_not_allowed"}
+        request = WsRequest(raw_path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        installation = getattr(identity, "installation_id", None)
+        if isinstance(installation, str) and installation:
+            setattr(request, "_nanobot_owner_installation", installation)
+        response = await self.dispatch(None, request, internal=True)
+        if response is None:
+            return 404, {"error": "not_found"}
+        try:
+            body: Any = json.loads(response.body) if response.body else {}
         except (UnicodeDecodeError, json.JSONDecodeError):
             return 502, {"error": "invalid_response"}
         if not isinstance(body, dict):
             return 502, {"error": "invalid_response"}
+        if (
+            spec.max_response_bytes is not None
+            and len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+            > spec.max_response_bytes
+        ):
+            return 413, {"error": "response_too_large"}
         return response.status_code, cast(dict[str, Any], body)
 
     def mobile_thread_payload(
         self,
         key: str,
         query: dict[str, list[str]],
+        *,
+        owner: bool = False,
     ) -> tuple[int, dict[str, Any]]:
         """Return one persisted thread, including restricted permission state.
 
@@ -718,6 +731,7 @@ class GatewayHTTPHandler:
             request,
             key,
             allow_remote_permissions=True,
+            remote_owner=owner,
         )
         try:
             body = json.loads(response.body)
@@ -1164,6 +1178,7 @@ class GatewayHTTPHandler:
                 ),
                 "runtime_surface": self._runtime_surface,
                 "runtime_capabilities": self._capabilities,
+                "request_settings_version": 1,
             }
             return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
 
@@ -1199,6 +1214,7 @@ class GatewayHTTPHandler:
             ),
             "runtime_surface": self._runtime_surface,
             "runtime_capabilities": self._capabilities,
+            "request_settings_version": 1,
         }
         if api_token is not None:
             payload["api_token"] = api_token
@@ -1353,6 +1369,7 @@ class GatewayHTTPHandler:
         *,
         connection: Any | None = None,
         allow_remote_permissions: bool = False,
+        remote_owner: bool = False,
     ) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -1487,7 +1504,7 @@ class GatewayHTTPHandler:
                             controls_available=(
                                 self.workspace_controls_available(connection)
                                 if local_permission_projection
-                                else False
+                                else allow_remote_permissions and remote_owner
                             ),
                         )
                     )
@@ -2181,9 +2198,15 @@ class GatewayHTTPHandler:
             connection,
             request.headers,
         )
-        owner_authorized = _typed_owner_identity(connection) is not None
+        owner_identity = _typed_owner_identity(connection)
+        owner_authorized = owner_identity is not None
+        owner_installation_id = (
+            owner_identity.installation_id if owner_identity is not None else None
+        )
         if not local_ui and not owner_authorized:
             return _http_error(403, "local_ui_required")
+        if owner_authorized and payload.get("request_settings_version") != 1:
+            return _http_error(409, "update_required")
         if owner_authorized:
             action_name = (
                 "workspace.access.prepare_full"
@@ -2203,12 +2226,14 @@ class GatewayHTTPHandler:
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
+                    owner_installation_id=owner_installation_id,
                 )
             else:
                 result = self.workspaces.set_permission_mode(
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
+                    owner_installation_id=owner_installation_id,
                 )
         except WorkspacePermissionActionError as exc:
             return _http_error(exc.status, exc.message)

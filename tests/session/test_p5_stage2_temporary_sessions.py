@@ -10,6 +10,7 @@ from nanobot.channels.websocket.tests.test_websocket_channel import (
     _basic_handler,
     _new_temporary_chat,
 )
+from nanobot.session import webui_turns as wth
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.runtime_authority import OfflineSessionOperator
 from nanobot.webui.temporary_chats import TemporaryChatError
@@ -218,7 +219,7 @@ async def test_real_channel_temporary_lifecycle_and_late_events(tmp_path, manage
         await channel._dispatch_envelope(owner, "webui", {"type": "message", "chat_id": chat_id,
             "content": "private", "webui": True, "turn_id": "turn-1",
             "media": [{"data_url": "data:text/plain;base64,cHJpdmF0ZQ=="}],
-            "workspace_scope": {"project_path": str(tmp_path), "access_mode": "full"}})
+            "workspace_scope": {"project_path": str(tmp_path), "access_mode": "restricted"}})
         assert manager.get_cached(key) is session
         assert state(manager) == before
         assert manager.read_session_metadata(key) is None
@@ -307,3 +308,82 @@ def test_unmanaged_activation_rejects_durable_collision_even_with_live_transient
     with pytest.raises(RuntimeError, match="^temporary session activation conflicts with session policy$"):
         manager.get_or_create_transient(key, retain=True)
     assert manager.get_cached(key) is retained and state(manager) == before
+
+
+@pytest.mark.asyncio
+async def test_temporary_submitted_sandbox_wins_when_full_is_enabled(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manager = SessionManager(workspace, sessions_root=tmp_path / "sessions")
+    bus = MagicMock()
+    bus.publish_inbound = AsyncMock()
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"]},
+        bus,
+        gateway=_basic_handler(bus, session_manager=manager, workspace_path=workspace),
+    )
+    owner = AsyncMock()
+    try:
+        chat_id = await _new_temporary_chat(channel, owner)
+        workspaces = channel.gateway.workspaces
+        prepared = workspaces.prepare_full({"chat_id": chat_id}, local_ui=True)
+        enabled = workspaces.set_permission_mode(
+            {
+                "chat_id": chat_id,
+                "mode": "full",
+                "expected_runtime_id": prepared["workspace_permissions"]["runtime_id"],
+                "expected_permission_revision": prepared[
+                    "workspace_permissions"
+                ]["revision"],
+            },
+            local_ui=True,
+        )
+        assert enabled["workspace_scope"]["access_mode"] == "full"
+        policy = channel._temporary_chats.message_policy(owner, chat_id, "hello")
+        assert policy is not None
+        assert policy.workspace_scope.access_mode == "full"
+
+        await channel._dispatch_envelope(
+            owner,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": chat_id,
+                "content": "sandbox",
+                "webui": True,
+                "turn_id": "turn-sandbox",
+                "request_settings_version": 1,
+                "request_intent": "new",
+                "workspace_scope": {
+                    "project_path": str(policy.workspace_scope.project_path),
+                    "access_mode": "restricted",
+                    "restrict_to_workspace": True,
+                },
+            },
+        )
+        sandbox_message = bus.publish_inbound.await_args.args[0]
+        assert sandbox_message.workspace_scope.access_mode == "restricted"
+        wth.clear_websocket_turns(chat_id)
+
+        await channel._dispatch_envelope(
+            owner,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": chat_id,
+                "content": "full",
+                "webui": True,
+                "turn_id": "turn-full",
+                "request_settings_version": 1,
+                "request_intent": "new",
+                "workspace_scope": {
+                    "project_path": str(policy.workspace_scope.project_path),
+                    "access_mode": "full",
+                    "restrict_to_workspace": False,
+                },
+            },
+        )
+        full_message = bus.publish_inbound.await_args.args[0]
+        assert full_message.workspace_scope.access_mode == "full"
+    finally:
+        channel._temporary_chats.close()

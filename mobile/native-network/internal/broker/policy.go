@@ -25,6 +25,22 @@ var routes = map[string]route{
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/remote/v1/health$`),
 	},
+	"remote_status": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/remote/v1/status$`),
+	},
+	"remote_refresh": {
+		method:  http.MethodPost,
+		pattern: regexp.MustCompile(`^/remote/v1/refresh$`),
+	},
+	"remote_devices": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/remote/v1/devices$`),
+	},
+	"remote_device_revoke": {
+		method:  http.MethodPost,
+		pattern: regexp.MustCompile(`^/remote/v1/devices/[A-Za-z0-9._-]{1,128}/revoke$`),
+	},
 	"remote_pair_collect": {
 		method:  http.MethodPost,
 		pattern: regexp.MustCompile(`^/remote/v1/pair/collect$`),
@@ -52,6 +68,11 @@ var routes = map[string]route{
 	"mobile_api": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/api$`),
+		queries: map[string]bool{"path": true},
+	},
+	"mobile_dispatch": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/dispatch$`),
 		queries: map[string]bool{"path": true},
 	},
 	"mobile_feature": {

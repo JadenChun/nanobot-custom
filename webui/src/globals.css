@@ -964,9 +964,28 @@
 
 @container thread-composer (max-width: 16rem) {
   .thread-composer-access {
-    width: 2rem;
     flex: none;
     justify-content: center;
+    padding-inline: 0.5rem;
+  }
+
+  .thread-composer-access-icon {
+    margin-right: 0.25rem;
+  }
+
+  .thread-composer-access-label-short,
+  .thread-composer-access-chevron {
+    display: inline;
+  }
+
+  .thread-composer-mobile-project-picker .thread-composer-project-label {
+    display: none;
+  }
+}
+
+@container thread-composer (max-width: 14rem) {
+  .thread-composer-access {
+    width: 2.75rem;
     padding-inline: 0;
   }
 
@@ -974,19 +993,8 @@
     margin-right: 0;
   }
 
-  .thread-composer-access-label-short,
-  .thread-composer-access-chevron {
+  .thread-composer-access-label-short {
     display: none;
-  }
-}
-
-@container thread-composer (max-width: 15rem) {
-  .thread-composer-action.touch-target,
-  .thread-composer-access.touch-target {
-    width: 2rem;
-    min-width: 2rem;
-    height: 2rem;
-    min-height: 2rem;
   }
 }
 @media (forced-colors: active) {

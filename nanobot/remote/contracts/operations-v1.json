@@ -12,6 +12,11 @@
     "devices.scope.upgrade",
     "devices.owner.devices_list",
     "devices.entry.mapping",
+    "devices.remote.pairing_deny",
+    "devices.remote.pairing_cancel",
+    "devices.remote.pairing_renew",
+    "devices.remote.pairing_pending",
+    "devices.remote.tailscale_status",
     "lifecycle.server_start",
     "lifecycle.service_install",
     "lifecycle.diagnostics"

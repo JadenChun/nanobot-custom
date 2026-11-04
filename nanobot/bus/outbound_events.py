@@ -103,6 +103,15 @@ class UserInputEvent(AgentEvent):
 
 
 @dataclass(frozen=True)
+class WebUIAdmissionRejectedEvent(AgentEvent):
+    """A previously acknowledged WebUI request lost its turn before injection."""
+
+    detail: str
+    reason: str
+    turn_id: str | None = None
+
+
+@dataclass(frozen=True)
 class RuntimeModelUpdatedEvent(AgentEvent):
     model: str | None
     model_preset: str | None = None

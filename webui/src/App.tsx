@@ -1512,8 +1512,13 @@ function Shell({
               [activeKey]: { ...current[activeKey], workspaceScope: next },
             };
           });
-        } else if (!activeChatRunning) {
-          client.setWorkspaceScope(activeChatId, next);
+        } else {
+          // Reflect an unsubmitted selection immediately, even while a turn is
+          // running; the next message carries this exact snapshot.
+          setWorkspaceOverrides((current) => ({ ...current, [activeChatId]: next }));
+          if (!activeChatRunning) {
+            client.setWorkspaceScope(activeChatId, next);
+          }
         }
         return;
       }
@@ -1554,6 +1559,8 @@ function Shell({
           mode: "full",
           expected_runtime_id: prepared.workspace_permissions.runtime_id,
           expected_permission_revision: prepared.workspace_permissions.revision,
+          source_token: prepared.workspace_permissions.source_token,
+          full_confirmation_id: prepared.full_confirmation_id,
         });
         acknowledgeWorkspaceScope(chatId, activated.workspace_scope);
       }
@@ -2592,7 +2599,10 @@ function Shell({
           showHostChrome && "host-window-shell",
         )}
       >
-        <MobileConnectionNotice status={client.status} />
+        <MobileConnectionNotice
+          status={client.status}
+          onRetry={() => void client.retry()}
+        />
         {showHostChrome ? (
           <HostChrome
             rightAction={
@@ -2759,7 +2769,6 @@ function Shell({
                         workspaceControls={workspaces?.controls ?? null}
                       workspaces={workspaces}
                       onRefreshWorkspaces={refreshWorkspaces}
-                        workspaceScopeDisabled={activeChatRunning}
                         workspaceError={workspaceError}
                         onWorkspaceScopeChange={applyWorkspaceScope}
                         onWorkspaceScopeAcknowledged={(scope) => {
@@ -2812,7 +2821,6 @@ function Shell({
                       workspaceControls={workspaces?.controls ?? null}
                       workspaces={workspaces}
                       onRefreshWorkspaces={refreshWorkspaces}
-                      workspaceScopeDisabled={paneRunning}
                       workspaceError={context.active ? workspaceError : null}
                       onWorkspaceScopeChange={(scope) => {
                         if (paneRunning) return;

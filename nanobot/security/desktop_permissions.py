@@ -7,12 +7,14 @@ bound to their Python object identity and cannot be serialized.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import threading
+import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, NoReturn, TypedDict, cast
+from typing import TYPE_CHECKING, Callable, Literal, NoReturn, NotRequired, TypedDict, cast
 
 from nanobot.security.folder_grants import FolderFileAccess
 
@@ -32,6 +34,7 @@ PermissionFullUnavailableReason = Literal[
 ]
 
 _TOKEN = object()
+_DERIVED_FULL_REQUEST = object()
 _RUNTIME_ID = re.compile(r"^[0-9a-f]{32}$")
 _MAX_ID_LENGTH = 128
 _MAX_SESSION_KEY_LENGTH = 256
@@ -41,6 +44,11 @@ class PermissionSourceBinding(TypedDict):
     store_identity: str
     incarnation: str
     generation: int
+
+
+def is_temporary_source_binding(binding: PermissionSourceBinding) -> bool:
+    """Return whether this binding belongs to an in-memory Temporary Chat."""
+    return binding.get("store_identity", "").startswith("temporary:")
 
 
 class TaskAccessFolder(TypedDict):
@@ -72,6 +80,7 @@ class WorkspacePermissionProjection(TypedDict):
     full_access_unavailable_reason: PermissionFullUnavailableReason | None
     task_access: TaskAccessProjection | None
     retirement: PermissionRetirementProjection | None
+    source_token: NotRequired[str]
 
 
 class WorkspacePermissionUnavailableError(RuntimeError):
@@ -137,12 +146,18 @@ class WorkspaceFullAccessReference:
     source_binding: PermissionSourceBinding
     epoch: int
     _token: object = field(repr=False)
+    _request_token: object | None = field(default=None, repr=False)
+    request_turn_id: str | None = field(default=None, repr=False)
+    request_input_event_id: str | None = field(default=None, repr=False)
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("workspace Full permission references cannot be serialized")
 
     def is_owner_issued(self) -> bool:
         return self._token is _TOKEN
+
+    def is_request_derived(self) -> bool:
+        return self._request_token is _DERIVED_FULL_REQUEST
 
 
 WorkspacePermissionReference = WorkspaceTaskAccessReference | WorkspaceFullAccessReference
@@ -191,6 +206,7 @@ class _SourceIdentity:
     store_identity: str
     incarnation: str
     generation: int
+    lifetime: Literal["canonical", "temporary"] = "canonical"
 
 
 @dataclass
@@ -222,6 +238,8 @@ class DesktopPermissionOwner:
         self._task_retirements: dict[_TaskIdentity, _Retirement] = {}
         self._full: dict[_SourceIdentity, WorkspaceFullAccessReference] = {}
         self._full_retirements: dict[_SourceIdentity, _Retirement] = {}
+        self._remote_full_consents: dict[tuple[str, _SourceIdentity], bool] = {}
+        self._full_confirmations: dict[tuple[str, _SourceIdentity], tuple[str, float]] = {}
         self._native_stdin_closers: dict[object, dict[object, Callable[[], bool]]] = {}
         self._native_process_counts: dict[object, Callable[[], tuple[int, int]]] = {}
         self._full_residual_counts: dict[_SourceIdentity, tuple[int, int]] = {}
@@ -451,9 +469,10 @@ class DesktopPermissionOwner:
         stores_healthy: bool,
         persist: Callable[[int], None] | None = None,
         process_counts: Callable[[], tuple[int, int]] | None = None,
+        expire_tasks: bool = True,
     ) -> WorkspaceFullAccessReference:
         source = _source_identity(session_key, source_binding)
-        if not persistent or not existing:
+        if (not persistent and source.lifetime != "temporary") or not existing:
             raise WorkspacePermissionUnavailableError("session_required")
         if not local:
             raise WorkspacePermissionUnavailableError("session_required")
@@ -504,13 +523,15 @@ class DesktopPermissionOwner:
                     raise WorkspacePermissionConflictError("native_processes_unknown")
                 if active_processes:
                     raise WorkspacePermissionConflictError("native_processes_active")
-            for identity, reference in tuple(self._tasks.items()):
-                if _source_for_task(identity) == source:
-                    self._close_native_stdin_unlocked(reference)
+            if expire_tasks:
+                for identity, reference in tuple(self._tasks.items()):
+                    if _source_for_task(identity) == source:
+                        self._close_native_stdin_unlocked(reference)
             epoch = self._next_epoch()
             if persist is not None:
                 persist(epoch)
-            self._expire_source_tasks(source)
+            if expire_tasks:
+                self._expire_source_tasks(source)
             reference = WorkspaceFullAccessReference(
                 session_key=source.session_key,
                 source_binding=_binding_from_source(source),
@@ -526,13 +547,75 @@ class DesktopPermissionOwner:
         *,
         session_key: str,
         source_binding: PermissionSourceBinding,
+        request_turn_id: str | None = None,
+        request_input_event_id: str | None = None,
     ) -> WorkspaceFullAccessReference | None:
         try:
             source = _source_identity(session_key, source_binding)
         except (TypeError, ValueError):
             return None
         with self._lock:
-            return self._full.get(source)
+            base = self._full.get(source)
+            if base is None:
+                return None
+            if request_turn_id is None and request_input_event_id is None:
+                return base
+            return replace(
+                base,
+                _request_token=_DERIVED_FULL_REQUEST,
+                request_turn_id=request_turn_id,
+                request_input_event_id=request_input_event_id,
+            )
+
+    def record_remote_full_consent(
+        self,
+        *,
+        installation_id: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+    ) -> None:
+        """Bind an explicit remote confirmation to its device and source lifetime."""
+        if not installation_id:
+            raise WorkspacePermissionUnavailableError("session_required")
+        source = _source_identity(session_key, source_binding)
+        with self._lock:
+            if source not in self._full:
+                raise WorkspacePermissionUnavailableError("session_required")
+            self._remote_full_consents[(installation_id, source)] = True
+
+    def authorizes_remote_full(
+        self,
+        *,
+        installation_id: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+    ) -> bool:
+        if not installation_id:
+            return False
+        try:
+            source = _source_identity(session_key, source_binding)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            return (
+                source in self._full
+                and self._remote_full_consents.get((installation_id, source)) is True
+            )
+
+    def clear_remote_full_consents(
+        self,
+        *,
+        installation_id: str | None = None,
+        session_key: str | None = None,
+    ) -> None:
+        with self._lock:
+            for key in tuple(self._remote_full_consents):
+                consent_installation, source = key
+                if installation_id is not None and consent_installation != installation_id:
+                    continue
+                if session_key is not None and source.session_key != session_key:
+                    continue
+                self._remote_full_consents.pop(key, None)
 
     def authorizes_full(
         self,
@@ -540,6 +623,7 @@ class DesktopPermissionOwner:
         *,
         session_key: str,
         source_binding: PermissionSourceBinding,
+        request_turn_id: str | None = None,
     ) -> bool:
         if type(reference) is not WorkspaceFullAccessReference:
             return False
@@ -551,7 +635,21 @@ class DesktopPermissionOwner:
         except (TypeError, ValueError):
             return False
         with self._lock:
-            return self._full.get(source) is typed and typed.epoch > 0
+            base = self._full.get(source)
+            if base is None or typed.epoch <= 0:
+                return False
+            if typed is not base:
+                if not typed.is_request_derived():
+                    return False
+                if (
+                    typed.epoch != base.epoch
+                    or typed.session_key != base.session_key
+                    or typed.source_binding != base.source_binding
+                ):
+                    return False
+            if typed.request_turn_id is not None:
+                return request_turn_id == typed.request_turn_id
+            return True
 
     def with_current_reference(
         self,
@@ -603,6 +701,14 @@ class DesktopPermissionOwner:
                 }
         return None
 
+    @staticmethod
+    def is_temporary_full_reference(reference: object) -> bool:
+        return (
+            type(reference) is WorkspaceFullAccessReference
+            and reference.is_owner_issued()
+            and is_temporary_source_binding(reference.source_binding)
+        )
+
     def is_current_full_reference(self, reference: object) -> bool:
         if type(reference) is not WorkspaceFullAccessReference:
             return False
@@ -613,6 +719,7 @@ class DesktopPermissionOwner:
             typed,
             session_key=typed.session_key,
             source_binding=typed.source_binding,
+            request_turn_id=typed.request_turn_id,
         )
 
     def disable_full(
@@ -638,10 +745,15 @@ class DesktopPermissionOwner:
             close_failures = 0
             if retirement is None:
                 reference = self._full.pop(source, None)
+                self._remote_full_consents = {
+                    key: value
+                    for key, value in self._remote_full_consents.items()
+                    if key[1] != source
+                }
                 retirement = _Retirement(reason, private_reference=reference)
                 self._full_retirements[source] = retirement
                 if reference is not None:
-                    close_failures = self._close_native_stdin_unlocked(reference)
+                    close_failures = self._close_related_full_stdin_unlocked(reference)
                 self._changed()
             else:
                 reference = retirement.private_reference
@@ -672,8 +784,8 @@ class DesktopPermissionOwner:
                 raise WorkspacePermissionConflictError("chat_running")
             self._full_retirements.pop(source, None)
             self._full_residual_counts.pop(source, None)
-            if reference is not None:
-                self._native_process_counts.pop(reference, None)
+            if type(reference) is WorkspaceFullAccessReference:
+                self._discard_related_full_native_unlocked(reference)
             self._changed()
             return True
 
@@ -988,6 +1100,52 @@ class DesktopPermissionOwner:
                 self._changed()
             return True
 
+    def issue_full_confirmation(
+        self,
+        *,
+        identity: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+    ) -> str:
+        """Mint a bounded, non-authorizing confirmation for one identity/source."""
+        if not identity:
+            raise WorkspacePermissionUnavailableError("session_required")
+        source = _source_identity(session_key, source_binding)
+        with self._lock:
+            confirmation_id = uuid.uuid4().hex
+            self._full_confirmations[(identity, source)] = (
+                confirmation_id,
+                time.time() + 300.0,
+            )
+            return confirmation_id
+
+    def consume_full_confirmation(
+        self,
+        *,
+        identity: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+        confirmation_id: str,
+    ) -> bool:
+        """Consume one identity/source-bound confirmation exactly once."""
+        if not identity or not confirmation_id:
+            return False
+        try:
+            source = _source_identity(session_key, source_binding)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            stored = self._full_confirmations.get((identity, source))
+            if stored is None:
+                return False
+            expected, expires_at = stored
+            if expected != confirmation_id or time.time() > expires_at:
+                if time.time() > expires_at:
+                    self._full_confirmations.pop((identity, source), None)
+                return False
+            self._full_confirmations.pop((identity, source), None)
+            return True
+
     def projection(
         self,
         *,
@@ -1125,6 +1283,7 @@ class DesktopPermissionOwner:
                 self._close_native_stdin_unlocked(reference)
             self._tasks.clear()
             self._task_retirements.clear()
+            self._full_confirmations.clear()
             self._full.clear()
             self._full_retirements.clear()
             self._full_residual_counts.clear()
@@ -1176,6 +1335,46 @@ class DesktopPermissionOwner:
                 if _source_for_task(identity) == source
             )
 
+    def _related_full_references_unlocked(
+        self,
+        reference: WorkspaceFullAccessReference,
+    ) -> tuple[WorkspaceFullAccessReference, ...]:
+        related: list[WorkspaceFullAccessReference] = []
+        candidates = set(self._native_stdin_closers) | set(self._native_process_counts)
+        for candidate in candidates:
+            if type(candidate) is not WorkspaceFullAccessReference:
+                continue
+            if not candidate.is_owner_issued():
+                continue
+            if (
+                candidate.session_key == reference.session_key
+                and candidate.source_binding == reference.source_binding
+                and candidate.epoch == reference.epoch
+            ):
+                related.append(candidate)
+        return tuple(related)
+
+    def _close_related_full_stdin_unlocked(
+        self,
+        reference: WorkspaceFullAccessReference,
+    ) -> int:
+        failures = 0
+        seen: set[int] = set()
+        for candidate in (reference, *self._related_full_references_unlocked(reference)):
+            marker = id(candidate)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            failures += self._close_native_stdin_unlocked(candidate)
+        return failures
+
+    def _discard_related_full_native_unlocked(
+        self,
+        reference: WorkspaceFullAccessReference,
+    ) -> None:
+        for candidate in (reference, *self._related_full_references_unlocked(reference)):
+            self._native_process_counts.pop(candidate, None)
+
     def _close_native_stdin_unlocked(self, reference: object) -> int:
         registered = self._native_stdin_closers.pop(reference, {})
         pending: dict[object, Callable[[], bool]] = {}
@@ -1193,14 +1392,34 @@ class DesktopPermissionOwner:
         return failures
 
     def _counts_for_reference_unlocked(self, reference: object) -> tuple[int, int]:
-        process_counts = self._native_process_counts.get(reference)
-        if process_counts is None:
-            return 0, 0
-        try:
-            active_processes, unknown_processes = process_counts()
-            return _count(active_processes), _count(unknown_processes)
-        except Exception:
-            return 0, 1
+        references: tuple[object, ...]
+        if type(reference) is WorkspaceFullAccessReference:
+            references = (
+                reference,
+                *self._related_full_references_unlocked(reference),
+            )
+        else:
+            references = (reference,)
+        active_total = 0
+        unknown_total = 0
+        seen: set[int] = set()
+        for candidate in references:
+            marker = id(candidate)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            process_counts = self._native_process_counts.get(candidate)
+            if process_counts is None:
+                continue
+            try:
+                active_processes, unknown_processes = process_counts()
+            except Exception:
+                active_total += 0
+                unknown_total += 1
+            else:
+                active_total += _count(active_processes)
+                unknown_total += _count(unknown_processes)
+        return _count(active_total), _count(unknown_total)
 
     def _refresh_retirement_counts_unlocked(self, retirement: _Retirement) -> bool:
         if retirement.private_reference is None:
@@ -1230,6 +1449,12 @@ class DesktopPermissionOwner:
 
     def _changed(self) -> None:
         self._revision += 1
+
+
+def permission_source_token(binding: PermissionSourceBinding) -> str:
+    """Return the content-free token for a validated permission source."""
+    raw = f"{binding['store_identity']}:{binding['incarnation']}:{binding['generation']}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 def validate_source_binding(value: object) -> PermissionSourceBinding:
@@ -1283,11 +1508,13 @@ def _source_identity(session_key: str, source_binding: PermissionSourceBinding) 
     binding = validate_source_binding(dict(source_binding))
     if not 1 <= len(session_key) <= _MAX_SESSION_KEY_LENGTH:
         raise ValueError("invalid session key")
+    store_identity = binding["store_identity"]
     return _SourceIdentity(
         session_key,
-        binding["store_identity"],
+        store_identity,
         binding["incarnation"],
         binding["generation"],
+        "temporary" if store_identity.startswith("temporary:") else "canonical",
     )
 
 

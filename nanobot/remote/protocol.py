@@ -375,6 +375,7 @@ ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/remote/v1/devices", "local.admin", local_admin=True),
     RouteSpec("POST", "/remote/v1/devices/{id}/revoke", "local.admin", local_admin=True),
     RouteSpec("GET", "/remote/v1/status", "local.admin", local_admin=True),
+    RouteSpec("POST", "/remote/v1/refresh", "chat.read"),
 )
 
 

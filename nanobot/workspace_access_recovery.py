@@ -190,6 +190,7 @@ class WorkspacePermissionProjection(TypedDict):
     full_access_unavailable_reason: PermissionFullUnavailableReason | None
     task_access: WorkspacePermissionTaskAccess | None
     retirement: WorkspacePermissionRetirement | None
+    source_token: NotRequired[str]
 
 
 class FolderAccessTask(TypedDict):
@@ -267,6 +268,8 @@ class WorkspaceOnceActionResult(FolderAccessActionResult):
 class WorkspaceModeActionResult(TypedDict):
     workspace_scope: WorkspaceScopePayload
     workspace_permissions: WorkspacePermissionProjection
+    source_token: NotRequired[str | None]
+    full_confirmation_id: NotRequired[str]
 
 
 class WorkspaceModeConflictErrorPayload(TypedDict):

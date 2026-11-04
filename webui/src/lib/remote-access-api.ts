@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from "./http";
+import { getMobileRuntime, mobileOwnerCapability } from "./mobile-runtime";
 
 export interface RemoteAccessMutationTransport {
   requestMutation<T>(action: string, payload: Record<string, unknown>): Promise<T>;
@@ -57,6 +58,8 @@ export interface RemotePairingPending {
   requested_at?: number;
   pairing_code?: string;
   origin?: string;
+  created_at?: number;
+  renewable?: boolean;
   transport?: "tailscale";
   scopes?: string[];
   device?: {
@@ -106,7 +109,70 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+function mobileOwnerTransport() {
+  const runtime = getMobileRuntime();
+  if (!runtime || !mobileOwnerCapability()) return null;
+  return runtime.transport;
+}
+
+async function ownerWithRefresh<T>(
+  operation: () => Promise<T>,
+  refresh: () => Promise<boolean>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("HTTP 401")) throw error;
+    const refreshed = await refresh().catch(() => false);
+    if (!refreshed) throw error;
+    return operation();
+  }
+}
+
+function ownerDeviceRows(value: unknown): RemoteAccessDevice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const row = item as Record<string, unknown>;
+    const installationId = typeof row.installation_id === "string"
+      ? row.installation_id
+      : "";
+    if (!installationId) return [];
+    return [{
+      installation_id: installationId,
+      label: typeof row.label === "string" ? row.label : "",
+      scopes: Array.isArray(row.scopes)
+        ? row.scopes.filter((scope): scope is string => typeof scope === "string")
+        : [],
+      status: row.status === "revoked" ? "revoked" as const : "active" as const,
+      created_at: typeof row.created_at === "number" ? row.created_at : 0,
+      last_seen_at: typeof row.last_seen_at === "number" ? row.last_seen_at : 0,
+    }];
+  });
+}
+
 export async function fetchRemoteAccessStatus(token: string): Promise<RemoteAccessStatus> {
+  const transport = mobileOwnerTransport();
+  if (transport?.remoteStatus && transport.remoteDevices) {
+    const [status, devices] = await Promise.all([
+      ownerWithRefresh(
+        () => transport.remoteStatus!(),
+        () => transport.refresh(),
+      ),
+      ownerWithRefresh(
+        () => transport.remoteDevices!(),
+        () => transport.refresh(),
+      ),
+    ]);
+    return {
+      enabled: status.enabled === true,
+      installation_id: typeof status.installation_id === "string"
+        ? status.installation_id
+        : "",
+      devices: ownerDeviceRows(devices.devices),
+      owner_available: true,
+    };
+  }
   return request<RemoteAccessStatus>(token, "/api/settings/remote-access");
 }
 
@@ -163,9 +229,23 @@ export async function revokeRemoteDevice(
   transport: RemoteAccessMutationTransport,
   installationId: string,
 ): Promise<void> {
-  await transport.requestMutation("settings.remote_access.revoke", {
-    installation_id: installationId,
-  });
+  try {
+    // A live gateway owns in-process Full consents, so prefer its revoke path
+    // when the socket is available. It clears those consents through the
+    // existing callback.
+    await transport.requestMutation("settings.remote_access.revoke", {
+      installation_id: installationId,
+    });
+    return;
+  } catch (error) {
+    const owner = mobileOwnerTransport();
+    if (!owner?.remoteRevoke) throw error;
+    // Gateway stopped/unreachable: the independent owner remains authoritative.
+    await ownerWithRefresh(
+      () => owner.remoteRevoke!(installationId),
+      () => owner.refresh(),
+    );
+  }
 }
 
 export async function startRemotePairing(
@@ -188,6 +268,16 @@ export async function startRemotePairing(
       fullControlConsent: input.fullControlConsent ?? true,
       sharedHistoryConsent: input.sharedHistoryConsent ?? true,
     },
+  );
+}
+
+export async function renewRemotePairing(
+  transport: RemoteAccessMutationTransport,
+  pairingId: string,
+): Promise<RemotePairingPending> {
+  return transport.requestMutation<RemotePairingPending>(
+    "settings.remote_access.pairing.renew",
+    { pairingId },
   );
 }
 

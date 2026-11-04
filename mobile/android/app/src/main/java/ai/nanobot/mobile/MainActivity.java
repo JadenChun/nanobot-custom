@@ -24,6 +24,17 @@ public class MainActivity extends BridgeActivity {
         captureLink(intent);
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().evaluateJavascript(
+                "window.dispatchEvent(new Event('nanobot-native-resume'))",
+                null
+            );
+        }
+    }
+
     private void captureLink(Intent intent) {
         Uri data = intent == null ? null : intent.getData();
         if (data != null && "nanobot".equals(data.getScheme())) {

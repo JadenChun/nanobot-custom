@@ -147,6 +147,13 @@
       "scope": "local.admin",
       "replay": "none",
       "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/remote/v1/refresh",
+      "scope": "chat.read",
+      "replay": "none",
+      "websocket": false
     }
   ],
   "mutation": {

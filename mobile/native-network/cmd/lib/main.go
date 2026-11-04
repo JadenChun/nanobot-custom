@@ -211,6 +211,18 @@ func nanobot_network_ws_close(handle C.int64_t, wsID C.uint64_t) C.int32_t {
 	return 0
 }
 
+//export nanobot_network_ws_ping
+func nanobot_network_ws_ping(handle C.int64_t, wsID C.uint64_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return setError(broker.ErrNotFound)
+	}
+	if err := core.WSPing(uint64(wsID)); err != nil {
+		return setError(err)
+	}
+	return 0
+}
+
 //export nanobot_network_poll_event
 func nanobot_network_poll_event(handle C.int64_t, out *C.char, capacity C.int32_t) C.int32_t {
 	core := lookup(handle)
