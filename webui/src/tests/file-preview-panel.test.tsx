@@ -78,17 +78,17 @@ describe("FilePreviewPanel", () => {
 
   it("updates translated chrome without refetching the open file", async () => {
     vi.mocked(fetchFilePreview).mockResolvedValue({
-      path: "/workspace/notes.md",
-      display_path: "notes.md",
-      language: "markdown",
-      content: "# Notes",
+      path: "/workspace/notes.txt",
+      display_path: "notes.txt",
+      language: "text",
+      content: "plain notes",
       truncated: false,
     });
 
     render(
       <FilePreviewPanel
         sessionKey="websocket:chat-1"
-        path="notes.md"
+        path="notes.txt"
         token="tok"
         onClose={() => {}}
       />,

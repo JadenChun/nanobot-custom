@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { AlertCircle, ChevronRight, Loader2, X } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { CodeBlock } from "@/components/CodeBlock";
+import { MarkdownText } from "@/components/MarkdownText";
 import { splitFilePath } from "@/components/FileReferenceChip";
 import { ApiError, fetchFilePreview } from "@/lib/api";
 import type { FilePreviewPayload } from "@/lib/types";
@@ -49,12 +50,17 @@ export function FilePreviewPanel({
   const [state, setState] = useState<PreviewState>({ status: "loading" });
   const [entered, setEntered] = useState(false);
   const [activePath, setActivePath] = useState(path);
+  const [viewMode, setViewMode] = useState<"formatted" | "source">("formatted");
   const tokenRef = useRef(token);
   tokenRef.current = token;
 
   useEffect(() => {
     setActivePath(path);
   }, [path]);
+
+  useEffect(() => {
+    setViewMode("formatted");
+  }, [activePath]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setEntered(true));
@@ -90,19 +96,35 @@ export function FilePreviewPanel({
     () => (pathParts.length > 1 ? pathParts.slice(0, -1) : []),
     [pathParts],
   );
-  const breadcrumbParts = useMemo(
-    () => (directoryParts.length > 0 ? [...directoryParts, fileName] : [fileName]),
-    [directoryParts, fileName],
-  );
-  const compactBreadcrumbParts = useMemo(
-    () => (breadcrumbParts.length > 3 ? breadcrumbParts.slice(-3) : breadcrumbParts),
-    [breadcrumbParts],
-  );
-  const hasCompactPrefix = breadcrumbParts.length > compactBreadcrumbParts.length;
   const breadcrumbTitle = `${hasRootPrefix ? "/" : ""}${[
     ...directoryParts,
     fileName,
   ].join("/")}`;
+  const payloadKind = state.status === "ready" ? state.payload.kind ?? "text" : "text";
+  const isDirectory = payloadKind === "directory";
+  const isMarkdown = payloadKind === "text" && (
+    (state.status === "ready" && state.payload.language === "markdown")
+    || /\.(md|markdown)$/i.test(activePath)
+  );
+  const navTrail = useMemo(() => {
+    const absolute = state.status === "ready" ? state.payload.path : activePath;
+    const normalized = absolute.replace(/\\/g, "/");
+    const parts = normalized.split("/").filter(Boolean);
+    const prefixes: string[] = [];
+    let accumulated = normalized.startsWith("/") ? "" : "";
+    for (const part of parts) {
+      accumulated = `${accumulated}/${part}`;
+      prefixes.push(accumulated);
+    }
+    return { parts, prefixes };
+  }, [activePath, state]);
+  const visibleTrail = useMemo(() => {
+    if (navTrail.parts.length <= 3) return navTrail.parts.map((part, index) => ({ part, index }));
+    return navTrail.parts
+      .slice(-3)
+      .map((part, index) => ({ part, index: navTrail.parts.length - 3 + index }));
+  }, [navTrail]);
+  const canNavigateBack = isDirectory || activePath !== path;
   const errorMessage = state.status === "error"
     ? (state.error instanceof ApiError
       ? (state.error.status === 404 && /API route not found/i.test(state.error.message)
@@ -165,13 +187,31 @@ export function FilePreviewPanel({
             className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 px-3"
             title={previewPath}
           >
+            {canNavigateBack ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const parent = activePath.replace(/\/[^/]+\/?$/, "") || "/";
+                  setActivePath(parent);
+                }}
+                className={cn(
+                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+                  "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+                title={t("filePreview.back", { defaultValue: "Back to parent folder" })}
+                aria-label={t("filePreview.back", { defaultValue: "Back to parent folder" })}
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden />
+              </button>
+            ) : null}
             <nav
               aria-label={t("filePreview.breadcrumb", { defaultValue: "File path" })}
               className="flex min-w-0 flex-1 items-center overflow-hidden text-sm leading-5"
               title={breadcrumbTitle}
               data-testid="file-preview-breadcrumb"
             >
-              {hasCompactPrefix ? (
+              {navTrail.parts.length > visibleTrail.length ? (
                 <>
                   <span className="shrink-0 text-muted-foreground/55">...</span>
                   <ChevronRight
@@ -179,7 +219,7 @@ export function FilePreviewPanel({
                     aria-hidden
                   />
                 </>
-              ) : hasRootPrefix ? (
+              ) : normalizedPreviewPath.startsWith("/") ? (
                 <>
                   <span className="shrink-0 text-muted-foreground/55">/</span>
                   <ChevronRight
@@ -188,34 +228,74 @@ export function FilePreviewPanel({
                   />
                 </>
               ) : null}
-              {compactBreadcrumbParts.map((part, index) => {
-                const isLast = index === compactBreadcrumbParts.length - 1;
+              {visibleTrail.map(({ part, index }, position) => {
+                const isLast = position === visibleTrail.length - 1;
+                const label = (
+                  <span
+                    className={cn(
+                      "min-w-0 truncate rounded-mark px-1 py-0.5",
+                      isLast
+                        ? "font-medium text-foreground"
+                        : "max-w-[26vw] shrink text-muted-foreground/78",
+                    )}
+                    data-testid={isLast ? "file-preview-title" : undefined}
+                  >
+                    {part}
+                  </span>
+                );
                 return (
                   <span
                     key={`${part}-${index}`}
                     className="flex min-w-0 items-center overflow-hidden"
                   >
-                    {index > 0 ? (
+                    {position > 0 ? (
                       <ChevronRight
                         className="mx-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/35"
                         aria-hidden
                       />
                     ) : null}
-                    <span
-                      className={cn(
-                        "min-w-0 truncate rounded-mark px-1 py-0.5",
-                        isLast
-                          ? "font-medium text-foreground"
-                          : "max-w-[26vw] shrink text-muted-foreground/78",
-                      )}
-                      data-testid={isLast ? "file-preview-title" : undefined}
-                    >
-                      {part}
-                    </span>
+                    {isDirectory && !isLast ? (
+                      <button
+                        type="button"
+                        onClick={() => setActivePath(navTrail.prefixes[index])}
+                        className="min-w-0 rounded-mark px-1 py-0.5 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        title={navTrail.prefixes[index]}
+                      >
+                        {label}
+                      </button>
+                    ) : (
+                      label
+                    )}
                   </span>
                 );
               })}
             </nav>
+            {isMarkdown ? (
+              <div
+                role="group"
+                aria-label={t("filePreview.viewMode", { defaultValue: "Preview mode" })}
+                className="flex shrink-0 items-center rounded-full border border-border/60 bg-muted/30 p-0.5 text-[11px] font-medium"
+              >
+                {(["formatted", "source"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setViewMode(mode)}
+                    aria-pressed={viewMode === mode}
+                    className={cn(
+                      "rounded-full px-2 py-0.5 transition-colors",
+                      viewMode === mode
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {mode === "formatted"
+                      ? t("filePreview.formatted", { defaultValue: "Formatted" })
+                      : t("filePreview.source", { defaultValue: "Source" })}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={onClose}
@@ -291,6 +371,25 @@ export function FilePreviewPanel({
                   </li>
                 ) : null}
               </ul>
+            ) : isMarkdown && viewMode === "formatted" ? (
+              <div className="min-h-full px-4 py-3 text-[13.5px] leading-6">
+                {state.payload.truncated ? (
+                  <div className="mb-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                    {t("filePreview.truncated", {
+                      defaultValue: "Preview is truncated because this file is large.",
+                    })}
+                  </div>
+                ) : null}
+                <MarkdownText
+                  className={cn(
+                    "max-w-none break-words text-[13.5px] leading-6",
+                    "[&_pre]:max-w-full [&_pre]:overflow-x-auto",
+                    "[&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto",
+                  )}
+                >
+                  {state.payload.content}
+                </MarkdownText>
+              </div>
             ) : (
               <div className="min-h-full">
                 {state.payload.truncated ? (
