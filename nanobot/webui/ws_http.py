@@ -15,6 +15,7 @@ import mimetypes
 import re
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -158,6 +159,68 @@ _SLOW_WEBUI_HTTP_LOG_MS = 1_000
 _WEBUI_MUTATION_PAYLOAD_ATTR = "_nanobot_webui_mutation_payload"
 _WEBUI_MUTATION_REQUEST_ATTR = "_nanobot_webui_mutation_request"
 _WEBUI_EXPECTED_SOURCE_BINDING_ATTR = "_nanobot_webui_expected_source_binding"
+
+# Chips in assistant text often use a path relative to the folder the agent was
+# working in (for example `characters/Sena.md`), which is not relative to the
+# session workspace. Resolve those against absolute paths the transcript already
+# references, so a linked file opens exactly as the conversation named it.
+_PREVIEW_ABSOLUTE_PATH_RE = re.compile(
+    r"/(?:home|tmp|var|opt|srv|mnt|root|media|Users|Volumes)/[^\"\\\r\n\t]+"
+)
+_PREVIEW_PATH_CACHE_TTL_S = 60.0
+_PREVIEW_PATH_CACHE_MAX = 8
+_PREVIEW_PATH_LIMIT = 20_000
+_preview_path_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
+_preview_path_lock = threading.Lock()
+
+
+def _transcript_absolute_paths(session_key: str) -> tuple[str, ...]:
+    now = time.monotonic()
+    with _preview_path_lock:
+        cached = _preview_path_cache.get(session_key)
+        if cached is not None and now - cached[0] < _PREVIEW_PATH_CACHE_TTL_S:
+            return cached[1]
+    found: set[str] = set()
+    try:
+        from nanobot.webui.transcript import read_transcript_lines
+
+        for record in read_transcript_lines(session_key):
+            blob = json.dumps(record, ensure_ascii=False)
+            for match in _PREVIEW_ABSOLUTE_PATH_RE.findall(blob):
+                candidate = match.rstrip(".,;:)]}")
+                if 3 < len(candidate) <= 4096:
+                    found.add(candidate)
+                if len(found) >= _PREVIEW_PATH_LIMIT:
+                    break
+    except Exception:
+        found = set()
+    paths = tuple(found)
+    with _preview_path_lock:
+        _preview_path_cache[session_key] = (now, paths)
+        if len(_preview_path_cache) > _PREVIEW_PATH_CACHE_MAX:
+            oldest = min(_preview_path_cache, key=lambda key: _preview_path_cache[key][0])
+            _preview_path_cache.pop(oldest, None)
+    return paths
+
+
+def _resolve_relative_preview_path(session_key: str, raw_path: str) -> str | None:
+    relative = raw_path.strip()
+    if not relative or relative.startswith(("/", "~")):
+        return None
+    relative = relative.lstrip("./").replace("\\", "/")
+    parts = [part for part in relative.split("/") if part not in ("", ".")]
+    if not parts or ".." in parts or len(relative) > 512:
+        return None
+    normalized = "/".join(parts)
+    matches = {
+        candidate
+        for candidate in _transcript_absolute_paths(session_key)
+        if candidate.endswith("/" + normalized)
+    }
+    if len(matches) != 1:
+        return None
+    return matches.pop()
+
 _NO_STORE_HEADERS = [("Cache-Control", "no-store")]
 
 WEBSOCKET_MUTATION_ROUTES = {
@@ -1595,6 +1658,10 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         path = _query_first(query, "path")
+        if isinstance(path, str):
+            resolved_relative = _resolve_relative_preview_path(decoded_key, path)
+            if resolved_relative is not None:
+                path = resolved_relative
         is_probe = _query_first(query, "probe") == "1"
         try:
             scope = self.workspaces.scope_for_session_key(decoded_key)
