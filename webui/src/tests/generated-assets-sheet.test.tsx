@@ -152,6 +152,31 @@ describe("GeneratedAssetsSheet", () => {
     expect(await screen.findAllByAltText("a1.png")).toHaveLength(2);
   });
 
+  it("copies the media link and path from the viewer", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    try {
+      render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+      await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+      await user.click(await screen.findByRole("button", { name: "Open a1.png" }));
+
+      await user.click(await screen.findByRole("button", { name: "Copy media link" }));
+      expect(writeText).toHaveBeenLastCalledWith(
+        expect.stringMatching(/\/api\/media\/sig\/a1$/),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Copy file path for agent" }));
+      expect(writeText).toHaveBeenLastCalledWith("/home/test/media/generated/a1.png");
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("clears the previous session badge when the session changes", async () => {
     const user = userEvent.setup();
     const { rerender } = render(

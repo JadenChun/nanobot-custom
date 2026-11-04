@@ -30,8 +30,8 @@ import { useGeneratedAssetLibrary } from "@/hooks/useGeneratedAssetLibrary";
 import { useSessionGeneratedAssets } from "@/hooks/useSessionGeneratedAssets";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { fmtDateTime } from "@/lib/format";
+import { mediaLink } from "@/lib/media-links";
 import { useMobileMediaUrl } from "@/lib/mobile-media";
-import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import type { GeneratedAsset, GeneratedAssetGroup, UIImage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -387,7 +387,7 @@ function AssetThumbnail({
   const url = useMobileMediaUrl(asset.url);
 
   const copy = (kind: "link" | "path") => {
-    const value = kind === "link" ? assetLink(asset) : (asset.path ?? "");
+    const value = kind === "link" ? mediaLink(asset.url) : (asset.path ?? "");
     if (!value) return;
     void copyTextToClipboard(value).then((ok) => {
       if (!ok) return;
@@ -486,15 +486,6 @@ function AssetThumbnail({
   );
 }
 
-function assetLink(asset: GeneratedAsset): string {
-  if (!asset.url) return "";
-  if (isMobileRuntimeActive()) return asset.url;
-  try {
-    return new URL(asset.url, window.location.origin).href;
-  } catch {
-    return asset.url;
-  }
-}
 
 function shortSessionLabel(sessionKey: string): string {
   const raw = sessionKey.replace(/^websocket:/, "");
