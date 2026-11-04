@@ -833,7 +833,7 @@
       panel.appendChild(card);
       var title = textElement("h1", "mobile-pairing-title", "Reconnect this phone");
       card.appendChild(title);
-      card.appendChild(textElement("p", "mobile-pairing-copy", "Your Nanobot pairing is saved. Tailscale needs a fresh sign-in before this phone can reach the server."));
+      card.appendChild(textElement("p", "mobile-pairing-copy", "Your Nanobot pairing is saved. This phone can't reach the desktop over Tailscale right now."));
       var status = textElement("p", "mobile-pairing-status", initialMessage || "Tailscale sign-in is required.");
       status.setAttribute("aria-live", "polite");
       card.appendChild(status);
@@ -844,7 +844,14 @@
         status.classList.remove("is-error");
         status.textContent = "Opening Tailscale sign-in...";
         void plugin.openLogin().catch(function (error) {
-          status.textContent = String(error && error.message ? error.message : error);
+          var message = String(error && error.message ? error.message : error);
+          if (message.indexOf("no approved login URL") === 0) {
+            status.textContent =
+              "Tailscale is already signed in on this phone. Check that the desktop is running, then retry.";
+            status.classList.add("is-error");
+            return;
+          }
+          status.textContent = message;
         });
       });
       actions.appendChild(login);

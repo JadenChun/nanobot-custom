@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.Base64
+import android.util.Log
 import com.getcapacitor.BridgeActivity
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -50,6 +51,10 @@ import java.io.ByteArrayOutputStream
     permissions = [Permission(alias = "camera", strings = [Manifest.permission.CAMERA])],
 )
 class NativeNetworkPlugin : Plugin() {
+    private companion object {
+        private const val TAG = "NanobotNetwork"
+    }
+
     @Volatile private var transportHandle: Long = 0L
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val operationExecutor = Executors.newCachedThreadPool()
@@ -1099,6 +1104,7 @@ class NativeNetworkPlugin : Plugin() {
                 }
                 val bytes = NativeNetwork.pollEvent(current) ?: return@scheduleWithFixedDelay
                 val event = JSONObject(String(bytes, StandardCharsets.UTF_8))
+                logTransportEvent(event)
                 val requestId = event.optLong("request_id", 0L)
                 if (requestId > 0L) {
                     val pending = pendingNative.remove(requestId)
@@ -1113,6 +1119,33 @@ class NativeNetworkPlugin : Plugin() {
             20,
             TimeUnit.MILLISECONDS
         )
+    }
+
+    private fun logTransportEvent(event: JSONObject) {
+        when (event.optString("type")) {
+            "node_state" ->
+                Log.i(
+                    TAG,
+                    "node_state state=${event.optString("state")} login_url=${event.optString("login_url")}",
+                )
+            "http_error" ->
+                Log.w(
+                    TAG,
+                    "http_error code=${event.optString("code")} status=${event.optInt("status")} " +
+                        "message=${event.optString("message")}",
+                )
+            "http_response" ->
+                Log.i(
+                    TAG,
+                    "http_response request=${event.optLong("request_id")} status=${event.optInt("status")}",
+                )
+            "ws_error" ->
+                Log.w(
+                    TAG,
+                    "ws_error code=${event.optString("code")} message=${event.optString("message")}",
+                )
+            else -> Unit
+        }
     }
 
     private fun requestRefresh(record: CustodyRecord): JSONObject = jsonRequest(
