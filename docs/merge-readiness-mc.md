@@ -12,7 +12,7 @@ Status: **LOCAL CANDIDATE READY FOR STAGING REVIEW — NOT MERGED, PUSHED OR DEP
 | Repair branch base (handoff + task docs) | `7be433232d28a88106e15a486af3ade2250347f4` |
 | Fetched staging integrated | `aacca07cfadaf51fa1d83913f93ba2d797c0aa58` (`origin/staging`) |
 | Staging integration merge | `221101b9a5181839802ea250dd977dd39fab0ffe` |
-| Corrected source commit | `45c97b18` (final code/test commit; later commits are docs-only) |
+| Corrected source commit | `9588d899` (final code/test commit; later commits are docs-only) |
 | Candidate APK | `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk` |
 | Candidate SHA-256 | `8e72b5f817d888f85211970cebfdd92b1a3f250bd0d6585908770c951b7b5064` |
 | Signer | `CN=jaden`, SHA-256 `8c30d04957e9724d1668e585890913b0581676c9460789f658c4ed9f84ba0c81` |
@@ -36,8 +36,8 @@ The candidate includes Capacitor local notifications from staging (`assets/capac
 
 | Check | Result |
 |---|---|
-| Full Python suite | **17,574 passed, 22 skipped, 6 subtests, exit 0** (`/tmp/opencode/mc-full-pytest.log`) |
-| Strict basedpyright | **0 errors / 528 files**; comparator `PASS_NO_NEW_DIAGNOSTICS`, `introduced: 0` (`/tmp/opencode/mc-type/{before,after,comparator}.json`) |
+| Full Python suite | **17,575 passed, 22 skipped, 6 subtests, exit 0** (`/tmp/opencode/mc-full-pytest-final.log`) |
+| Strict basedpyright | **0 errors / 528 files**; comparator `PASS_NO_NEW_DIAGNOSTICS`, `introduced: 0` (`/tmp/opencode/mc-type/{before,after-final,comparator-final}.json`) |
 | WebUI | **1,432 passed**, build exit 0, lint exit 0 (`/tmp/opencode/mc-webui-tests.log`, `/tmp/opencode/mc-webui-lint.log`) |
 | Desktop parity | PASS, 127 rows / 9 categories |
 | Go broker | PASS |
@@ -65,7 +65,7 @@ mutation so its in-process Full consents are cleared, then falls back to the
 independent owner when the gateway is unavailable.
 
 The second bounded review (`CORRECT — hold staging merge`) identified three
-remaining admission gaps. Code/test commit `45c97b18` now:
+remaining admission gaps. Code/test commit `9588d899` now:
 
 - rechecks the source token after hydration and again immediately before
   transcript/dispatch effects;

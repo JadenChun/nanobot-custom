@@ -713,7 +713,7 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   with merge `221101b9a5181839802ea250dd977dd39fab0ffe` without rewriting
   shared history. Staging notifications, image lightbox/scroll and settings
   changes remain present.
-- Final gates after the admission-race review: **17,574 passed** Python
+- Final gates after the admission-race review: **17,575 passed** Python
   (22 skipped, 6 subtests), strict **0/528**, WebUI **1,432 passed** plus
   build/lint, parity PASS, Go broker PASS, Android release PASS.
 - Candidate: `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
@@ -795,7 +795,7 @@ M38/signed-release review and applicable radio/Tailscale qualification.
 ### Post-review admission-race corrections (2026-11-04)
 
 The bounded review (`CORRECT — hold staging merge`) found three remaining
-blockers; code/test correction commit `45c97b18`.
+blockers; code/test correction commit `45c97b18`; final wire-coverage test commit `9588d899`.
 
 - MC01 source reset: the router rechecks the source token after hydration and
   again immediately before transcript/dispatch effects. The independently
@@ -819,19 +819,20 @@ blockers; code/test correction commit `45c97b18`.
   - `test_webui_steering_target_change_is_rejected_before_bus_dispatch`
   - `test_webui_steering_matching_target_still_dispatches`
   - `test_stale_webui_steering_is_rejected_at_pending_injection`
+  - `test_send_admission_rejected_emits_correlated_error_frame`
   - `restores the full queued snapshot and waits for an explicit retry`
 - Defect detection: the two hydration tests fail on `c0b0bf8d`
   (`/tmp/opencode/mc-admission-cases/before-fail.log`); the composer test fails
   without the snapshot/requeue path.
 - Evidence:
-  - Full Python: **17,574 passed, 22 skipped, 6 subtests**, exit 0
-    (`/tmp/opencode/mc-full-pytest.log`).
+  - Full Python: **17,575 passed, 22 skipped, 6 subtests**, exit 0
+    (`/tmp/opencode/mc-full-pytest-final.log`).
   - WebUI: **1,432 passed**, build/lint exit 0
     (`/tmp/opencode/mc-webui-tests.log`,
     `/tmp/opencode/mc-webui-lint.log`).
   - Strict basedpyright: before `c0b0bf8d` 0/528, after 0/528; comparator
     `PASS_NO_NEW_DIAGNOSTICS`, introduced 0
-    (`/tmp/opencode/mc-type/{before,after,comparator}.json`).
+    (`/tmp/opencode/mc-type/{before,after-final,comparator-final}.json`).
 - Candidate rebuilt after the correction:
   `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
   SHA-256 `8e72b5f817d888f85211970cebfdd92b1a3f250bd0d6585908770c951b7b5064`,
