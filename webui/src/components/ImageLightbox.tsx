@@ -49,16 +49,16 @@ export function ImageLightbox({
     startY: number;
     active: boolean;
   } | null>(null);
-  const [swipeOffset, setSwipeOffset] = useState(0);
+  const pendingIndexRef = useRef<number | null>(null);
+  const slideTimerRef = useRef<number | null>(null);
+  const [dragPx, setDragPx] = useState(0);
+  const [slide, setSlide] = useState<-1 | 0 | 1>(0);
+  const [snapBack, setSnapBack] = useState(false);
 
-  const go = useCallback(
-    (delta: number) => {
-      if (index === null || total <= 1) return;
-      const next = (index + delta + total) % total;
-      onIndexChange(next);
-    },
-    [index, onIndexChange, total],
-  );
+  const slideActionRef = useRef<(delta: 1 | -1) => void>(() => {});
+  const go = useCallback((delta: number) => {
+    slideActionRef.current(delta > 0 ? 1 : -1);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -108,13 +108,73 @@ export function ImageLightbox({
     return [prev, next].filter((i) => i && i.url);
   }, [images, index, total]);
 
+  const hasMany = total > 1;
+  const counter = hasMany && index !== null ? `${index + 1} / ${total}` : null;
+  const slideImages = hasMany && index !== null
+    ? [images[(index - 1 + total) % total], current, images[(index + 1) % total]]
+    : current
+      ? [current]
+      : [];
+
+  const prefersReducedMotion = () =>
+    typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const clearSlideTimer = () => {
+    if (slideTimerRef.current !== null) {
+      window.clearTimeout(slideTimerRef.current);
+      slideTimerRef.current = null;
+    }
+  };
+
+  const completeSlide = () => {
+    clearSlideTimer();
+    const target = pendingIndexRef.current;
+    pendingIndexRef.current = null;
+    setSnapBack(true);
+    setSlide(0);
+    setDragPx(0);
+    if (target !== null) onIndexChange(target);
+  };
+
+  const startSlide = (delta: 1 | -1) => {
+    if (index === null || total <= 1 || slide !== 0) return;
+    const target = (index + delta + total) % total;
+    if (prefersReducedMotion()) {
+      onIndexChange(target);
+      return;
+    }
+    pendingIndexRef.current = target;
+    setSlide(delta);
+    clearSlideTimer();
+    // `transitionend` is the normal commit path. The timer keeps the gallery
+    // from sticking when a throttled/hidden tab never delivers the event.
+    slideTimerRef.current = window.setTimeout(completeSlide, 400);
+  };
+
+  slideActionRef.current = startSlide;
+
+  useEffect(() => {
+    if (open) return;
+    clearSlideTimer();
+    pendingIndexRef.current = null;
+    setSlide(0);
+    setDragPx(0);
+  }, [open]);
+
+  useEffect(() => {
+    if (!snapBack) return;
+    const frame = window.requestAnimationFrame(() => setSnapBack(false));
+    return () => window.cancelAnimationFrame(frame);
+  }, [snapBack]);
+
+  // Keep this below every hook: `index` is null while the dialog is closed,
+  // and returning before a hook would change the hook order on open.
   if (!current || !resolvedCurrent) return null;
 
-  const hasMany = total > 1;
-  const counter = hasMany ? `${index! + 1} / ${total}` : null;
-
   const beginSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!hasMany || event.pointerType === "mouse") return;
+    if (total <= 1 || slide !== 0 || event.pointerType === "mouse") return;
     swipeRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -129,17 +189,16 @@ export function ImageLightbox({
     const dx = event.clientX - swipe.startX;
     const dy = event.clientY - swipe.startY;
     if (!swipe.active) {
-      // Let vertical gestures (and the filmstrip) win until the drag is
-      // clearly horizontal.
+      // Let vertical gestures and taps win until the drag is clearly horizontal.
       if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 12) {
         swipeRef.current = null;
-        setSwipeOffset(0);
+        setDragPx(0);
         return;
       }
       if (Math.abs(dx) < 10) return;
       swipe.active = true;
     }
-    setSwipeOffset(dx * 0.35);
+    setDragPx(dx);
   };
 
   const finishSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -148,10 +207,39 @@ export function ImageLightbox({
     swipeRef.current = null;
     const dx = event.clientX - swipe.startX;
     const dy = event.clientY - swipe.startY;
-    setSwipeOffset(0);
-    if (!swipe.active || Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
-    go(dx < 0 ? 1 : -1);
+    const committed = swipe.active
+      && Math.abs(dx) >= 56
+      && Math.abs(dx) >= Math.abs(dy) * 1.2;
+    if (committed) {
+      startSlide(dx < 0 ? 1 : -1);
+      return;
+    }
+    setDragPx(0);
   };
+
+  const handleTrackTransitionEnd = (event: React.TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || slide === 0) return;
+    completeSlide();
+  };
+
+  const trackStyle = total <= 1
+    ? { transform: "translate3d(0,0,0)" }
+    : {
+        // The track is one viewport wide; slides overflow it as flex items, so
+        // percentages below are relative to a single slide, not the 3-slide
+        // content width.
+        transform: slide === 1
+          ? "translate3d(-200%,0,0)"
+          : slide === -1
+            ? "translate3d(0%,0,0)"
+            : `translate3d(calc(-100% + ${dragPx}px),0,0)`,
+        transition: slide !== 0
+          ? "transform 260ms cubic-bezier(0.22, 1, 0.36, 1)"
+          : snapBack || dragPx !== 0
+            ? "none"
+            : "transform 200ms ease-out",
+        willChange: "transform",
+      } as const;
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -181,25 +269,21 @@ export function ImageLightbox({
 
           <div className="relative flex min-h-0 flex-1 items-center justify-center px-4 pb-2 pt-16 sm:px-16">
             <div
-              className="flex h-full w-full touch-pan-y items-center justify-center"
+              className="h-full w-full touch-pan-y overflow-hidden"
               onPointerDown={beginSwipe}
               onPointerMove={moveSwipe}
               onPointerUp={finishSwipe}
               onPointerCancel={finishSwipe}
-              style={{
-                transform: `translate3d(${swipeOffset}px,0,0)`,
-                transition: swipeOffset === 0 ? "transform 180ms ease-out" : "none",
-                willChange: "transform",
-              }}
             >
-              <img
-                key={resolvedCurrent}
-                src={resolvedCurrent}
-                alt={current.name ?? ""}
-                decoding="async"
-                draggable={false}
-                className="max-h-full max-w-full select-none rounded-compact object-contain shadow-2xl"
-              />
+              <div
+                className="flex h-full w-full"
+                style={trackStyle}
+                onTransitionEnd={handleTrackTransitionEnd}
+              >
+                {slideImages.map((image, slot) => (
+                  <LightboxSlide key={`${image?.url ?? "empty"}-${slot}`} image={image} />
+                ))}
+              </div>
             </div>
 
             {hasMany ? (
@@ -297,6 +381,22 @@ interface NavButtonProps {
   side: "left" | "right";
   label: string;
   onClick: React.MouseEventHandler<HTMLButtonElement>;
+}
+
+function LightboxSlide({ image }: { image: UIImage | null }) {
+  const src = useMobileMediaUrl(image?.url);
+  if (!src) return <div className="h-full w-full shrink-0" aria-hidden />;
+  return (
+    <div className="flex h-full w-full shrink-0 items-center justify-center">
+      <img
+        src={src}
+        alt={image?.name ?? ""}
+        decoding="async"
+        draggable={false}
+        className="max-h-full max-w-full select-none rounded-compact object-contain shadow-2xl"
+      />
+    </div>
+  );
 }
 
 function PreloadImage({ image }: { image: UIImage }) {
