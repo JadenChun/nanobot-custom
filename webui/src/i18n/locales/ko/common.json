@@ -1499,7 +1499,8 @@
     "cliRunRan": "사용함",
     "cliRunFailed": "실패",
     "automationSourceFallback": "자동화",
-    "automationTriggered": "자동 실행됨"
+    "automationTriggered": "자동 실행됨",
+    "mediaLoading": "미디어를 불러오는 중…"
   },
   "recovery": {
     "actionFailed": "복구 작업에 실패했습니다. 다시 시도하세요.",

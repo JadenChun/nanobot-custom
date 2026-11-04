@@ -40,7 +40,10 @@ from nanobot.webui.http_utils import (
 
 _MEDIA_RE = re.compile(r"^/mobile/v1/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$")
 MOBILE_API_TIMEOUT_S = 30.0
-MOBILE_API_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+# Safety ceiling only: the thread projection is paged and bounded, so a normal
+# session stays far below this. It exists to stop a pathological payload from
+# exhausting the phone, not to decide which sessions are viewable.
+MOBILE_API_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 _THREAD_RE = re.compile(r"^/mobile/v1/sessions/([^/]+)/thread$")
 _MOBILE_API_ROUTES: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
     (re.compile(r"^/api/commands$"), frozenset()),

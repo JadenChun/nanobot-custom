@@ -171,3 +171,85 @@ Java_ai_nanobot_mobile_network_NativeNetwork_lastError(JNIEnv *env, jobject thiz
     const char *message = nanobot_network_last_error();
     return (*env)->NewStringUTF(env, message == NULL ? "" : message);
 }
+
+JNIEXPORT jint JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_mediaSetToken(JNIEnv *env, jobject thiz,
+                                                          jlong handle, jstring token) {
+    (void)thiz;
+    const char *raw = (*env)->GetStringUTFChars(env, token, NULL);
+    if (raw == NULL) {
+        return -1;
+    }
+    int32_t status = nanobot_network_media_set_token((int64_t)handle, (char *)raw);
+    (*env)->ReleaseStringUTFChars(env, token, raw);
+    return status;
+}
+
+JNIEXPORT jlong JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_mediaOpen(JNIEnv *env, jobject thiz, jlong handle,
+                                                       jstring path, jstring range_header) {
+    (void)thiz;
+    const char *raw_path = (*env)->GetStringUTFChars(env, path, NULL);
+    if (raw_path == NULL) {
+        return 0;
+    }
+    const char *raw_range = (*env)->GetStringUTFChars(env, range_header, NULL);
+    if (raw_range == NULL) {
+        (*env)->ReleaseStringUTFChars(env, path, raw_path);
+        return 0;
+    }
+    uint64_t stream_id = 0;
+    int32_t status = nanobot_network_media_open((int64_t)handle, (char *)raw_path,
+                                                (char *)raw_range, &stream_id);
+    (*env)->ReleaseStringUTFChars(env, path, raw_path);
+    (*env)->ReleaseStringUTFChars(env, range_header, raw_range);
+    return status == 0 ? (jlong)stream_id : 0;
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_mediaInfo(JNIEnv *env, jobject thiz, jlong handle,
+                                                       jlong stream_id) {
+    (void)thiz;
+    char *buffer = malloc(16 * 1024);
+    if (buffer == NULL) {
+        return NULL;
+    }
+    int32_t length = nanobot_network_media_info((int64_t)handle, (uint64_t)stream_id, buffer,
+                                                16 * 1024);
+    jbyteArray result = copy_bytes(env, buffer, length);
+    free(buffer);
+    return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_mediaRead(JNIEnv *env, jobject thiz, jlong handle,
+                                                       jlong stream_id, jbyteArray buffer) {
+    (void)thiz;
+    if (buffer == NULL) {
+        return -1;
+    }
+    jsize capacity = (*env)->GetArrayLength(env, buffer);
+    jbyte *bytes = (*env)->GetByteArrayElements(env, buffer, NULL);
+    if (bytes == NULL) {
+        return -1;
+    }
+    int32_t read = nanobot_network_media_read((int64_t)handle, (uint64_t)stream_id,
+                                              (char *)bytes, capacity);
+    (*env)->ReleaseByteArrayElements(env, buffer, bytes, 0);
+    return (jint)read;
+}
+
+JNIEXPORT jint JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_mediaClose(JNIEnv *env, jobject thiz, jlong handle,
+                                                        jlong stream_id) {
+    (void)env;
+    (void)thiz;
+    return (jint)nanobot_network_media_close((int64_t)handle, (uint64_t)stream_id);
+}
+
+JNIEXPORT jint JNICALL
+Java_ai_nanobot_mobile_network_NativeNetwork_mediaPurge(JNIEnv *env, jobject thiz, jlong handle) {
+    (void)env;
+    (void)thiz;
+    return (jint)nanobot_network_media_purge((int64_t)handle);
+}

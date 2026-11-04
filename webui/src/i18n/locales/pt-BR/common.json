@@ -1499,7 +1499,8 @@
       "context": "Contexto atual: {{tokens}}{{capacity}}",
       "requests": "{{count}} chamadas nesta rodada",
       "estimated": "Inclui uso estimado"
-    }
+    },
+    "mediaLoading": "Carregando mídia…"
   },
   "recovery": {
     "actionFailed": "A recuperação falhou. Tente novamente.",

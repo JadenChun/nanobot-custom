@@ -14,6 +14,7 @@ import {
   Clock3,
   Copy,
   ImageIcon,
+  Loader2,
   Quote,
   Wrench,
 } from "lucide-react";
@@ -40,7 +41,6 @@ import {
   formatMessageEndTime,
 } from "@/lib/format";
 import { toMediaAttachment } from "@/lib/media";
-import { useMobileMediaUrl } from "@/lib/mobile-media";
 import { matchingSlashCommand } from "@/lib/slash-command";
 import { sessionHandleColor } from "@/lib/session-handle";
 import { parseQuotedUserMessage } from "@/lib/user-message-quote";
@@ -828,9 +828,12 @@ function UserImageCell({
   openLabel: string;
   onOpen?: () => void;
 }) {
+  const { t } = useTranslation();
   const hasUrl = typeof image.url === "string" && image.url.length > 0;
-  const resolvedUrl = useMobileMediaUrl(image.url);
-  const displayUrl = resolvedUrl ?? (hasUrl ? image.url : undefined);
+  const [imageState, setImageState] = useState<"loading" | "ready" | "error">("loading");
+  useEffect(() => {
+    setImageState("loading");
+  }, [image.url]);
   const tileClasses = cn(
     "relative overflow-hidden border border-border/60 bg-muted/40",
     layout === "tile"
@@ -841,26 +844,25 @@ function UserImageCell({
     "shadow-[0_6px_18px_-14px_rgba(0,0,0,0.45)]",
   );
 
-  if (hasUrl && displayUrl && onOpen) {
-    return (
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={image.name ? `${openLabel}: ${image.name}` : openLabel}
+  if (hasUrl && imageState !== "error") {
+    const content = (
+      <div
         className={cn(
-          tileClasses,
-          "block cursor-zoom-in p-0",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+          "relative",
+          layout === "tile" ? "h-full w-full" : size === "large" ? "w-full" : "h-full w-full",
         )}
       >
         <img
-          src={displayUrl}
+          src={image.url}
           alt={image.name ?? ""}
           loading="lazy"
           decoding="async"
           draggable={false}
+          onLoad={() => setImageState("ready")}
+          onError={() => setImageState("error")}
           className={cn(
-            "block",
+            "block transition-opacity duration-200",
+            imageState === "loading" ? "opacity-0" : "opacity-100",
             layout === "tile"
               ? "h-full w-full object-cover"
               : size === "large"
@@ -868,7 +870,40 @@ function UserImageCell({
                 : "h-full w-full object-cover",
           )}
         />
-      </button>
+        {imageState === "loading" ? (
+          <div
+            className="absolute inset-0 grid place-items-center bg-muted/40"
+            aria-busy="true"
+            aria-label={t("message.mediaLoading", { defaultValue: "Loading media…" })}
+          >
+            <Loader2
+              className="h-5 w-5 animate-spin text-muted-foreground motion-reduce:animate-none"
+              aria-hidden
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+    if (onOpen) {
+      return (
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={image.name ? `${openLabel}: ${image.name}` : openLabel}
+          className={cn(
+            tileClasses,
+            "block cursor-zoom-in p-0",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50",
+          )}
+        >
+          {content}
+        </button>
+      );
+    }
+    return (
+      <div className={tileClasses} title={image.name ?? undefined}>
+        {content}
+      </div>
     );
   }
 

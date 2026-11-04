@@ -1499,7 +1499,8 @@
     "cliRunFailed": "失敗",
     "automationSourceFallback": "自動化",
     "automationTriggered": "已自動觸發",
-    "askAboutSelection": "繼續提問"
+    "askAboutSelection": "繼續提問",
+    "mediaLoading": "正在載入媒體…"
   },
   "recovery": {
     "actionFailed": "復原操作失敗，請再試一次。",

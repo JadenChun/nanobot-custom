@@ -75,6 +75,29 @@ int32_t nanobot_network_poll_event(int64_t handle, char *out, int32_t capacity);
 
 int32_t nanobot_network_stop(int64_t handle);
 
+/*
+ * Media streaming for the packaged WebView. `set_token` updates the owner
+ * access token used for media requests; `open` starts one ranged request and
+ * writes its stream id; `info` writes a JSON object with the upstream status
+ * and headers; `read` copies up to capacity bytes (0 at EOF, negative on
+ * error); `close` releases the stream and finalizes its cache entry; `purge`
+ * deletes the on-device media cache.
+ */
+int32_t nanobot_network_media_set_token(int64_t handle, const char *token);
+
+int32_t nanobot_network_media_open(int64_t handle, const char *path,
+                                   const char *range_header, uint64_t *out_stream_id);
+
+int32_t nanobot_network_media_info(int64_t handle, uint64_t stream_id, char *out,
+                                   int32_t capacity);
+
+int32_t nanobot_network_media_read(int64_t handle, uint64_t stream_id, char *out,
+                                   int32_t capacity);
+
+int32_t nanobot_network_media_close(int64_t handle, uint64_t stream_id);
+
+int32_t nanobot_network_media_purge(int64_t handle);
+
 const char *nanobot_network_last_error(void);
 
 #ifdef __cplusplus

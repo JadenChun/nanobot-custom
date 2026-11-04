@@ -1499,7 +1499,8 @@
     "cliRunRan": "Digunakan",
     "cliRunFailed": "Gagal",
     "automationSourceFallback": "Otomatisasi",
-    "automationTriggered": "Dipicu otomatis"
+    "automationTriggered": "Dipicu otomatis",
+    "mediaLoading": "Memuat media…"
   },
   "recovery": {
     "actionFailed": "Pemulihan gagal. Coba lagi.",

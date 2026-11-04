@@ -1499,7 +1499,8 @@
     "cliRunRan": "Usado",
     "cliRunFailed": "Falló",
     "automationSourceFallback": "Automatización",
-    "automationTriggered": "Activada automáticamente"
+    "automationTriggered": "Activada automáticamente",
+    "mediaLoading": "Cargando contenido…"
   },
   "recovery": {
     "actionFailed": "La recuperación falló. Inténtalo de nuevo.",

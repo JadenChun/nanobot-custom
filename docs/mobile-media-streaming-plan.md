@@ -1,6 +1,6 @@
 # Mobile large-payload and media streaming plan
 
-Status: proposed. No runtime change is implied by this document.
+Status: implemented; on-device verification pending (see §11).
 
 ## 1. Problem
 
@@ -172,6 +172,17 @@ lifecycle of its own.
 Without P8 the WebView's HTTP cache already avoids some repeats, but it is not a
 guarantee ("loads once" needs the native cache).
 
+### P9 — Media loading placeholder (UI)
+
+While media bytes are in flight, show a spinner over the tile instead of a
+broken-image icon. Implemented at the element level (`onLoad`/`onError`), so it
+works for both surfaces and survives the native streaming path.
+
+- `webui/src/components/MessageBubble.tsx` (image cell) and
+  `AttachmentTile.tsx` keep a muted tile with a spinner until `onLoad`, and fall
+  back to the existing placeholder on `onError`.
+- No per-client behaviour: the same markup renders on desktop and phone.
+
 ## 5b. Out of scope (deferred, not needed for this fix)
 
 - **P1 write-time artifact references** — stops new sessions from accumulating inline blobs on disk. Display works without it; the projection already bounds responses.
@@ -226,6 +237,23 @@ reverting the plugin method and `mobile-media.ts` together.
   must never remove content the UI renders.
 - Budget tuning is empirical: verify with the largest real sessions before
   fixing the constant.
+
+## 11. Implementation status
+
+| Item | State |
+|---|---|
+| P2 projection budget | implemented (`nanobot/webui/ws_http.py`, `THREAD_PROJECTION_BUDGET_BYTES`) |
+| P3 media streaming core | implemented (`mobile/native-network/internal/broker/media.go`, C ABI + JNI) |
+| P4 same-origin intercept | implemented (`NativeMediaInterceptor.kt`, `NanobotWebViewClient.java`, direct media URLs in the WebUI) |
+| P5 cap → safety ceiling | implemented (64 MiB, `nanobot/remote/edge.py`) |
+| P9 loading placeholder | implemented |
+| P8 device cache | implemented in the core (LRU, 512 MiB, purge on logout/revocation); hit-ratio metrics pending |
+| On-device verification | pending: the phone was disconnected from USB before the new APK could be installed |
+
+Verification plan once the phone is back: install the release APK, open `@kevu`,
+confirm images render with the loading placeholder, confirm no `mobile_media`
+request is issued, confirm the second open hits the cache (no media request),
+and seek in a video attachment.
 
 ## 10. Decisions and open questions
 

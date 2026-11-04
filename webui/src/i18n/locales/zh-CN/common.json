@@ -1499,7 +1499,8 @@
       "context": "当前上下文：{{tokens}}{{capacity}}",
       "requests": "本轮 {{count}} 次模型调用",
       "estimated": "包含估算用量"
-    }
+    },
+    "mediaLoading": "正在加载媒体…"
   },
   "recovery": {
     "actionFailed": "恢复操作失败，请重试。",

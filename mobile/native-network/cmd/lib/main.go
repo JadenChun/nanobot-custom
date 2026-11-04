@@ -264,3 +264,77 @@ func nanobot_network_last_error() *C.char {
 	}
 	return lastErrC
 }
+
+//export nanobot_network_media_set_token
+func nanobot_network_media_set_token(handle C.int64_t, token *C.char) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return setError(broker.ErrNotFound)
+	}
+	core.SetMediaToken(C.GoString(token))
+	return 0
+}
+
+//export nanobot_network_media_open
+func nanobot_network_media_open(handle C.int64_t, path *C.char, rangeHeader *C.char, out *C.uint64_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return setError(broker.ErrNotFound)
+	}
+	streamID, err := core.OpenMediaStream(C.GoString(path), C.GoString(rangeHeader))
+	if err != nil {
+		return setError(err)
+	}
+	*out = C.uint64_t(streamID)
+	return 0
+}
+
+//export nanobot_network_media_info
+func nanobot_network_media_info(handle C.int64_t, streamID C.uint64_t, out *C.char, capacity C.int32_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return setError(broker.ErrNotFound)
+	}
+	info := core.MediaStreamInfo(uint64(streamID))
+	if info == nil {
+		return setError(broker.ErrNotFound)
+	}
+	return writeJSON(out, capacity, info)
+}
+
+//export nanobot_network_media_read
+func nanobot_network_media_read(handle C.int64_t, streamID C.uint64_t, out *C.char, capacity C.int32_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return setError(broker.ErrNotFound)
+	}
+	if capacity <= 0 {
+		return 0
+	}
+	buffer := unsafe.Slice((*byte)(unsafe.Pointer(out)), int(capacity))
+	return C.int32_t(core.ReadMediaStream(uint64(streamID), buffer))
+}
+
+//export nanobot_network_media_close
+func nanobot_network_media_close(handle C.int64_t, streamID C.uint64_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return setError(broker.ErrNotFound)
+	}
+	if core.CloseMediaStream(uint64(streamID)) != 0 {
+		return setError(broker.ErrNotFound)
+	}
+	return 0
+}
+
+//export nanobot_network_media_purge
+func nanobot_network_media_purge(handle C.int64_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return setError(broker.ErrNotFound)
+	}
+	if core.PurgeMediaCache() != 0 {
+		return setError(broker.ErrUnavailable)
+	}
+	return 0
+}

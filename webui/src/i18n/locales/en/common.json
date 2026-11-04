@@ -1499,7 +1499,8 @@
       "context": "Context now: {{tokens}}{{capacity}}",
       "requests": "{{count}} calls this turn",
       "estimated": "Includes estimated usage"
-    }
+    },
+    "mediaLoading": "Loading media…"
   },
   "recovery": {
     "actionFailed": "Recovery action failed. Try again.",

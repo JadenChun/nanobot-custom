@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         captureLink(getIntent());
         getBridge().getWebView().addJavascriptInterface(new NativeProbe(), "NanobotNativeProbe");
+        getBridge().getWebView().setWebViewClient(new NanobotWebViewClient(getBridge()));
     }
 
     @Override

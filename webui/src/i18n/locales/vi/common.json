@@ -1499,7 +1499,8 @@
     "cliRunRan": "Đã dùng",
     "cliRunFailed": "Thất bại",
     "automationSourceFallback": "Tự động hóa",
-    "automationTriggered": "Tự động kích hoạt"
+    "automationTriggered": "Tự động kích hoạt",
+    "mediaLoading": "Đang tải phương tiện…"
   },
   "recovery": {
     "actionFailed": "Khôi phục thất bại. Hãy thử lại.",

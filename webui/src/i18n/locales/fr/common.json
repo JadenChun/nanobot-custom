@@ -1499,7 +1499,8 @@
     "cliRunRan": "Utilisé",
     "cliRunFailed": "Échec",
     "automationSourceFallback": "Automatisation",
-    "automationTriggered": "Déclenché automatiquement"
+    "automationTriggered": "Déclenché automatiquement",
+    "mediaLoading": "Chargement du média…"
   },
   "recovery": {
     "actionFailed": "La récupération a échoué. Réessayez.",

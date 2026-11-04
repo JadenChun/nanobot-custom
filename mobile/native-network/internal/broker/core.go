@@ -47,6 +47,10 @@ type Core struct {
 	peerMu  sync.Mutex
 	peerIPs map[string]string
 	peerAt  time.Time
+
+	mediaToken   string
+	mediaStreams map[uint64]*mediaStream
+	nextMediaID  uint64
 }
 
 func NewCore(cfg Config) (*Core, error) {
@@ -58,11 +62,12 @@ func NewCore(cfg Config) (*Core, error) {
 		return nil, fmt.Errorf("%w: origin cannot be parsed", ErrInvalid)
 	}
 	return &Core{
-		cfg:      cfg,
-		origin:   origin,
-		state:    "new",
-		requests: make(map[uint64]context.CancelFunc),
-		events:   make(chan []byte, cfg.QueueSize),
+		cfg:          cfg,
+		origin:       origin,
+		state:        "new",
+		requests:     make(map[uint64]context.CancelFunc),
+		events:       make(chan []byte, cfg.QueueSize),
+		mediaStreams: make(map[uint64]*mediaStream),
 	}, nil
 }
 

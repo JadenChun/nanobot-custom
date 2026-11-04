@@ -21,6 +21,12 @@ object NativeNetwork {
     external fun wsClose(handle: Long, wsId: Long): Int
     external fun wsPing(handle: Long, wsId: Long): Int
     external fun pollEvent(handle: Long): ByteArray?
+    external fun mediaSetToken(handle: Long, token: String): Int
+    external fun mediaOpen(handle: Long, path: String, rangeHeader: String): Long
+    external fun mediaInfo(handle: Long, streamId: Long): ByteArray?
+    external fun mediaRead(handle: Long, streamId: Long, buffer: ByteArray): Int
+    external fun mediaClose(handle: Long, streamId: Long): Int
+    external fun mediaPurge(handle: Long): Int
     external fun stop(handle: Long): Int
     external fun lastError(): String
 }

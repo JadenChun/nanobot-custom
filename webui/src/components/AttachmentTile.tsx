@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { FileIcon, ImageIcon, PlaySquare } from "lucide-react";
+import { FileIcon, ImageIcon, Loader2, PlaySquare } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { useMobileMediaUrl } from "@/lib/mobile-media";
+import { useMediaSource } from "@/lib/mobile-media";
 import { cn } from "@/lib/utils";
 import type { UIMediaAttachment } from "@/lib/types";
 
@@ -16,7 +16,9 @@ interface AttachmentTileProps {
 export function AttachmentTile({ attachment, className, inline = false, variant = "default" }: AttachmentTileProps) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
-  const resolvedUrl = useMobileMediaUrl(attachment.url);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const media = useMediaSource(attachment.url);
+  const resolvedUrl = media.src;
   const hasUrl = typeof resolvedUrl === "string" && resolvedUrl.length > 0;
   const label = attachmentLabel(attachment, t);
 
@@ -32,7 +34,7 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
           href={resolvedUrl}
           target="_blank"
           rel="noreferrer noopener"
-          className="block bg-muted/20"
+          className="relative block bg-muted/20"
           aria-label={attachment.name
             ? t("message.openAttachment", { name: attachment.name })
             : t("lightbox.open", { defaultValue: "Open image" })}
@@ -43,12 +45,29 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
             loading="lazy"
             decoding="async"
             draggable={false}
+            onLoad={() => setImageLoaded(true)}
             onError={() => setFailed(true)}
             className={cn(
-              "block h-auto max-w-full bg-background object-contain",
+              "block h-auto max-w-full bg-background object-contain transition-opacity duration-200",
+              imageLoaded ? "opacity-100" : "opacity-0",
               variant === "compact" ? "max-h-40" : "max-h-[34rem]",
             )}
           />
+          {imageLoaded ? null : (
+            <span
+              className={cn(
+                "absolute inset-0 grid place-items-center bg-muted/40",
+                variant === "compact" ? "min-h-24" : "min-h-40",
+              )}
+              aria-busy="true"
+              aria-label={t("message.mediaLoading", { defaultValue: "Loading media…" })}
+            >
+              <Loader2
+                className="h-5 w-5 animate-spin text-muted-foreground motion-reduce:animate-none"
+                aria-hidden
+              />
+            </span>
+          )}
         </a>
       </AttachmentFrame>
     );

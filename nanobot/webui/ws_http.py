@@ -412,6 +412,9 @@ def _resolve_bootstrap_model_name(
 # ---------------------------------------------------------------------------
 
 
+# One thread response stays within this budget by paging, not by trimming.
+THREAD_PROJECTION_BUDGET_BYTES = 1_500_000
+
 _MOBILE_COMMAND_NAMES = frozenset({
     "/new",
     "/compact",
@@ -1423,31 +1426,51 @@ class GatewayHTTPHandler:
         active_turn_transcript_persistence_failed = (
             websocket_turn_transcript_persistence_failed(chat_id)
         )
-        data: dict[str, Any] | None = build_webui_thread_response(
-            decoded_key,
-            augment_user_media=lambda paths: self.media.augment_transcript_media(
-                paths,
-                allow_folder_grants=allow_folder_grants,
-            ),
-            augment_assistant_media=lambda paths: self.media.augment_transcript_media(
-                paths,
-                allow_folder_grants=allow_folder_grants,
-            ),
-            augment_assistant_text=lambda text: self.media.rewrite_local_markdown_images(
-                text,
-                workspace_path=scope.project_path,
-                allow_folder_grants=allow_folder_grants,
-            ),
-            session_messages_loader=load_session_messages,
-            active_turn_started_at=active_turn_started_at,
-            active_turn_id=active_turn_id,
-            active_turn_transcript_persistence_failed=(
-                active_turn_transcript_persistence_failed
-            ),
-            limit=limit,
-            direction=direction,
-            before=before,
-        )
+
+        def build_thread(limit_value: int | None) -> dict[str, Any] | None:
+            return build_webui_thread_response(
+                decoded_key,
+                augment_user_media=lambda paths: self.media.augment_transcript_media(
+                    paths,
+                    allow_folder_grants=allow_folder_grants,
+                ),
+                augment_assistant_media=lambda paths: self.media.augment_transcript_media(
+                    paths,
+                    allow_folder_grants=allow_folder_grants,
+                ),
+                augment_assistant_text=lambda text: self.media.rewrite_local_markdown_images(
+                    text,
+                    workspace_path=scope.project_path,
+                    allow_folder_grants=allow_folder_grants,
+                ),
+                session_messages_loader=load_session_messages,
+                active_turn_started_at=active_turn_started_at,
+                active_turn_id=active_turn_id,
+                active_turn_transcript_persistence_failed=(
+                    active_turn_transcript_persistence_failed
+                ),
+                limit=limit_value,
+                direction=direction,
+                before=before,
+            )
+
+
+        data = build_thread(limit)
+        # Bound one response by showing fewer turns, never by trimming a turn:
+        # every client receives identical content for the turns it gets.
+        if data is not None and limit is not None:
+            effective_limit = limit
+            while (
+                len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+                > THREAD_PROJECTION_BUDGET_BYTES
+                and effective_limit > 1
+            ):
+                effective_limit = max(1, effective_limit // 2)
+                smaller_page = build_thread(effective_limit)
+                if smaller_page is None:
+                    break
+                data = smaller_page
+
         if data is None:
             metadata_payload = (
                 self.session_manager.read_session_metadata(decoded_key)

@@ -122,6 +122,10 @@ class NativeNetworkPlugin : Plugin() {
                 try {
                     custody.logout(serverReachable = true)
                     custody.purgeMedia()
+                    val current = transportHandle
+                    if (current != 0L) {
+                        NativeNetwork.mediaPurge(current)
+                    }
                 } catch (_: Exception) {
                     // Custody may already be gone; the reload still resets UI.
                 }
@@ -151,7 +155,7 @@ class NativeNetworkPlugin : Plugin() {
             active = latest
             requestRefresh(active)
         }
-        return custody.saveRefreshedTokens(
+        val saved = custody.saveRefreshedTokens(
             active.origin,
             active.installationId,
             refreshed.getString("access_token"),
@@ -159,6 +163,11 @@ class NativeNetworkPlugin : Plugin() {
             refreshed.optInt("expires_in", 600),
             refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
         )
+        val current = transportHandle
+        if (current != 0L) {
+            NativeNetwork.mediaSetToken(current, saved.accessToken)
+        }
+        return saved
     }
 
     @PluginMethod
@@ -1073,6 +1082,9 @@ class NativeNetworkPlugin : Plugin() {
     fun logout(call: PluginCall) {
         val serverReachable = call.getBoolean("serverReachable") ?: false
         val current = transportHandle
+        if (current != 0L) {
+            NativeNetwork.mediaPurge(current)
+        }
         transportHandle = 0L
         pollTask?.cancel(false)
         pollTask = null
@@ -1193,6 +1205,8 @@ class NativeNetworkPlugin : Plugin() {
             throw IllegalStateException(NativeNetwork.lastError())
         }
         transportHandle = newHandle
+        NativeNetwork.mediaSetToken(newHandle, record.accessToken)
+        NativeMediaInterceptor.transportHandle = newHandle
         startPoller()
         return record
     }
@@ -1268,6 +1282,7 @@ class NativeNetworkPlugin : Plugin() {
         pendingWsFrames.clear()
         val current = transportHandle
         transportHandle = 0L
+        NativeMediaInterceptor.transportHandle = 0L
         if (current != 0L) {
             NativeNetwork.stop(current)
         }
