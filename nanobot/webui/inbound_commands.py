@@ -142,6 +142,25 @@ def request_settings_error(
     return None
 
 
+def steering_target_error(
+    envelope: dict[str, Any],
+    *,
+    chat_id: str,
+    scope: WorkspaceScope,
+) -> tuple[str, str] | None:
+    """Reject guidance whose target turn or captured scope no longer matches."""
+    target_turn_id = envelope.get("target_turn_id")
+    if (
+        not isinstance(target_turn_id, str)
+        or websocket_turn_id(chat_id) != target_turn_id
+    ):
+        return "not_admitted", "steering_target_changed"
+    current_scope = websocket_turn_scope(chat_id)
+    if current_scope is None or scope.metadata() != current_scope:
+        return "not_admitted", "steering_context_changed"
+    return None
+
+
 @dataclass(frozen=True)
 
 class WebUIRequestResult:
@@ -751,6 +770,22 @@ class WebUICommandRouter:
             )
             return
 
+        self._transport.webui_attach(connection, chat_id)
+        if temporary_policy is None or temporary_policy.hydrate_transcript:
+            await self._transport.webui_hydrate(chat_id)
+        if (
+            temporary_policy is None
+            and self._workspaces.source_token(chat_id) != current_source_token
+        ):
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="source_changed",
+                reason="source_token",
+                **rejection_fields,
+            )
+            return
+
         is_webui = envelope.get("webui") is True
         trusted_webui = is_webui and connection in self._webui_connections
         is_user_shell = (
@@ -805,10 +840,6 @@ class WebUICommandRouter:
                     **rejection_fields,
                 )
                 return
-            self._transport.webui_attach(connection, chat_id)
-            if temporary_policy is None or temporary_policy.hydrate_transcript:
-                await self._transport.webui_hydrate(chat_id)
-
             local_controls = self.workspace_controls_available(connection)
             controls_available = local_controls or _typed_owner_mobile_identity(connection) is not None
             scope = await self.workspace_scope_or_error(
@@ -834,13 +865,14 @@ class WebUICommandRouter:
             if queued_owner is not None:
                 bind_queued_websocket_turn_scope(chat_id, queued_owner, scope.metadata())
             if request_intent == "steer":
-                current_scope = websocket_turn_scope(chat_id)
-                if current_scope is None or scope.metadata() != current_scope:
+                error = steering_target_error(envelope, chat_id=chat_id, scope=scope)
+                if error is not None:
+                    detail, reason = error
                     await self._transport.webui_send_event(
                         connection,
                         "error",
-                        detail="not_admitted",
-                        reason="steering_context_changed",
+                        detail=detail,
+                        reason=reason,
                         **rejection_fields,
                     )
                     return
@@ -932,6 +964,32 @@ class WebUICommandRouter:
             metadata[WORKSPACE_SCOPE_METADATA_KEY] = scope.metadata()
             if queued_owner is not None:
                 metadata[WEBSOCKET_TURN_OWNER_METADATA_KEY] = queued_owner
+
+            if request_intent == "steer":
+                error = steering_target_error(envelope, chat_id=chat_id, scope=scope)
+                if error is not None:
+                    detail, reason = error
+                    await self._transport.webui_send_event(
+                        connection,
+                        "error",
+                        detail=detail,
+                        reason=reason,
+                        **rejection_fields,
+                    )
+                    return
+
+            if (
+                temporary_policy is None
+                and self._workspaces.source_token(chat_id) != current_source_token
+            ):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="source_changed",
+                    reason="source_token",
+                    **rejection_fields,
+                )
+                return
 
             try:
                 if is_webui and (

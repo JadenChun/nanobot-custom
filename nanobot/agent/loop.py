@@ -100,6 +100,7 @@ from nanobot.bus.outbound_events import (
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
+    WebUIAdmissionRejectedEvent,
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -194,7 +195,12 @@ from nanobot.utils.progress_events import output_events
 from nanobot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
 )
-from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.metadata import (
+    WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_REQUEST_INTENT_METADATA_KEY,
+    WEBUI_TARGET_TURN_METADATA_KEY,
+    WEBUI_TURN_METADATA_KEY,
+)
 
 if TYPE_CHECKING:
     from nanobot.agent.busy_control import BusyControlRouter
@@ -2362,7 +2368,16 @@ class AgentLoop:
                     return binding
                 return row
 
-            async def convert(pending_msg: InboundMessage) -> SourceInjectionBinding | dict[str, object]:
+            async def convert(
+                pending_msg: InboundMessage,
+            ) -> SourceInjectionBinding | dict[str, object] | None:
+                steering_rejection = self._webui_steering_rejection(pending_msg)
+                if steering_rejection is not None:
+                    await self._reject_webui_steering(
+                        pending_msg,
+                        *steering_rejection,
+                    )
+                    return None
                 try:
                     return await _to_user_message(pending_msg)
                 except BaseException:
@@ -2372,12 +2387,16 @@ class AgentLoop:
 
             items: list[SourceInjectionBinding | dict[str, object]] = []
             if first_msg is not None:
-                items.append(await convert(first_msg))
+                first = await convert(first_msg)
+                if first is not None:
+                    items.append(first)
             while len(items) < limit:
                 try:
-                    items.append(await convert(pending_queue.get_nowait()))
+                    converted = await convert(pending_queue.get_nowait())
                 except asyncio.QueueEmpty:
                     break
+                if converted is not None:
+                    items.append(converted)
 
             return items
 
@@ -2706,6 +2725,10 @@ class AgentLoop:
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
+                steering_rejection = self._webui_steering_rejection(msg)
+                if steering_rejection is not None:
+                    await self._reject_webui_steering(msg, *steering_rejection)
+                    continue
                 continuation = workspace_access_continuation(msg, session_key=effective_key)
                 if effective_key in self._busy_consumers:
                     # No wire field is authentication or durable admission proof.
@@ -3076,6 +3099,43 @@ class AgentLoop:
             task.result()
             if cancelled:
                 raise asyncio.CancelledError()
+
+    @staticmethod
+    def _webui_steering_rejection(msg: InboundMessage) -> tuple[str, str] | None:
+        """Reject guidance whose original turn is no longer the active target."""
+        if msg.channel != "websocket":
+            return None
+        metadata = msg.metadata
+        if metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY) != "steer":
+            return None
+        target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+        if not isinstance(target_turn_id, str) or not target_turn_id:
+            return ("not_admitted", "steering_target_changed")
+        from nanobot.session.webui_turns import websocket_turn_id
+
+        if websocket_turn_id(msg.chat_id) != target_turn_id:
+            return ("not_admitted", "steering_target_changed")
+        return None
+
+    async def _reject_webui_steering(
+        self,
+        msg: InboundMessage,
+        detail: str,
+        reason: str,
+    ) -> None:
+        metadata = msg.metadata
+        turn_id = metadata.get(WEBUI_TURN_METADATA_KEY)
+        await self.bus.publish_outbound(OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content="",
+            metadata=dict(metadata),
+            event=WebUIAdmissionRejectedEvent(
+                detail=detail,
+                reason=reason,
+                turn_id=turn_id if isinstance(turn_id, str) and turn_id else None,
+            ),
+        ))
 
     async def _dispatch(
         self, msg: InboundMessage, *,

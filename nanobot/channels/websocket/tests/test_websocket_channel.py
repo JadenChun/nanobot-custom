@@ -6625,6 +6625,147 @@ async def test_webui_message_rejects_stale_source_and_accepts_current_source(
 
 
 @pytest.mark.asyncio
+async def test_webui_message_source_reset_during_hydration_is_rejected_before_effects(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.webui.transcript import read_transcript_lines
+
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:source-hydration-race"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("source-hydration-race")
+    assert token is not None
+    source = sessions._jsonl_store.source
+
+    async def reset_during_hydration(_chat_id: str) -> None:
+        snapshot = source.load_source_snapshot(key)
+        source.reset_source_session(key, snapshot.state, [])
+
+    channel.webui_hydrate = AsyncMock(side_effect=reset_during_hydration)
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "source-hydration-race",
+            "content": "hello",
+            "webui": True,
+            "turn_id": "turn-source-race",
+            "request_settings_version": 1,
+            "request_intent": "new",
+            "source_token": token,
+        },
+    )
+
+    payloads = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+    errors = [payload for payload in payloads if payload.get("event") == "error"]
+    assert len(errors) == 1
+    assert errors[0]["detail"] == "source_changed"
+    assert errors[0]["reason"] == "source_token"
+    assert errors[0]["turn_id"] == "turn-source-race"
+    assert not any(payload.get("event") == "message_accepted" for payload in payloads)
+    assert read_transcript_lines(key) == []
+    bus.publish_inbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webui_steer_rejects_target_replaced_during_hydration_before_effects(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.webui.transcript import read_transcript_lines
+
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:steer-hydration-race"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("steer-hydration-race")
+    assert token is not None
+    first_owner = wth.register_queued_websocket_turn_if_idle(
+        "steer-hydration-race",
+        "turn-1",
+        workspace_scope=scope.metadata(),
+    )
+    assert first_owner is not None
+
+    async def replace_target(_chat_id: str) -> None:
+        wth.clear_websocket_turn_if_current("steer-hydration-race", first_owner)
+        wth.register_queued_websocket_turn_if_idle(
+            "steer-hydration-race",
+            "turn-2",
+            workspace_scope=scope.metadata(),
+        )
+
+    channel.webui_hydrate = AsyncMock(side_effect=replace_target)
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "steer-hydration-race",
+            "content": "guidance",
+            "webui": True,
+            "turn_id": "guidance-1",
+            "request_settings_version": 1,
+            "request_intent": "steer",
+            "target_turn_id": "turn-1",
+            "source_token": token,
+            "workspace_scope": scope.metadata(),
+        },
+    )
+
+    payloads = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+    errors = [payload for payload in payloads if payload.get("event") == "error"]
+    assert len(errors) == 1
+    assert errors[0]["detail"] == "not_admitted"
+    assert errors[0]["reason"] == "steering_target_changed"
+    assert errors[0]["turn_id"] == "guidance-1"
+    assert not any(payload.get("event") == "message_accepted" for payload in payloads)
+    assert read_transcript_lines(key) == []
+    bus.publish_inbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_legacy_webui_message_without_v1_fields_still_admits(
     bus: MagicMock,
     tmp_path,

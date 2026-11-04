@@ -1585,6 +1585,30 @@ class WebSocketChannel(BaseChannel):
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" user_message ")
 
+    async def send_admission_rejected(
+        self,
+        chat_id: str,
+        *,
+        detail: str,
+        reason: str,
+        turn_id: str | None = None,
+    ) -> None:
+        """Reject an acknowledged request whose injection target changed."""
+        conns = list(self._subs.get(chat_id, ()))
+        if not conns:
+            return
+        body: dict[str, Any] = {
+            "event": "error",
+            "chat_id": chat_id,
+            "detail": detail,
+            "reason": reason,
+        }
+        if turn_id:
+            body["turn_id"] = turn_id
+        raw = json.dumps(body, ensure_ascii=False)
+        for connection in conns:
+            await self._safe_send_to(connection, raw, label=" error ")
+
     async def send_runtime_model_updated(
         self,
         *,

@@ -1241,6 +1241,20 @@ export function ThreadShell({
     dismissStreamError,
   } = useNanobotStream(chatId, initial, hasPendingToolCalls, handleTurnEnd);
 
+  const admissionRejectedTurn = useMemo(() => {
+    if (
+      streamError?.kind !== "turn_rejected"
+      || streamError.detail !== "not_admitted"
+      || (
+        streamError.reason !== "busy_new_request"
+        && streamError.reason !== "steering_target_changed"
+      )
+    ) {
+      return null;
+    }
+    return { turnId: streamError.turnId };
+  }, [streamError]);
+
   useLayoutEffect(() => {
     if (currentUiMessagesRef.current === messages) return;
     currentUiMessagesRef.current = messages;
@@ -2120,9 +2134,17 @@ export function ThreadShell({
         activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
         setSubmittedViewportTurnId(submitted.turnId);
       }
+      return submitted;
     },
     [chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, send, withWorkspaceScope, workspaceAccessRequest],
   );
+
+  const handleAdmissionRejectedPromptRestored = useCallback((turnId: string) => {
+    setMessages((prev) => prev.filter(
+      (message) => !(message.role === "user" && message.turnId === turnId),
+    ));
+    dismissStreamError();
+  }, [dismissStreamError, setMessages]);
 
   const handleWorkspaceScopeChange = useCallback((scope: WorkspaceScopePayload) => {
     if (workspaceAccessRequest && chatId) {
@@ -2361,6 +2383,8 @@ export function ThreadShell({
         ) : null}
         <ThreadComposer
           onSend={handleThreadSend}
+          admissionRejectedTurn={admissionRejectedTurn}
+          onAdmissionRejectedPromptRestored={handleAdmissionRejectedPromptRestored}
           disabled={!chatId}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}

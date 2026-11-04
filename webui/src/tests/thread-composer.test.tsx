@@ -4083,3 +4083,106 @@ describe("mobile Full device confirmation", () => {
     await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
   });
 });
+
+describe("queued prompt retention after busy admission rejection", () => {
+  it("restores the full queued snapshot and waits for an explicit retry", async () => {
+    const scope = {
+      project_path: "/tmp/submitted-project",
+      project_name: "submitted-project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const submitted = {
+      turnId: "turn-busy",
+      userMessageId: "user-busy",
+      sideChannel: false,
+    };
+    const onSend = vi.fn(() => submitted);
+    const onRestored = vi.fn();
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "queued follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith(
+        "queued follow-up",
+        undefined,
+        { workspaceScope: scope },
+      );
+    });
+    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={{ turnId: "turn-busy" }}
+        onAdmissionRejectedPromptRestored={onRestored}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onRestored).toHaveBeenCalledWith("turn-busy"));
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        admissionRejectedTurn={null}
+        onAdmissionRejectedPromptRestored={onRestored}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={null}
+        onAdmissionRejectedPromptRestored={onRestored}
+        workspaceScope={scope}
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend).toHaveBeenLastCalledWith(
+      "queued follow-up",
+      undefined,
+      { workspaceScope: scope },
+    );
+    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
+  });
+});
