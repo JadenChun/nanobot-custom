@@ -263,6 +263,7 @@ vi.mock("@/lib/nanobot-client", async (importOriginal) => {
       sidebarStateUpdateHandlers.add(handler);
       return () => sidebarStateUpdateHandlers.delete(handler);
     };
+    onSettingsUpdated = () => () => {};
     onRunStatus = (handler: (chatId: string, startedAt: number | null) => void) => {
       runStatusHandlers.add(handler);
       return () => runStatusHandlers.delete(handler);

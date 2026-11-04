@@ -73,6 +73,11 @@ function resolveCopy(
         title: t("errors.turnRejected.title"),
         body: t("errors.turnRejected.body"),
       };
+    case "connection_closed":
+      return {
+        title: t("errors.connectionClosed.title"),
+        body: t("errors.connectionClosed.body"),
+      };
     case "model_request_failed":
       return resolveModelRequestFailureCopy(error, t);
     default: {

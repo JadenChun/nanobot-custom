@@ -2411,7 +2411,11 @@ export function ThreadComposer({
       modelPresets={modelPresets}
       onPresetChange={onModelPresetChange}
       onManageModels={onManageModels}
-      onRequestComposerFocus={() => textareaRef.current?.focus()}
+      onRequestComposerFocus={() => {
+        // A touch keyboard would cover the thread; only restore composer focus
+        // when the user has a hardware keyboard.
+        if (!hasTouchPrimaryPointer) textareaRef.current?.focus();
+      }}
       provider={modelProvider}
       providerLabel={modelProviderLabel}
       needsSetup={modelNeedsSetup}

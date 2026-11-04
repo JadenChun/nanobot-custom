@@ -102,6 +102,26 @@
   };
   window.nanobotMobileTransport = transport;
 
+  // Mirror WebUI console output to logcat: the packaged client has no devtools
+  // bridge, so mobile-only connection faults are otherwise invisible.
+  (function () {
+    var probe = window.NanobotNativeProbe;
+    if (!probe || typeof probe.log !== "function") return;
+    ["log", "warn", "error"].forEach(function (level) {
+      var original = console[level];
+      console[level] = function () {
+        try {
+          var parts = Array.prototype.map.call(arguments, function (value) {
+            if (typeof value === "string") return value;
+            try { return JSON.stringify(value); } catch (_) { return String(value); }
+          });
+          probe.log("[" + level + "] " + parts.join(" ").slice(0, 400));
+        } catch (_) {}
+        original.apply(console, arguments);
+      };
+    });
+  })();
+
   var resolveReady;
   window.nanobotMobileReady = new Promise(function (resolve) {
     resolveReady = resolve;

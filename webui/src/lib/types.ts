@@ -17,6 +17,7 @@ export type MessageDeliveryStatus = "sending" | "accepted" | "failed";
 export type MessageDeliveryErrorKind =
   | "message_too_big"
   | "workspace_scope_rejected"
+  | "connection_closed"
   | "turn_rejected";
 
 /** One image attached to a UIMessage.
@@ -1768,6 +1769,7 @@ export type InboundEvent =
       event: "sidebar_state_updated";
       state: SidebarStatePayload;
     }
+  | { event: "settings_updated" }
   | { event: "transcription_result"; request_id: string; text: string }
   | {
       event: "transcription_error";

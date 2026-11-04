@@ -1277,7 +1277,11 @@ async def test_webui_request_survives_disconnect_and_preserves_reconnect_order(
     await asyncio.gather(*pending)
 
     assert dispatch_order == ["automation.run", "automation.update", "automation.delete"]
-    responses = [json.loads(call.args[0]) for call in retry_conn.send.await_args_list]
+    responses = [
+        json.loads(call.args[0])
+        for call in retry_conn.send.await_args_list
+        if json.loads(call.args[0]).get("event") == "webui_response"
+    ]
     assert [response["request_id"] for response in responses] == [
         "request-retry",
         "request-queued",

@@ -51,6 +51,10 @@ class WebUIGatewayEndpoint:
         self._tokens = tokens
         self._mobile_edge = mobile_edge
         self.webui_connections: set[ServerConnection] = set()
+        # Every accepted WebUI-protocol socket, desktop and mobile. Kept apart
+        # from ``webui_connections`` (a trust/local-authority set) so broadcasts
+        # cannot widen authorization.
+        self.protocol_connections: set[ServerConnection] = set()
 
     async def process_request(
         self,
@@ -64,7 +68,10 @@ class WebUIGatewayEndpoint:
         if got == "/mobile/v1/ws" and is_websocket_upgrade(request):
             if self._mobile_edge is None:
                 return connection.respond(404, "Not Found")
-            return await self._mobile_edge.authorize_websocket(connection, request)
+            response = await self._mobile_edge.authorize_websocket(connection, request)
+            if response is None:
+                self.protocol_connections.add(connection)
+            return response
         if got == "/mobile/v1" or got.startswith("/mobile/v1/"):
             if self._mobile_edge is None:
                 return connection.respond(404, "Not Found")
@@ -82,7 +89,10 @@ class WebUIGatewayEndpoint:
                 client_id = client_id[:128]
             if not is_allowed(client_id):
                 return connection.respond(403, "Forbidden")
-            return self.authorize_websocket_handshake(connection, query, request.headers)
+            response = self.authorize_websocket_handshake(connection, query, request.headers)
+            if response is None:
+                self.protocol_connections.add(connection)
+            return response
         return await self._http.dispatch(connection, request)
 
     def authorize_websocket_handshake(
@@ -141,6 +151,8 @@ class WebUIGatewayEndpoint:
 
     def discard_connection(self, connection: ServerConnection) -> None:
         self.webui_connections.discard(connection)
+        self.protocol_connections.discard(connection)
 
     def clear(self) -> None:
         self.webui_connections.clear()
+        self.protocol_connections.clear()

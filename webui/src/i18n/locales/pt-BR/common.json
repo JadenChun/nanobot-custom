@@ -1602,6 +1602,10 @@
       "unknownTitle": "Falha na solicitação ao provedor do modelo",
       "bodyWithAttempt": "A solicitação ainda falhou na tentativa {{attempts}}, então as novas tentativas foram interrompidas. Verifique a configuração ou o status do provedor e tente novamente.",
       "body": "Verifique a configuração ou o status do provedor e tente novamente."
+    },
+    "connectionClosed": {
+      "title": "A mensagem não foi enviada",
+      "body": "A conexão foi encerrada antes que o gateway aceitasse esta mensagem. Verifique se este dispositivo continua conectado e envie novamente."
     }
   },
   "workspace": {

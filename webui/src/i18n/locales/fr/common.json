@@ -1602,6 +1602,10 @@
       "unknownTitle": "Échec de la requête au fournisseur du modèle",
       "bodyWithAttempt": "La requête a encore échoué à la tentative {{attempts}} ; les nouvelles tentatives ont donc été arrêtées. Vérifiez la configuration ou l’état du fournisseur, puis réessayez.",
       "body": "Vérifiez la configuration ou l’état du fournisseur, puis réessayez."
+    },
+    "connectionClosed": {
+      "title": "Le message n'a pas été envoyé",
+      "body": "La connexion s'est fermée avant que la passerelle n'accepte ce message. Vérifiez que cet appareil est toujours connecté, puis renvoyez-le."
     }
   },
   "workspace": {

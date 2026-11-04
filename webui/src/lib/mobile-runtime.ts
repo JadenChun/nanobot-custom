@@ -67,6 +67,8 @@ export interface MobileRuntime {
   createWebSocket(url: string): WebSocket;
   /** Restore foreground connectivity once; no-op when no runtime is installed. */
   recover(): Promise<void>;
+  /** Mint a fresh access token and reopen live sockets before it expires. */
+  renew(): Promise<void>;
 }
 
 let installedMobileRuntime: MobileRuntime | null = null;
@@ -129,6 +131,20 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
   let listening: Promise<() => void> | null = null;
   const sockets = new Set<MobileWebSocket>();
   let recovery: Promise<void> | null = null;
+  let renewalTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleRenewal = (payload: Record<string, unknown>): void => {
+    const limits = payload.limits;
+    const rawTtl = limits && typeof limits === "object"
+      ? Number((limits as Record<string, unknown>).access_ttl_seconds)
+      : NaN;
+    const ttlSeconds = Number.isFinite(rawTtl) && rawTtl >= 120 ? rawTtl : 600;
+    if (renewalTimer !== null) clearTimeout(renewalTimer);
+    renewalTimer = setTimeout(() => {
+      renewalTimer = null;
+      void runtime.renew().finally(() => scheduleRenewal(payload));
+    }, Math.max(60_000, Math.floor(ttlSeconds * 0.7) * 1000));
+  };
 
   const ensureListener = (): Promise<() => void> => {
     if (listening === null) {
@@ -186,6 +202,10 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     transport,
     request,
     async handshake() {
+      // Rotate the access token first: refresh invalidates every previous token
+      // for this installation, so a token inherited from an earlier session can
+      // be minutes from expiry and would kill the socket right after connect.
+      await transport.refresh().catch(() => false);
       const response = await request({ operation: "mobile_handshake", method: "GET", path: "/mobile/v1/handshake" });
       if (response.status !== 200) throw new MobileRuntimeError(`handshake_status_${response.status}`);
       const payload = JSON.parse(decodeBase64(response.bodyBase64)) as Record<string, unknown>;
@@ -203,6 +223,7 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
           && (capabilities as Record<string, unknown>).standard_dispatch === true
         ),
       );
+      scheduleRenewal(payload);
       return payload;
     },
     async read(path = "/mobile/v1/read") {
@@ -232,6 +253,17 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
         recovery = null;
       });
       return recovery;
+    },
+    async renew() {
+      // Access tokens live for minutes; the gateway closes a socket once its
+      // token expires, losing any send in flight. Refresh first, then reopen
+      // live sockets so they carry the fresh token.
+      const refreshed = await transport.refresh().catch(() => false);
+      if (!refreshed) return;
+      for (const socket of [...sockets]) {
+        await socket.renew();
+        if (socket.isRetired()) sockets.delete(socket);
+      }
     },
   };
   return runtime;
@@ -318,7 +350,24 @@ class MobileWebSocket {
     if (this.readyState !== 1 || typeof data !== "string") {
       throw new Error("mobile socket accepts text frames only");
     }
-    void this.runtime.transport.wsSend(this.wsId, new TextEncoder().encode(data), "text");
+    // A rejected native send means the frame never left the device. Surface it
+    // as a transport close so the client reconnects instead of waiting for an
+    // acknowledgement that cannot arrive.
+    void this.runtime.transport
+      .wsSend(this.wsId, new TextEncoder().encode(data), "text")
+      .catch(() => this.failTransport());
+  }
+
+  /** Reopen on a refreshed access token without reporting a disconnect. */
+  async renew(): Promise<void> {
+    if (this.retired) return;
+    await this.reopen();
+  }
+
+  private failTransport(): void {
+    if (this.closeEmitted) return;
+    this.onerror?.call(this as unknown as WebSocket, new Event("error"));
+    this.emitClose(1006);
   }
 
   close(): void {

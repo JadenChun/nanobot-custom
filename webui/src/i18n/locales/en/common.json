@@ -1586,6 +1586,10 @@
       "title": "Workspace was not changed",
       "body": "The gateway rejected this project or access mode. Choose an existing project or a different access mode, then try again."
     },
+    "connectionClosed": {
+      "title": "Message was not sent",
+      "body": "The connection closed before the gateway accepted this message. Check that this device is still connected, then send it again."
+    },
     "turnRejected": {
       "title": "Message was not sent",
       "body": "The gateway rejected this message. Review its text or attachments, then try again."
