@@ -1769,6 +1769,7 @@ export type InboundEvent =
       event: "sidebar_state_updated";
       state: SidebarStatePayload;
     }
+  | { event: "settings_updated" }
   | { event: "transcription_result"; request_id: string; text: string }
   | {
       event: "transcription_error";

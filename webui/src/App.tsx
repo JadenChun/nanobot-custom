@@ -1161,17 +1161,24 @@ function Shell({
 
   useEffect(() => {
     let cancelled = false;
-    fetchSettings(getToken())
-      .then((payload) => {
-        if (!cancelled) setSettingsSnapshot(payload);
-      })
-      .catch(() => {
-        if (!cancelled) setSettingsSnapshot(null);
-      });
+    const load = () => {
+      fetchSettings(getToken())
+        .then((payload) => {
+          if (!cancelled) setSettingsSnapshot(payload);
+        })
+        .catch(() => {
+          if (!cancelled) setSettingsSnapshot(null);
+        });
+    };
+    load();
+    // Another client changed app-level settings: reload the shared projection
+    // so the composer's model presets and the settings surface stay in sync.
+    const unsubscribe = client.onSettingsUpdated(load);
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, [getToken]);
+  }, [client, getToken]);
 
   useEffect(() => {
     try {

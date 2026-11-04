@@ -11,6 +11,7 @@ from loguru import logger
 from nanobot.session.manager import SessionManager
 from nanobot.session.webui_turns import WEBUI_TITLE_METADATA_KEY, clean_generated_title
 from nanobot.webui.session_identity import is_valid_webui_chat_id, webui_session_key
+from nanobot.webui.state_sync import SESSIONS, notify_domains
 from nanobot.webui.transcript import (
     append_fork_marker,
     delete_webui_transcript,
@@ -39,6 +40,14 @@ class WebUIForkHost(Protocol):
         *,
         fork_id: str,
         fork_key: str,
+    ) -> None: ...
+
+    async def broadcast_webui_event(
+        self,
+        event: str,
+        *,
+        exclude: Any | None = None,
+        **fields: Any,
     ) -> None: ...
 
 
@@ -129,3 +138,6 @@ async def handle_webui_fork_chat(
         fork_id=fork_id,
         fork_key=fork_key,
     )
+    # The fork is already persisted, so every other client's session list has to
+    # learn about the new chat.
+    await notify_domains(channel, frozenset({SESSIONS}), fork_id, exclude=connection)

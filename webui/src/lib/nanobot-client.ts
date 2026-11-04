@@ -79,6 +79,7 @@ type SessionUpdateHandler = (
   workspacePermissions?: WorkspacePermissionProjection,
 ) => void;
 type SidebarStateUpdateHandler = (state: SidebarStatePayload) => void;
+type SettingsUpdatedHandler = () => void;
 type RunStatusHandler = (chatId: string, startedAt: number | null) => void;
 
 /** Structured errors surfaced to the UI.
@@ -204,6 +205,7 @@ export class NanobotClient {
   private runtimeModelHandlers = new Set<RuntimeModelHandler>();
   private sessionUpdateHandlers = new Set<SessionUpdateHandler>();
   private sidebarStateUpdateHandlers = new Set<SidebarStateUpdateHandler>();
+  private settingsUpdatedHandlers = new Set<SettingsUpdatedHandler>();
   private runStatusHandlers = new Set<RunStatusHandler>();
   private errorHandlers = new Set<ErrorHandler>();
   // chat_id -> handlers listening on it
@@ -306,6 +308,14 @@ export class NanobotClient {
     this.sidebarStateUpdateHandlers.add(handler);
     return () => {
       this.sidebarStateUpdateHandlers.delete(handler);
+    };
+  }
+
+  /** Another client changed app-level settings (presets, providers, skills). */
+  onSettingsUpdated(handler: SettingsUpdatedHandler): Unsubscribe {
+    this.settingsUpdatedHandlers.add(handler);
+    return () => {
+      this.settingsUpdatedHandlers.delete(handler);
     };
   }
 
@@ -1289,6 +1299,10 @@ export class NanobotClient {
       return;
     }
 
+    if (parsed.event === "settings_updated") {
+      this.emitSettingsUpdated();
+      return;
+    }
     if (parsed.event === "sidebar_state_updated") {
       this.emitSidebarStateUpdate(parsed.state);
       return;
@@ -1356,6 +1370,16 @@ export class NanobotClient {
   private emitSidebarStateUpdate(state: SidebarStatePayload): void {
     for (const handler of this.sidebarStateUpdateHandlers) {
       handler(state);
+    }
+  }
+
+  private emitSettingsUpdated(): void {
+    for (const handler of this.settingsUpdatedHandlers) {
+      try {
+        handler();
+      } catch {
+        // best-effort: a subscriber fault must not stall transport bookkeeping
+      }
     }
   }
 

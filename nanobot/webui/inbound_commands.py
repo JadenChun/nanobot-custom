@@ -8,7 +8,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -404,9 +404,48 @@ class WebUICommandRouter:
         self.gateway.endpoint.discard_connection(connection)
         self.discard_request_lock_if_idle(connection)
 
-    async def broadcast_webui_event(self, event: str, **fields: Any) -> None:
-        for connection in tuple(self._webui_connections):
+    async def broadcast_webui_event(
+        self,
+        event: str,
+        *,
+        exclude: Any | None = None,
+        **fields: Any,
+    ) -> None:
+        # Fan out to every accepted WebUI-protocol socket (desktop and mobile).
+        # ``_webui_connections`` remains the trust/local-authority set; its
+        # members are protocol connections too, so the union is deduplicated.
+        targets = set(self._webui_connections)
+        protocol = getattr(self.gateway.endpoint, "protocol_connections", None)
+        if protocol:
+            targets.update(protocol)
+        if exclude is not None:
+            targets.discard(exclude)
+        for connection in tuple(targets):
             await self._transport.webui_send_event(connection, event, **fields)
+
+    async def notify_state_changed(
+        self,
+        action: str,
+        payload: Mapping[str, Any],
+        *,
+        origin: Any | None = None,
+    ) -> None:
+        """Invalidate the projections one successful mutation changed.
+
+        The namespace table lives in ``nanobot.webui.state_sync``: new actions in
+        a known namespace are covered automatically, unknown namespaces refresh
+        every cache until they are classified. The origin client already holds
+        the mutation response, so it is skipped.
+        """
+        from nanobot.webui.state_sync import mutation_chat_id, mutation_domains, notify_domains
+
+        await notify_domains(
+            self,
+            mutation_domains(action),
+            mutation_chat_id(payload),
+            exclude=origin,
+        )
+        # ``sidebar`` mutations broadcast their full projection themselves.
 
     async def broadcast_user_message(
         self,
@@ -1473,6 +1512,10 @@ class WebUICommandRouter:
             await self._deliver_authorized_webui_result(
                 connection, request_id, action, payload, result, source_binding,
             )
+            if result.status is None or 200 <= result.status < 300:
+                # After the actor's response, invalidate the caches this
+                # mutation changed on every other client.
+                await self.notify_state_changed(action, payload, origin=connection)
         finally:
             self.request_tasks.pop((connection, request_id), None)
             self.discard_request_lock_if_idle(connection)
@@ -1625,24 +1668,6 @@ class WebUICommandRouter:
                         await self.broadcast_webui_event(
                             "sidebar_state_updated",
                             state=result,
-                        )
-                    if (
-                        action == "session.delete"
-                        and isinstance(result, dict)
-                        and result.get("deleted")
-                    ):
-                        # Each connected client keeps its own session list, so a
-                        # delete must invalidate the others as well.
-                        from nanobot.webui.session_identity import webui_chat_id
-
-                        raw_key = payload.get("key")
-                        deleted_chat_id = (
-                            webui_chat_id(raw_key) if isinstance(raw_key, str) else None
-                        )
-                        await self.broadcast_webui_event(
-                            "session_updated",
-                            chat_id=deleted_chat_id or "",
-                            scope="metadata",
                         )
                     return WebUIRequestResult(result=result)
                 if action == "workspace.access.mode.set":
