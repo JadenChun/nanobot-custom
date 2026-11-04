@@ -248,12 +248,19 @@ reverting the plugin method and `mobile-media.ts` together.
 | P5 cap → safety ceiling | implemented (64 MiB, `nanobot/remote/edge.py`) |
 | P9 loading placeholder | implemented |
 | P8 device cache | implemented in the core (LRU, 512 MiB, purge on logout/revocation); hit-ratio metrics pending |
-| On-device verification | pending: the phone was disconnected from USB before the new APK could be installed |
+| On-device verification | **done for the session/media path** (see below); video seek and the loading placeholder still need a visual check |
 
-Verification plan once the phone is back: install the release APK, open `@kevu`,
-confirm images render with the loading placeholder, confirm no `mobile_media`
-request is issued, confirm the second open hits the cache (no media request),
-and seek in a video attachment.
+Verified on the A142 (release APK `11c86ccf` + tracing build):
+
+- `@kevu` opens (thread payload 238 KiB, no 413) and its images render.
+- Media is served by the native interceptor, not the JS bridge:
+  `NanobotMedia: open https://localhost/api/media/... status=200 cached=true`.
+- The device cache persists across app updates: after reinstalling, every image
+  opened from cache (`cached=true`) with no upstream fetch.
+- No `mobile_media` request is issued by the client any more.
+
+Still to check by eye: the loading spinner during a cold first fetch, and video
+range seeking (`206`) on a session with a video attachment.
 
 ## 10. Decisions and open questions
 
