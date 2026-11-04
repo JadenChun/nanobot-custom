@@ -12,9 +12,9 @@ Status: **LOCAL CANDIDATE READY FOR STAGING REVIEW — NOT MERGED, PUSHED OR DEP
 | Repair branch base (handoff + task docs) | `7be433232d28a88106e15a486af3ade2250347f4` |
 | Fetched staging integrated | `aacca07cfadaf51fa1d83913f93ba2d797c0aa58` (`origin/staging`) |
 | Staging integration merge | `221101b9a5181839802ea250dd977dd39fab0ffe` |
-| Corrected source commit | `9588d899` (final code/test commit; later commits are docs-only) |
+| Corrected source commit | `68b5377d` (final code/test commit; later commits are docs-only) |
 | Candidate APK | `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk` |
-| Candidate SHA-256 | `8e72b5f817d888f85211970cebfdd92b1a3f250bd0d6585908770c951b7b5064` |
+| Candidate SHA-256 | `d396b6922d20a167f8165ba1b908f15fefee553026e93f6e43c0446abb78a9dc` |
 | Signer | `CN=jaden`, SHA-256 `8c30d04957e9724d1668e585890913b0581676c9460789f658c4ed9f84ba0c81` |
 
 The candidate includes Capacitor local notifications from staging (`assets/capacitor.plugins.json`); zipalign and apksigner verification pass. This APK supersedes the pre-review `4d62c84b…` candidate and was not installed because the phone was not attached at rebuild time.
@@ -25,7 +25,7 @@ The candidate includes Capacitor local notifications from staging (`assets/capac
 |---|---|---|
 | MC01 | PASS focused | v1 version/intent/source/confirmation validation in message and owner control paths; source token carried in projection and rechecked at execution admission. Post-review: source rechecked after hydration and immediately before transcript/dispatch effects, closing the reset-during-hydration race. Legacy local controls remain compatible. |
 | MC02 | PASS focused | Submitted temporary Sandbox wins over later Full policy; channel-boundary test covers restricted/Full envelopes; discard still retires transient authority. |
-| MC03 | PASS focused | Atomic busy reservation before media/scope awaits; concurrent new submissions yield one accepted turn and one `not_admitted/busy_new_request`; steering requires exact active turn and captured scope. Post-review: target/scope rechecked after hydration and before effects; loop consumes steering metadata at bus and pending-injection admission; rejected queued prompts stay in the composer queue. |
+| MC03 | PASS focused | Atomic busy reservation before media/scope awaits; concurrent new submissions yield one accepted turn and one `not_admitted/busy_new_request`; steering requires exact active turn and captured scope. Post-review: ordinary v1 `new` requests must own the reservation after hydration or are rejected before any effect; target/scope are rechecked after hydration and before effects; loop consumes steering metadata at bus and pending-injection admission; rejected queued prompts stay in the composer queue. |
 | MC04 | PASS focused | Remote owner Full admission uses verified owner identity; v1 control requires bound confirmation; second device gets its own consent; UI exposes explicit device confirmation. Actual owner consent is rechecked at loop admission, and revoke clears in-memory consent. |
 | MC05 | PASS focused | Request-derived Full proofs are aggregated for native stdin closure/accounting; unrelated owners unaffected; multiple handles per proof covered. Real native-process closure remains platform qualification. |
 | MC06 | PASS focused | Native refresh uses `POST /remote/v1/refresh`; owner status/devices/revoke use exact owner operations with custody bearer auth and one 401 refresh retry. Instrumented owner journey added but not executed. |
@@ -36,8 +36,8 @@ The candidate includes Capacitor local notifications from staging (`assets/capac
 
 | Check | Result |
 |---|---|
-| Full Python suite | **17,575 passed, 22 skipped, 6 subtests, exit 0** (`/tmp/opencode/mc-full-pytest-final.log`) |
-| Strict basedpyright | **0 errors / 528 files**; comparator `PASS_NO_NEW_DIAGNOSTICS`, `introduced: 0` (`/tmp/opencode/mc-type/{before,after-final,comparator-final}.json`) |
+| Full Python suite | **17,576 passed, 22 skipped, 6 subtests, exit 0** (`/tmp/opencode/mc-full-pytest-busy.log`) |
+| Strict basedpyright | **0 errors / 528 files**; comparator `PASS_NO_NEW_DIAGNOSTICS`, `introduced: 0` (`/tmp/opencode/mc-type/{before,after-busy,comparator-busy}.json`) |
 | WebUI | **1,432 passed**, build exit 0, lint exit 0 (`/tmp/opencode/mc-webui-tests.log`, `/tmp/opencode/mc-webui-lint.log`) |
 | Desktop parity | PASS, 127 rows / 9 categories |
 | Go broker | PASS |
@@ -64,11 +64,14 @@ second-device UI confirmation. The final revoke path prefers the live gateway
 mutation so its in-process Full consents are cleared, then falls back to the
 independent owner when the gateway is unavailable.
 
-The second bounded review (`CORRECT — hold staging merge`) identified three
-remaining admission gaps. Code/test commit `9588d899` now:
+The bounded reviews (`CORRECT — hold staging merge`) identified four remaining
+admission gaps. Code/test commit `68b5377d` now:
 
 - rechecks the source token after hydration and again immediately before
   transcript/dispatch effects;
+- requires an ordinary v1 `new` request to own the turn reservation after
+  hydration, rejecting `not_admitted/busy_new_request` before media, transcript,
+  defaults or inbound dispatch if another turn won the wait;
 - rechecks the steering target and captured scope at the same points and has
   the loop consume `webui_request_intent`/`webui_target_turn_id` at bus and
   pending-injection admission;
@@ -76,6 +79,8 @@ remaining admission gaps. Code/test commit `9588d899` now:
   workspace scope) to a held waiting state, retried only by explicit user
   action, and removes the duplicate failed optimistic bubble.
 
-The new hydration cases fail on `c0b0bf8d`; the corrected branch passes. Full
-Python, WebUI, strict, parity, broker and Android release gates are recorded
-above. The rebuilt signed candidate is ready for the independent M38 review.
+The source/steering hydration cases fail on `c0b0bf8d`; the busy-during-
+hydration case fails on `07cc6459` and the external requirements-only
+reproduction now passes. Full Python, WebUI, strict, parity, broker and Android
+release gates are recorded above. The rebuilt signed candidate is ready for the
+independent M38 review.

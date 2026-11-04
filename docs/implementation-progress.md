@@ -646,6 +646,10 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   admission, so guidance whose target ended is rejected with
   `not_admitted/steering_target_changed` instead of being injected into a
   successor turn.
+- Post-review correction 2: an ordinary v1 `new` request must own the turn
+  reservation after hydration. If the chat became busy while hydration waited,
+  the router returns `not_admitted/busy_new_request` before media, transcript,
+  defaults or inbound dispatch; later rejections release the reservation.
 - Added public channel-boundary coverage: busy Sandbox B is not admitted while
   Full A runs; matching steer is admitted; changed-context steer is rejected
   without a second published message.
@@ -713,11 +717,11 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   with merge `221101b9a5181839802ea250dd977dd39fab0ffe` without rewriting
   shared history. Staging notifications, image lightbox/scroll and settings
   changes remain present.
-- Final gates after the admission-race review: **17,575 passed** Python
+- Final gates after the admission-race review: **17,576 passed** Python
   (22 skipped, 6 subtests), strict **0/528**, WebUI **1,432 passed** plus
   build/lint, parity PASS, Go broker PASS, Android release PASS.
 - Candidate: `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
-  SHA-256 `8e72b5f817d888f85211970cebfdd92b1a3f250bd0d6585908770c951b7b5064`,
+  SHA-256 `d396b6922d20a167f8165ba1b908f15fefee553026e93f6e43c0446abb78a9dc`,
   same `CN=jaden` signer, zipalign verified, local-notifications plugin present.
   Rebuilt after the post-review fixes; the prior `4d62c84b…` APK is superseded.
 - Bounded review found and the branch corrected: the busy reservation race,
@@ -730,7 +734,7 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
 
 ### MC08 physical candidate evidence (2026-11-04)
 
-- Installed `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`
+- Installed the then-current `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`
   over `ai.nanobot.mobile` with `adb install -r`; `firstInstallTime`
   `2026-11-02 22:04:34` preserved. Pulled installed APK SHA-256
   `4d62c84b308db6f09d5106a2317a275b1c1f83d6696dccd679f6c5bfea3811e6`,
@@ -794,8 +798,8 @@ M38/signed-release review and applicable radio/Tailscale qualification.
 
 ### Post-review admission-race corrections (2026-11-04)
 
-The bounded review (`CORRECT — hold staging merge`) found three remaining
-blockers; code/test correction commit `45c97b18`; final wire-coverage test commit `9588d899`.
+The bounded reviews (`CORRECT — hold staging merge`) found four remaining
+blockers; code/test correction commits `45c97b18` and `68b5377d`.
 
 - MC01 source reset: the router rechecks the source token after hydration and
   again immediately before transcript/dispatch effects. The independently
@@ -808,6 +812,11 @@ blockers; code/test correction commit `45c97b18`; final wire-coverage test commi
   `webui_target_turn_id` at bus admission and pending injection, emits
   `not_admitted/steering_target_changed`, and never injects guidance into the
   successor turn.
+- MC03 busy during hydration: an ordinary v1 `new` request must own the turn
+  reservation after hydration. If another connection became active while
+  hydration waited, the router returns `not_admitted/busy_new_request` before
+  media, transcript, defaults or inbound dispatch; the other turn remains the
+  sole owner.
 - MC03 queued prompt retention: the WebUI composer keeps the full queued
   snapshot (text, images, quote, mentions, workspace scope) when a correlated
   `busy_new_request` or `steering_target_changed` rejection arrives, holds it
@@ -821,26 +830,31 @@ blockers; code/test correction commit `45c97b18`; final wire-coverage test commi
 - New boundary tests:
   - `test_webui_message_source_reset_during_hydration_is_rejected_before_effects`
   - `test_webui_steer_rejects_target_replaced_during_hydration_before_effects`
+  - `test_webui_new_request_rejected_when_chat_becomes_busy_during_hydration`
   - `test_webui_steering_target_change_is_rejected_before_bus_dispatch`
   - `test_webui_steering_matching_target_still_dispatches`
   - `test_stale_webui_steering_is_rejected_at_pending_injection`
   - `test_send_admission_rejected_emits_correlated_error_frame`
   - `restores the full queued snapshot and waits for an explicit retry`
 - Defect detection: the two hydration tests fail on `c0b0bf8d`
-  (`/tmp/opencode/mc-admission-cases/before-fail.log`); the composer test fails
-  without the snapshot/requeue path.
+  (`/tmp/opencode/mc-admission-cases/before-fail.log`); the busy-during-
+  hydration test fails on `07cc6459`
+  (`/tmp/opencode/mc-admission-cases/busy-before-fail.log`); the external
+  requirements-only case `/home/jaden/.cache/nanobot-review/2026-11-04-c0b0bf8d/
+  test_busy_contract.py` now passes; the composer test fails without the
+  snapshot/requeue path.
 - Evidence:
-  - Full Python: **17,575 passed, 22 skipped, 6 subtests**, exit 0
-    (`/tmp/opencode/mc-full-pytest-final.log`).
+  - Full Python: **17,576 passed, 22 skipped, 6 subtests**, exit 0
+    (`/tmp/opencode/mc-full-pytest-busy.log`).
   - WebUI: **1,432 passed**, build/lint exit 0
     (`/tmp/opencode/mc-webui-tests.log`,
     `/tmp/opencode/mc-webui-lint.log`).
   - Strict basedpyright: before `c0b0bf8d` 0/528, after 0/528; comparator
     `PASS_NO_NEW_DIAGNOSTICS`, introduced 0
-    (`/tmp/opencode/mc-type/{before,after-final,comparator-final}.json`).
+    (`/tmp/opencode/mc-type/{before,after-busy,comparator-busy}.json`).
 - Candidate rebuilt after the correction:
   `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
-  SHA-256 `8e72b5f817d888f85211970cebfdd92b1a3f250bd0d6585908770c951b7b5064`,
+  SHA-256 `d396b6922d20a167f8165ba1b908f15fefee553026e93f6e43c0446abb78a9dc`,
   `CN=jaden`, zipalign/local-notifications verified. The phone was not attached
   (`adb devices` empty), so the superseded `4d62c84b…` installation was not
   replaced.
