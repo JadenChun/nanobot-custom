@@ -104,9 +104,11 @@ export function FilePreviewPanel({
         "--file-preview-slot-width": !entered || isClosing ? "0px" : `${desktopWidth}px`,
       } as CSSProperties}
       className={cn(
-        "absolute inset-y-0 right-0 z-30 w-[min(100vw,var(--file-preview-slot-width))] overflow-hidden",
-        "transition-[width] duration-300 ease-out will-change-[width]",
-        "md:relative md:z-auto md:w-[var(--file-preview-slot-width)] md:min-w-0 md:shrink-0",
+        // Phones get the whole viewport: a side-by-side split leaves too little
+        // room to read anything. Desktop keeps the resizable side panel.
+        "fixed inset-0 z-50 w-full overflow-hidden",
+        "md:relative md:inset-auto md:z-auto md:w-[var(--file-preview-slot-width)] md:min-w-0 md:shrink-0",
+        "md:transition-[width] md:duration-300 md:ease-out md:will-change-[width]",
         isClosing && "pointer-events-none",
       )}
       data-testid="file-preview-panel"
@@ -114,8 +116,9 @@ export function FilePreviewPanel({
     >
       <div
         className={cn(
-          "absolute inset-y-0 right-0 flex w-[min(100vw,var(--file-preview-width))] flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] md:w-[var(--file-preview-width)] md:pb-0",
-          "border-l border-border/70 bg-background shadow-2xl md:shadow-none",
+          "absolute inset-0 flex w-full flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]",
+          "md:inset-y-0 md:left-auto md:right-0 md:w-[var(--file-preview-width)] md:pb-0",
+          "border-border/70 bg-background md:border-l md:shadow-none shadow-2xl",
           "transition-[opacity,transform] duration-300 ease-out will-change-transform",
           !entered || isClosing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100",
           "motion-reduce:translate-x-0",
