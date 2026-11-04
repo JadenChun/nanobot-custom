@@ -65,7 +65,7 @@ If the WebUI does not expose the option you need, start from the task below. Mos
 | Enable image generation | `tools.imageGeneration.enabled`, `tools.imageGeneration.provider`, `tools.imageGeneration.model`, matching provider credentials | Enable Image Generation in the WebUI and send one image request | [Image Generation](#image-generation) |
 | Add external tools through MCP | `tools.mcpServers.<name>` | Start `nanobot gateway --verbose` and check startup/tool logs | [MCP](#mcp-model-context-protocol) |
 | Tighten tool and network safety | `tools.restrictToWorkspace`, `tools.exec.sandbox`, `tools.ssrfWhitelist`, `channels.*.allowFrom` | Run the same workflow through the channel or CLI you plan to expose | [Security](#security), [Pairing](#pairing) |
-| Tune request timeouts or process concurrency | `NANOBOT_LLM_TIMEOUT_S`, `NANOBOT_STREAM_IDLE_TIMEOUT_S`, `NANOBOT_MAX_CONCURRENT_REQUESTS` | Start nanobot from the same environment and inspect startup/runtime logs | [Runtime Environment Variables](#runtime-environment-variables) |
+| Tune request timeouts or process concurrency | `NANOBOT_LLM_TIMEOUT_S`, `NANOBOT_STREAM_IDLE_TIMEOUT_S` | Start nanobot from the same environment and inspect startup/runtime logs | [Runtime Environment Variables](#runtime-environment-variables) |
 | Run multiple isolated bots | separate `--config` and `--workspace` paths, plus distinct `gateway.port` or channel ports when processes run together | Use the same explicit paths with `nanobot status`, `agent`, `webui`, `gateway`, and `serve` | [Multiple Instances](./multiple-instances.md), [CLI Reference](./cli-reference.md) |
 | Observe model calls | `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL` environment variables | Run one model call, then check the matching Langfuse project | [Langfuse Observability](#langfuse-observability) |
 
@@ -184,11 +184,12 @@ ANTHROPIC_API_KEY="$(bw get password api/anthropic)" nanobot agent
 
 These variables are process-level switches. Set them in the same terminal, service unit, container, or supervisor that starts nanobot.
 
+`NANOBOT_MAX_CONCURRENT_REQUESTS` is retired and has no effect, including when set to a positive value or a non-numeric value. Independent sessions are not limited by a global inbound-turn slot; turns for the same session remain ordered by that session's execution owner.
+
 ### Runtime controls
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NANOBOT_MAX_CONCURRENT_REQUESTS` | Unlimited | Maximum concurrently running inbound agent requests. Set a positive integer to apply a cap; unset, `0`, or a negative value means unlimited. |
 | `NANOBOT_LLM_TIMEOUT_S` | `300` | Wall-clock timeout, in seconds. Ordinary requests use this value; streaming requests use the greater of 300 seconds or twice this value. Set `0` to disable. Sustained-goal turns bypass this wall-clock cap. |
 | `NANOBOT_STREAM_IDLE_TIMEOUT_S` | `90` | Streaming idle timeout, in seconds, used by streaming providers. Invalid or non-positive values are ignored; values above `3600` are clamped. |
 | `NANOBOT_OPENAI_COMPAT_TIMEOUT_S` | `120` | HTTP request timeout, in seconds, for OpenAI-compatible providers. Invalid or non-positive values are ignored. |
@@ -2175,6 +2176,10 @@ For API keys, tokens, and other secrets, see [Environment Variables for Secrets]
 |--------|---------|-------------|
 | `tools.restrictToWorkspace` | `false` | When `true`, enables nanobot's application-level workspace guards for workspace-aware tools. File tools resolve paths under the active workspace; selected internal roots can be added as read-only or explicitly write-enabled roots, and media uploads are read-only by default. Shell execution rejects workspace-external `working_dir` values and applies best-effort command path checks, but this is not an OS sandbox. |
 | `tools.maxSessionMessagesPerMinute` | `6` | Maximum messages one source session may send during any rolling 60-second window. Additional sends are rejected to stop runaway agent loops. |
+| `tools.mediaOutputRoots` | `[]` | Absolute directories from which trusted MCP media tools may copy generated videos or files into nanobot's managed media library. Empty disables MCP file/video capture. Only files resolved under one of these roots are accepted; images returned as MCP image blocks are unaffected. |
+| `tools.generatedMediaRetentionDays` | `0` | Delete generated media older than this many days. `0` keeps generated media forever. |
+| `tools.generatedMediaOrphanGraceDays` | `7` | Delete generated media that no WebUI transcript or asset index references after this many days. Referenced assets are kept unless the retention limit applies. |
+| `tools.generatedMediaMaxBytes` | `0` | Byte quota for generated media. `0` disables the quota. Quota cleanup deletes oldest unreferenced assets first and reports any remaining overage when referenced assets alone exceed the limit. |
 | `tools.exec.sandbox` | `""` | Sandbox backend for shell commands. Set to `"bwrap"` to wrap exec calls in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox — the process can only see the workspace (read-write) and media directory (read-only); config files and API keys are hidden. Automatically enables workspace restriction for file tools. **Linux only** — requires `bwrap` installed (`apt install bubblewrap`; pre-installed in the Docker image). Not available on macOS or Windows (bwrap depends on Linux kernel namespaces). |
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
 | `tools.exec.timeout` | `60` | Default hard timeout in seconds for shell commands. Config values may exceed the per-call tool cap; set `0` to disable the hard timeout for trusted long-running commands. |

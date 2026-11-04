@@ -8,7 +8,9 @@ import pytest
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import DelegatedReadOnlyPolicy
 from nanobot.agent.runner import AgentRunner
+from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.execution import execute_tool_calls
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
@@ -62,6 +64,60 @@ async def test_records_each_known_outcome_once_and_detaches_evidence(kind):
     if kind == "structured":
         raw["items"].append(2)
         assert records[0].raw_result == {"items": [1]}
+
+
+async def test_records_media_artifact_references_with_the_result_event():
+    raw = ToolOutcome(
+        content="generated",
+        media_artifacts=({"id": "img_1", "kind": "image", "path": "/media/img_1.png"},),
+    )
+    tools = registry(raw)
+    records = []
+
+    async def record(value):
+        records.append(value)
+
+    await execute(tools, callback=record)
+
+    assert len(records) == 2
+    assert records[0].raw_result.media_artifacts == raw.media_artifacts
+    assert records[0].event["media_artifacts"] == [{
+        "id": "img_1",
+        "kind": "image",
+        "path": "/media/img_1.png",
+    }]
+
+
+async def test_tool_result_media_refs_are_wrapped_and_recorded():
+    class MediaTool:
+        async def execute(self, **kwargs):
+            return ToolResult.with_media(
+                "generated",
+                [{"id": "img_1", "kind": "image", "path": "/media/img_1.png"}],
+            )
+
+    outcome = await ToolRegistry.execute_prepared(MediaTool(), {})
+    assert isinstance(outcome, ToolOutcome)
+    assert outcome.media_artifacts == ({
+        "id": "img_1",
+        "kind": "image",
+        "path": "/media/img_1.png",
+    },)
+
+    tools = registry(outcome)
+    records = []
+
+    async def record(value):
+        records.append(value)
+
+    await execute(tools, callback=record)
+
+    assert len(records) == 2
+    assert records[0].event["media_artifacts"] == [{
+        "id": "img_1",
+        "kind": "image",
+        "path": "/media/img_1.png",
+    }]
 
 
 @pytest.mark.parametrize("failure", [OSError("storage"), asyncio.CancelledError()])

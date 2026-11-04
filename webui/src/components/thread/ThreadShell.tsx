@@ -12,6 +12,7 @@ import {
   type FolderAccessResolveIntent,
 } from "@/components/thread/FolderAccessRequestCard";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
+import { GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
@@ -600,7 +601,7 @@ const FILE_PREVIEW_CLOSE_ANIMATION_MS = 320;
 type FilePreviewAvailabilityCacheEntry = {
   available?: boolean;
   promise: Promise<boolean>;
-  revision: number;
+  revision: string;
 };
 
 function clampFilePreviewWidth(width: number, maxWidth: number): number {
@@ -1371,7 +1372,7 @@ export function ThreadShell({
     () => new Map<string, FilePreviewAvailabilityCacheEntry>(),
     [historyKey],
   );
-  const filePreviewAvailabilityRevision = displayMessages.length;
+  const filePreviewAvailabilityRevision = `${displayMessages.length}:${turnActive}`;
   const resolveFilePreviewAvailability = useCallback((path: string) => {
     if (!historyKey) return Promise.resolve(false);
     const cached = filePreviewAvailabilityCache.get(path);
@@ -2522,6 +2523,13 @@ export function ThreadShell({
       <HeroGreeting text={t(heroGreetingKey)} />
     </div>
   );
+  const generatedAssetsAction = historyKey && !temporary ? (
+    <GeneratedAssetsSheet
+      sessionKey={historyKey}
+      token={token}
+      refreshKey={turnActive ? "running" : "idle"}
+    />
+  ) : undefined;
   const sessionInfoAction = historyKey ? (
     <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
   ) : undefined;
@@ -2547,6 +2555,7 @@ export function ThreadShell({
       minimal={!session && !loading}
       promptNavigatorAction={promptNavigatorAction}
       sessionInfoAction={sessionInfoAction}
+      generatedAssetsAction={generatedAssetsAction}
       temporaryChatEnabled={temporaryChatEnabled}
       temporaryChatDisabled={booting || turnActive}
       onTemporaryChatEnabledChange={

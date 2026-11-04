@@ -1,0 +1,256 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
+import { setAppLanguage } from "@/i18n";
+import type { SessionGeneratedAssetsPayload } from "@/lib/types";
+
+function response(payload: SessionGeneratedAssetsPayload): Response {
+  return {
+    ok: true,
+    headers: new Headers({ "content-type": "application/json" }),
+    json: async () => payload,
+  } as Response;
+}
+
+function asset(id: string, name: string) {
+  return {
+    id,
+    kind: "image" as const,
+    mime: "image/png",
+    name,
+    url: `/api/media/sig/${id}`,
+    bytes: 123,
+    createdAt: 1_793_438_339_000,
+    prompt: `${name} prompt`,
+  };
+}
+
+const payload: SessionGeneratedAssetsPayload = {
+  schemaVersion: 1,
+  sessionKey: "websocket:chat-1",
+  total: 3,
+  groups: [
+    {
+      id: "turn-1|call-1",
+      turnId: "turn-1",
+      toolCallId: "call-1",
+      toolName: "mcp_comfy_generate_image",
+      sequence: 1,
+      startedAt: 1_793_438_338_000,
+      arguments: { prompt: "first batch prompt", workflow: "qwen_image_2_1" },
+      artifacts: [asset("a1", "a1.png"), asset("a2", "a2.png")],
+    },
+    {
+      id: "turn-1|call-2",
+      turnId: "turn-1",
+      toolCallId: "call-2",
+      toolName: "mcp_comfy_edit_image",
+      sequence: 2,
+      startedAt: 1_793_438_339_000,
+      arguments: { prompt: "second batch prompt" },
+      artifacts: [asset("b1", "b1.png")],
+    },
+  ],
+};
+
+describe("GeneratedAssetsSheet", () => {
+  beforeEach(async () => {
+    await setAppLanguage("en");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(payload)));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("loads and groups generated assets by tool call", async () => {
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/sessions/websocket%3Achat-1/generated-assets?limit=50"),
+        expect.objectContaining({
+          headers: { Authorization: "Bearer tok" },
+        }),
+      );
+    });
+
+    expect(await screen.findByText("first batch prompt")).toBeInTheDocument();
+    expect(screen.getByText("second batch prompt")).toBeInTheDocument();
+    expect(screen.getAllByTestId("generated-assets-group")).toHaveLength(2);
+    expect(screen.getByText("Candidates: 2")).toBeInTheDocument();
+    expect(screen.getByText("Candidates: 1")).toBeInTheDocument();
+    expect(screen.getByText("qwen_image_2_1")).toBeInTheDocument();
+    expect(screen.getByTestId("generated-assets-count")).toHaveTextContent("3");
+  });
+
+  it("switches to the flat all-assets view", async () => {
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    await screen.findByText("first batch prompt");
+    await user.click(screen.getByRole("button", { name: "All assets" }));
+
+    expect(screen.getByTestId("generated-assets-flat")).toBeInTheDocument();
+    expect(screen.getAllByTestId("generated-asset-thumbnail")).toHaveLength(3);
+    expect(screen.queryByTestId("generated-assets-groups")).not.toBeInTheDocument();
+  });
+
+  it("loads the next page of groups", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn()
+        .mockResolvedValueOnce(response({
+          ...payload,
+          total: 3,
+          groups: [payload.groups[0]],
+          next: "1",
+        }))
+        .mockResolvedValueOnce(response({
+          ...payload,
+          total: 3,
+          groups: [payload.groups[1]],
+          next: null,
+        })),
+    );
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    expect(await screen.findByText("first batch prompt")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(await screen.findByText("second batch prompt")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenLastCalledWith(
+      expect.stringContaining("cursor=1"),
+      expect.any(Object),
+    );
+  });
+
+  it("opens the lightbox from a thumbnail", async () => {
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    await screen.findByText("first batch prompt");
+    await user.click(screen.getByRole("button", { name: "Open a1.png" }));
+
+    expect(await screen.findAllByAltText("a1.png")).toHaveLength(2);
+  });
+
+  it("clears the previous session badge when the session changes", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    expect(await screen.findByTestId("generated-assets-count")).toHaveTextContent("3");
+
+    rerender(<GeneratedAssetsSheet sessionKey="websocket:chat-2" token="tok" />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("generated-assets-count")).not.toBeInTheDocument();
+    });
+  });
+
+  it("loads the cross-session asset library", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/generated-assets?")) {
+          return Promise.resolve(response({
+            ...payload,
+            groups: [{ ...payload.groups[0], sessionKey: "websocket:lib" }],
+          }));
+        }
+        return Promise.resolve(response(payload));
+      }),
+    );
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    await screen.findByText("first batch prompt");
+    await user.click(screen.getByRole("button", { name: "All sessions" }));
+
+    expect(await screen.findByTestId("generated-assets-library")).toBeInTheDocument();
+    expect(screen.getByTitle("websocket:lib")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/generated-assets?limit=50"),
+      expect.any(Object),
+    );
+  });
+
+  it("renders and opens generated video assets", async () => {
+    const videoGroup = {
+      ...payload.groups[1],
+      artifacts: [{
+        id: "v1",
+        kind: "video" as const,
+        mime: "video/mp4",
+        name: "clip.mp4",
+        url: "/api/media/sig/v1",
+        bytes: 100,
+      }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(response({
+        ...payload,
+        total: 1,
+        groups: [videoGroup],
+      })),
+    );
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    await screen.findByText("second batch prompt");
+    const thumbnail = screen.getByTestId("generated-asset-thumbnail");
+    expect(thumbnail.querySelector("video")).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Open clip.mp4" }));
+
+    expect(await screen.findAllByLabelText("clip.mp4")).toHaveLength(3);
+  });
+
+  it("shows an empty state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(response({ ...payload, total: 0, groups: [] })),
+    );
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+    expect(await screen.findByText("No generated assets in this session yet.")).toBeInTheDocument();
+  });
+
+  it("retries after a failed load", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce(response(payload)),
+    );
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    expect(await screen.findByText("Could not load generated assets.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("first batch prompt")).toBeInTheDocument();
+  });
+});

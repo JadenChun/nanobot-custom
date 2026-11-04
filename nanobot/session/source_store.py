@@ -38,7 +38,6 @@ from nanobot.session.pending_followups import (
     parse_pending_followup_records,
 )
 from nanobot.session.persistence_metadata import (
-    BUSY_INBOX_METADATA_KEY,
     DURABLE_METADATA_KEYS,
     LEGACY_RECOVERY_KEYS,
     SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
@@ -1452,9 +1451,9 @@ class SourceSessionStore:
     ) -> SourceResetPlan:
         """Build and validate the exact reset output without writing storage."""
 
-        from nanobot.session.busy_inbox import require_busy_inbox_disposition
+        from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
-        require_busy_inbox_disposition(snapshot.header["metadata"])
+        require_legacy_h1_disposition(snapshot.header["metadata"])
         try:
             parsed_time = datetime.fromisoformat(updated_at)
         except (TypeError, ValueError):
@@ -1570,19 +1569,6 @@ class SourceSessionStore:
 
             ExecutionOwner.retire_after_destructive_write(owner)
         return result
-
-    def commit_busy_inbox_metadata(
-        self, key: str, expected: object, replacement: dict[str, object],
-    ) -> SourceSnapshot:
-        """Commit only inbox metadata, preserving the active execution/source."""
-        with self._backend.locked_session_files():
-            header, events = self._read_unlocked(key)
-            self._check(header, self._state(header))
-            if header["metadata"].get(BUSY_INBOX_METADATA_KEY) != expected:
-                raise SourceValidationError("busy inbox changed before commit")
-            header["metadata"][BUSY_INBOX_METADATA_KEY] = deepcopy(replacement)
-            header["revision"] += 1
-            return self._write(header, events)
 
     def commit_workspace_access_request(
         self,
@@ -1840,10 +1826,10 @@ class SourceSessionStore:
             self._delete_unlocked(key, expected, owner=owner)
 
     def _delete_unlocked(self, key: str, expected: SourceState, *, owner: ExecutionOwner | None = None) -> None:
-        from nanobot.session.busy_inbox import require_busy_inbox_disposition
+        from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
         header, _events = self._current_unlocked(key, expected)
-        require_busy_inbox_disposition(header["metadata"])
+        require_legacy_h1_disposition(header["metadata"])
         self._backend.get_session_path(key).unlink()
         from nanobot.session.manager import JsonlSessionStore
 

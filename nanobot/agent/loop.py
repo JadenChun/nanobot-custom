@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
-import os
 import re
 import time
 import uuid
@@ -35,7 +34,6 @@ from nanobot.agent import context as agent_context
 from nanobot.agent import model_presets as preset_helpers
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
-from nanobot.agent.busy_dispatch import BusyInboxConsumer, BusyTurn
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
@@ -90,7 +88,6 @@ from nanobot.agent.turn_admission import ApprovalAdmission
 from nanobot.agent.turn_delivery import (
     TurnDelivery,
     TurnDeliveryFactory,
-    TurnOutputHook,
 )
 from nanobot.agent.turn_delivery import TurnRoute as TurnRoute
 from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
@@ -139,7 +136,6 @@ from nanobot.security.workspace_access import (
 )
 from nanobot.session import turn_continuation
 from nanobot.session.automation_turns import automation_history_overrides
-from nanobot.session.busy_inbox import SessionBusyInbox
 from nanobot.session.execution_owner import ExecutionOwner, acquire_execution
 from nanobot.session.goal_state import (
     goal_state_runtime_lines,
@@ -203,10 +199,7 @@ from nanobot.webui.metadata import (
 )
 
 if TYPE_CHECKING:
-    from nanobot.agent.busy_control import BusyControlRouter
     from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.channels.telegram.busy_inbox import TelegramBusyInbox
-    from nanobot.channels.telegram.runtime import TelegramChannel
     from nanobot.config.schema import (
         ChannelsConfig,
         Config,
@@ -449,7 +442,6 @@ class _TurnExecutionOptions:
     admitted_activity_marker: _AdmittedActivityMessage | None = None
     silent_output: bool = False
     persist_approval_request: bool = True
-    busy_turn: BusyTurn | None = field(default=None, repr=False)
     workspace_access_continuation: WorkspaceAccessContinuationReference | None = field(
         default=None, repr=False,
     )
@@ -750,8 +742,6 @@ class AgentLoop:
         self._activity_admission_token = object()
         self._pending_republish: dict[str, list[InboundMessage]] = {}
         self._stopped_pending_followup_ids: dict[str, set[str]] = {}
-        self._busy_consumers: dict[str, BusyInboxConsumer] = {}
-        self._telegram_busy_edges: dict[str, TelegramBusyInbox] = {}
         self._bus_cleanup_tasks: dict[str, set[asyncio.Future[Any]]] = {}
         self._preserve_inflight_turns_on_shutdown = False
         self._deferred_automation_turns: dict[str, list[InboundMessage]] = {}
@@ -770,11 +760,6 @@ class AgentLoop:
         self._automation_turn_coordinators = (
             ("cron", self._cron_turns),
             ("local trigger", self._local_trigger_turns),
-        )
-        # NANOBOT_MAX_CONCURRENT_REQUESTS: unset or <=0 means unlimited.
-        _max = int(os.environ.get("NANOBOT_MAX_CONCURRENT_REQUESTS", "0"))
-        self._concurrency_gate: asyncio.Semaphore | None = (
-            asyncio.Semaphore(_max) if _max > 0 else None
         )
         self.consolidator = Consolidator(
             store=self.context.memory,
@@ -1156,225 +1141,11 @@ class AgentLoop:
         """Attach the gateway-owned process edge; direct SDK use stays explicit."""
         self._exec_session_manager.install_completion_sink(sink)
 
-    def _own_busy_inbox(self, inbox: SessionBusyInbox, *,
-                       automation_scope: tuple[str, ...]) -> BusyInboxConsumer:
-        """Explicit dormant adapter seam; inbound metadata cannot register an owner."""
-        if self._lifecycle_is_closing() or inbox.sessions is not self.sessions:
-            raise RuntimeError("inbox owner requires this open AgentLoop's session authority")
-        key = inbox.session_key
-        if key in self._busy_consumers or key in self._pending_queues or self._active_tasks.get(key):
-            raise RuntimeError("session already has an execution owner")
-        metadata = self.sessions.read_session_metadata(key)
-        if (self._pending_republish.get(key) or self._deferred_automation_turns.get(key)
-                or (metadata is not None and any(metadata["metadata"].get(name) for name in (
-                    "pending_user_followups", "runtime_checkpoint", "pending_user_turn", "webui_recovery")))):
-            raise RuntimeError("inbox owner requires explicit existing-journal recovery")
-        if inbox.temporary_lifetime_id is not None:
-            raise ValueError("temporary inbox execution requires its separate context adapter")
-        consumer = BusyInboxConsumer(
-            inbox, execute=lambda turn: self._execute_busy_turn(turn),
-            track_task=partial(self._track_active_task, key), automation_scope=automation_scope,
-            terminal_record=lambda run_id: self.run_store.load(run_id),
-        )
-        consumer.recover()
-        self._busy_consumers[key] = consumer
-        return consumer
-
-    def register_telegram_busy_inbox(
-        self,
-        channel: TelegramChannel,
-        inbox: SessionBusyInbox,
-        router: BusyControlRouter,
-        *,
-        account_id: str,
-        owner_sender_ids: frozenset[str],
-        owner_chat_ids: frozenset[str],
-        tool_scope: tuple[str, ...],
-        automation_scope: tuple[str, ...],
-    ) -> TelegramBusyInbox:
-        """Register one explicit Telegram edge on this loop's session authority."""
-        from nanobot.channels.telegram.busy_inbox import TelegramBusyInbox as Edge
-
-        if (self._lifecycle_is_closing() or channel.name != "telegram"
-                or inbox.sessions is not self.sessions or inbox.session_key in self._telegram_busy_edges):
-            raise RuntimeError("Telegram H1 registration requires an open loop and unique session owner")
-        if (channel._busy_inbox is not None or channel._bot_user_id is None
-                or str(channel._bot_user_id) != account_id):
-            raise ValueError("Telegram H1 registration requires the matching authenticated account")
-        consumer = self._own_busy_inbox(inbox, automation_scope=automation_scope)
-        edge = Edge(
-            channel,
-            inbox,
-            consumer,
-            router,
-            account_id=account_id,
-            owner_sender_ids=owner_sender_ids,
-            owner_chat_ids=owner_chat_ids,
-            tool_scope=tool_scope,
-            track_task=self._track_background_task,
-        )
-        try:
-            channel.register_busy_inbox(edge)
-        except BaseException:
-            self._busy_consumers.pop(inbox.session_key, None)
-            consumer.remove_delivery_waker(edge._notice_waker)
-            edge._closed = True
-            raise
-        self._telegram_busy_edges[inbox.session_key] = edge
-        return edge
-
-    def _track_background_task(self, task: asyncio.Task[None]) -> None:
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
-
-    async def _owned_automation_turn(self, msg: InboundMessage) -> bool:
-        key = self._effective_session_key(msg)
-        consumer = self._busy_consumers.get(key)
-        if consumer is None:
-            return False
-        result = await consumer.submit_automation(dataclasses.replace(msg, session_key_override=key))
-        outbound = result.outbound
-        if outbound is not None and not isinstance(outbound, OutboundMessage):
-            raise TypeError("owned automation requires a typed outbound result")
-        for _, coordinator in self._automation_turn_coordinators:
-            coordinator.complete(msg, response=outbound)
-        return True
-
     async def _publish_automation_turn(self, msg: InboundMessage) -> None:
-        if not await self._owned_automation_turn(msg):
-            await self.bus.publish_inbound(msg)
+        await self.bus.publish_inbound(msg)
 
     async def _dispatch_automation_turn(self, msg: InboundMessage) -> None:
-        if not await self._owned_automation_turn(msg):
-            await self._dispatch(msg)
-
-    @asynccontextmanager
-    async def _busy_turn_scope(
-        self,
-        msg: InboundMessage,
-        key: str,
-        *,
-        suppress_channel_output: bool = False,
-        trusted_output_hook: TurnOutputHook | None = None,
-    ) -> AsyncGenerator[_AdmittedTurnIO]:
-        """Delivery only: the inbox consumer owns queuing and terminal settlement."""
-        if suppress_channel_output:
-            self.turn_delivery_factory.suppress_session_output(key, True)
-        delivery = self.turn_delivery_factory.create(
-            msg, key, enable_stream=not suppress_channel_output,
-            suppress_channel_output=suppress_channel_output,
-            trusted_output_hook=trusted_output_hook,
-        )
-        io = _AdmittedTurnIO(delivery=delivery)
-        try:
-            yield io
-        except asyncio.CancelledError:
-            await delivery.abort_stream()
-            raise
-        except Exception as exc:
-            try:
-                await delivery.fail(publish_completion=True, error=exc)
-            except asyncio.CancelledError:
-                if trusted_output_hook is not None:
-                    io.delivery_error = "CancelledError"
-                raise
-            except Exception as delivery_error:
-                if trusted_output_hook is None:
-                    raise
-                io.delivery_error = type(delivery_error).__name__
-            raise
-        else:
-            assert io.result is not None
-            try:
-                await delivery.complete(io.result.outbound, publish_completion=True)
-            except asyncio.CancelledError:
-                io.delivery_error = "CancelledError"
-                await delivery.abort_stream()
-                raise
-            except Exception as exc:
-                io.delivery_error = type(exc).__name__
-        finally:
-            await delivery.idle()
-            self.runtime_event_publisher.clear_turn(key)
-            if suppress_channel_output:
-                self.turn_delivery_factory.suppress_session_output(key, False)
-
-    async def _execute_busy_turn(self, turn: BusyTurn) -> TurnResult:
-        consumer = turn.consumer
-        key = consumer.inbox.session_key
-        if self._busy_consumers.get(key) is not consumer:
-            raise ValueError("busy turn requires the registered inbox owner")
-        edge = self._telegram_busy_edges.get(key)
-        h1_turn = turn.initial is not None and edge is not None and edge.consumer is consumer
-        trusted_output_hook = (
-            partial(edge.deliver_result, turn)
-            if h1_turn and edge is not None
-            else None
-        )
-        if turn.initial is not None:
-            payload = turn.initial.payload
-            if payload is None:
-                raise ValueError("busy turn has no input payload")
-            origin = payload.origin
-            reply_to = (
-                origin.output_reply_to_message_id
-                if h1_turn
-                else origin.output_reply_to_message_id or origin.transport_id
-            )
-            msg = InboundMessage(channel=origin.channel, chat_id=origin.chat_id,
-                                 sender_id=origin.sender_id, content=payload.content, media=list(payload.media),
-                                   session_key_override=key, metadata={"message_id": reply_to,
-                                                                     "thread_id": origin.thread_id})
-        elif turn.automation is not None:
-            msg = turn.automation
-        else:
-            raise ValueError("busy turn requires human or automation input")
-        request = TurnRequest(content=msg.content, session_key=key, run_id=turn.run_id,
-            source=self._inbound_turn_source(msg), sender_id=msg.sender_id, media=tuple(msg.media),
-            route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id,
-                                 message_id=msg.metadata.get("message_id"), thread_id=msg.metadata.get("thread_id")),
-            metadata=dict(msg.metadata), tool_names=consumer.active_scope)
-
-        async def close_admission(admitted_key: str) -> None:
-            # This callback runs beneath the actual session/source ownership.
-            # Session-owned collaborators must quiesce before a younger turn can
-            # acquire the lock; never do session-wide cleanup from a late waiter.
-            try:
-                if turn.stop_requested:
-                    cleanup_errors: list[BaseException] = []
-                    for cleanup in (self.subagents.cancel_by_session,
-                                    self._exec_session_manager.terminate_by_owner):
-                        try:
-                            await cleanup(admitted_key)
-                        except BaseException as exc:
-                            cleanup_errors.append(exc)
-                    if cleanup_errors:
-                        if len(cleanup_errors) == 1:
-                            raise cleanup_errors[0]
-                        raise BaseExceptionGroup("session-owned cleanup failed", cleanup_errors)
-            except BaseException as exc:
-                turn.cleanup_error = exc
-                raise
-            finally:
-                turn.admission_closed = True
-
-        if h1_turn and edge is not None:
-            admission_scope = partial(
-                self._busy_turn_scope,
-                msg,
-                suppress_channel_output=True,
-                trusted_output_hook=trusted_output_hook,
-            )
-        else:
-            admission_scope = partial(self._busy_turn_scope, msg)
-
-        return await self.execute_turn(request, _options=_TurnExecutionOptions(
-            inbound=msg,
-            admission_scope=admission_scope,
-            raise_errors=True,
-            trusted_foreground_activity=self._trusted_foreground_inbound(msg), busy_turn=turn,
-            on_admission_end=close_admission,
-        ))
+        await self._dispatch(msg)
 
     def pending_cron_job_ids_for_session(self, session_key: str) -> set[str]:
         return self._cron_turns.pending_job_ids_for_session(session_key)
@@ -1404,10 +1175,6 @@ class AgentLoop:
         Returns True if the message was persisted.
         """
         run_context = trace_owner.run_context if trace_owner is not None else None
-        busy_turn = run_context.busy_turn if run_context is not None else None
-        if busy_turn is not None and busy_turn.initial is not None:
-            busy_turn.persist_initial(session)
-            return True
         if not turn_continuation.should_persist_user_message(msg.metadata):
             return False
         media_paths = [
@@ -1479,18 +1246,6 @@ class AgentLoop:
     def _build_transcript_input(self, ctx: TurnContext) -> TranscriptInput:
         """Capture the persisted history and fresh input as separate transcript parts."""
         assert ctx.session is not None
-        busy_turn = ctx.run_context.busy_turn if ctx.run_context is not None else None
-        if busy_turn is not None and busy_turn.initial is not None:
-            first, *replies = busy_turn.initial_messages
-            busy_turn.initial_messages = (dataclasses.replace(
-                first, message=self.context.build_current_message(
-                    ctx.msg.content, media=ctx.msg.media or None,
-                    runtime_context_blocks=ctx.runtime_context_blocks)), *replies)
-            history = list(ctx.history)
-            if ctx.run_context is not None and ctx.run_context.source_writer is None:
-                history.extend(dict(item.message) for item in busy_turn.initial_messages)
-            return TranscriptInput(history=history, current_message=None, session_summary=ctx.pending_summary,
-                                   runtime_context_blocks=ctx.runtime_context_blocks)
         return TranscriptInput(
             history=ctx.history,
             current_message=ctx.msg.content,
@@ -1634,8 +1389,6 @@ class AgentLoop:
 
     def _enqueue_bus_dispatch(self, msg: InboundMessage, key: str) -> asyncio.Task[None]:
         """Bind compact settlement before the task's first coroutine execution."""
-        if key in self._busy_consumers:
-            raise RuntimeError("registered inbox sessions require durable inbox admission")
         settlement = None
         if normalize_command_text(msg.content).lower() == "/compact":
             original = msg
@@ -2243,10 +1996,9 @@ class AgentLoop:
         fresh_history = (run_context.request is not None
                          and run_context.request.history_mode is HistoryMode.FRESH)
         source_writer = run_context.source_writer
-        busy_turn = run_context.busy_turn
-        if fresh_history or busy_turn is not None:
+        if fresh_history:
             pending_queue = None
-        if fresh_history or source_writer is not None or busy_turn is not None:
+        if fresh_history or source_writer is not None:
             provider_state = None
         tool_policy = RiskyActionPolicy(
             workspace=run_context.policy.workspace,
@@ -2256,7 +2008,7 @@ class AgentLoop:
         self._sync_subagent_runtime_limits()
 
         async def _checkpoint(payload: dict[str, Any]) -> None:
-            if session is None or fresh_history or source_writer is not None or busy_turn is not None:
+            if session is None or fresh_history or source_writer is not None:
                 return
             public_payload = dict(payload)
             private_state = public_payload.pop("provider_state", None)
@@ -2533,13 +2285,6 @@ class AgentLoop:
                     input_event_id=run_context.source_input_event_id,
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
                     include_memory=session.policy.persist if session is not None else True)
-                if busy_turn is not None and busy_turn.initial is not None:
-                    inputs: list[SourceNode] = []
-                    for item in busy_turn.initial_messages:
-                        if item.source_event_id is None:
-                            raise ValueError("canonical inbox input requires an actual source event")
-                        inputs.append(SourceNode(item.source_event_id, dict(item.message)))
-                    source_transcript = SourceTranscript((*source_transcript.nodes, *inputs))
             run_context.artifact_read_allowed = (
                 (
                     self._artifact_reader_factory is not None
@@ -2615,9 +2360,8 @@ class AgentLoop:
                     if session is not None and not ephemeral and not fresh_history and source_writer is None
                     else None
                 ),
-                injection_callback=_drain_pending if busy_turn is None else None,
-                terminal_injection_callback=_wait_for_pending if busy_turn is None else None,
-                busy_steering=busy_turn.steering if busy_turn is not None else None,
+                injection_callback=_drain_pending,
+                terminal_injection_callback=_wait_for_pending,
                 # Sustained goals may legitimately exceed NANOBOT_LLM_TIMEOUT_S; idle stall
                 # is still capped by NANOBOT_STREAM_IDLE_TIMEOUT_S in streaming providers.
                 llm_timeout_s=runner_wall_llm_timeout_s(
@@ -2730,14 +2474,6 @@ class AgentLoop:
                     await self._reject_webui_steering(msg, *steering_rejection)
                     continue
                 continuation = workspace_access_continuation(msg, session_key=effective_key)
-                if effective_key in self._busy_consumers:
-                    # No wire field is authentication or durable admission proof.
-                    # Future channel adapters must admit into the explicit owner.
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id,
-                        content="Message was not accepted: authenticated inbox admission is required.",
-                        reply_to=msg.metadata.get("message_id"), metadata=dict(msg.metadata)))
-                    continue
                 if msg.is_user_input and continuation is None:
                     if msg.sender_id != "subagent":
                         try:
@@ -3142,8 +2878,6 @@ class AgentLoop:
         _compact_settlement: _CompactDispatchSettlement | None = None,
     ) -> None:
         """Adapt trusted bus ingress to canonical admission without another lock."""
-        if self._effective_session_key(msg) in self._busy_consumers:
-            raise RuntimeError("registered inbox sessions require durable inbox admission")
         activity_marker = self._take_admitted_activity_message(msg)
         registration_key = self._effective_session_key(msg)
         original = msg
@@ -3262,24 +2996,6 @@ class AgentLoop:
         """Run the one shared cooperative teardown operation."""
 
         errors: list[BaseException] = []
-        for consumer in getattr(self, "_busy_consumers", {}).values():
-            try:
-                await consumer.aclose(exclude=getattr(self, "_close_initiator", None))
-            except BaseException as exc:
-                errors.append(exc)
-        telegram_edges = tuple(getattr(self, "_telegram_busy_edges", {}).values())
-        for edge in telegram_edges:
-            try:
-                await edge.aclose()
-            except BaseException as exc:
-                errors.append(exc)
-        getattr(self, "_telegram_busy_edges", {}).clear()
-        routers = {id(edge.router): edge.router for edge in telegram_edges}
-        for router in routers.values():
-            try:
-                await router.aclose()
-            except BaseException as exc:
-                errors.append(exc)
         active_task_groups = getattr(self, "_active_tasks", {})
         compact_settlements = tuple(getattr(self, "_compact_dispatches", {}).items())
         active_tasks = tuple({task for tasks in active_task_groups.values() for task in tasks})
@@ -3447,33 +3163,32 @@ class AgentLoop:
                            if not task.done()}
                 if not pending:
                     self._bus_cleanup_tasks.pop(key, None)
-                    async with self._concurrency_gate or nullcontext():
-                        # Select the live policy only after lifecycle cleanup and
-                        # under admission: queued temporary work cannot recreate
-                        # a disposed session or acquire persistent source authority.
-                        if workspace_access_continuation is not None:
-                            if (
-                                not require_existing_session
-                                or ephemeral
-                                or workspace_access_continuation.session_key != key
-                            ):
-                                raise RuntimeError("invalid workspace continuation admission")
-                            self._read_workspace_continuation_source(
-                                key,
-                                workspace_access_continuation,
-                            )
-                            session = None
-                        else:
-                            session = (
-                                self.sessions.get_cached(key)
-                                if require_existing_session or not ephemeral else None
-                            )
-                            if require_existing_session and session is None:
-                                raise RuntimeError("required session is not active")
-                        yield (
-                            session if not ephemeral and session is not None
-                            and not session.policy.persist else None
+                    # Select the live policy only after lifecycle cleanup and
+                    # under admission: queued temporary work cannot recreate
+                    # a disposed session or acquire persistent source authority.
+                    if workspace_access_continuation is not None:
+                        if (
+                            not require_existing_session
+                            or ephemeral
+                            or workspace_access_continuation.session_key != key
+                        ):
+                            raise RuntimeError("invalid workspace continuation admission")
+                        self._read_workspace_continuation_source(
+                            key,
+                            workspace_access_continuation,
                         )
+                        session = None
+                    else:
+                        session = (
+                            self.sessions.get_cached(key)
+                            if require_existing_session or not ephemeral else None
+                        )
+                        if require_existing_session and session is None:
+                            raise RuntimeError("required session is not active")
+                    yield (
+                        session if not ephemeral and session is not None
+                        and not session.policy.persist else None
+                    )
                     return
             await asyncio.wait(pending)
 
@@ -3843,9 +3558,6 @@ class AgentLoop:
                 ):
                     if context.source_writer is not None:
                         record.metadata["source_stream_id"] = context.source_writer.stream_id
-                    if options.busy_turn is not None:
-                        context.busy_turn = options.busy_turn
-                        options.busy_turn.admit(context, self.context)
                     try:
                         scope = options.admission_scope(key) if options.admission_scope else nullcontext(_AdmittedTurnIO())
                         async with scope as io:
@@ -4312,6 +4024,9 @@ class AgentLoop:
                 ctx.session = self.sessions.get_or_create(ctx.session_key)
         session = ctx.session
         ctx.ephemeral = ctx.ephemeral or not session.policy.persist
+        from nanobot.session.legacy_h1 import require_legacy_h1_disposition
+
+        require_legacy_h1_disposition(session.metadata)
         tools = ctx.tools if ctx.tools is not None else self.tools
         disabled_tools = set(session.policy.disabled_tools)
         if (
@@ -4476,10 +4191,6 @@ class AgentLoop:
         request = ctx.run_context.request if ctx.run_context is not None else None
         if request is not None and request.source in (TurnSource.CRON, TurnSource.HEARTBEAT):
             return False
-        if ctx.run_context is not None and ctx.run_context.busy_turn is not None:
-            # Commands/control are separately admitted by the owner, never
-            # executed from arbitrary next-turn task text before source binding.
-            return False
         if ctx.kind is TurnKind.SYSTEM or ctx.msg.channel == "system":
             return False
         if ctx.run_context is not None and ctx.run_context.source_writer is not None:
@@ -4601,11 +4312,9 @@ class AgentLoop:
         # Keep the full recovery history until the runner has admitted its
         # invocation-specific artifact verifier and checkpoint dependencies.
         if not ctx.fresh_history:
-            busy_turn = ctx.run_context.busy_turn
-            busy_ids: set[str | None] = {item.source_event_id for item in busy_turn.initial_messages} if busy_turn is not None else set()
             ctx.run_context.source_history = SourceTranscript(tuple(
                 node for node in source_nodes(writer.owner.read_snapshot().events)
-                if node.event_id != ctx.run_context.source_input_event_id and node.event_id not in busy_ids
+                if node.event_id != ctx.run_context.source_input_event_id
             ))
             ctx.history = ctx.run_context.source_history.messages()
         ctx.transcript_input = self._build_transcript_input(ctx)
@@ -4650,7 +4359,7 @@ class AgentLoop:
             ctx.provider_state = None
             # The append changes the portable transcript: an old handle cannot survive it.
             session.provider_state = None
-        stored_state = None if ctx.fresh_history or (ctx.run_context is not None and ctx.run_context.busy_turn is not None) else session.provider_state
+        stored_state = None if ctx.fresh_history else session.provider_state
         subagent_followup_persisted = False
         if is_subagent:
             # Keep the durable internal delivery as an assistant record, but

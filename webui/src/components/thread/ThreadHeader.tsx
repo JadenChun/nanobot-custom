@@ -27,6 +27,7 @@ interface ThreadHeaderProps {
   minimal?: boolean;
   promptNavigatorAction?: ReactNode;
   sessionInfoAction?: ReactNode;
+  generatedAssetsAction?: ReactNode;
   temporaryChatEnabled?: boolean;
   temporaryChatDisabled?: boolean;
   onTemporaryChatEnabledChange?: (enabled: boolean) => void;
@@ -46,6 +47,7 @@ export function ThreadHeader({
   minimal = false,
   promptNavigatorAction,
   sessionInfoAction,
+  generatedAssetsAction,
   temporaryChatEnabled = false,
   temporaryChatDisabled = false,
   onTemporaryChatEnabledChange,
@@ -92,6 +94,7 @@ export function ThreadHeader({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        {generatedAssetsAction}
         {sessionInfoAction}
         {promptNavigatorAction}
         {actions}

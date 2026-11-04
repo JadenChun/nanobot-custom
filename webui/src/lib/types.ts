@@ -36,6 +36,7 @@ export type MessageDeliveryErrorKind =
 export interface UIImage {
   url?: string;
   name?: string;
+  kind?: "image" | "video" | "file" | string;
 }
 
 export type UIMediaKind = "image" | "video" | "file";
@@ -224,6 +225,40 @@ export interface SessionAutomationJob {
 
 export interface SessionAutomationsPayload { jobs: SessionAutomationJob[]; }
 export interface AutomationsPayload { jobs: SessionAutomationJob[]; }
+
+export interface GeneratedAsset {
+  id: string;
+  kind: "image" | "video" | "file" | string;
+  mime: string;
+  name: string;
+  url: string;
+  bytes: number;
+  createdAt?: number | null;
+  prompt?: string;
+  model?: string;
+  provider?: string;
+  sourceImages?: string[];
+}
+
+export interface GeneratedAssetGroup {
+  id: string;
+  sessionKey?: string;
+  turnId: string;
+  toolCallId: string;
+  toolName: string;
+  sequence: number;
+  startedAt?: number | null;
+  arguments: Record<string, unknown>;
+  artifacts: GeneratedAsset[];
+}
+
+export interface SessionGeneratedAssetsPayload {
+  schemaVersion: number;
+  sessionKey: string;
+  total: number;
+  groups: GeneratedAssetGroup[];
+  next?: string | null;
+}
 export interface AutomationUpdatePayload {
   name?: string;
   message?: string;
@@ -366,6 +401,7 @@ export interface ToolProgressEvent {
   error?: unknown;
   files?: unknown[];
   embeds?: unknown[];
+  media_artifacts?: unknown[];
 }
 
 export interface UIFileDiff {

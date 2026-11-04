@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useMobileBack } from "@/hooks/useMobileBack";
@@ -396,6 +396,20 @@ interface NavButtonProps {
 function LightboxSlide({ image }: { image: UIImage | null }) {
   const src = useMobileMediaUrl(image?.url);
   if (!src) return <div className="h-full w-full shrink-0" aria-hidden />;
+  if (image?.kind === "video") {
+    return (
+      <div className="flex h-full w-full shrink-0 items-center justify-center">
+        <video
+          src={src}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label={image.name ?? ""}
+          className="max-h-full max-w-full rounded-compact bg-black shadow-2xl"
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex h-full w-full shrink-0 items-center justify-center">
       <img
@@ -411,12 +425,29 @@ function LightboxSlide({ image }: { image: UIImage | null }) {
 
 function PreloadImage({ image }: { image: UIImage }) {
   const src = useMobileMediaUrl(image.url);
-  return src ? <img src={src} alt="" /> : null;
+  if (!src || image.kind === "video") return null;
+  return <img src={src} alt="" />;
 }
 
 function LightboxThumbnail({ image }: { image: UIImage }) {
   const src = useMobileMediaUrl(image.url);
   if (!src) return null;
+  if (image.kind === "video") {
+    return (
+      <span className="relative block h-full w-full">
+        <video
+          src={src}
+          muted
+          playsInline
+          preload="metadata"
+          className="h-full w-full object-cover"
+        />
+        <span className="absolute inset-0 grid place-items-center bg-black/20">
+          <Play className="h-4 w-4 fill-white text-white" aria-hidden />
+        </span>
+      </span>
+    );
+  }
   return (
     <img
       src={src}

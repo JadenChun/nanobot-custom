@@ -27,8 +27,8 @@ def test_registry_matches_m36_inventory() -> None:
     }
     registry = load_registry()
     assert set(registry.operations) == expected
-    assert len(registry.operations) == 109
-    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 109
+    assert len(registry.operations) == 111
+    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 111
 
 
 def test_enabled_mutations_match_websocket_source_routes() -> None:

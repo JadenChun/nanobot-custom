@@ -334,6 +334,129 @@
           "notes": ""
         },
         {
+          "id": "chat.generated_assets.read",
+          "category": "chat",
+          "feature": "Chat media/files",
+          "action": "List generated session assets",
+          "desktop": {
+            "source": [
+              "nanobot/webui/ws_http.py:_handle_generated_assets",
+              "nanobot/webui/generated_assets.py"
+            ],
+            "tests": [
+              "tests/webui/test_generated_assets.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/sessions/{key}/generated-assets"
+          },
+          "ui": {
+            "entry": "Session header generated-assets button"
+          },
+          "auth": {
+            "owner": "read",
+            "legacy": "chat.read",
+            "local_only": false,
+            "current_local_only": false
+          },
+          "native": {
+            "operation": "sessions.generated_assets",
+            "bounds": {
+              "max_response_bytes": 8388608,
+              "timeout_s": 30,
+              "range_requests": false
+            },
+            "replay": "none"
+          },
+          "dependency": [
+            "M11",
+            "M31"
+          ],
+          "checks": {
+            "positive": [
+              "owner lists signed generated image URLs for their session"
+            ],
+            "negative": [
+              "foreign session key denied",
+              "non-owner denied",
+              "missing media files skipped"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "partial",
+            "evidence": [
+              "mobile edge allowlist includes generated-assets"
+            ]
+          },
+          "exception": null,
+          "notes": ""
+        },
+        {
+          "id": "chat.generated_assets.library",
+          "category": "chat",
+          "feature": "Chat media/files",
+          "action": "List generated assets across sessions",
+          "desktop": {
+            "source": [
+              "nanobot/webui/ws_http.py:_handle_all_generated_assets",
+              "nanobot/webui/generated_asset_index.py"
+            ],
+            "tests": [
+              "tests/webui/test_generated_assets.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/generated-assets"
+          },
+          "ui": {
+            "entry": "Session header generated-assets button → All sessions"
+          },
+          "auth": {
+            "owner": "read",
+            "legacy": "chat.read",
+            "local_only": false,
+            "current_local_only": false
+          },
+          "native": {
+            "operation": "sessions.generated_assets.library",
+            "bounds": {
+              "max_response_bytes": 8388608,
+              "timeout_s": 60,
+              "range_requests": false
+            },
+            "replay": "none"
+          },
+          "dependency": [
+            "M11",
+            "M31"
+          ],
+          "checks": {
+            "positive": [
+              "owner lists signed generated media across persisted WebUI sessions"
+            ],
+            "negative": [
+              "non-owner denied",
+              "sessions without generated media contribute no groups"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "partial",
+            "evidence": [
+              "mobile edge allowlist includes /api/generated-assets"
+            ]
+          },
+          "exception": null,
+          "notes": ""
+        },
+        {
           "id": "chat.commands.read",
           "category": "chat",
           "feature": "Chat commands",

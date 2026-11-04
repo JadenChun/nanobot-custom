@@ -20,6 +20,7 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from nanobot.config.legacy_h1 import consume_retired_telegram_busy
 from nanobot.config.timezone import detect_system_timezone
 from nanobot.config_base import Base
 from nanobot.cron.types import CronSchedule
@@ -38,32 +39,6 @@ class MaxTokensConfig(Base):
 
     input: int = 120000
     output: int = 4096
-
-
-class BusyControlConfig(Base):
-    """Explicit limits for the dormant H1 stateless route-only model."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-    max_concurrent: StrictInt = Field(default=2, ge=1, le=16)
-    timeout_seconds: float = Field(default=3.0, gt=0, le=30, allow_inf_nan=False)
-    max_calls_per_window: StrictInt = Field(default=30, ge=1, le=1000)
-    window_seconds: float = Field(default=60.0, gt=0, le=3600, allow_inf_nan=False)
-    max_input_bytes: StrictInt = Field(default=16384, ge=1, le=65536)
-    max_output_tokens: StrictInt = Field(default=128, ge=1, le=1024)
-    max_response_bytes: StrictInt = Field(default=4096, ge=1, le=16384)
-    minimum_confidence: float = Field(default=0.8, ge=0, le=1, allow_inf_nan=False)
-
-
-class BusyInboxConfig(Base):
-    """Finite admission storage; overload must fail before acceptance."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-    max_pending: StrictInt = Field(default=256, ge=1, le=8192)
-    max_records: StrictInt = Field(default=4096, ge=1, le=65536)
-    max_bytes: StrictInt = Field(default=4194304, ge=256, le=67108864)
-    max_clarifications: StrictInt = Field(default=8, ge=1, le=32)
 
 
 class FallbackEntry(Base):
@@ -777,40 +752,6 @@ class GatewayCronConfig(Base):
     codex_quota_retry: StrictBool = True
 
 
-class TelegramBusyConfig(Base):
-    """Selected regular Telegram owner; temporary/cross-channel admission is separate."""
-
-    enabled: StrictBool = False
-    session_key: str = Field(default="", max_length=256)
-    owner_sender_ids: list[str] = Field(default_factory=list, max_length=64)
-    owner_chat_ids: list[str] = Field(default_factory=list, max_length=64)
-    control_provider: str = ""
-    control_model: str = ""
-    tool_scope: list[str] | None = Field(default=None, max_length=4096)
-    automation_scope: list[str] | None = Field(default=None, max_length=4096)
-    limits: BusyControlConfig = Field(default_factory=BusyControlConfig)
-    inbox: BusyInboxConfig = Field(default_factory=BusyInboxConfig)
-
-    @model_validator(mode="after")
-    def validate_enabled_owner(self) -> TelegramBusyConfig:
-        if self.enabled:
-            if (not self.session_key.startswith("telegram:") or not self.owner_sender_ids
-                    or not self.owner_chat_ids or not self.control_model.strip()
-                    or not self.control_provider.strip() or self.control_provider == "auto"):
-                raise ValueError("Telegram busy input needs a regular Telegram session, owners, chats and explicit control provider/model")
-            for value in self.owner_sender_ids:
-                if not value.isdecimal() or int(value) <= 0 or str(int(value)) != value:
-                    raise ValueError("Telegram busy owners must be canonical numeric user IDs")
-            for value in self.owner_chat_ids:
-                try:
-                    valid = bool(value) and value != "0" and str(int(value)) == value
-                except ValueError:
-                    valid = False
-                if not valid:
-                    raise ValueError("Telegram busy chats must be canonical numeric chat IDs")
-        return self
-
-
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
@@ -820,7 +761,11 @@ class GatewayConfig(Base):
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     process_continuations: bool = False
     cron: GatewayCronConfig = Field(default_factory=GatewayCronConfig)
-    telegram_busy: TelegramBusyConfig = Field(default_factory=TelegramBusyConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _retire_telegram_busy(cls, value: object) -> object:
+        return consume_retired_telegram_busy(value)
 
 
 class DirectoryBrowserRootConfig(Base):
@@ -938,6 +883,15 @@ class ToolsConfig(Base):
         default_factory=lambda: _lazy_default("nanobot.agent.tools.image_generation", "ImageGenerationToolConfig"),
     )
     max_session_messages_per_minute: int = Field(default=6, ge=1)
+    # Explicit roots from which trusted MCP media tools may stage video/file
+    # outputs into the managed media library. Empty means no file capture.
+    media_output_roots: list[str] = Field(default_factory=list)
+    # 0 = keep generated media forever; otherwise remove assets older than the
+    # configured age. Orphan cleanup only targets unreferenced assets.
+    generated_media_retention_days: int = Field(default=0, ge=0)
+    generated_media_orphan_grace_days: int = Field(default=7, ge=1)
+    # 0 = no quota. Quota cleanup never deletes referenced assets.
+    generated_media_max_bytes: int = Field(default=0, ge=0)
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
     webui_allow_local_service_access: bool = Field(
         default=True,
@@ -957,6 +911,19 @@ class ToolsConfig(Base):
     )  # allow non-local WebUI clients to install optional packages and agent skills
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
+
+    @field_validator("media_output_roots")
+    @classmethod
+    def _validate_media_output_roots(cls, values: list[str]) -> list[str]:
+        roots: list[str] = []
+        for value in values:
+            if not value.strip():
+                raise ValueError("tools.mediaOutputRoots entries must be non-empty paths")
+            path = Path(value).expanduser()
+            if not path.is_absolute() or path == Path(path.anchor):
+                raise ValueError("tools.mediaOutputRoots entries must be absolute non-root paths")
+            roots.append(os.path.abspath(os.fspath(path)))
+        return roots
 
 
 class ArtifactsConfig(Base):

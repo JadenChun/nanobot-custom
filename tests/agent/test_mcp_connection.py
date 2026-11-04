@@ -144,7 +144,7 @@ async def test_connect_mcp_retries_when_no_servers_connect(tmp_path, monkeypatch
     provider, _registry = _make_provider()
     attempts = 0
 
-    async def _fake_connect(_servers, _registry):
+    async def _fake_connect(_servers, _registry, **_kwargs: object):
         nonlocal attempts
         attempts += 1
         return {}
@@ -203,7 +203,7 @@ async def test_mcp_provider_closes_connections_independently_from_agent_loop(
             closed_tasks.append(asyncio.current_task())
             assert asyncio.current_task() is self.owner
 
-    async def _fake_connect(servers, _registry):
+    async def _fake_connect(servers, _registry, **_kwargs: object):
         stacks = {name: _OwnerCheckedStack() for name in servers}
         return stacks
 
@@ -333,7 +333,7 @@ async def test_reload_mcp_servers_adds_and_removes_tools_without_restart(
     async def _mark_closed(name: str) -> None:
         closed.append(name)
 
-    async def _fake_connect(servers, registry):
+    async def _fake_connect(servers, registry, **_kwargs: object):
         stacks = {}
         for name in servers:
             registry.register(_FakeMcpTool(f"mcp_{name}_navigate"))
@@ -382,7 +382,7 @@ async def test_reload_is_a_direct_provider_operation_without_an_agent_loop(
     async def _mark_closed(name: str) -> None:
         closed.append(name)
 
-    async def _fake_connect(servers, registry):
+    async def _fake_connect(servers, registry, **_kwargs: object):
         stacks = {}
         for name in servers:
             registry.register(_FakeMcpTool(f"mcp_{name}_navigate"))
@@ -422,7 +422,7 @@ async def test_reload_timeout_marks_attempted_server_failed_and_allows_retry(
     started = asyncio.Event()
     attempts = 0
 
-    async def _fake_connect(servers, _registry):
+    async def _fake_connect(servers, _registry, **_kwargs: object):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -469,7 +469,7 @@ async def test_reload_mcp_servers_retries_configured_server_without_live_stack(
     )
     save_config(config)
 
-    async def _fake_connect(servers, registry):
+    async def _fake_connect(servers, registry, **_kwargs: object):
         stacks = {}
         for name in servers:
             registry.register(_FakeMcpTool(f"mcp_{name}_navigate"))
@@ -516,7 +516,7 @@ async def test_reload_mcp_servers_skips_oauth_server_waiting_for_authorization(
 
     attempted: list[str] = []
 
-    async def _fake_connect(servers, _registry):
+    async def _fake_connect(servers, _registry, **_kwargs: object):
         attempted.extend(servers)
         stack = AsyncExitStack()
         await stack.__aenter__()
@@ -568,7 +568,7 @@ async def test_mcp_tool_reconnects_after_session_terminated(
                 content=[mcp_types.TextContent(type="text", text="recovered")]
             )
 
-    async def _fake_connect(servers, registry):
+    async def _fake_connect(servers, registry, **_kwargs: object):
         nonlocal connect_count
         stacks = {}
         for name in servers:
@@ -626,7 +626,7 @@ async def test_mcp_reconnect_handler_uses_sanitized_server_prefix(
                 content=[mcp_types.TextContent(type="text", text="recovered")]
             )
 
-    async def _fake_connect(servers, registry):
+    async def _fake_connect(servers, registry, **_kwargs: object):
         nonlocal connect_count
         stacks = {}
         for name in servers:
@@ -685,7 +685,7 @@ async def test_concurrent_mcp_reconnect_reuses_fresh_session(
                 ]
             )
 
-    async def _fake_connect(servers, registry):
+    async def _fake_connect(servers, registry, **_kwargs: object):
         nonlocal connect_count
         stacks = {}
         for name in servers:

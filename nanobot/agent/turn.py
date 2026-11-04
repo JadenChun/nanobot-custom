@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 if TYPE_CHECKING:
-    from nanobot.agent.busy_dispatch import BusyTurn
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.base import ToolDenialKind
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
@@ -390,7 +389,6 @@ class TurnContext:
     workspace_full_reference: WorkspaceFullAccessReference | None = field(
         default=None, repr=False,
     )
-    busy_turn: BusyTurn | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.request is not None:
@@ -762,6 +760,9 @@ class ToolOutcome:
     content: Any = None
     stop_reason: str | None = None
     policy_metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    # Immutable references to media produced by this call. These travel with the
+    # result event so the WebUI can group assets without parsing tool text.
+    media_artifacts: tuple[Mapping[str, Any], ...] = ()
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
     handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False, compare=False)

@@ -372,9 +372,9 @@ class Session:
         candidate = deepcopy(self)
         if self._replacement_pending or self._projection_edit_pending:
             if self._replacement_pending and disk is not None:
-                from nanobot.session.busy_inbox import require_busy_inbox_disposition
+                from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
-                require_busy_inbox_disposition(disk.metadata)
+                require_legacy_h1_disposition(disk.metadata)
             if disk is not None and disk.revision != self._base_revision:
                 raise SessionWriteConflict()
             candidate.generation = (disk.generation if disk else 0) + int(self._replacement_pending)
@@ -2212,24 +2212,6 @@ class JsonlSessionStore:
         except (TypeError, ValueError, UnicodeError):
             raise SessionStorageError() from None
 
-    def commit_busy_inbox_metadata(
-        self, key: str, expected: object, replacement: dict[str, object],
-    ) -> None:
-        """CAS only the reserved inbox record, retaining history and recovery."""
-        with self.locked_session_files():
-            session = self._load_unlocked(key, strict=True)
-            if session is None:
-                raise SessionWriteConflict()
-            if "source_schema_version" in session.metadata:
-                self.source.commit_busy_inbox_metadata(key, expected, replacement)
-                return
-            self._overlay_checkpoint_unlocked(session, self.get_session_path(key))
-            if session.metadata.get(BUSY_INBOX_METADATA_KEY) != expected:
-                raise SessionWriteConflict()
-            session.metadata[BUSY_INBOX_METADATA_KEY] = deepcopy(replacement)
-            session.revision += 1
-            self._save_unlocked(session, fsync=True)
-
     def update_metadata(
         self,
         key: str,
@@ -2276,11 +2258,11 @@ class JsonlSessionStore:
             return self._delete_unlocked(key)
 
     def _delete_unlocked(self, key: str) -> bool:
-        from nanobot.session.busy_inbox import require_busy_inbox_disposition
+        from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
         session = self._load_unlocked(key, strict=True)
         if session is not None:
-            require_busy_inbox_disposition(session.metadata)
+            require_legacy_h1_disposition(session.metadata)
         paths = [
             self.get_session_path(key),
             self.get_runtime_checkpoint_path(key),
@@ -3291,36 +3273,6 @@ class SessionManager:
             accepted = accepted_metadata_updates(updates, source=is_source)
             Session.publish_committed_metadata_update(session, accepted)
         return updated
-
-    def prepare_busy_inbox_metadata(self, key: str) -> None:
-        """Admit storage before the inbox takes its short files transaction.
-
-        Existing sessions do not reacquire execution ownership: input must remain
-        admissible while their task owns the execution lock. Creation follows the
-        established migration -> execution -> files ordering instead.
-        """
-        if self._store is not self._jsonl_store:
-            raise RuntimeError("busy inbox requires the admitted JSONL authority")
-        cached = self.get_cached(key)
-        if cached is not None and not cached.policy.persist:
-            raise RuntimeError("temporary inbox requires a disjoint recovery journal")
-        if self.read_session_metadata(key) is None:
-            self.upsert_session_metadata(key, {}, create_if_absent=True, fsync=True)
-
-    def commit_busy_inbox_metadata(
-        self, key: str, expected: object, replacement: dict[str, object],
-    ) -> None:
-        """Dedicated inbox boundary under the admitted namespace's storage lock."""
-        if self._store is not self._jsonl_store:
-            raise RuntimeError("busy inbox requires the admitted JSONL authority")
-        cached = self.get_cached(key)
-        if cached is not None and not cached.policy.persist:
-            raise RuntimeError("temporary inbox requires a disjoint recovery journal")
-        with self.locked_session_files():
-            if self._mode_resolver is not None and self._mode_resolver.resolve(key).state != "active":
-                raise SessionWriteConflict()
-            self._jsonl_store.commit_busy_inbox_metadata(key, expected, replacement)
-            self.invalidate(key)
 
     def commit_workspace_access_request(
         self,

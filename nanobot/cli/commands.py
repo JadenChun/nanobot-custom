@@ -1213,6 +1213,29 @@ def status(
         _print_model_setup_steps(config_path)
 
 
+@app.command("media-gc")
+def media_gc(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report without deleting files"),
+):
+    """Remove expired or unreferenced generated media and enforce the configured quota."""
+    _, loaded = _load_inspection_config(config=config)
+    from nanobot.webui.media_maintenance import run_generated_media_gc
+
+    result = run_generated_media_gc(loaded, dry_run=dry_run)
+    mode = "Would delete" if dry_run else "Deleted"
+    console.print(
+        f"Generated media: scanned {result['scanned']}, {mode.lower()} "
+        f"{result['deleted']} file(s), {result['deleted_bytes']} bytes; "
+        f"kept {result['kept']} file(s), {result['kept_bytes']} bytes."
+    )
+    if result["quota_unmet_bytes"]:
+        console.print(
+            f"[yellow]{result['quota_unmet_bytes']} bytes remain over quota because "
+            "the remaining assets are referenced.[/yellow]"
+        )
+
+
 # ============================================================================
 # OAuth Login
 # ============================================================================

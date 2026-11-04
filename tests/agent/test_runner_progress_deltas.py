@@ -88,6 +88,7 @@ async def test_runner_routes_hosted_tool_events_to_structured_progress():
             "error": None,
             "files": [],
             "embeds": [],
+            "media_artifacts": [],
         },
         {
             "version": 1,
@@ -99,6 +100,7 @@ async def test_runner_routes_hosted_tool_events_to_structured_progress():
             "error": None,
             "files": [],
             "embeds": [],
+            "media_artifacts": [],
         },
     ]
     assert progress_text == ['search X "nanobot oauth"', ""]
@@ -163,6 +165,7 @@ async def test_runner_fails_pending_hosted_tool_when_model_request_fails():
         "error": "hosted search backend failed",
         "files": [],
         "embeds": [],
+        "media_artifacts": [],
     }
     provider.chat_with_retry.assert_not_awaited()
 

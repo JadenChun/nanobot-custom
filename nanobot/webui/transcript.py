@@ -656,6 +656,24 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
     return lines
 
 
+def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], ...]:
+    """Return a cheap content signature for a session's transcript chunks."""
+    entries: list[tuple[str, int, int]] = []
+    for chunk_id in _chunk_ids(session_key):
+        path = (
+            webui_transcript_path(session_key)
+            if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID
+            else _segment_file_path(session_key, chunk_id)
+        )
+        try:
+            info = path.stat()
+        except OSError:
+            entries.append((chunk_id, 0, 0))
+            continue
+        entries.append((chunk_id, info.st_size, info.st_mtime_ns))
+    return tuple(entries)
+
+
 def _write_transcript_lines(session_key: str, rows: list[dict[str, Any]]) -> None:
     delete_webui_transcript(session_key)
     path = webui_transcript_path(session_key)
@@ -999,6 +1017,9 @@ def delete_webui_transcript(session_key: str) -> bool:
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript segments {}: {}", segments_dir, e)
+    from nanobot.webui.generated_asset_index import delete_generated_asset_index
+
+    removed = delete_generated_asset_index(session_key) or removed
     return removed
 
 

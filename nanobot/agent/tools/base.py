@@ -5,7 +5,7 @@ import inspect
 import math
 import typing
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from enum import StrEnum
 from typing import Any, TypeVar, cast
@@ -144,18 +144,35 @@ class Schema(ABC):
 
 
 class ToolResult(str):
-    """String-compatible tool output with structured status."""
+    """String-compatible tool output with structured status and media refs."""
 
     is_error: bool
+    media_artifacts: tuple[Mapping[str, Any], ...]
 
-    def __new__(cls, content: str, *, is_error: bool = False) -> ToolResult:
+    def __new__(
+        cls,
+        content: str,
+        *,
+        is_error: bool = False,
+        media_artifacts: tuple[Mapping[str, Any], ...] = (),
+    ) -> ToolResult:
         obj = str.__new__(cls, content)
         obj.is_error = is_error
+        obj.media_artifacts = media_artifacts
         return obj
 
     @classmethod
     def error(cls, content: str) -> ToolResult:
         return cls(content, is_error=True)
+
+    @classmethod
+    def with_media(
+        cls,
+        content: str,
+        artifacts: list[Mapping[str, Any]],
+    ) -> ToolResult:
+        """Return string-compatible output with durable media references."""
+        return cls(content, media_artifacts=tuple(dict(item) for item in artifacts))
 
 
 class ToolDenialKind(StrEnum):

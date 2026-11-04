@@ -46,8 +46,8 @@ that another harness encounters Nanobot's practical failure. No matched workload
 attributed how much each difference contributes to latency or reliability.
 
 - DSH inspected baseline: `903a6dd97cb9fd5eff68e1d1a4a3799661ab1cf1`. Its
-  [prepared call](/home/jaden/Documents/Utilities/deepseek-harness/packages/llm/llm/src/index.ts) captures model metadata,
-  controls and adapter together; its [compaction policy](/home/jaden/Documents/Utilities/deepseek-harness/packages/compaction/compaction-basic/src/config.ts)
+  [prepared call](https://github.com/deepseek-ai/deepseek-harness/blob/903a6dd97cb9fd5eff68e1d1a4a3799661ab1cf1/packages/llm/llm/src/index.ts) captures model metadata,
+  controls and adapter together; its [compaction policy](https://github.com/deepseek-ai/deepseek-harness/blob/903a6dd97cb9fd5eff68e1d1a4a3799661ab1cf1/packages/compaction/compaction-basic/src/config.ts)
   reserves output plus compaction headroom before pressure qualifies. Its default summary/headroom
   allowance is 65,536, configurable per target; that number is evidence, not a Nanobot default.
   Local uncommitted pi-ai changes are not part of the committed comparative baseline.

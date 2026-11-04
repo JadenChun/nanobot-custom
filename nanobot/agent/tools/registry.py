@@ -342,7 +342,12 @@ class ToolRegistry:
 
         result = (await tool.execute_with_context(context, **params)
                   if context is not None else await tool.execute(**params))
-        outcome = result if isinstance(result, ToolOutcome) else ToolOutcome(content=result)
+        if isinstance(result, ToolOutcome):
+            outcome = result
+        elif isinstance(result, ToolResult) and result.media_artifacts:
+            outcome = ToolOutcome(content=result, media_artifacts=result.media_artifacts)
+        else:
+            outcome = ToolOutcome(content=result)
         if outcome.recovery_kind is not None:
             # Recovery classification is owned by the registry/executor, never
             # by a tool's returned envelope.
@@ -364,6 +369,7 @@ class ToolRegistry:
                     outcome.content,
                     outcome.stop_reason,
                     outcome.policy_metadata,
+                    media_artifacts=outcome.media_artifacts,
                     producer_receipt=outcome.producer_receipt,
                 )
         if outcome.handoff_receipt is not None:
@@ -373,6 +379,7 @@ class ToolRegistry:
                     outcome.content,
                     outcome.stop_reason,
                     outcome.policy_metadata,
+                    media_artifacts=outcome.media_artifacts,
                     producer_receipt=outcome.producer_receipt,
                     retrieval_receipt=outcome.retrieval_receipt,
                 )
@@ -385,6 +392,7 @@ class ToolRegistry:
                 content=outcome.content,
                 stop_reason=outcome.stop_reason or "tool_error",
                 policy_metadata=outcome.policy_metadata,
+                media_artifacts=outcome.media_artifacts,
             )
         return outcome
 
@@ -449,6 +457,7 @@ class ToolRegistry:
                                 content=ToolResult.error(outcome.content + hint),
                                 stop_reason=outcome.stop_reason,
                                 policy_metadata=outcome.policy_metadata,
+                                media_artifacts=outcome.media_artifacts,
                             )
         except Exception as exc:
             outcome = ToolOutcome(content=ToolResult.error(f"Error executing {name}: {exc}" + hint),

@@ -78,6 +78,8 @@ These pages explain implementation and extension points. You do not need them to
 | Goal | Read |
 |---|---|
 | Understand source ownership and runtime flow | [Architecture](./architecture.md) |
+| Review future agent-managed sessions and the SuperAgent study | [SuperAgent research and session direction](./superagent-research-and-session-direction.md) |
+| Review the retired H1/concurrency cleanup | [Telegram H1 and global concurrency cleanup plan](./telegram-h1-concurrency-cleanup-plan.md) |
 | Set up a development environment | [Development](./development.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Add a channel package | [Channel Package Guide](./channel-package-guide.md) |
 | Build the WebUI source | [WebUI Development](../webui/README.md) |

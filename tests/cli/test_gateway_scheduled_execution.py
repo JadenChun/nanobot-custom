@@ -17,15 +17,12 @@ from nanobot.providers.factory import ProviderSnapshot
 from nanobot.providers.unconfigured_provider import UnconfiguredProvider
 
 
-def test_normal_gateway_runs_due_job_and_owns_busy_registration(tmp_path, monkeypatch):
+def test_normal_gateway_runs_due_job(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config = Config.model_validate({
         "agents": {"defaults": {"workspace": str(workspace), "sessionTtlMinutes": 0}},
-        "gateway": {"cron": {"enabled": True, "pollIntervalS": 0.05},
-                    "telegramBusy": {"enabled": True, "sessionKey": "telegram:42",
-                                     "ownerSenderIds": ["42"], "ownerChatIds": ["42"],
-                                     "controlProvider": "openai", "controlModel": "test/control"}},
+        "gateway": {"cron": {"enabled": True, "pollIntervalS": 0.05}},
         "channels": {"websocket": {"enabled": False}, "telegram": {
             "enabled": True, "token": "local-fixture", "allowFrom": ["42"], "allowChats": ["42"]}},
         "tools": {"exec": {"enable": False}, "agentBrowser": {"enabled": False},
@@ -41,9 +38,7 @@ def test_normal_gateway_runs_due_job_and_owns_busy_registration(tmp_path, monkey
                     "Return the local test result", deliver=True, channel="telegram", to="42")
     provider = UnconfiguredProvider("test/task")
     provider.chat = AsyncMock(return_value=LLMResponse(content="local verified result"))
-    control = UnconfiguredProvider("test/control")
-    control.chat = AsyncMock()
-    graphs, deliveries, authenticated = [], [], []
+    graphs, deliveries = [], []
     original_init = GatewayCron.__init__
 
     def capture(graph, *args, **kwargs):
@@ -51,15 +46,11 @@ def test_normal_gateway_runs_due_job_and_owns_busy_registration(tmp_path, monkey
         graphs.append(graph)
 
     def snapshot(_config, *, preset=None, **_kwargs):
-        selected = provider if preset is None else control
-        return ProviderSnapshot(selected, selected.get_default_model(), 20000, ("fixture",))
+        return ProviderSnapshot(provider, provider.get_default_model(), 20000, ("fixture",))
 
     async def start(channel):
         channel._running = True
         channel._bot_user_id = 999
-        await channel._authenticated_startup(channel)
-        assert channel._busy_inbox is not None
-        authenticated.append(channel._busy_inbox)
         channel._app = SimpleNamespace()
         channel._app_ready.set()
         await asyncio.Event().wait()
@@ -89,7 +80,6 @@ def test_normal_gateway_runs_due_job_and_owns_busy_registration(tmp_path, monkey
 
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: path)
     monkeypatch.setattr("nanobot.providers.factory.build_provider_snapshot", snapshot)
-    monkeypatch.setattr("nanobot.channels.telegram.gateway_busy.build_provider_snapshot", snapshot)
     monkeypatch.setattr(GatewayCron, "__init__", capture)
     monkeypatch.setattr(TelegramChannel, "start", start)
     monkeypatch.setattr(TelegramChannel, "stop", stop)
@@ -107,7 +97,7 @@ def test_normal_gateway_runs_due_job_and_owns_busy_registration(tmp_path, monkey
     monkeypatch.setattr(gateway_runtime, "sync_workspace_templates", lambda *_: None)
     monkeypatch.setattr(gateway_runtime, "_health_server", health)
     gateway_runtime._run_gateway(config)
-    assert authenticated and provider.chat.await_count == 1
+    assert provider.chat.await_count == 1
     assert deliveries == [("42", ("local verified result",))]
     assert graphs[0].status()["state"] == "closed"
     assert graphs[0].service.list_deliveries()[0].status == "delivered"

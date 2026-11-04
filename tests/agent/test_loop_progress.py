@@ -12,7 +12,7 @@ from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.filesystem import WriteFileTool
-from nanobot.agent.turn import RunPolicyContext
+from nanobot.agent.turn import RunPolicyContext, ToolOutcome
 from nanobot.agent.turn import TurnContext as RunContext
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
@@ -138,6 +138,7 @@ class TestToolEventProgress:
                     "error": None,
                     "files": [],
                     "embeds": [],
+                    "media_artifacts": [],
                 }],
             ),
             (
@@ -153,9 +154,60 @@ class TestToolEventProgress:
                     "error": None,
                     "files": [],
                     "embeds": [],
+                    "media_artifacts": [],
                 }],
             ),
         ]
+
+    @pytest.mark.asyncio
+    async def test_finish_event_carries_structured_media_artifacts(
+        self, tmp_path: Path, admitted_async: AsyncAdmittedFactory
+    ) -> None:
+        loop = await _make_loop(tmp_path, admitted_async)
+        tool_call = ToolCallRequest(id="call-media", name="mcp_test_generate", arguments={})
+        calls = iter([
+            LLMResponse(content="", tool_calls=[tool_call]),
+            LLMResponse(content="Done", tool_calls=[]),
+        ])
+        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+        loop.tools.prepare_call = MagicMock(return_value=(None, {}, None))
+        loop.tools.execute = AsyncMock(return_value=ToolOutcome(
+            content="generated",
+            media_artifacts=({
+                "id": "img_1",
+                "path": "/tmp/img_1.png",
+                "kind": "image",
+                "mime": "image/png",
+                "name": "img_1.png",
+            },),
+        ))
+        progress: list[dict] = []
+
+        async def on_progress(
+            content: str,
+            *,
+            tool_hint: bool = False,
+            tool_events: list[dict] | None = None,
+        ) -> None:
+            if tool_events:
+                progress.extend(tool_events)
+
+        await loop._run_agent_loop(
+            TranscriptInput(history=[], current_message=None),
+            runtime=loop.llm_runtime(),
+            run_context=_run_context(loop),
+            events=output_events(on_progress=on_progress),
+        )
+
+        finish = next(event for event in progress if event["phase"] == "end")
+        assert finish["media_artifacts"] == [{
+            "id": "img_1",
+            "path": "/tmp/img_1.png",
+            "kind": "image",
+            "mime": "image/png",
+            "name": "img_1.png",
+        }]
 
     @pytest.mark.asyncio
     async def test_write_file_emits_file_edit_progress(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
