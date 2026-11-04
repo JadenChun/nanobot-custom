@@ -608,6 +608,10 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
 - A content-free source token is exposed in the permission projection, sent by
   the WebUI client, frozen in inbound metadata, and rechecked at source
   execution admission.
+- Post-review correction: the router now rechecks the source after transcript
+  hydration and again immediately before transcript/dispatch effects. A reset
+  during the hydration await returns `source_changed/source_token` with no
+  acknowledged user row and no inbound message.
 - Requirements-only author: `ses_e5d84f1bdffeYPaeqSMb7tTW1p`
   (`/tmp/opencode/mc01-requirements-author/request-admission-cases.md`).
 - Focused: 259 Python tests, 444 WebUI tests, WebUI build/lint; strict 0/528,
@@ -636,6 +640,12 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
 - Steering validates the exact active turn and the captured active scope, not
   the mutable chat preference. Wrong target or changed project/mode is
   `not_admitted`; source validation still applies.
+- Post-review correction: target and scope are rechecked after hydration and
+  immediately before transcript/dispatch effects. The loop also consumes
+  `webui_request_intent` and `webui_target_turn_id` at bus and pending-injection
+  admission, so guidance whose target ended is rejected with
+  `not_admitted/steering_target_changed` instead of being injected into a
+  successor turn.
 - Added public channel-boundary coverage: busy Sandbox B is not admitted while
   Full A runs; matching steer is admitted; changed-context steer is rejected
   without a second published message.
@@ -703,15 +713,19 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   with merge `221101b9a5181839802ea250dd977dd39fab0ffe` without rewriting
   shared history. Staging notifications, image lightbox/scroll and settings
   changes remain present.
-- Final gates: **17,569 passed** Python, strict **0/528**, WebUI **1,431
-  passed** plus build/lint, parity PASS, Go broker PASS, Android release PASS.
+- Final gates after the admission-race review: **17,574 passed** Python
+  (22 skipped, 6 subtests), strict **0/528**, WebUI **1,432 passed** plus
+  build/lint, parity PASS, Go broker PASS, Android release PASS.
 - Candidate: `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
-  SHA-256 `4d62c84b308db6f09d5106a2317a275b1c1f83d6696dccd679f6c5bfea3811e6`,
+  SHA-256 `8e72b5f817d888f85211970cebfdd92b1a3f250bd0d6585908770c951b7b5064`,
   same `CN=jaden` signer, zipalign verified, local-notifications plugin present.
+  Rebuilt after the post-review fixes; the prior `4d62c84b…` APK is superseded.
 - Bounded review found and the branch corrected: the busy reservation race,
   missing owner auth on status/devices/revoke, source-token parser loss, v1
-  control confirmation correlation, second-device UI consent, and unbounded
-  reconnect. Remaining items are physical/instrumented qualification only.
+  control confirmation correlation, second-device UI consent, unbounded
+  reconnect, and the post-review source/steering admission races plus queued
+  prompt loss. Remaining items are the independent release review and signed
+  release sign-off.
 - Merge-readiness details: `docs/merge-readiness-mc.md`. No push/merge/deploy.
 
 ### MC08 physical candidate evidence (2026-11-04)
@@ -776,3 +790,50 @@ test, MC05 real native command closure, and M38/signed-release review.
 - Result: `MC05_NATIVE_PASS base_handles=1 derived_retired=true session=ef7a086ade9c`
   (`/tmp/opencode/mc-phone-evidence/mc05-native.log`).
 - This is real process closure, not only synthetic callback aggregation.
+
+### Post-review admission-race corrections (2026-11-04)
+
+The bounded review (`CORRECT — hold staging merge`) found three remaining
+blockers; code/test correction commit `45c97b18`.
+
+- MC01 source reset: the router rechecks the source token after hydration and
+  again immediately before transcript/dispatch effects. The independently
+  authored hydration race now returns `source_changed/source_token` with zero
+  user transcript rows and zero inbound messages; the old `c0b0bf8d` code
+  emitted `message_accepted`, one row and one inbound message.
+- MC03 steering target: target and captured scope are rechecked after hydration
+  and immediately before effects. A second check runs after metadata/mention
+  preparation. The loop now reads `webui_request_intent` and
+  `webui_target_turn_id` at bus admission and pending injection, emits
+  `not_admitted/steering_target_changed`, and never injects guidance into the
+  successor turn.
+- MC03 queued prompt retention: the WebUI composer keeps the full queued
+  snapshot (text, images, quote, mentions, workspace scope) when a correlated
+  `busy_new_request` or `steering_target_changed` rejection arrives, holds it
+  out of automatic idle flushes, and retries only on an explicit Guide/click.
+  The failed optimistic row is removed instead of leaving a duplicate bubble.
+- New boundary tests:
+  - `test_webui_message_source_reset_during_hydration_is_rejected_before_effects`
+  - `test_webui_steer_rejects_target_replaced_during_hydration_before_effects`
+  - `test_webui_steering_target_change_is_rejected_before_bus_dispatch`
+  - `test_webui_steering_matching_target_still_dispatches`
+  - `test_stale_webui_steering_is_rejected_at_pending_injection`
+  - `restores the full queued snapshot and waits for an explicit retry`
+- Defect detection: the two hydration tests fail on `c0b0bf8d`
+  (`/tmp/opencode/mc-admission-cases/before-fail.log`); the composer test fails
+  without the snapshot/requeue path.
+- Evidence:
+  - Full Python: **17,574 passed, 22 skipped, 6 subtests**, exit 0
+    (`/tmp/opencode/mc-full-pytest.log`).
+  - WebUI: **1,432 passed**, build/lint exit 0
+    (`/tmp/opencode/mc-webui-tests.log`,
+    `/tmp/opencode/mc-webui-lint.log`).
+  - Strict basedpyright: before `c0b0bf8d` 0/528, after 0/528; comparator
+    `PASS_NO_NEW_DIAGNOSTICS`, introduced 0
+    (`/tmp/opencode/mc-type/{before,after,comparator}.json`).
+- Candidate rebuilt after the correction:
+  `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
+  SHA-256 `8e72b5f817d888f85211970cebfdd92b1a3f250bd0d6585908770c951b7b5064`,
+  `CN=jaden`, zipalign/local-notifications verified. The phone was not attached
+  (`adb devices` empty), so the superseded `4d62c84b…` installation was not
+  replaced.
