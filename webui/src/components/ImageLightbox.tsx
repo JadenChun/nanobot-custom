@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { useMobileBack } from "@/hooks/useMobileBack";
 import { useMobileMediaUrl } from "@/lib/mobile-media";
 import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { cn } from "@/lib/utils";
@@ -172,6 +173,11 @@ export function ImageLightbox({
     const frame = window.requestAnimationFrame(() => setSnapBack(false));
     return () => window.cancelAnimationFrame(frame);
   }, [snapBack]);
+
+  useMobileBack(() => {
+    onOpenChange(false);
+    return true;
+  }, open);
 
   // Keep this below every hook: `index` is null while the dialog is closed,
   // and returning before a hook would change the hook order on open.

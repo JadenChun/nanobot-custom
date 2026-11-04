@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { CodeBlock } from "@/components/CodeBlock";
 import { MarkdownText } from "@/components/MarkdownText";
 import { splitFilePath } from "@/components/FileReferenceChip";
+import { useMobileBack } from "@/hooks/useMobileBack";
 import { ApiError, fetchFilePreview } from "@/lib/api";
 import type { FilePreviewPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -51,10 +52,12 @@ export function FilePreviewPanel({
   const [entered, setEntered] = useState(false);
   const [activePath, setActivePath] = useState(path);
   const [viewMode, setViewMode] = useState<"formatted" | "source">("formatted");
+  const pathHistoryRef = useRef<string[]>([]);
   const tokenRef = useRef(token);
   tokenRef.current = token;
 
   useEffect(() => {
+    pathHistoryRef.current = [];
     setActivePath(path);
   }, [path]);
 
@@ -81,6 +84,23 @@ export function FilePreviewPanel({
       cancelled = true;
     };
   }, [activePath, sessionKey]);
+
+  const navigateToPath = (next: string) => {
+    if (next === activePath) return;
+    pathHistoryRef.current.push(activePath);
+    setActivePath(next);
+  };
+
+  // Android back unwinds folder/file navigation before closing the preview.
+  useMobileBack(() => {
+    const previous = pathHistoryRef.current.pop();
+    if (previous !== undefined) {
+      setActivePath(previous);
+      return true;
+    }
+    onClose();
+    return true;
+  });
 
   const displayPath = state.status === "ready" ? state.payload.display_path : activePath;
   const previewPath = state.status === "ready" ? state.payload.path : displayPath;
@@ -192,7 +212,7 @@ export function FilePreviewPanel({
                 type="button"
                 onClick={() => {
                   const parent = activePath.replace(/\/[^/]+\/?$/, "") || "/";
-                  setActivePath(parent);
+                  navigateToPath(parent);
                 }}
                 className={cn(
                   "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
@@ -257,7 +277,7 @@ export function FilePreviewPanel({
                     {isDirectory && !isLast ? (
                       <button
                         type="button"
-                        onClick={() => setActivePath(navTrail.prefixes[index])}
+                        onClick={() => navigateToPath(navTrail.prefixes[index])}
                         className="min-w-0 rounded-mark px-1 py-0.5 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         title={navTrail.prefixes[index]}
                       >
@@ -345,7 +365,7 @@ export function FilePreviewPanel({
                   <li key={entry.path}>
                     <button
                       type="button"
-                      onClick={() => setActivePath(entry.path)}
+                      onClick={() => navigateToPath(entry.path)}
                       className={cn(
                         "flex w-full items-center gap-2 px-4 py-2 text-left text-[13px]",
                         "transition-colors hover:bg-muted/55 focus-visible:bg-muted/55 focus-visible:outline-none",

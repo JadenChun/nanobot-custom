@@ -4,4 +4,5 @@
     <string name="title_activity_main">Nanobot Mobile</string>
     <string name="package_name">ai.nanobot.mobile</string>
     <string name="custom_url_scheme">ai.nanobot.mobile</string>
+    <string name="back_press_again">Press back again to exit</string>
 </resources>
