@@ -17,6 +17,7 @@ export type MessageDeliveryStatus = "sending" | "accepted" | "failed";
 export type MessageDeliveryErrorKind =
   | "message_too_big"
   | "workspace_scope_rejected"
+  | "connection_closed"
   | "turn_rejected";
 
 /** One image attached to a UIMessage.

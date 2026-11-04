@@ -1602,6 +1602,10 @@
       "unknownTitle": "La solicitud al proveedor del modelo falló",
       "bodyWithAttempt": "La solicitud siguió fallando en el intento {{attempts}}, por lo que se detuvieron los reintentos. Revisa la configuración o el estado del proveedor y vuelve a intentarlo.",
       "body": "Revisa la configuración o el estado del proveedor y vuelve a intentarlo."
+    },
+    "connectionClosed": {
+      "title": "El mensaje no se envió",
+      "body": "La conexión se cerró antes de que la puerta de enlace aceptara este mensaje. Comprueba que este dispositivo siga conectado y vuelve a enviarlo."
     }
   },
   "workspace": {

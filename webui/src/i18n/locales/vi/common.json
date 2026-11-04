@@ -1602,6 +1602,10 @@
       "unknownTitle": "Yêu cầu tới nhà cung cấp mô hình không thành công",
       "bodyWithAttempt": "Yêu cầu vẫn thất bại ở lần thử {{attempts}}, nên hệ thống đã dừng thử lại. Hãy kiểm tra cấu hình hoặc trạng thái dịch vụ của nhà cung cấp rồi thử lại.",
       "body": "Hãy kiểm tra cấu hình hoặc trạng thái dịch vụ của nhà cung cấp rồi thử lại."
+    },
+    "connectionClosed": {
+      "title": "Tin nhắn chưa được gửi",
+      "body": "Kết nối đã đóng trước khi cổng kết nối chấp nhận tin nhắn này. Hãy kiểm tra thiết bị này vẫn đang kết nối, rồi gửi lại."
     }
   },
   "workspace": {

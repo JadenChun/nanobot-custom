@@ -196,6 +196,11 @@ function deliveryErrorCopy(
         title: t("errors.workspaceScopeRejected.title"),
         body: t("errors.workspaceScopeRejected.body"),
       };
+    case "connection_closed":
+      return {
+        title: t("errors.connectionClosed.title"),
+        body: t("errors.connectionClosed.body"),
+      };
     case "turn_rejected":
     case undefined:
       return {

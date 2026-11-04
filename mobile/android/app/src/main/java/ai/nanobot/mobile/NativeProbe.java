@@ -21,8 +21,12 @@ public final class NativeProbe {
     private native String nativeIdentity();
 
     @JavascriptInterface
-    public String probe() {
-        String machine = "unknown";
+    public void log(String message) {
+        Log.i("NanobotWeb", String.valueOf(message));
+    }
+
+    @JavascriptInterface
+    public String probe() {        String machine = "unknown";
         long pageSize = -1;
         try {
             String identity = nativeIdentity();

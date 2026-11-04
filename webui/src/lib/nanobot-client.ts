@@ -111,6 +111,12 @@ export type StreamError =
       turnId?: string;
       errorKind?: string;
       attempts?: number;
+    }
+  | {
+      /** The socket closed before the gateway acknowledged this send. */
+      kind: "connection_closed";
+      chatId: string;
+      turnId: string;
     };
 
 type ErrorHandler = (error: StreamError) => void;
@@ -1443,6 +1449,16 @@ export class NanobotClient {
         this.runSendKey(pending.chatId, pending.turnId),
       );
       if (current?.state === "sent") current.state = "unknown";
+      if (willReconnect) {
+        // The frame left the socket but never got an acknowledgement. Mark the
+        // optimistic row failed so the composer unlocks and the user can resend
+        // instead of waiting on a "Sending…" bubble forever.
+        this.emitError({
+          kind: "connection_closed",
+          chatId: pending.chatId,
+          turnId: pending.turnId,
+        });
+      }
     }
     this.socketPendingMessageSendKeys.clear();
     this.lastSocketMessageSendKey = null;

@@ -1123,6 +1123,14 @@ class NativeNetworkPlugin : Plugin() {
 
     private fun logTransportEvent(event: JSONObject) {
         when (event.optString("type")) {
+            "ws_open" ->
+                Log.i(TAG, "ws_open ws=${event.optLong("ws_id")}")
+            "ws_closed" ->
+                Log.i(
+                    TAG,
+                    "ws_closed ws=${event.optLong("ws_id")} code=${event.optInt("code")} " +
+                        "reason=${event.optString("reason")}",
+                )
             "node_state" ->
                 Log.i(
                     TAG,
