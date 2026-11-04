@@ -102,6 +102,7 @@ pub struct Shared {
     busy: AtomicBool,
     quit_requested: AtomicBool,
     quit_queued: AtomicBool,
+    window_open: AtomicBool,
     lifecycle_gate: AdmissionGate,
     bus_verified: bool,
     _host_guard: Option<HostGuard>,
@@ -120,6 +121,7 @@ impl Shared {
             busy: AtomicBool::new(false),
             quit_requested: AtomicBool::new(false),
             quit_queued: AtomicBool::new(false),
+            window_open: AtomicBool::new(true),
             lifecycle_gate: AdmissionGate::default(),
             bus_verified,
             _host_guard: host_guard,
@@ -170,6 +172,14 @@ impl Shared {
             .read()
             .map(|snapshot| snapshot.tray_available)
             .unwrap_or(false)
+    }
+
+    pub fn set_window_open(&self, open: bool) {
+        self.window_open.store(open, Ordering::Release);
+    }
+
+    pub fn window_open(&self) -> bool {
+        self.window_open.load(Ordering::Acquire)
     }
 
     pub fn set_error(&self, code: &str) {
@@ -775,9 +785,7 @@ impl Controller {
                     .as_ref()
                     .is_some_and(|url| url.origin() == origin.origin());
             if on_chat_origin {
-                let _ = existing.unminimize();
-                let _ = existing.show();
-                let _ = existing.set_focus();
+                native::reveal_window(&self.shared, &existing);
                 return Ok(());
             }
             let on_setup = setup_url
@@ -787,6 +795,8 @@ impl Controller {
                 reuse_existing = Some(existing);
             } else if !native::destroy_chat_after_hide(&self.app, &self.shared, &existing) {
                 return Err("chat_cleanup_unconfirmed".to_owned());
+            } else {
+                self.shared.set_window_open(false);
             }
         }
         let preferences = self
@@ -803,6 +813,7 @@ impl Controller {
         let setup_for_reuse = setup_url.clone();
         if let Some(existing) = reuse_existing {
             let app_for_reuse = self.app.clone();
+            let shared_for_reuse = self.shared.clone();
             let _ = self.app.run_on_main_thread(move || {
                 let _ = existing.set_title("Nanobot");
                 let _ = existing.set_size(LogicalSize::new(1120.0, 780.0));
@@ -822,14 +833,13 @@ impl Controller {
                     let _ = sender.send(Err("chat_window_unavailable".to_owned()));
                     return;
                 }
-                let _ = existing.unminimize();
-                let _ = existing.show();
-                let _ = existing.set_focus();
+                native::reveal_window(&shared_for_reuse, &existing);
                 let _ = sender.send(Ok(()));
             });
         } else {
             let app_for_create = self.app.clone();
             let shared_for_event = self.shared.clone();
+            let shared_for_flag = self.shared.clone();
             let setup_for_policy = setup_url.clone();
             let _ = self.app.run_on_main_thread(move || {
                 let builder = WebviewWindowBuilder::new(
@@ -867,6 +877,7 @@ impl Controller {
                     return;
                 }
                 native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
+                shared_for_flag.set_window_open(true);
                 let _ = sender.send(Ok(()));
             });
         }
@@ -1022,7 +1033,9 @@ impl Controller {
             self.quit_ui_expired = true;
             if self.shared.quit_requested.load(Ordering::Acquire) && !self.exit_requested {
                 self.publish("unavailable", "stop_unconfirmed");
-                native::open_setup(&self.app);
+                if self.shared.window_open() {
+                    native::open_setup(&self.app, &self.shared);
+                }
             }
         }
         if self.readiness_deadline.is_some_and(|deadline| now >= deadline)
@@ -1230,8 +1243,8 @@ impl Controller {
             });
         snapshot.effective_workspace = self.effective_workspace.clone();
         self.shared.replace_snapshot(snapshot);
-        if reveal_status {
-            native::open_setup(&self.app);
+        if reveal_status && self.shared.window_open() {
+            native::open_setup(&self.app, &self.shared);
         }
     }
 

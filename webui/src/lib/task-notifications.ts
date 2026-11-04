@@ -2,9 +2,9 @@
  * Turn-completion notifications shared by the browser, desktop shell, and
  * mobile client.
  *
- * The desktop shell handles WebKit's `show-notification` signal natively and
- * the mobile bootstrap installs a `nanobotMobileNotifications` bridge backed by
- * Android local notifications. Regular browsers fall back to the Notification
+ * The desktop shell routes completion alerts through the local gateway notifier
+ * and the mobile bootstrap installs a `nanobotMobileNotifications` bridge backed
+ * by Android local notifications. Regular browsers fall back to the Notification
  * API, then to the service worker path required by mobile browsers.
  */
 interface MobileTaskNotificationBridge {
@@ -25,6 +25,10 @@ declare global {
 
 const DEFAULT_NOTIFICATION_TITLE = "nanobot";
 const DEFAULT_NOTIFICATION_ICON = "/brand/nanobot_icon_192.png";
+const DESKTOP_HIDE_EVENT = "nanobot:desktop-hide";
+const DESKTOP_SHOW_EVENT = "nanobot:desktop-show";
+
+let desktopWindowOpen = true;
 
 function mobileBridge(): MobileTaskNotificationBridge | undefined {
   if (typeof window === "undefined") return undefined;
@@ -34,6 +38,28 @@ function mobileBridge(): MobileTaskNotificationBridge | undefined {
 function isDesktopShell(): boolean {
   return typeof window !== "undefined"
     && typeof window.__TAURI_INTERNALS__ !== "undefined";
+}
+
+/** Whether this client currently has a window the user can actually see. */
+export function clientWindowIsOpen(): boolean {
+  if (!isDesktopShell()) return true;
+  if (typeof document === "undefined") return desktopWindowOpen;
+  return desktopWindowOpen && document.visibilityState === "visible";
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener(DESKTOP_HIDE_EVENT, () => {
+    desktopWindowOpen = false;
+  });
+  window.addEventListener(DESKTOP_SHOW_EVENT, () => {
+    desktopWindowOpen = true;
+  });
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (!isDesktopShell()) return;
+      desktopWindowOpen = document.visibilityState === "visible";
+    });
+  }
 }
 
 export function taskNotificationsSupported(): boolean {
@@ -95,6 +121,7 @@ export function showTaskNotification({
   title?: string;
 }): void {
   if (isDesktopShell()) {
+    if (!clientWindowIsOpen()) return;
     const query = new URLSearchParams({ title, body });
     if (tag) query.set("tag", tag);
     void fetch(`/api/desktop/notify?${query.toString()}`, {

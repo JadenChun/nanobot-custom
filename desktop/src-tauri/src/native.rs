@@ -32,6 +32,7 @@ use webkit2gtk::{
 use crate::controller::Shared;
 
 const HIDE_SCRIPT: &str = "window.dispatchEvent(new Event('nanobot:desktop-hide'));";
+const SHOW_SCRIPT: &str = "window.dispatchEvent(new Event('nanobot:desktop-show'));";
 
 pub struct HostGuard {
     _lock: fs::File,
@@ -121,7 +122,7 @@ pub fn initialize_primary(app: &AppHandle<Wry>, guard: &HostGuard, shared: Arc<S
     if guard.bus_verified {
         if install_tray(app, shared.clone()).is_ok() {
             shared.set_tray_available(tray_host_available());
-            start_tray_host_monitor(app.clone(), shared);
+            start_tray_host_monitor(shared);
         } else {
             shared.set_tray_available(false);
         }
@@ -261,53 +262,53 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
     Ok(())
 }
 
-fn start_tray_host_monitor(app: AppHandle<Wry>, shared: Arc<Shared>) {
+fn start_tray_host_monitor(shared: Arc<Shared>) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(500));
         let available = tray_host_available();
-        let previous = shared.tray_available();
-        if available == previous {
+        if available == shared.tray_available() {
             continue;
         }
+        // A disappearing tray host must not pull a closed window back onto the
+        // desktop. The tray label still reflects the state, and relaunching the
+        // app activates the existing hidden window if the user wants it back.
         shared.set_tray_available(available);
-        if !available {
-            let app_for_window = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(window) = app_for_window.get_webview_window("chat") {
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            });
-        }
     });
+}
+
+/// Bring the retained window back without changing its page, and tell the
+/// WebUI that notifications are deliverable again.
+pub fn reveal_window(shared: &Shared, window: &WebviewWindow<Wry>) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    let _ = window.eval(SHOW_SCRIPT);
+    shared.set_window_open(true);
 }
 
 pub fn focus_existing_window(app: &AppHandle<Wry>) {
     if let Some(shared) = app.try_state::<Arc<Shared>>() {
         focus_control_window(app, shared.inner());
-    } else {
-        open_setup(app);
+    } else if let Some(window) = app.get_webview_window("chat") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
 fn focus_control_window(app: &AppHandle<Wry>, shared: &Shared) {
     if shared.snapshot().state == "running" {
         if let Some(window) = app.get_webview_window("chat") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
+            reveal_window(shared, &window);
             return;
         }
     }
     show_setup(app, shared);
 }
 
-pub fn open_setup(app: &AppHandle<Wry>) {
+pub fn open_setup(app: &AppHandle<Wry>, shared: &Shared) {
     if let Some(window) = app.get_webview_window("chat") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        reveal_window(shared, &window);
     }
 }
 
@@ -328,9 +329,7 @@ pub fn show_setup(app: &AppHandle<Wry>, shared: &Shared) {
                 }
             }
         }
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        reveal_window(shared, &window);
     }
 }
 
@@ -342,9 +341,7 @@ pub fn return_to_setup(app: &AppHandle<Wry>, shared: &Shared) {
         }
         let _ = window.set_size(LogicalSize::new(650.0, 720.0));
         let _ = window.set_title("Nanobot Desktop");
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        reveal_window(shared, &window);
     }
 }
 
@@ -359,7 +356,7 @@ pub fn install_hide_on_close(
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             if let Some(window) = app.get_webview_window("chat") {
-                hide_chat(&app, &shared, &window, in_progress.clone());
+                hide_chat(&app, shared.clone(), &window, in_progress.clone());
             }
         }
     });
@@ -367,7 +364,7 @@ pub fn install_hide_on_close(
 
 pub fn hide_chat(
     app: &AppHandle<Wry>,
-    shared: &Shared,
+    shared: Arc<Shared>,
     window: &WebviewWindow<Wry>,
     in_progress: Arc<AtomicBool>,
 ) {
@@ -377,9 +374,16 @@ pub fn hide_chat(
     let app = app.clone();
     let window = window.clone();
     let tray_available = shared.tray_available();
+    // Close the notification window immediately so a status change racing the
+    // hide callback cannot reveal the window the user just dismissed.
+    shared.set_window_open(false);
     thread::spawn(move || {
-        if !notify_before_window_action(&window, tray_available, false) && !tray_available {
-            open_setup(&app);
+        let hidden = notify_before_window_action(&window, tray_available, false);
+        if !hidden {
+            shared.set_window_open(true);
+            if !tray_available {
+                open_setup(&app, &shared);
+            }
         }
         in_progress.store(false, Ordering::Release);
     });
