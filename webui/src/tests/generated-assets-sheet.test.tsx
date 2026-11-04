@@ -84,7 +84,6 @@ describe("GeneratedAssetsSheet", () => {
 
     expect(screen.getByTestId("generated-assets-flat")).toBeInTheDocument();
     expect(await screen.findAllByTestId("generated-asset-thumbnail")).toHaveLength(3);
-    expect(screen.getByTestId("generated-assets-count")).toHaveTextContent("3");
 
     await user.click(screen.getByRole("button", { name: "By tool call" }));
 
@@ -175,22 +174,6 @@ describe("GeneratedAssetsSheet", () => {
     } finally {
       Reflect.deleteProperty(navigator, "clipboard");
     }
-  });
-
-  it("clears the previous session badge when the session changes", async () => {
-    const user = userEvent.setup();
-    const { rerender } = render(
-      <GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
-    expect(await screen.findByTestId("generated-assets-count")).toHaveTextContent("3");
-
-    rerender(<GeneratedAssetsSheet sessionKey="websocket:chat-2" token="tok" />);
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("generated-assets-count")).not.toBeInTheDocument();
-    });
   });
 
   it("loads the cross-session asset library", async () => {

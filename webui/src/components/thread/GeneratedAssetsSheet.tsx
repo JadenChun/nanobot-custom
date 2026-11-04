@@ -78,7 +78,6 @@ export function GeneratedAssetsSheet({
   } = useSessionGeneratedAssets(open, token, sessionKey, refreshKey);
   const {
     groups: libraryGroups,
-    total: libraryTotal,
     next: libraryNext,
     loading: libraryLoading,
     loadingMore: libraryLoadingMore,
@@ -129,7 +128,6 @@ export function GeneratedAssetsSheet({
   const activeNext = libraryMode ? libraryNext : next;
   const activeRefresh = libraryMode ? refreshLibrary : refresh;
   const activeLoadMore = libraryMode ? loadMoreLibrary : loadMore;
-  const badgeCount = libraryMode ? libraryTotal : totalAssets;
 
   const openGroup = (group: MediaGroup, index: number) => {
     setLightbox({ images: group.assets, index });
@@ -155,14 +153,6 @@ export function GeneratedAssetsSheet({
         onClick={() => setOpen(true)}
       >
         <Images className="h-4 w-4" />
-        {badgeCount > 0 ? (
-          <span
-            data-testid="generated-assets-count"
-            className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 text-[9px] font-semibold leading-4 text-background"
-          >
-            {badgeCount > 99 ? "99+" : badgeCount}
-          </span>
-        ) : null}
       </Button>
 
       <Sheet open={open} onOpenChange={setOpen}>
