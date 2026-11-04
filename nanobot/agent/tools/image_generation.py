@@ -40,6 +40,7 @@ from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.utils.artifacts import (
     ArtifactError,
     generated_image_tool_result,
+    media_artifact_ref,
     store_generated_image_artifact,
 )
 from nanobot.utils.helpers import detect_image_mime
@@ -268,7 +269,10 @@ class ImageGenerationTool(Tool):
                 if self.config.provider == "codex_cli":
                     result.update({key: response.raw[key] for key in ("provider", "source_path", "prompt")
                                    if key in response.raw})
-            return json.dumps(result, ensure_ascii=False)
+            return ToolResult.with_media(
+                json.dumps(result, ensure_ascii=False),
+                [media_artifact_ref(artifact) for artifact in artifacts],
+            )
         except (ArtifactError, ImageGenerationError, OSError, ValueError) as exc:
             retained = f"; retained artifacts: {json.dumps(artifacts)}" if artifacts else ""
             return ToolResult.error(f"Error: {exc}{retained}")

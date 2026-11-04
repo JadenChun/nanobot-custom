@@ -30,6 +30,7 @@ import type {
   RepositoryRecord,
   RecoveryState,
   SessionDeleteResult,
+  SessionGeneratedAssetsPayload,
   SessionHandle,
   SessionAutomationsPayload,
   SettingsPayload,
@@ -832,6 +833,46 @@ export async function fetchSessionAutomations(
 ): Promise<SessionAutomationsPayload> {
   return request<SessionAutomationsPayload>(
     `${base}/api/sessions/${encodeURIComponent(key)}/automations`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export interface FetchSessionGeneratedAssetsOptions {
+  cursor?: string | null;
+  limit?: number;
+}
+
+export async function fetchSessionGeneratedAssets(
+  token: string,
+  key: string,
+  base: string = "",
+  options: FetchSessionGeneratedAssetsOptions = {},
+): Promise<SessionGeneratedAssetsPayload> {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) query.set("limit", String(options.limit));
+  if (options.cursor) query.set("cursor", options.cursor);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<SessionGeneratedAssetsPayload>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/generated-assets${suffix}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function fetchAllGeneratedAssets(
+  token: string,
+  base: string = "",
+  options: FetchSessionGeneratedAssetsOptions = {},
+): Promise<SessionGeneratedAssetsPayload> {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) query.set("limit", String(options.limit));
+  if (options.cursor) query.set("cursor", options.cursor);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<SessionGeneratedAssetsPayload>(
+    `${base}/api/generated-assets${suffix}`,
     token,
     undefined,
     API_READ_TIMEOUT_MS,

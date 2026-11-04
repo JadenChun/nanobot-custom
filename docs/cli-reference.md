@@ -136,6 +136,8 @@ Default paths:
 | Command | Description |
 |---|---|
 | `nanobot status` | Summarize the default config/workspace and check Agent provider/model readiness |
+| `nanobot media-gc` | Remove expired or unreferenced generated media and enforce the configured quota |
+| `nanobot media-gc --dry-run` | Report what generated media cleanup would remove |
 | `nanobot status --config <path>` | Check a specific config file |
 | `nanobot status --workspace <path>` | Show status with a workspace override |
 

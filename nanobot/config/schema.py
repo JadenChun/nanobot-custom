@@ -869,6 +869,15 @@ class ToolsConfig(Base):
         default_factory=lambda: _lazy_default("nanobot.agent.tools.image_generation", "ImageGenerationToolConfig"),
     )
     max_session_messages_per_minute: int = Field(default=6, ge=1)
+    # Explicit roots from which trusted MCP media tools may stage video/file
+    # outputs into the managed media library. Empty means no file capture.
+    media_output_roots: list[str] = Field(default_factory=list)
+    # 0 = keep generated media forever; otherwise remove assets older than the
+    # configured age. Orphan cleanup only targets unreferenced assets.
+    generated_media_retention_days: int = Field(default=0, ge=0)
+    generated_media_orphan_grace_days: int = Field(default=7, ge=1)
+    # 0 = no quota. Quota cleanup never deletes referenced assets.
+    generated_media_max_bytes: int = Field(default=0, ge=0)
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
     webui_allow_local_service_access: bool = Field(
         default=True,
@@ -888,6 +897,19 @@ class ToolsConfig(Base):
     )  # allow non-local WebUI clients to install optional packages and agent skills
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
+
+    @field_validator("media_output_roots")
+    @classmethod
+    def _validate_media_output_roots(cls, values: list[str]) -> list[str]:
+        roots: list[str] = []
+        for value in values:
+            if not value.strip():
+                raise ValueError("tools.mediaOutputRoots entries must be non-empty paths")
+            path = Path(value).expanduser()
+            if not path.is_absolute() or path == Path(path.anchor):
+                raise ValueError("tools.mediaOutputRoots entries must be absolute non-root paths")
+            roots.append(os.path.abspath(os.fspath(path)))
+        return roots
 
 
 class ArtifactsConfig(Base):

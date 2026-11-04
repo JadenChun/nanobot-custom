@@ -760,6 +760,9 @@ class ToolOutcome:
     content: Any = None
     stop_reason: str | None = None
     policy_metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    # Immutable references to media produced by this call. These travel with the
+    # result event so the WebUI can group assets without parsing tool text.
+    media_artifacts: tuple[Mapping[str, Any], ...] = ()
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
     handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False, compare=False)

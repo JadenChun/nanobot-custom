@@ -140,7 +140,8 @@ function isMobileChatApiPath(path: string): boolean {
   return (
     path === "/api/commands"
     || path === "/api/webui/sidebar-state"
-    || /^\/api\/sessions\/[^/]+\/(file-preview|automations)$/.test(path)
+    || path === "/api/generated-assets"
+    || /^\/api\/sessions\/[^/]+\/(file-preview|generated-assets|automations)$/.test(path)
   );
 }
 

@@ -12,6 +12,7 @@ import {
   type FolderAccessResolveIntent,
 } from "@/components/thread/FolderAccessRequestCard";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
+import { GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
@@ -2486,6 +2487,13 @@ export function ThreadShell({
       <HeroGreeting text={t(heroGreetingKey)} />
     </div>
   );
+  const generatedAssetsAction = historyKey && !temporary ? (
+    <GeneratedAssetsSheet
+      sessionKey={historyKey}
+      token={token}
+      refreshKey={turnActive ? "running" : "idle"}
+    />
+  ) : undefined;
   const sessionInfoAction = historyKey ? (
     <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
   ) : undefined;
@@ -2511,6 +2519,7 @@ export function ThreadShell({
       minimal={!session && !loading}
       promptNavigatorAction={promptNavigatorAction}
       sessionInfoAction={sessionInfoAction}
+      generatedAssetsAction={generatedAssetsAction}
       temporaryChatEnabled={temporaryChatEnabled}
       temporaryChatDisabled={booting || turnActive}
       onTemporaryChatEnabledChange={

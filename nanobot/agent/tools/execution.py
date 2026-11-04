@@ -43,7 +43,7 @@ class KnownToolResult:
     name: str
     raw_result: Any
     result: Any
-    event: dict[str, str]
+    event: dict[str, Any]
     dispatched: bool
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
@@ -60,6 +60,7 @@ def _copy_recorded_value(value: Any) -> Any:
             content=deepcopy(value.content),
             stop_reason=value.stop_reason,
             policy_metadata=deepcopy(value.policy_metadata),
+            media_artifacts=deepcopy(value.media_artifacts),
             producer_receipt=value.producer_receipt,
             retrieval_receipt=value.retrieval_receipt,
             handoff_receipt=value.handoff_receipt,
@@ -67,9 +68,18 @@ def _copy_recorded_value(value: Any) -> Any:
     return deepcopy(value)
 
 
+def _attach_media_artifacts(
+    event: dict[str, Any],
+    outcome: ToolOutcome | None,
+) -> dict[str, Any]:
+    if outcome is not None and outcome.media_artifacts:
+        event["media_artifacts"] = [dict(item) for item in outcome.media_artifacts]
+    return event
+
+
 async def _record_result(callback: ToolResultCallback | None, ordinal: int,
                          call: ToolCallRequest, raw: Any, result: Any,
-                         event: dict[str, str], *, dispatched: bool,
+                         event: dict[str, Any], *, dispatched: bool,
                          producer_receipt: FilesystemReadReceipt | None = None,
                          retrieval_receipt: ArtifactRetrievalReceipt | None = None,
     handoff_receipt: ArtifactHandoffReceipt | None = None) -> None:
@@ -118,7 +128,7 @@ async def execute_tool_calls(
     turn_context: TurnContext | None = None,
     fail_on_tool_error: bool = False,
     tool_result_callback: ToolResultCallback | None = None,
-) -> tuple[list[Any], list[dict[str, str]]]:
+) -> tuple[list[Any], list[dict[str, Any]]]:
     """Execute one model response's tool calls in stable result order."""
     if turn_context is not None and turn_context.execution_owner is not None and tool_result_callback is None:
         raise ValueError("Execution ownership requires durable tool-result recording")
@@ -129,7 +139,7 @@ async def execute_tool_calls(
         if decision.action != "allow":
             terminal = ToolOutcome(decision.response, decision.stop_reason or "policy_blocked",
                                    decision.metadata)
-    tool_results: list[tuple[Any, dict[str, str]]] = []
+    tool_results: list[tuple[Any, dict[str, Any]]] = []
     # Contextual delegates require strict stop propagation across the batch.
     concurrent = (concurrent and turn_context is None and tool_policy is None
                   and not fail_on_tool_error and tool_result_callback is None)
@@ -246,7 +256,7 @@ async def _execute_tool_call(
     turn_context: TurnContext | None = None,
     tool_result_callback: ToolResultCallback | None = None,
     ordinal: int = 0,
-) -> tuple[Any, dict[str, str]]:
+) -> tuple[Any, dict[str, Any]]:
     lookup_error = repeated_external_lookup_error(
         tool_call.name,
         tool_call.arguments,
@@ -362,6 +372,7 @@ async def _execute_tool_call(
         result = outcome.content
         if outcome.stop_reason and outcome.stop_reason != "tool_error":
             event = {"name": tool_call.name, "status": "stopped", "detail": outcome.stop_reason}
+            _attach_media_artifacts(event, outcome)
             await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                                  outcome, event, dispatched=True)
             await hook.after_execute_tool(context, tool_call, tool, params, result)
@@ -389,8 +400,10 @@ async def _execute_tool_call(
             payload,
             "tool_error",
             outcome.policy_metadata if outcome else {},
+            media_artifacts=outcome.media_artifacts if outcome else (),
             recovery_kind=recovery_kind,
         )
+        _attach_media_artifacts(event, classified)
         await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                              classified, event, dispatched=True)
         await hook.on_execute_tool_error(context, tool_call, tool, params, result)
@@ -403,6 +416,7 @@ async def _execute_tool_call(
     elif len(detail) > 120:
         detail = detail[:120] + "..."
     event = {"name": tool_call.name, "status": "ok", "detail": detail}
+    _attach_media_artifacts(event, outcome)
     await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                          result, event, dispatched=True,
                          producer_receipt=outcome.producer_receipt if outcome else None,
@@ -447,10 +461,10 @@ def _classify_violation(
     *,
     raw_text: str,
     soft_payload: str,
-    event: dict[str, str],
+    event: dict[str, Any],
     tool_call: ToolCallRequest,
     workspace_violation_counts: dict[str, int],
-) -> tuple[Any, dict[str, str]] | None:
+) -> tuple[Any, dict[str, Any]] | None:
     if is_ssrf_violation(raw_text):
         logger.warning(
             "Tool {} blocked by SSRF guard; returning non-retryable tool error: {}",

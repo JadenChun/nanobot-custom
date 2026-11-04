@@ -56,6 +56,12 @@ class _FakeImageContent:
         self.mimeType = mime_type
 
 
+class _FakeResourceLink:
+    def __init__(self, uri: str, mime_type: str = "video/mp4") -> None:
+        self.uri = uri
+        self.mimeType = mime_type
+
+
 @pytest.fixture
 def fake_mcp_runtime() -> dict[str, object | None]:
     return {"session": None}
@@ -77,6 +83,7 @@ def _fake_mcp_module(
         TextResourceContents=_FakeTextResourceContents,
         BlobResourceContents=_FakeBlobResourceContents,
         ImageContent=_FakeImageContent,
+        ResourceLink=_FakeResourceLink,
     )
 
     class _FakeStdioServerParameters:
@@ -144,20 +151,35 @@ def _fake_mcp_module(
     monkeypatch.setitem(sys.modules, "mcp.shared.exceptions", exc_mod)
 
 
-def _make_wrapper(session: object, *, timeout: float = 0.1) -> MCPToolWrapper:
+def _make_wrapper(
+    session: object,
+    *,
+    timeout: float = 0.1,
+    media_output_roots: tuple[Path, ...] = (),
+) -> MCPToolWrapper:
     tool_def = SimpleNamespace(
         name="demo",
         description="demo tool",
         inputSchema={"type": "object", "properties": {}},
     )
-    return MCPToolWrapper(session, "test", tool_def, tool_timeout=timeout)
+    return MCPToolWrapper(
+        session,
+        "test",
+        tool_def,
+        tool_timeout=timeout,
+        media_output_roots=media_output_roots,
+    )
 
 
 @pytest.mark.asyncio
 async def test_mcp_provider_connect_propagates_external_cancellation(monkeypatch) -> None:
     started = asyncio.Event()
 
-    async def connect_mcp_servers(_servers: dict, _registry: ToolRegistry) -> dict:
+    async def connect_mcp_servers(
+        _servers: dict,
+        _registry: ToolRegistry,
+        **_kwargs: object,
+    ) -> dict:
         started.set()
         await asyncio.sleep(60)
         return {}
@@ -589,17 +611,118 @@ async def test_execute_persists_image_block_as_artifact(tmp_path: Path) -> None:
 
     result = await wrapper.execute(prompt="a cat", model="sdxl")
 
-    payload = json.loads(result)
+    from nanobot.agent.turn import ToolOutcome
+
+    assert isinstance(result, ToolOutcome)
+    payload = json.loads(result.content)
     assert payload["text"] == "here you go"
     assert len(payload["artifacts"]) == 1
     artifact = payload["artifacts"][0]
     assert artifact["mime"] == "image/png"
     assert artifact["prompt"] == "a cat"
     assert artifact["provider"] == "mcp:test"
+    assert artifact["kind"] == "image"
+    assert artifact["name"] == Path(artifact["path"]).name
+    assert artifact["bytes"] > 0
+    assert len(artifact["sha256"]) == 64
     assert Path(artifact["path"]).is_file()
+    assert len(result.media_artifacts) == 1
+    assert result.media_artifacts[0]["id"] == artifact["id"]
+    assert result.media_artifacts[0]["path"] == artifact["path"]
+    assert result.media_artifacts[0]["kind"] == "image"
     # The base64 payload must NOT leak into the model-facing result.
-    assert _PNG_B64 not in result
+    assert _PNG_B64 not in result.content
     assert "message tool" in payload["next_step"]
+
+
+@pytest.mark.asyncio
+async def test_execute_structured_refs_keep_only_generated_candidates(tmp_path: Path) -> None:
+    from nanobot.agent.turn import ToolOutcome
+    from nanobot.config.loader import set_config_path
+
+    set_config_path(tmp_path / "config.json")
+    payload = json.dumps({
+        "candidate_count": 1,
+        "candidates": [{"candidate": 1, "prompt": "candidate prompt"}],
+    })
+
+    async def call_tool(_name: str, arguments: dict) -> object:
+        return SimpleNamespace(
+            content=[
+                _FakeTextContent(payload),
+                _FakeTextContent("CRITIC CONTEXT"),
+                _FakeImageContent(_PNG_B64, "image/png"),
+                _FakeTextContent("CANDIDATE 1"),
+                _FakeImageContent(_PNG_B64, "image/png"),
+            ]
+        )
+
+    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool))
+
+    result = await wrapper.execute(prompt="a cat")
+
+    assert isinstance(result, ToolOutcome)
+    visible = json.loads(result.content)
+    assert len(visible["artifacts"]) == 2
+    assert len(result.media_artifacts) == 1
+    assert result.media_artifacts[0]["id"] == visible["artifacts"][1]["id"]
+
+
+@pytest.mark.asyncio
+async def test_execute_stages_trusted_video_resource(tmp_path: Path) -> None:
+    from nanobot.agent.turn import ToolOutcome
+    from nanobot.config.loader import set_config_path
+
+    set_config_path(tmp_path / "config.json")
+    output_root = tmp_path / "comfy-output"
+    output_root.mkdir()
+    video = output_root / "clip.mp4"
+    video.write_bytes(b"video-bytes")
+
+    async def call_tool(_name: str, arguments: dict) -> object:
+        return SimpleNamespace(content=[
+            _FakeTextContent(json.dumps({"prompt": "a clip"})),
+            _FakeResourceLink(video.as_uri(), "video/mp4"),
+        ])
+
+    wrapper = _make_wrapper(
+        SimpleNamespace(call_tool=call_tool),
+        media_output_roots=(output_root,),
+    )
+
+    result = await wrapper.execute(prompt="a clip")
+
+    assert isinstance(result, ToolOutcome)
+    assert len(result.media_artifacts) == 1
+    artifact = result.media_artifacts[0]
+    assert artifact["kind"] == "video"
+    assert artifact["mime"] == "video/mp4"
+    assert artifact["bytes"] == len(b"video-bytes")
+    assert Path(artifact["path"]).is_file()
+    assert Path(artifact["path"]).read_bytes() == b"video-bytes"
+
+
+@pytest.mark.asyncio
+async def test_execute_rejects_video_outside_trusted_roots(tmp_path: Path) -> None:
+    from nanobot.config.loader import set_config_path
+
+    set_config_path(tmp_path / "config.json")
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"outside")
+
+    async def call_tool(_name: str, arguments: dict) -> object:
+        return SimpleNamespace(content=[_FakeResourceLink(outside.as_uri(), "video/mp4")])
+
+    wrapper = _make_wrapper(
+        SimpleNamespace(call_tool=call_tool),
+        media_output_roots=(trusted,),
+    )
+
+    result = await wrapper.execute()
+
+    assert "could not be staged" in result
 
 
 @pytest.mark.asyncio

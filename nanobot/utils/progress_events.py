@@ -99,6 +99,7 @@ def build_tool_event_start_payload(tool_call: Any) -> dict[str, Any]:
         "error": None,
         "files": [],
         "embeds": [],
+        "media_artifacts": [],
     }
 
 
@@ -123,6 +124,7 @@ def build_tool_event_finish_payloads(context: AgentHookContext) -> list[dict[str
         status = event.get("status")
         phase = "end" if status == "ok" else "error"
         files, embeds = tool_event_result_extras(result)
+        raw_media_artifacts = event.get("media_artifacts")
         payload = {
             "version": 1,
             "phase": phase,
@@ -133,6 +135,11 @@ def build_tool_event_finish_payloads(context: AgentHookContext) -> list[dict[str
             "error": None,
             "files": files,
             "embeds": embeds,
+            "media_artifacts": (
+                cast(list[Any], raw_media_artifacts)
+                if isinstance(raw_media_artifacts, list)
+                else []
+            ),
         }
         if phase == "error":
             if isinstance(result, str) and result.strip():

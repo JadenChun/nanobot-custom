@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.image_generation import ImageGenerationTool
 from nanobot.config.loader import set_config_path
 from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig
@@ -63,9 +64,13 @@ async def test_generate_image_tool_stores_artifact_and_source_images(
         count=2,
     )
 
+    assert isinstance(result, ToolResult)
     payload = json.loads(result)
     artifacts = payload["artifacts"]
     assert len(artifacts) == 2
+    assert len(result.media_artifacts) == 2
+    assert result.media_artifacts[0]["id"] == artifacts[0]["id"]
+    assert result.media_artifacts[0]["kind"] == "image"
     assert Path(artifacts[0]["path"]).is_file()
     assert artifacts[0]["source_images"] == [str(ref.resolve())]
     assert artifacts[0]["model"] == "openai/gpt-5.4-image-2"

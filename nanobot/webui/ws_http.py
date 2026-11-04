@@ -30,6 +30,7 @@ from websockets.http11 import Response
 
 from nanobot.bus.outbound_events import SessionUpdatedEvent
 from nanobot.command.builtin import builtin_command_palette
+from nanobot.config.paths import get_media_dir, get_webui_dir
 from nanobot.context_repo.catalog import CatalogRevisionConflictError
 from nanobot.context_repo.manager import ContextRepoManager
 from nanobot.context_repo.policy import ResourceAccessPolicy
@@ -61,6 +62,11 @@ from nanobot.webui.file_preview import (
     file_preview_reference,
 )
 from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
+from nanobot.webui.generated_asset_index import (
+    load_all_generated_asset_groups,
+    load_or_build_generated_asset_index,
+)
+from nanobot.webui.generated_assets import build_generated_assets_payload_from_groups
 from nanobot.webui.http_utils import (
     accepts_gzip as _accepts_gzip,
 )
@@ -150,6 +156,7 @@ from nanobot.webui.transcript import (
     WEBUI_TRANSCRIPT_SCHEMA_VERSION,
     build_webui_thread_response,
     read_transcript_lines,
+    webui_transcript_signature,
 )
 from nanobot.webui.workspaces import (
     RepositoryInUseError,
@@ -1047,6 +1054,9 @@ class GatewayHTTPHandler:
         if response is not None:
             return response
 
+        if got == "/api/generated-assets":
+            return await self._handle_all_generated_assets(request)
+
         # Session routes
         response = await self._dispatch_session_routes(connection, request, got)
         if response is not None:
@@ -1247,6 +1257,10 @@ class GatewayHTTPHandler:
         m = re.match(r"^/api/sessions/([^/]+)/file-preview$", got)
         if m:
             return self._handle_file_preview(connection, request, m.group(1))
+
+        m = re.match(r"^/api/sessions/([^/]+)/generated-assets$", got)
+        if m:
+            return await self._handle_generated_assets(request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/automations$", got)
         if m:
@@ -1604,6 +1618,100 @@ class GatewayHTTPHandler:
         except WorkspaceAccessActionError as exc:
             return _http_error(exc.status, exc.message)
         return _http_json_response(payload)
+
+    async def _handle_all_generated_assets(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        query = _parse_query(request.path)
+        raw_limit = _query_first(query, "limit")
+        raw_cursor = _query_first(query, "cursor")
+        limit: int | None = None
+        cursor = 0
+        if raw_limit is not None and raw_limit.strip():
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                return _http_error(400, "invalid limit")
+            if not 1 <= limit <= 500:
+                return _http_error(400, "invalid limit")
+        if raw_cursor is not None and raw_cursor.strip():
+            try:
+                cursor = int(raw_cursor)
+            except ValueError:
+                return _http_error(400, "invalid cursor")
+            if cursor < 0:
+                return _http_error(400, "invalid cursor")
+        try:
+            groups = await asyncio.to_thread(
+                load_all_generated_asset_groups,
+                get_webui_dir(),
+            )
+            payload = build_generated_assets_payload_from_groups(
+                groups,
+                session_key="*",
+                media_root=get_media_dir(),
+                sign_path=lambda path: self.media.sign_or_stage_media_path(
+                    path,
+                    allow_folder_grants=False,
+                ),
+                cursor=cursor,
+                limit=limit,
+            )
+        except Exception:
+            self._log.exception("generated asset library projection failed")
+            return _http_error(500, "generated_assets_unavailable")
+        return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
+
+    async def _handle_generated_assets(self, request: WsRequest, key: str) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None:
+            return _http_error(400, "invalid session key")
+        if not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        query = _parse_query(request.path)
+        raw_limit = _query_first(query, "limit")
+        raw_cursor = _query_first(query, "cursor")
+        limit: int | None = None
+        cursor = 0
+        if raw_limit is not None and raw_limit.strip():
+            try:
+                limit = int(raw_limit)
+            except ValueError:
+                return _http_error(400, "invalid limit")
+            if not 1 <= limit <= 500:
+                return _http_error(400, "invalid limit")
+        if raw_cursor is not None and raw_cursor.strip():
+            try:
+                cursor = int(raw_cursor)
+            except ValueError:
+                return _http_error(400, "invalid cursor")
+            if cursor < 0:
+                return _http_error(400, "invalid cursor")
+        try:
+            signature = await asyncio.to_thread(webui_transcript_signature, decoded_key)
+            groups = await asyncio.to_thread(
+                load_or_build_generated_asset_index,
+                decoded_key,
+                signature=signature,
+                records_loader=lambda: read_transcript_lines(decoded_key),
+            )
+            payload = build_generated_assets_payload_from_groups(
+                groups,
+                session_key=decoded_key,
+                media_root=get_media_dir(),
+                sign_path=lambda path: self.media.sign_or_stage_media_path(
+                    path,
+                    allow_folder_grants=False,
+                ),
+                cursor=cursor,
+                limit=limit,
+            )
+        except Exception:
+            self._log.exception("generated assets projection failed")
+            return _http_error(500, "generated_assets_unavailable")
+        return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
 
     def _handle_session_automations(self, request: WsRequest, key: str) -> Response:
         if not self.check_api_token(request):

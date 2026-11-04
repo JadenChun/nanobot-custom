@@ -411,6 +411,25 @@ def test_status_uses_explicit_config_and_workspace(tmp_path: Path):
     assert str(config_workspace) not in compact_output
 
 
+def test_media_gc_reports_generated_media_without_deleting_in_dry_run(tmp_path: Path):
+    config_path = tmp_path / "instance" / "config.json"
+    config = Config()
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps(config.model_dump(mode="json", by_alias=True)))
+    asset = config_path.parent / "media" / "generated" / "2026-05-08" / "img.png"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"image")
+
+    result = runner.invoke(
+        app,
+        ["media-gc", "--config", str(config_path), "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert "scanned 1" in _strip_ansi(result.stdout)
+    assert asset.is_file()
+
+
 def test_onboard_interactive_discard_does_not_save_or_create_workspace(mock_paths, monkeypatch):
     config_file, workspace_dir = mock_paths
 

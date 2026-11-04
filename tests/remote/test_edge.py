@@ -214,10 +214,27 @@ async def test_edge_allowlisted_chat_api_proxy(edge_setup) -> None:
     assert allowed_preview is not None and allowed_preview.status_code == 200
     assert "file-preview" in body(allowed_preview)["path"]
 
+    assets = quote("/api/sessions/websocket%3Achat-1/generated-assets?limit=50", safe="")
+    allowed_assets = await edge.handle(
+        None,
+        request(f"/mobile/v1/api?path={assets}", pair.access_token),
+    )
+    assert allowed_assets is not None and allowed_assets.status_code == 200
+    assert "generated-assets" in body(allowed_assets)["path"]
+
+    library = quote("/api/generated-assets?limit=50&cursor=1", safe="")
+    allowed_library = await edge.handle(
+        None,
+        request(f"/mobile/v1/api?path={library}", pair.access_token),
+    )
+    assert allowed_library is not None and allowed_library.status_code == 200
+    assert body(allowed_library)["path"] == "/api/generated-assets?limit=50&cursor=1"
+
     for raw in (
         "/api/settings",
         "/api/webui/skills",
         "/api/sessions/websocket%3Achat-1/file-preview?path=notes&unexpected=1",
+        "/api/sessions/websocket%3Achat-1/generated-assets?unexpected=1",
         "https://evil.test/api/commands",
     ):
         denied = await edge.handle(

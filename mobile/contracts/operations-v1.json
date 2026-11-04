@@ -998,6 +998,46 @@
       }
     },
     {
+      "id": "sessions.generated_assets",
+      "inventory_row": "chat.generated_assets.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions/{key}/generated-assets",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 8388608,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "sessions.generated_assets.library",
+      "inventory_row": "chat.generated_assets.library",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/generated-assets",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 8388608,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
       "id": "sessions.list",
       "inventory_row": "chat.sessions.list",
       "category": "chat",

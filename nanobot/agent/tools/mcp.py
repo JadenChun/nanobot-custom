@@ -9,9 +9,10 @@ import os
 import re
 import shutil
 import urllib.parse
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from urllib.parse import urlparse
 
@@ -573,8 +574,8 @@ def _image_block_data_url(block: Any, types: Any) -> str | None:
     return None
 
 
-def _mcp_image_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]]) -> str:
-    """Build the compact tool result for an MCP call that returned image(s).
+def _mcp_media_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]]) -> str:
+    """Build the compact tool result for an MCP call that returned media.
 
     The base64 stays out of the model context entirely — only artifact paths and
     metadata are returned, so the result is small and the channel can deliver the
@@ -583,9 +584,9 @@ def _mcp_image_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]
     payload: dict[str, Any] = {
         "artifacts": artifacts,
         "next_step": (
-            "These images were returned by an MCP tool and saved as local artifacts. "
+            "These media files were returned by an MCP tool and saved as local artifacts. "
             "Call the message tool with the artifact 'path' values in the media "
-            "parameter to deliver the images to the user. Do not paste base64 or raw "
+            "parameter to deliver them to the user. Do not paste base64 or raw "
             "paths into your reply unless the user asks for debug details."
         ),
     }
@@ -703,8 +704,12 @@ class MCPToolWrapper(_MCPWrapperBase):
         transport_type: str = "stdio",
         server_url: str | None = None,
         server_command: str | None = None,
+        media_output_roots: Sequence[Path] = (),
     ):
         self._set_mcp_connection(session, server_name)
+        self._media_output_roots = tuple(
+            Path(root).expanduser() for root in media_output_roots
+        )
         self._original_name = tool_def.name
         self._name = _sanitize_mcp_tool_name(f"mcp_{server_name}_{tool_def.name}")
         self._description = tool_def.description or tool_def.name
@@ -767,7 +772,7 @@ class MCPToolWrapper(_MCPWrapperBase):
     def parameters(self) -> dict[str, Any]:
         return self._parameters
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> Any:
         retried_transient = False
         refreshed_session = False
         while True:
@@ -829,9 +834,19 @@ class MCPToolWrapper(_MCPWrapperBase):
             else:
                 # Success — extract text and persist any image content as artifacts.
                 try:
-                    rendered = self._render_call_result(result.content, kwargs)
+                    rendered, media_artifacts = self._render_call_result(result.content, kwargs)
                     if getattr(result, "isError", False):
                         return ToolResult.error(rendered)
+                    if media_artifacts:
+                        from nanobot.agent.turn import ToolOutcome
+                        from nanobot.utils.artifacts import media_artifact_ref
+
+                        return ToolOutcome(
+                            content=rendered,
+                            media_artifacts=tuple(
+                                media_artifact_ref(artifact) for artifact in media_artifacts
+                            ),
+                        )
                     return rendered
                 except Exception as exc:
                     logger.exception(
@@ -844,7 +859,11 @@ class MCPToolWrapper(_MCPWrapperBase):
                         f"(MCP tool returned malformed content: {type(exc).__name__})"
                     )
 
-    def _render_call_result(self, content: Any, arguments: Mapping[str, Any]) -> str:
+    def _render_call_result(
+        self,
+        content: Any,
+        arguments: Mapping[str, Any],
+    ) -> tuple[str, list[dict[str, Any]]]:
         """Turn MCP content blocks into a tool result string.
 
         Text is concatenated as before. Image blocks are decoded and saved as
@@ -856,6 +875,7 @@ class MCPToolWrapper(_MCPWrapperBase):
 
         text_parts: list[str] = []
         artifacts: list[dict[str, Any]] = []
+        resource_link_type = getattr(types, "ResourceLink", None)
         for block in content:
             if isinstance(block, types.TextContent):
                 text_parts.append(block.text)
@@ -868,11 +888,28 @@ class MCPToolWrapper(_MCPWrapperBase):
                 else:
                     text_parts.append("(MCP tool returned an image that could not be stored)")
                 continue
+            if resource_link_type is not None and isinstance(block, resource_link_type):
+                stored = self._store_resource_link(block, arguments)
+                if stored is not None:
+                    artifacts.append(stored)
+                    text_parts.append(
+                        f"(MCP tool returned a {stored['kind']} file saved as an artifact)"
+                    )
+                else:
+                    text_parts.append("(MCP tool returned a file that could not be staged)")
+                continue
             text_parts.append(str(block))
 
         if artifacts:
-            return _mcp_image_tool_result(text_parts, artifacts)
-        return "\n".join(text_parts) or "(no output)"
+            from nanobot.utils.artifacts import (
+                parse_embedded_text_payload,
+                select_candidate_artifacts,
+            )
+
+            payload = parse_embedded_text_payload("\n".join(text_parts))
+            candidates = select_candidate_artifacts(artifacts, payload)
+            return _mcp_media_tool_result(text_parts, artifacts), candidates
+        return ("\n".join(text_parts) or "(no output)"), []
 
     def _store_image_block(
         self, data_url: str, arguments: Mapping[str, Any]
@@ -891,6 +928,41 @@ class MCPToolWrapper(_MCPWrapperBase):
         except (ArtifactError, OSError) as exc:
             logger.warning(
                 "MCP tool '{}' returned an image that could not be stored: {}",
+                self._name,
+                exc,
+            )
+            return None
+
+    def _store_resource_link(
+        self, block: Any, arguments: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        """Stage a trusted local MCP resource file into the managed media store."""
+        from nanobot.utils.artifacts import ArtifactError, store_generated_file_artifact
+
+        uri = getattr(block, "uri", None)
+        if not isinstance(uri, str) or not uri:
+            return None
+        parsed = urllib.parse.urlparse(uri)
+        if parsed.scheme != "file":
+            return None
+        raw_path = urllib.parse.unquote(parsed.path)
+        if parsed.netloc and parsed.netloc not in {"", "localhost"}:
+            raw_path = f"//{parsed.netloc}{raw_path}"
+        mime = getattr(block, "mimeType", None)
+        kind = "video" if isinstance(mime, str) and mime.startswith("video/") else "file"
+        try:
+            return store_generated_file_artifact(
+                Path(raw_path),
+                kind=kind,
+                prompt=str(arguments.get("prompt") or ""),
+                model=str(arguments.get("model") or ""),
+                provider=f"mcp:{self._server_name}",
+                allowed_roots=self._media_output_roots,
+                save_dir="generated",
+            )
+        except (ArtifactError, OSError) as exc:
+            logger.warning(
+                "MCP tool '{}' returned a file that could not be stored: {}",
                 self._name,
                 exc,
             )
@@ -1145,6 +1217,7 @@ async def connect_mcp_servers(
     registry: ToolRegistry,
     *,
     oauth_handlers: Mapping[str, MCPOAuthHandlers] | None = None,
+    media_output_roots: Sequence[Path] = (),
 ) -> dict[str, MCPConnection]:
     """Connect to configured MCP servers and register their tools, resources, prompts.
 
@@ -1300,8 +1373,16 @@ async def connect_mcp_servers(
                         name,
                     )
                     continue
-                wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout,
-                                         transport_type=transport_type, server_url=cfg.url, server_command=cfg.command)
+                wrapper = MCPToolWrapper(
+                    session,
+                    name,
+                    tool_def,
+                    tool_timeout=cfg.tool_timeout,
+                    transport_type=transport_type,
+                    server_url=cfg.url,
+                    server_command=cfg.command,
+                    media_output_roots=media_output_roots,
+                )
                 registry.register(wrapper)
                 logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
                 registered_count += 1
@@ -1496,10 +1577,12 @@ class MCPProvider:
         registry: ToolRegistry,
         *,
         server_loader: MCPServerLoader | None = None,
+        media_output_roots: Sequence[Path] = (),
     ) -> None:
         self._servers = dict(servers)
         self._registry = registry
         self._server_loader = server_loader or _load_current_servers
+        self._media_output_roots = tuple(media_output_roots)
         self._connections: dict[str, MCPConnection] = {}
         self._runtime_statuses: dict[str, MCPRuntimeStatus] = {}
         self._lock = asyncio.Lock()
@@ -1517,6 +1600,7 @@ class MCPProvider:
             _configured_servers(config),
             registry,
             server_loader=server_loader,
+            media_output_roots=[Path(root) for root in config.tools.media_output_roots],
         )
 
     @property
@@ -1588,7 +1672,11 @@ class MCPProvider:
                 return
             self._set_runtime_status(missing_servers, "connecting")
             try:
-                connected = await connect_mcp_servers(missing_servers, self._registry)
+                connected = await connect_mcp_servers(
+                    missing_servers,
+                    self._registry,
+                    media_output_roots=self._media_output_roots,
+                )
                 if self._closing:
                     await close_mcp_connections(connected)
                     return
@@ -1677,7 +1765,11 @@ class MCPProvider:
             if to_connect:
                 self._set_runtime_status(to_connect, "connecting")
                 try:
-                    connected = await connect_mcp_servers(to_connect, self._registry)
+                    connected = await connect_mcp_servers(
+                        to_connect,
+                        self._registry,
+                        media_output_roots=self._media_output_roots,
+                    )
                 except BaseException:
                     self._set_runtime_status(to_connect, "failed")
                     raise
@@ -1792,6 +1884,7 @@ class MCPProvider:
             connected = await connect_mcp_servers(
                 {server_name: cfg},
                 self._registry,
+                media_output_roots=self._media_output_roots,
             )
             if self._closing:
                 await close_mcp_connections(connected)

@@ -10,6 +10,7 @@ from nanobot.config.loader import set_config_path
 from nanobot.utils.artifacts import (
     ArtifactError,
     decode_image_data_url,
+    store_generated_file_artifact,
     store_generated_image_artifact,
 )
 
@@ -63,4 +64,60 @@ def test_store_generated_image_artifact_rejects_unsafe_save_dir(tmp_path: Path) 
             prompt="x",
             model="m",
             save_dir="../outside",
+        )
+
+
+def test_store_generated_file_artifact_copies_trusted_video(tmp_path: Path) -> None:
+    set_config_path(tmp_path / "config.json")
+    root = tmp_path / "comfy-output"
+    root.mkdir()
+    source = root / "clip.mp4"
+    source.write_bytes(b"video-bytes")
+
+    created_at = datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc)
+    artifact = store_generated_file_artifact(
+        source,
+        kind="video",
+        prompt="a clip",
+        model="minimax",
+        provider="mcp:comfy",
+        allowed_roots=[root],
+        created_at=created_at,
+    )
+
+    target = Path(artifact["path"])
+    assert target.is_file()
+    assert target.parent == tmp_path / "media" / "generated" / "videos" / "2026-05-08"
+    assert target.read_bytes() == b"video-bytes"
+    assert artifact["kind"] == "video"
+    assert artifact["mime"] == "video/mp4"
+    assert artifact["sha256"]
+    assert json.loads(target.with_suffix(".json").read_text(encoding="utf-8"))["id"] == artifact["id"]
+
+
+def test_store_generated_file_artifact_rejects_untrusted_roots(tmp_path: Path) -> None:
+    set_config_path(tmp_path / "config.json")
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    outside = tmp_path / "outside.mp4"
+    outside.write_bytes(b"outside")
+
+    with pytest.raises(ArtifactError):
+        store_generated_file_artifact(
+            outside,
+            kind="video",
+            prompt="",
+            model="",
+            provider="mcp:comfy",
+            allowed_roots=[trusted],
+        )
+
+    with pytest.raises(ArtifactError):
+        store_generated_file_artifact(
+            outside,
+            kind="video",
+            prompt="",
+            model="",
+            provider="mcp:comfy",
+            allowed_roots=[],
         )

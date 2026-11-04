@@ -113,6 +113,11 @@ class AgentProgressHook(AgentHook):
             "error": event.get("error") if phase == "error" else None,
             "files": [],
             "embeds": [],
+            "media_artifacts": (
+                event.get("media_artifacts")
+                if isinstance(event.get("media_artifacts"), list)
+                else []
+            ),
         }
         if phase == "start":
             await self.emit_reasoning_end()
