@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -43,6 +43,13 @@ export function ImageLightbox({
   const resolvedCurrent = useMobileMediaUrl(current?.url);
   const stripRef = useRef<HTMLDivElement | null>(null);
   const thumbnailRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const swipeRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    active: boolean;
+  } | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
 
   const go = useCallback(
     (delta: number) => {
@@ -106,6 +113,46 @@ export function ImageLightbox({
   const hasMany = total > 1;
   const counter = hasMany ? `${index! + 1} / ${total}` : null;
 
+  const beginSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!hasMany || event.pointerType === "mouse") return;
+    swipeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+  };
+
+  const moveSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const swipe = swipeRef.current;
+    if (!swipe || swipe.pointerId !== event.pointerId) return;
+    const dx = event.clientX - swipe.startX;
+    const dy = event.clientY - swipe.startY;
+    if (!swipe.active) {
+      // Let vertical gestures (and the filmstrip) win until the drag is
+      // clearly horizontal.
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 12) {
+        swipeRef.current = null;
+        setSwipeOffset(0);
+        return;
+      }
+      if (Math.abs(dx) < 10) return;
+      swipe.active = true;
+    }
+    setSwipeOffset(dx * 0.35);
+  };
+
+  const finishSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const swipe = swipeRef.current;
+    if (!swipe || swipe.pointerId !== event.pointerId) return;
+    swipeRef.current = null;
+    const dx = event.clientX - swipe.startX;
+    const dy = event.clientY - swipe.startY;
+    setSwipeOffset(0);
+    if (!swipe.active || Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+    go(dx < 0 ? 1 : -1);
+  };
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -134,9 +181,14 @@ export function ImageLightbox({
 
           <div className="relative flex min-h-0 flex-1 items-center justify-center px-4 pb-2 pt-16 sm:px-16">
             <div
-              className="flex h-full w-full items-center justify-center"
+              className="flex h-full w-full touch-pan-y items-center justify-center"
+              onPointerDown={beginSwipe}
+              onPointerMove={moveSwipe}
+              onPointerUp={finishSwipe}
+              onPointerCancel={finishSwipe}
               style={{
-                transform: "translate3d(0,0,0)",
+                transform: `translate3d(${swipeOffset}px,0,0)`,
+                transition: swipeOffset === 0 ? "transform 180ms ease-out" : "none",
                 willChange: "transform",
               }}
             >
