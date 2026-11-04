@@ -38,6 +38,7 @@ from nanobot.bus.outbound_events import (
     TurnEndEvent,
     TurnModelUpdatedEvent,
     UserInputEvent,
+    WebUIAdmissionRejectedEvent,
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.websocket.runtime import (
@@ -2930,6 +2931,33 @@ async def test_send_turn_end_emits_turn_end_event() -> None:
         {"event": "turn_end", "chat_id": "chat-1"},
         {"event": "session_updated", "chat_id": "chat-1", "scope": "thread"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_send_admission_rejected_emits_correlated_error_frame() -> None:
+    bus = MagicMock()
+    channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
+    mock_ws = AsyncMock()
+    channel._attach(mock_ws, "chat-1")
+
+    await channel.send(OutboundMessage(
+        channel="websocket",
+        chat_id="chat-1",
+        content="",
+        event=WebUIAdmissionRejectedEvent(
+            detail="not_admitted",
+            reason="steering_target_changed",
+            turn_id="guidance-1",
+        ),
+    ))
+
+    assert _sent_ws_payloads(mock_ws) == [{
+        "event": "error",
+        "chat_id": "chat-1",
+        "detail": "not_admitted",
+        "reason": "steering_target_changed",
+        "turn_id": "guidance-1",
+    }]
 
 
 @pytest.mark.asyncio
