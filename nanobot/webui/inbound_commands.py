@@ -793,12 +793,27 @@ class WebUICommandRouter:
         )
         queued_owner = None
         accepted = False
-        if is_webui and not is_user_shell and builtin_command_starts_agent_turn(content):
+        expects_agent_turn = (
+            is_webui and not is_user_shell and builtin_command_starts_agent_turn(content)
+        )
+        if expects_agent_turn:
             queued_owner = register_queued_websocket_turn_if_idle(
                 chat_id,
                 turn_id,
                 publish=False,
             )
+        if request_intent == "new" and expects_agent_turn and queued_owner is None:
+            # The chat may have become busy while hydration was waiting. A new
+            # v1 request must own the turn reservation before it can create any
+            # transcript, default or inbound effect.
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="not_admitted",
+                reason="busy_new_request",
+                **rejection_fields,
+            )
+            return
         try:
             raw_media = envelope.get("media")
             media_paths: list[str] = []

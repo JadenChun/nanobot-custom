@@ -6718,6 +6718,102 @@ async def test_webui_message_source_reset_during_hydration_is_rejected_before_ef
 
 
 @pytest.mark.asyncio
+async def test_webui_new_request_rejected_when_chat_becomes_busy_during_hydration(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.webui.transcript import read_transcript_lines
+
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    waiting_conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, waiting_conn)
+    key = "websocket:busy-hydration-race"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("busy-hydration-race")
+    assert token is not None
+    waiting_workspace = tmp_path / "waiting-workspace"
+    waiting_workspace.mkdir()
+    waiting_scope = default_workspace_scope(waiting_workspace, True)
+    real_hydrate = channel.webui_hydrate
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated_hydrate(chat_id: str) -> None:
+        entered.set()
+        await release.wait()
+        await real_hydrate(chat_id)
+
+    channel.webui_hydrate = gated_hydrate
+    envelope = {
+        "type": "message",
+        "chat_id": "busy-hydration-race",
+        "content": "waiting N",
+        "webui": True,
+        "turn_id": "submission-N",
+        "request_settings_version": 1,
+        "request_intent": "new",
+        "source_token": token,
+        "workspace_scope": waiting_scope.metadata(),
+    }
+    waiting_task = asyncio.create_task(
+        channel._dispatch_envelope(waiting_conn, "waiting-client", envelope)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        channel.webui_hydrate = real_hydrate
+        active_conn = AsyncMock()
+        _authenticate_local_webui_connection(channel, active_conn)
+        await channel._dispatch_envelope(
+            active_conn,
+            "active-client",
+            {
+                **envelope,
+                "turn_id": "admitted-R",
+                "content": "active R",
+                "workspace_scope": scope.metadata(),
+            },
+        )
+        release.set()
+        await waiting_task
+
+        waiting_payloads = [
+            json.loads(call.args[0]) for call in waiting_conn.send.await_args_list
+        ]
+        errors = [payload for payload in waiting_payloads if payload.get("event") == "error"]
+        assert len(errors) == 1
+        assert errors[0]["detail"] == "not_admitted"
+        assert errors[0]["reason"] == "busy_new_request"
+        assert errors[0]["turn_id"] == "submission-N"
+        assert not any(
+            payload.get("event") == "message_accepted" for payload in waiting_payloads
+        )
+        assert [row["text"] for row in read_transcript_lines(key)] == ["active R"]
+        assert bus.publish_inbound.await_count == 1
+        assert wth.websocket_turn_id("busy-hydration-race") == "admitted-R"
+    finally:
+        release.set()
+        if not waiting_task.done():
+            await waiting_task
+
+
+@pytest.mark.asyncio
 async def test_webui_steer_rejects_target_replaced_during_hydration_before_effects(
     bus: MagicMock,
     tmp_path,
