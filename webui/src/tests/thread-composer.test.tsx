@@ -603,7 +603,7 @@ describe("ThreadComposer", () => {
     );
 
     const context = screen.getByTestId("composer-context-usage");
-    expect(context).toHaveClass("size-5", "rounded-full");
+    expect(context).toHaveClass("h-9", "w-9", "rounded-full");
     expect(context).not.toHaveTextContent("Context 74.9K / 1M");
     expect(screen.getByTestId("composer-context-meter")).toBeInTheDocument();
     expect(context).toHaveAccessibleName(
@@ -1784,12 +1784,18 @@ describe("ThreadComposer", () => {
     expect(screen.getByRole("button", { name: "Working in: current" })).toBeInTheDocument();
   });
 
-  it("shows native command availability from legacy access in a v2 workspace response", () => {
-    const legacyScope = {
+  it("shows native command availability from legacy access in a v2 workspace response", async () => {
+    const user = userEvent.setup();
+    const defaultScope = {
       project_path: "/agent/home",
       project_name: "Agent home",
       access_mode: "restricted" as const,
       restrict_to_workspace: true,
+    };
+    const legacyScope = {
+      ...defaultScope,
+      project_path: "/agent/home/current",
+      project_name: "current",
       effective_access: {
         policy: "legacy" as const,
         source: "configured" as const,
@@ -1811,12 +1817,12 @@ describe("ThreadComposer", () => {
         onSend={vi.fn()}
         placeholder="Type your message..."
         workspaceScope={legacyScope}
-        workspaceDefaultScope={legacyScope}
+        workspaceDefaultScope={defaultScope}
         workspaceControls={{ can_change_project: true, can_use_full_access: false }}
         workspaces={{
           schema_version: 2,
           default_access_mode: "restricted",
-          default_scope: legacyScope,
+          default_scope: defaultScope,
           managed_access: false,
           management: null,
           controls: { can_change_project: true, can_use_full_access: false },
@@ -1825,7 +1831,8 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    expect(screen.getByText("Read and write · Commands available")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Working in: current" }));
+    expect(await screen.findByText("Read and write · Commands available")).toBeInTheDocument();
     expect(screen.queryByText(/Bubblewrap|Unavailable/)).not.toBeInTheDocument();
   });
 
@@ -1907,7 +1914,7 @@ describe("ThreadComposer", () => {
     expect(await screen.findByLabelText("Paste path")).toHaveAttribute("placeholder", placeholder);
   });
 
-  it("slides project controls closed without offering a compact replacement", () => {
+  it("keeps project selection in the action row and hides it with workspace controls", () => {
     const defaultScope = {
       project_path: "/Users/test/.nanobot/workspace",
       project_name: "workspace",
@@ -1927,21 +1934,12 @@ describe("ThreadComposer", () => {
       />
     );
     const { container, rerender } = render(composer(false));
-    const drawer = container.querySelector("[data-composer-workspace-drawer]");
 
-    expect(drawer).toHaveAttribute("data-state", "open");
-    expect(drawer).not.toHaveAttribute("aria-hidden");
-    expect(container.querySelector("[data-composer-workspace-compact]")).not.toBeInTheDocument();
+    expect(container.querySelector("[data-composer-workspace-drawer]")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Working in: current" })).toBeEnabled();
 
     rerender(composer(true));
 
-    expect(container.querySelector("[data-composer-workspace-drawer]")).toBe(drawer);
-    expect(drawer).toHaveAttribute("data-state", "closed");
-    expect(drawer).toHaveAttribute("aria-hidden", "true");
-    expect(within(drawer as HTMLElement).getByRole("button", {
-      hidden: true,
-      name: "Working in: current",
-    })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Working in: current" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", {
       name: "Workspace access mode: Full access",
@@ -1949,11 +1947,7 @@ describe("ThreadComposer", () => {
 
     rerender(composer(false));
 
-    expect(container.querySelector("[data-composer-workspace-drawer]")).toBe(drawer);
-    expect(drawer).toHaveAttribute("data-state", "open");
-    expect(within(drawer as HTMLElement).getByRole("button", {
-      name: "Working in: current",
-    })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Working in: current" })).toBeEnabled();
   });
 
   it("uses the native folder picker for project selection on native host", async () => {
@@ -3850,7 +3844,7 @@ describe("ThreadComposer", () => {
 describe("ThreadComposer — mobile controls", () => {
   afterEach(() => resetMobileRuntime());
 
-  it("keeps the model chip in the footer and shows the compact access label on mobile", () => {
+  it("keeps the model chip in the footer and the workspace name above the composer", () => {
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
       request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
@@ -3891,38 +3885,73 @@ describe("ThreadComposer — mobile controls", () => {
         }}
         workspaces={permissionV2Workspaces(scope)}
         workspacePermissions={permissionProjection({ can_enable_full: false })}
+        contextUsage={{ contextTokens: 1_000, contextWindowTokens: 10_000 }}
         persistentWorkspaceChat
         onWorkspaceAccessModeChange={vi.fn()}
         onWorkspaceScopeChange={vi.fn()}
       />,
     );
 
-    const modelRow = container.querySelector(".thread-composer-mobile-model-row");
+    const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
     const footer = container.querySelector(".thread-composer-footer");
-    expect(modelRow).not.toBeNull();
+    expect(workspaceRow).not.toBeNull();
     expect(footer).not.toBeNull();
-    expect(within(modelRow as HTMLElement).getByText("Default")).toBeInTheDocument();
-    expect(within(footer as HTMLElement).getByText("project")).toBeInTheDocument();
+    expect(within(workspaceRow as HTMLElement).getByText("project")).toBeInTheDocument();
+    expect(
+      within(workspaceRow as HTMLElement).getByTestId("composer-context-usage"),
+    ).toBeInTheDocument();
+    expect(within(footer as HTMLElement).getByText("Default")).toBeInTheDocument();
+    expect(container.querySelector(".thread-composer-mobile-model-row")).toBeNull();
     expect(container.querySelector(".thread-composer-mobile-project")).toBeNull();
     expect(
       within(footer as HTMLElement).getByLabelText(/Workspace access mode: Sandbox/).textContent,
-    ).toContain("Sandbox");
+    ).toBe("");
   });
-});
 
-describe("next-message settings hint", () => {
-  it("labels editable selections as applying to the next message while running", () => {
-    render(
+  it("shows a bare folder trigger above the composer at agent home", () => {
+    const runtime: MobileRuntime = {
+      transport: {} as MobileRuntime["transport"],
+      request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
+      handshake: async () => ({}),
+      read: async () => ({}),
+      onEvent: async () => () => undefined,
+      createWebSocket: () => ({}) as WebSocket,
+      recover: async () => undefined,
+    };
+    installMobileRuntime(runtime);
+    const scope: WorkspaceScopePayload = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+    };
+    const { container } = render(
       <ThreadComposer
         onSend={vi.fn()}
-        onStop={vi.fn()}
-        isStreaming
         placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceDefaultScope={scope}
+        workspaceControls={{
+          can_change_project: true,
+          can_use_full_access: false,
+          permission_v2: true,
+        }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({ can_enable_full: false })}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={vi.fn()}
+        onWorkspaceScopeChange={vi.fn()}
       />,
     );
-    expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
-      "For the next message",
-    );
+
+    const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+    expect(workspaceRow).not.toBeNull();
+    expect(
+      within(workspaceRow as HTMLElement).getByRole("button", {
+        name: "Choose project folder",
+      }),
+    ).toBeInTheDocument();
+    expect(within(workspaceRow as HTMLElement).queryByText("project")).not.toBeInTheDocument();
   });
 });
 
@@ -4026,7 +4055,6 @@ describe("settings during a running turn", () => {
       />,
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent("For the next message");
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
     await user.click(screen.getByRole("button", { name: "Enable Full access" }));

@@ -74,6 +74,7 @@ import {
   WorkspacePermissionV2Control,
   WorkspaceProjectPicker,
 } from "@/components/thread/WorkspaceControls";
+import { useThreadComposerChromeHidden } from "@/components/thread/composerChrome";
 import {
   ModelPresetBadge,
   type ModelPresetOption,
@@ -133,7 +134,6 @@ import {
 } from "@/lib/session-drag";
 import { formatQuotedUserMessage } from "@/lib/user-message-quote";
 import { cn } from "@/lib/utils";
-import { sameWorkspacePath } from "@/lib/workspace";
 
 const VOICE_SHORTCUT_CODE = "KeyD";
 const VOICE_SHORTCUT_ARIA = "Control+Shift+D";
@@ -986,6 +986,7 @@ export function ThreadComposer({
 }: ThreadComposerProps) {
   const { t } = useTranslation();
   const mobileComposer = isMobileRuntimeActive();
+  const composerChromeHidden = useThreadComposerChromeHidden();
   const [value, setValue] = useState("");
   const [selectedSessionMentions, setSelectedSessionMentions] = useState<SessionMention[]>([]);
   const [sessionDragPreview, setSessionDragPreview] = useState<{
@@ -1031,10 +1032,7 @@ export function ThreadComposer({
   const projectPickerAvailable =
     !!workspaceDefaultScope
     && !!onWorkspaceScopeChange;
-  const hasProjectFolder = !!workspaceScope && !!workspaceDefaultScope
-    && !sameWorkspacePath(workspaceScope.project_path, workspaceDefaultScope.project_path);
-  const showProjectPicker = projectPickerAvailable && hasProjectFolder && !workspaceControlsHidden;
-  const showCompactProjectPicker = projectPickerAvailable && !hasProjectFolder && !workspaceControlsHidden;
+  const showWorkspacePicker = projectPickerAvailable && !workspaceControlsHidden;
 
   useEffect(() => {
     secondEnterPromptIdRef.current = null;
@@ -1147,14 +1145,14 @@ export function ThreadComposer({
   } = useClipboardAndDrop(addFiles);
 
   useEffect(() => {
-    if (interactionDisabled || hasTouchPrimaryPointer || (workspaceError && (showProjectPicker || showCompactProjectPicker))) {
+    if (interactionDisabled || hasTouchPrimaryPointer || (workspaceError && showWorkspacePicker)) {
       return;
     }
     const el = textareaRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => el.focus());
     return () => cancelAnimationFrame(id);
-  }, [hasTouchPrimaryPointer, interactionDisabled, showCompactProjectPicker, showProjectPicker, workspaceError]);
+  }, [hasTouchPrimaryPointer, interactionDisabled, showWorkspacePicker, workspaceError]);
 
   useEffect(() => {
     if (!focusRequest || interactionDisabled) return;
@@ -2335,9 +2333,10 @@ export function ThreadComposer({
         )
       : "min-h-[50px] px-3.5 pb-1.5 pt-3 text-[16px] leading-5 sm:px-4",
   );
-  const projectPicker = (
+  const projectPickerInline = (
     <WorkspaceProjectPicker
-      compact={!hasProjectFolder || mobileComposer}
+      inline
+      isHero={isHero}
       disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
@@ -2349,6 +2348,28 @@ export function ThreadComposer({
       onChange={onWorkspaceScopeChange}
     />
   );
+  const projectPickerLine = (
+    <WorkspaceProjectPicker
+      line
+      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
+      scope={workspaceScope}
+      defaultScope={workspaceDefaultScope}
+      controls={workspaceControls}
+      workspaces={workspaces}
+      error={workspaceError}
+      onPickFolder={onPickWorkspaceFolder}
+      onRefreshWorkspaces={onRefreshWorkspaces}
+      onChange={onWorkspaceScopeChange}
+    />
+  );
+  const showMobileWorkspaceLine = mobileComposer
+    && !voiceRecorder.isRecording
+    && !workspaceControlsHidden
+    && projectPickerAvailable;
+  const hasMobileUsage = contextUsage != null || recentRoundUsage.length > 0;
+  const showMobileWorkspaceRow = mobileComposer
+    && !voiceRecorder.isRecording
+    && (showMobileWorkspaceLine || hasMobileUsage);
 
   const accessControl = workspaceScope && !workspaceControlsHidden ? (
     <WorkspacePermissionV2Control
@@ -2368,6 +2389,17 @@ export function ThreadComposer({
       onModeChange={onWorkspaceAccessModeChange}
       onRetryRestricted={onRetryWorkspaceRestricted}
     />
+  ) : null;
+  const accessControlSlot = accessControl ? (
+    <div
+      className={cn(
+        "thread-composer-access-slot flex min-w-0",
+        showWorkspacePicker && !mobileComposer && !voiceRecorder.isRecording
+          && "thread-composer-access-slot-after-workspace",
+      )}
+    >
+      {accessControl}
+    </div>
   ) : null;
 
   const mobileModelLabel = (modelLabel ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim();
@@ -2416,7 +2448,11 @@ export function ThreadComposer({
       onDrop={(event) => {
         if (!handleSessionDrop(event)) onDrop(event);
       }}
-      className={cn("relative w-full", isHero ? "px-0" : "px-1 pb-1.5 pt-1 sm:px-0")}
+      className={cn(
+        "relative w-full",
+        isHero ? "px-0" : "px-1 pb-1.5 sm:px-0",
+        mobileComposer ? "pt-3" : isHero ? "" : "pt-1",
+      )}
     >
       {showSlashMenu ? (
         <SlashCommandPalette
@@ -2437,6 +2473,23 @@ export function ThreadComposer({
           onHover={setSelectedCliAppIndex}
           onChoose={chooseMentionCandidate}
         />
+      ) : null}
+      {showMobileWorkspaceRow ? (
+        <div
+          className="thread-composer-mobile-workspace-row"
+          data-hidden={composerChromeHidden ? "true" : undefined}
+          aria-hidden={composerChromeHidden || undefined}
+        >
+          {showMobileWorkspaceLine ? projectPickerLine : null}
+          {hasMobileUsage ? (
+            <div className="thread-composer-mobile-workspace-meta flex min-w-0 items-center">
+              <ComposerUsagePopover
+                context={contextUsage}
+                rounds={recentRoundUsage}
+              />
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <div
         ref={surfaceRef}
@@ -2583,19 +2636,11 @@ export function ThreadComposer({
             {inlineError}
           </div>
         ) : null}
-        {mobileComposer && !voiceRecorder.isRecording && modelControl ? (
-          <div className="thread-composer-mobile-model-row">
-            <div className="thread-composer-mobile-model-control">{modelControl}</div>
-          </div>
-        ) : null}
         <div
           className={cn(
             "thread-composer-footer flex flex-nowrap items-center motion-safe:transition-[padding-bottom] motion-safe:[transition-duration:220ms] motion-safe:ease-in-out",
             isHero
-              ? cn(
-                  "gap-x-1.5 px-3 sm:px-4",
-                  showProjectPicker ? "pb-1.5" : "pb-3.5",
-                )
+              ? "gap-x-1.5 px-3 pb-3.5 sm:px-4"
               : "gap-x-2 px-2.5 pb-2 sm:px-3",
           )}
         >
@@ -2623,7 +2668,7 @@ export function ThreadComposer({
                     disabled={attachButtonDisabled}
                     aria-label={t("thread.composer.attachImage")}
                     className={cn(
-                      "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
+                      "thread-composer-action touch-target shrink-0 rounded-full text-muted-foreground hover:text-foreground",
                       isHero
                         ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
                         : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
@@ -2651,7 +2696,7 @@ export function ThreadComposer({
                 aria-label={t("thread.composer.attachImage")}
                 onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
+                  "thread-composer-action touch-target shrink-0 rounded-full text-muted-foreground hover:text-foreground",
                   isHero
                     ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
                     : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
@@ -2661,11 +2706,8 @@ export function ThreadComposer({
                 <span className="sr-only">{t("thread.composer.attachImage")}</span>
               </Button>
             )}
-            {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
-            {mobileComposer && !voiceRecorder.isRecording && projectPickerAvailable && !workspaceControlsHidden && workspaceControls?.can_change_project !== false ? (
-              <div className="thread-composer-mobile-project-picker">{projectPicker}</div>
-            ) : null}
-            {mobileComposer && !voiceRecorder.isRecording ? accessControl : null}
+            {showWorkspacePicker && !mobileComposer && !voiceRecorder.isRecording ? projectPickerInline : null}
+            {mobileComposer && !voiceRecorder.isRecording ? accessControlSlot : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
@@ -2674,29 +2716,20 @@ export function ThreadComposer({
                 isHero={isHero}
                 levels={voiceRecorder.levels}
               />
-            ) : !mobileComposer ? accessControl : null}
+            ) : !mobileComposer ? accessControlSlot : null}
           </div>
-          {isStreaming ? (
-            <span
-              role="status"
-              className="mr-auto shrink-0 pl-1 text-[11px] leading-4 text-muted-foreground"
-            >
-              {t("thread.composer.nextMessage", {
-                defaultValue: "For the next message",
-              })}
-            </span>
-          ) : null}
           <div
             className={cn(
               "thread-composer-footer-actions ml-auto flex min-w-0 items-center justify-end",
               isHero ? "gap-1.5" : "gap-2",
             )}
           >
-            {!mobileComposer ? modelControl : null}
+            {modelControl}
             {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}
                 rounds={recentRoundUsage}
+                isHero={isHero}
               />
             ) : null}
             {showVoiceButton ? (
@@ -2716,7 +2749,7 @@ export function ThreadComposer({
                       onPointerCancel={voiceRecorder.endPress}
                       onClick={voiceRecorder.handleClick}
                       className={cn(
-                        "thread-composer-action touch-target rounded-full border border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground",
+                        "thread-composer-action touch-target shrink-0 rounded-full border border-transparent text-muted-foreground hover:bg-muted/65 hover:text-foreground",
                         isHero ? "h-8 w-8" : "h-9 w-9",
                         voiceRecorder.isRecording &&
                           "bg-red-500 text-white shadow-[0_8px_20px_rgba(239,68,68,0.22)] hover:bg-red-500 hover:text-white",
@@ -2727,7 +2760,7 @@ export function ThreadComposer({
                       ) : voiceRecorder.isRecording ? (
                         <Square className={cn(isHero ? "h-3.5 w-3.5" : "h-3.5 w-3.5")} fill="currentColor" />
                       ) : (
-                        <Mic className={cn(isHero ? "h-4 w-4" : "h-4 w-4")} />
+                        <Mic className="h-[18px] w-[18px]" />
                       )}
                     </Button>
                   </TooltipTrigger>
@@ -2759,7 +2792,7 @@ export function ThreadComposer({
               }
               onClick={showStopButton ? handleStop : modelNeedsSetup ? onModelBadgeClick : undefined}
               className={cn(
-                "thread-composer-action touch-target rounded-full transition-transform",
+                "thread-composer-action touch-target shrink-0 rounded-full transition-transform",
                 showStopButton
                   ? "border border-border/70 bg-card text-foreground/85 shadow-[0_3px_10px_rgba(15,23,42,0.08)] hover:bg-muted/65 hover:text-foreground disabled:text-muted-foreground/50"
                   : isHero
@@ -2779,20 +2812,6 @@ export function ThreadComposer({
             </Button>
           </div>
         </div>
-        {projectPickerAvailable && hasProjectFolder && !mobileComposer ? (
-          <div
-            className="composer-workspace-drawer"
-            data-composer-workspace-drawer=""
-            data-state={showProjectPicker ? "open" : "closed"}
-            aria-hidden={showProjectPicker ? undefined : true}
-          >
-            <div className="composer-workspace-drawer-clip">
-              <div className="composer-workspace-drawer-content">
-                {projectPicker}
-              </div>
-            </div>
-          </div>
-        ) : null}
       </div>
     </form>
   );

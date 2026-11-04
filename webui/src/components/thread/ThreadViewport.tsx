@@ -13,6 +13,7 @@ import { ArrowDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { PromptRail } from "@/components/thread/PromptRail";
+import { ThreadComposerChromeHiddenProvider } from "@/components/thread/composerChrome";
 import { ThreadMessages } from "@/components/thread/ThreadMessages";
 import { isAgentActivityMember } from "@/components/thread/AgentActivityCluster";
 import { ThreadCameraController } from "@/components/thread/thread-camera";
@@ -946,7 +947,9 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   data-testid="thread-composer-motion"
                   className="mx-auto w-full max-w-[58rem]"
                 >
-                  {composer}
+                  <ThreadComposerChromeHiddenProvider value={!atBottom}>
+                    {composer}
+                  </ThreadComposerChromeHiddenProvider>
                 </div>
               </div>
             </div>
