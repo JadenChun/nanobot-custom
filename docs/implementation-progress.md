@@ -754,9 +754,10 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   `package-before/after.txt`, `after-restart.xml`, `after-manual-retry2.xml`,
   `remote-offline.xml`, `installed-final.apk`, gateway/owner logs).
 
-Remaining physical/instrumented qualification: MC04 two-installation owner
-confirmation, MC06 actual revoke and the plugin-level owner-route instrumented
-test, MC05 real native command closure, and M38/signed-release review.
+Physical/instrumented coverage now includes MC04 two-installation owner
+confirmation and revoke, MC06 owner status/list/revoke, MC07 restart/draft
+recovery, MC05 real native closure, and the M01 emulator rerun. Remaining:
+M38/signed-release review and applicable radio/Tailscale qualification.
 
 ### MC04/MC06 authenticated A/B and emulator evidence
 
@@ -775,9 +776,9 @@ test, MC05 real native command closure, and M38/signed-release review.
 - Emulator M01 rerun: `M01_RESULT=PASS`, 38 instrumentation tests.
 - Evidence: `/tmp/opencode/mc-phone-evidence/ab-journey.log`,
   `a-token.json`, `b-token.json`, `/tmp/opencode/mc-emulator-b.log`.
-- Remaining qualification: MC05 real native command closure and M38/signed
-  release review. The literal two-phone UI confirmation was not repeated; the
-  authenticated A/B installation journey covers the public protocol.
+- Remaining qualification: M38/signed-release review. The literal two-phone UI
+  confirmation was not repeated; the authenticated A/B installation journey
+  covers the public protocol.
 
 ### MC05 real native closure evidence
 
