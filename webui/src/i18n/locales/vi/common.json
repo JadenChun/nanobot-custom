@@ -1426,7 +1426,7 @@
       "refresh": "Làm mới nội dung đã tạo",
       "view": "Chế độ xem nội dung",
       "byCall": "Theo lệnh gọi công cụ",
-      "all": "Tất cả nội dung",
+      "all": "Nội dung phiên",
       "total": "Hình ảnh: {{count}}",
       "candidates": "Ứng viên: {{count}}",
       "loading": "Đang tải nội dung đã tạo…",
@@ -1437,7 +1437,12 @@
       "loadMore": "Tải thêm",
       "loadingMore": "Đang tải thêm…",
       "allSessions": "Tất cả phiên",
-      "emptyLibrary": "Chưa có nội dung nào được tạo trong các phiên."
+      "emptyLibrary": "Chưa có nội dung nào được tạo trong các phiên.",
+      "actions": "Thao tác nội dung: {{name}}",
+      "copyLink": "Sao chép liên kết media",
+      "copyPath": "Sao chép đường dẫn cho agent",
+      "linkCopied": "Đã sao chép liên kết",
+      "pathCopied": "Đã sao chép đường dẫn"
     },
     "promptNavigator": {
       "open": "Mở trình điều hướng lời nhắc",

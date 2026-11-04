@@ -1426,7 +1426,7 @@
       "refresh": "重新整理生成的素材",
       "view": "素材檢視",
       "byCall": "依工具呼叫",
-      "all": "全部素材",
+      "all": "工作階段素材",
       "total": "圖片：{{count}}",
       "candidates": "候選：{{count}}",
       "loading": "正在載入生成的素材…",
@@ -1437,7 +1437,12 @@
       "loadMore": "載入更多",
       "loadingMore": "正在載入更多…",
       "allSessions": "所有工作階段",
-      "emptyLibrary": "所有工作階段中還沒有生成的素材。"
+      "emptyLibrary": "所有工作階段中還沒有生成的素材。",
+      "actions": "素材操作：{{name}}",
+      "copyLink": "複製媒體連結",
+      "copyPath": "複製給 Agent 的檔案路徑",
+      "linkCopied": "已複製連結",
+      "pathCopied": "已複製路徑"
     },
     "promptNavigator": {
       "open": "開啟提示詞導覽",

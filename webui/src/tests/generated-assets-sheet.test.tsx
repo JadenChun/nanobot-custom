@@ -21,6 +21,7 @@ function asset(id: string, name: string) {
     mime: "image/png",
     name,
     url: `/api/media/sig/${id}`,
+    path: `/home/test/media/generated/${name}`,
     bytes: 123,
     createdAt: 1_793_438_339_000,
     prompt: `${name} prompt`,
@@ -65,7 +66,7 @@ describe("GeneratedAssetsSheet", () => {
     vi.unstubAllGlobals();
   });
 
-  it("loads and groups generated assets by tool call", async () => {
+  it("shows session assets by default and groups by tool call on request", async () => {
     const user = userEvent.setup();
     render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
 
@@ -81,22 +82,27 @@ describe("GeneratedAssetsSheet", () => {
       );
     });
 
+    expect(screen.getByTestId("generated-assets-flat")).toBeInTheDocument();
+    expect(await screen.findAllByTestId("generated-asset-thumbnail")).toHaveLength(3);
+    expect(screen.getByTestId("generated-assets-count")).toHaveTextContent("3");
+
+    await user.click(screen.getByRole("button", { name: "By tool call" }));
+
     expect(await screen.findByText("first batch prompt")).toBeInTheDocument();
     expect(screen.getByText("second batch prompt")).toBeInTheDocument();
     expect(screen.getAllByTestId("generated-assets-group")).toHaveLength(2);
     expect(screen.getByText("Candidates: 2")).toBeInTheDocument();
     expect(screen.getByText("Candidates: 1")).toBeInTheDocument();
     expect(screen.getByText("qwen_image_2_1")).toBeInTheDocument();
-    expect(screen.getByTestId("generated-assets-count")).toHaveTextContent("3");
   });
 
-  it("switches to the flat all-assets view", async () => {
+  it("switches back to the session-assets view", async () => {
     const user = userEvent.setup();
     render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
 
     await user.click(screen.getByRole("button", { name: "Open generated assets" }));
-    await screen.findByText("first batch prompt");
-    await user.click(screen.getByRole("button", { name: "All assets" }));
+    await user.click(screen.getByRole("button", { name: "By tool call" }));
+    await user.click(screen.getByRole("button", { name: "Session assets" }));
 
     expect(screen.getByTestId("generated-assets-flat")).toBeInTheDocument();
     expect(screen.getAllByTestId("generated-asset-thumbnail")).toHaveLength(3);
@@ -124,6 +130,7 @@ describe("GeneratedAssetsSheet", () => {
     render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
 
     await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+    await user.click(screen.getByRole("button", { name: "By tool call" }));
     expect(await screen.findByText("first batch prompt")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load more" }));
 
@@ -140,8 +147,7 @@ describe("GeneratedAssetsSheet", () => {
     render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
 
     await user.click(screen.getByRole("button", { name: "Open generated assets" }));
-    await screen.findByText("first batch prompt");
-    await user.click(screen.getByRole("button", { name: "Open a1.png" }));
+    await user.click(await screen.findByRole("button", { name: "Open a1.png" }));
 
     expect(await screen.findAllByAltText("a1.png")).toHaveLength(2);
   });
@@ -180,7 +186,7 @@ describe("GeneratedAssetsSheet", () => {
     render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
 
     await user.click(screen.getByRole("button", { name: "Open generated assets" }));
-    await screen.findByText("first batch prompt");
+    await screen.findByTestId("generated-assets-flat");
     await user.click(screen.getByRole("button", { name: "All sessions" }));
 
     expect(await screen.findByTestId("generated-assets-library")).toBeInTheDocument();
@@ -215,13 +221,39 @@ describe("GeneratedAssetsSheet", () => {
     render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
 
     await user.click(screen.getByRole("button", { name: "Open generated assets" }));
-    await screen.findByText("second batch prompt");
-    const thumbnail = screen.getByTestId("generated-asset-thumbnail");
+    const thumbnail = await screen.findByTestId("generated-asset-thumbnail");
     expect(thumbnail.querySelector("video")).not.toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Open clip.mp4" }));
 
     expect(await screen.findAllByLabelText("clip.mp4")).toHaveLength(3);
+  });
+
+  it("copies the media link and agent-usable path", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    try {
+      render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+      await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+      await user.click(await screen.findByRole("button", { name: "Asset actions: a1.png" }));
+      await user.click(await screen.findByRole("menuitem", { name: "Copy media link" }));
+      expect(writeText).toHaveBeenLastCalledWith(
+        expect.stringMatching(/\/api\/media\/sig\/a1$/),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Asset actions: a1.png" }));
+      await user.click(await screen.findByRole("menuitem", { name: "Copy file path for agent" }));
+      expect(writeText).toHaveBeenLastCalledWith("/home/test/media/generated/a1.png");
+      expect(await screen.findByText("Path copied")).toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 
   it("shows an empty state", async () => {
@@ -251,6 +283,6 @@ describe("GeneratedAssetsSheet", () => {
     expect(await screen.findByText("Could not load generated assets.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
-    expect(await screen.findByText("first batch prompt")).toBeInTheDocument();
+    expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
   });
 });

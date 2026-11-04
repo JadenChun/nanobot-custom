@@ -1426,7 +1426,7 @@
       "refresh": "Actualizar recursos generados",
       "view": "Vista de recursos",
       "byCall": "Por llamada",
-      "all": "Todos",
+      "all": "Recursos de la sesión",
       "total": "Imágenes: {{count}}",
       "candidates": "Candidatos: {{count}}",
       "loading": "Cargando recursos generados…",
@@ -1437,7 +1437,12 @@
       "loadMore": "Cargar más",
       "loadingMore": "Cargando más…",
       "allSessions": "Todas las sesiones",
-      "emptyLibrary": "Aún no hay recursos generados en las sesiones."
+      "emptyLibrary": "Aún no hay recursos generados en las sesiones.",
+      "actions": "Acciones del recurso: {{name}}",
+      "copyLink": "Copiar enlace del recurso",
+      "copyPath": "Copiar ruta para el agente",
+      "linkCopied": "Enlace copiado",
+      "pathCopied": "Ruta copiada"
     },
     "promptNavigator": {
       "open": "Abrir el navegador de instrucciones",

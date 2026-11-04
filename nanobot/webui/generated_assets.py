@@ -251,6 +251,7 @@ def _resolve_artifact(
         "mime": mime,
         "name": raw.get("name") or path.name,
         "url": signed["url"],
+        "path": str(path),
         "bytes": size,
         "createdAt": created_at,
         "prompt": raw.get("prompt") or _optional_text(sidecar.get("prompt")),

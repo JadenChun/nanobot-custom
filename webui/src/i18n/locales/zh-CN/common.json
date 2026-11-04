@@ -1426,7 +1426,7 @@
       "refresh": "刷新生成的素材",
       "view": "素材视图",
       "byCall": "按工具调用",
-      "all": "全部素材",
+      "all": "会话素材",
       "total": "图片：{{count}}",
       "candidates": "候选：{{count}}",
       "loading": "正在加载生成的素材…",
@@ -1437,7 +1437,12 @@
       "loadMore": "加载更多",
       "loadingMore": "正在加载更多…",
       "allSessions": "所有会话",
-      "emptyLibrary": "所有会话中还没有生成的素材。"
+      "emptyLibrary": "所有会话中还没有生成的素材。",
+      "actions": "素材操作：{{name}}",
+      "copyLink": "复制媒体链接",
+      "copyPath": "复制给 Agent 的文件路径",
+      "linkCopied": "已复制链接",
+      "pathCopied": "已复制路径"
     },
     "promptNavigator": {
       "open": "打开提示词导航",

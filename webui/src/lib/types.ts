@@ -231,6 +231,7 @@ export interface GeneratedAsset {
   mime: string;
   name: string;
   url: string;
+  path?: string;
   bytes: number;
   createdAt?: number | null;
   prompt?: string;

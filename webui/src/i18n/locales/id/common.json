@@ -1426,7 +1426,7 @@
       "refresh": "Segarkan aset yang dihasilkan",
       "view": "Tampilan aset",
       "byCall": "Per panggilan alat",
-      "all": "Semua aset",
+      "all": "Aset sesi",
       "total": "Gambar: {{count}}",
       "candidates": "Kandidat: {{count}}",
       "loading": "Memuat aset yang dihasilkan…",
@@ -1437,7 +1437,12 @@
       "loadMore": "Muat lebih banyak",
       "loadingMore": "Memuat lebih banyak…",
       "allSessions": "Semua sesi",
-      "emptyLibrary": "Belum ada aset yang dihasilkan di semua sesi."
+      "emptyLibrary": "Belum ada aset yang dihasilkan di semua sesi.",
+      "actions": "Aksi aset: {{name}}",
+      "copyLink": "Salin tautan media",
+      "copyPath": "Salin jalur untuk agen",
+      "linkCopied": "Tautan disalin",
+      "pathCopied": "Jalur disalin"
     },
     "promptNavigator": {
       "open": "Buka navigasi instruksi",
