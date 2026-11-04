@@ -813,6 +813,11 @@ blockers; code/test correction commit `45c97b18`; final wire-coverage test commi
   `busy_new_request` or `steering_target_changed` rejection arrives, holds it
   out of automatic idle flushes, and retries only on an explicit Guide/click.
   The failed optimistic row is removed instead of leaving a duplicate bubble.
+- Requirements-only author: session `ses_e5b4f2adbffepCXrhG5pQ63D2c`;
+  scenarios and skeletons under `/tmp/opencode/mc-admission-cases/`. Cases were
+  mechanically adapted to the real test harness without changing expected
+  outcomes; no repository source, existing tests or parent history were given
+  to the author.
 - New boundary tests:
   - `test_webui_message_source_reset_during_hydration_is_rejected_before_effects`
   - `test_webui_steer_rejects_target_replaced_during_hydration_before_effects`
