@@ -182,6 +182,59 @@ async def test_exec_input_files_exposes_only_exact_approved_files(tmp_path: Path
         reset_workspace_scope(scope_token)
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(not managed_bwrap_available(), reason="managed bwrap unavailable")
+async def test_exec_input_files_admits_workspace_nested_in_instance(tmp_path: Path) -> None:
+    from nanobot.agent.tools.filesystem import ReadFileTool
+
+    instance = tmp_path / "instance"
+    home = instance / "workspace"
+    home.mkdir(parents=True)
+    store = FolderGrantStore(
+        agent_home=home,
+        instance_root=instance,
+        path=instance / "webui" / "folder-grants.json",
+    )
+    policy = ResourceAccessPolicy(
+        workspace=home,
+        context_manager=ContextRepoManager(),
+        restrict_to_workspace=True,
+        folder_grants=store.view,
+        managed_webui_only=True,
+    )
+    source = home / "scale-mask.bin"
+    source.write_bytes(b"WORKSPACE-INPUT")
+    private = instance / "config.json"
+    private.write_text("PRIVATE-CONTROL", encoding="utf-8")
+    link = tmp_path / "workspace-link.bin"
+    link.symlink_to(source)
+
+    scope_token, request = _bind_managed_turn(home, home)
+    tool = ExecTool(
+        working_dir=str(home),
+        restrict_to_workspace=True,
+        resource_policy=policy,
+        read_file_tool=ReadFileTool(workspace=home, resource_policy=policy),
+    )
+    try:
+        with request:
+            admitted = await tool.execute(
+                command=f"cat {shlex.quote(str(source))}",
+                input_files=[str(source)],
+            )
+            assert "WORKSPACE-INPUT" in admitted
+
+            for denied_path in (private, link):
+                denied = await tool.execute(
+                    command=f"cat {shlex.quote(str(denied_path))}",
+                    input_files=[str(denied_path)],
+                )
+                assert denied.startswith("Error: input_files was not admitted")
+                assert "PRIVATE-CONTROL" not in denied
+    finally:
+        reset_workspace_scope(scope_token)
+
+
 def _enable_full(
     owner: DesktopPermissionOwner,
     source_binding: PermissionSourceBinding,

@@ -35,6 +35,7 @@ from nanobot.security.native_admission import (
     NativeOwnerTag,
     NativeProcessReservation,
 )
+from nanobot.security.runtime_boundary import is_private_runtime_path
 
 if TYPE_CHECKING:
     from nanobot.security.desktop_permissions import (
@@ -243,13 +244,12 @@ class FolderGrantView:
 
     def is_private_path(self, path: Path) -> bool:
         """Hide authoritative grant storage and its adjacent lock/temp files."""
-        resolved = path.expanduser().resolve(strict=False)
         with self._lock:
-            if any(_is_under(resolved, root) for root in self._private_roots):
-                return True
-            return _is_under(resolved, self._instance_root) and not _is_under(
-                resolved,
-                self._agent_home,
+            return is_private_runtime_path(
+                path,
+                instance_root=self._instance_root,
+                agent_home=self._agent_home,
+                private_roots=self._private_roots,
             )
 
     def overlaps_private_root(self, path: Path) -> bool:
