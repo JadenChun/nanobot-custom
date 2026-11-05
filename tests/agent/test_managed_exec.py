@@ -25,6 +25,7 @@ from nanobot.agent.tools.sandbox import managed_bwrap_available, wrap_managed_co
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.turn import ToolOutcome
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+from nanobot.security import native_admission
 from nanobot.security.desktop_permissions import (
     DesktopPermissionOwner,
     PermissionSourceBinding,
@@ -486,7 +487,16 @@ async def test_captured_legacy_registry_rechecks_host_tool_after_activation(tmp_
 
 
 @pytest.mark.asyncio
-async def test_opaque_native_host_return_keeps_first_activation_unknown(tmp_path: Path) -> None:
+async def test_opaque_native_host_return_keeps_first_activation_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This exercises an in-flight opaque tool reservation without launching a process.
+    monkeypatch.setattr(
+        native_admission,
+        "current_host_identity",
+        lambda: native_admission.HostIdentity("host-a", "boot-a", 101),
+    )
     home = tmp_path / "agent-home"
     project = tmp_path / "project"
     instance = tmp_path / "instance"

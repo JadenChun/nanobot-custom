@@ -215,6 +215,13 @@ def test_store_deletion_after_activation_is_fail_closed_after_restart(tmp_path, 
 
 
 def test_first_activation_waits_for_owned_native_process_reservation(tmp_path, monkeypatch):
+    from nanobot.security import native_admission
+
+    monkeypatch.setattr(
+        native_admission,
+        "current_host_identity",
+        lambda: native_admission.HostIdentity("host-a", "boot-a", 101),
+    )
     grant_store = _store(tmp_path, monkeypatch)
     root = tmp_path / "project"
     root.mkdir()

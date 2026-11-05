@@ -312,7 +312,11 @@ def test_unmanaged_activation_rejects_durable_collision_even_with_live_transient
 
 
 @pytest.mark.asyncio
-async def test_temporary_submitted_sandbox_wins_when_full_is_enabled(tmp_path):
+async def test_temporary_submitted_sandbox_wins_when_full_is_enabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "nanobot.agent.tools.native_process.native_supervisor_available",
+        lambda: True,
+    )
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     manager = SessionManager(workspace, sessions_root=tmp_path / "sessions")

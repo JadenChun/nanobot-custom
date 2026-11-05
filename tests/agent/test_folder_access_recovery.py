@@ -24,6 +24,7 @@ from nanobot.agent.tools.filesystem import (
     WriteFileTool,
 )
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.sandbox import managed_bwrap_available
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.workspace import RequestFolderAccessTool
 from nanobot.agent.turn import ToolOutcome
@@ -209,7 +210,11 @@ async def test_real_file_and_exec_adapters_emit_typed_recovery(tmp_path: Path) -
             command = await ExecTool(working_dir=str(home), resource_policy=policy).execute(
                 command="printf command-available",
             )
-            assert "command-available" in command
+            if managed_bwrap_available():
+                assert "command-available" in command
+            else:
+                assert "Error: Sandbox command confinement is unavailable" in command
+                assert "Sandbox requires a working bubblewrap installation" in command
     finally:
         reset_workspace_scope(scope_token)
 
