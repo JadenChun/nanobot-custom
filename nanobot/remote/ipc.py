@@ -6,6 +6,7 @@ import json
 import os
 import socket
 import struct
+import sys
 import threading
 import time
 from pathlib import Path
@@ -164,10 +165,26 @@ class OwnerIPCServer:
                 pass
 
     def _check_peer(self, connection: socket.socket) -> None:
-        if not hasattr(socket, "SO_PEERCRED"):
+        if sys.platform == "darwin" and hasattr(socket, "LOCAL_PEERCRED"):
+            # Darwin's version-0 xucred: version, UID, group count and 16 group IDs.
+            # SOL_LOCAL is 0; Python doesn't expose it on every supported release.
+            size = struct.calcsize("=IIh2x16I")
+            raw = connection.getsockopt(0, socket.LOCAL_PEERCRED, size)
+            if len(raw) != size:
+                raise IPCDeniedError("invalid peer credentials")
+            version = int.from_bytes(raw[:4], sys.byteorder)
+            groups = int.from_bytes(raw[8:10], sys.byteorder, signed=True)
+            if version != 0 or not 0 <= groups <= 16:
+                raise IPCDeniedError("invalid peer credentials")
+            uid = int.from_bytes(raw[4:8], sys.byteorder)
+        elif sys.platform == "linux" and hasattr(socket, "SO_PEERCRED"):
+            size = struct.calcsize("3i")
+            raw = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
+            if len(raw) != size:
+                raise IPCDeniedError("invalid peer credentials")
+            _pid, uid, _gid = struct.unpack("3i", raw)
+        else:
             raise IPCDeniedError("peer credentials are unavailable on this platform")
-        raw = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-        _pid, uid, _gid = struct.unpack("3i", raw)
         if uid != os.getuid():
             raise IPCDeniedError("IPC peer is not the selected OS user")
 

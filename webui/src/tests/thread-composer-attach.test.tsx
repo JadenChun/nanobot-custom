@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import type { EncodeResponse } from "@/lib/imageEncode";
@@ -85,6 +86,44 @@ beforeEach(() => {
 });
 
 describe("ThreadComposer — attachments", () => {
+  it.each([
+    ["", "hello", 0, 0, "hello"],
+    ["before old after", "新\nline", 7, 10, "before 新\nline after"],
+    ["prefix", " plus", 6, 6, "prefix plus"],
+  ] as const)("keeps mixed paste text exactly once with selection in %s", async (initial, text, start, end, expected) => {
+    const user = userEvent.setup();
+    render(<ThreadComposer onSend={vi.fn()} />);
+    const textarea = screen.getByLabelText(/message input/i) as HTMLTextAreaElement;
+    await user.click(textarea);
+    fireEvent.change(textarea, { target: { value: initial } });
+    textarea.setSelectionRange(start, end);
+    const file = pdfFile();
+    await user.paste({
+      getData: () => text,
+      items: [{ kind: "file", getAsFile: () => file }],
+      files: [file], types: ["Files", "text/plain"],
+    } as unknown as DataTransfer);
+    expect(textarea.value).toBe(expected);
+    expect(textarea.selectionStart).toBe(start + text.length);
+    expect(textarea.selectionEnd).toBe(start + text.length);
+    await waitFor(() => expect(screen.getAllByTestId("composer-chip")).toHaveLength(1));
+  });
+
+  it("allows native text paste alongside an unsupported file", async () => {
+    const user = userEvent.setup();
+    render(<ThreadComposer onSend={vi.fn()} />);
+    const textarea = screen.getByLabelText(/message input/i);
+    await user.click(textarea);
+    const file = new File(["unsupported"], "program.exe", { type: "application/x-msdownload" });
+    await user.paste({
+      getData: () => "plain text",
+      items: [{ kind: "file", getAsFile: () => file }],
+      files: [file], types: ["Files", "text/plain"],
+    } as unknown as DataTransfer);
+    expect(textarea).toHaveValue("plain text");
+    expect(screen.queryByTestId("composer-chip")).toBeNull();
+  });
+
   it("attaches a picked image and includes its data url on send", async () => {
     const file = pngFile("a.png");
     encodeImage.mockResolvedValueOnce(resolveReady(file));

@@ -510,6 +510,14 @@ function AutomationDetailPanel({
               {job.state.last_error}
             </div>
           ) : null}
+          {job.execution?.unavailable_reason ? (
+            <p role="status" className="text-[12px] leading-5 text-muted-foreground">
+              {job.execution.unavailable_reason}
+            </p>
+          ) : null}
+          {job.execution?.delivery_status ? (
+            <AutomationDetail label="Delivery">{job.execution.delivery_status}</AutomationDetail>
+          ) : null}
         </div>
 
         <aside className="min-h-0 overflow-y-auto overscroll-contain border-t border-border/35 bg-settings-surface p-4 text-[12px] text-muted-foreground lg:border-l lg:border-t-0">
@@ -572,7 +580,8 @@ function AutomationActionGroup({
   const canManage = !job.protected;
   const hasLinkedChat = Boolean(job.origin);
   const localTrigger = isLocalTriggerAutomation(job);
-  const canRun = canManage && hasLinkedChat && job.enabled && !job.state.pending && !localTrigger;
+  const canRun = canManage && hasLinkedChat && job.enabled && !job.state.pending && !localTrigger
+    && job.execution?.manual_run_supported === true;
   const toggleAction: AutomationAction = job.enabled ? "disable" : "enable";
   const canToggle = canManage && (job.enabled || hasLinkedChat);
   const toggleBusy = actionKey === `${toggleAction}:${job.id}`;

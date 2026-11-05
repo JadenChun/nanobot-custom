@@ -55,6 +55,10 @@ def _receipt(launch_id: str) -> QuiescenceReceipt:
     }
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux /proc host identity and process start times",
+)
 def test_receipt_is_private_single_link_and_cannot_be_replayed(tmp_path: Path) -> None:
     ledger = NativeAdmissionLedger(tmp_path / "admissions.json")
     launch_id = uuid.uuid4().hex
@@ -75,6 +79,10 @@ def test_receipt_is_private_single_link_and_cannot_be_replayed(tmp_path: Path) -
     assert target.stat().st_nlink == 1
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux /proc host identity and process start times",
+)
 def test_activation_waits_for_receipt_publication_and_consumes_valid_proof(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -144,6 +152,10 @@ def test_activation_waits_for_receipt_publication_and_consumes_valid_proof(
     assert ledger.reconcile() is False
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux /proc host identity and process start times",
+)
 def test_receipt_lock_timeout_is_retryable_and_does_not_latch_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -219,6 +231,10 @@ def test_receipt_lock_timeout_is_retryable_and_does_not_latch_store(
 
 
 @pytest.mark.parametrize("invalid_kind", ["corrupt", "hardlink", "permissive-mode"])
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux /proc host identity and process start times",
+)
 def test_invalid_receipt_evidence_keeps_admission_blocked(
     tmp_path: Path,
     invalid_kind: str,

@@ -1,0 +1,22 @@
+{
+  "source_revision": "364259daed2c11700d4064e7ca58743fd037b0b0",
+  "source_roots": [
+    "nanobot",
+    "webui/src",
+    "scripts"
+  ],
+  "source_files": 1141,
+  "source_sha256": "f5e498f4e23f844a9da76c10a6e6fb09d1359e93642f9dffd68019e9281b3883",
+  "source_digest_algorithm": "SHA-256 of each sorted git-tracked path, NUL, and raw SHA-256 file digest; regular files only",
+  "python": "3.13.2",
+  "pytest": "9.1.1",
+  "platform": "Darwin",
+  "kernel": "27.0.0",
+  "machine": "arm64",
+  "so_peercred": false,
+  "bun": "1.3.10",
+  "lock_files_sha256": {
+    "uv.lock": "c22a5441cb0935ebeac5d82aaadc643d00f31bc28ab4215067407a29d8eed44e",
+    "webui/bun.lock": "e85a23a004c453d8903ab4c9b1dff7bd72f6c46b701b84a1a12fc7f01aba90b5"
+  }
+}

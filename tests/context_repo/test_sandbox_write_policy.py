@@ -1,4 +1,5 @@
 """Sandbox confines writes, while ordinary reads and commands remain usable."""
+import sys
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,10 @@ def test_cli_channel_policy_keeps_legacy_access_until_grants_activate(tmp_path):
     policy.validate_path(outside / "notes.txt", "write")
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux /proc process environment paths",
+)
 def test_sandbox_file_reads_cannot_reach_gateway_process_environment(tmp_path):
     import os
     home, project = tmp_path / "home", tmp_path / "project"

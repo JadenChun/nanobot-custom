@@ -33,6 +33,10 @@ from nanobot.security.native_admission import NativeAdmissionLedger
 
 _SLOW_INPUT_BYTES = 256 * 1024
 _DUPLEX_BYTES = 512 * 1024
+_requires_native_supervisor = pytest.mark.skipif(
+    not native_process.native_supervisor_available(),
+    reason="requires Linux subreaper, /proc identity and durable process receipts",
+)
 
 
 def _python_command(source: str) -> str:
@@ -96,6 +100,7 @@ async def _wait_for_marker(path: Path, *, timeout: float = 5) -> bool:
     return path.exists()
 
 
+@_requires_native_supervisor
 @pytest.mark.asyncio
 async def test_handle_delivers_all_input_after_child_delays_reading(tmp_path: Path) -> None:
     source = (
@@ -119,6 +124,7 @@ async def test_handle_delivers_all_input_after_child_delays_reading(tmp_path: Pa
             await _finish_after_failure(handle)
 
 
+@_requires_native_supervisor
 @pytest.mark.asyncio
 async def test_session_write_delivers_all_input_after_child_delays_reading(tmp_path: Path) -> None:
     source = (
@@ -165,6 +171,7 @@ async def test_session_write_delivers_all_input_after_child_delays_reading(tmp_p
             await _wait_for_quiescence(ledger)
 
 
+@_requires_native_supervisor
 @pytest.mark.asyncio
 async def test_communicate_sends_and_receives_large_duplex_streams(tmp_path: Path) -> None:
     source = (
@@ -195,6 +202,7 @@ async def test_communicate_sends_and_receives_large_duplex_streams(tmp_path: Pat
             await _finish_after_failure(handle)
 
 
+@_requires_native_supervisor
 @pytest.mark.asyncio
 async def test_kill_services_control_while_output_pipe_is_full(tmp_path: Path) -> None:
     source = (
@@ -233,6 +241,7 @@ async def test_kill_services_control_while_output_pipe_is_full(tmp_path: Path) -
             await _finish_after_failure(handle)
 
 
+@_requires_native_supervisor
 @pytest.mark.asyncio
 async def test_once_retirement_closes_owned_interactive_stdin(tmp_path: Path) -> None:
     root = tmp_path / "project"
@@ -322,6 +331,7 @@ async def test_once_retirement_closes_owned_interactive_stdin(tmp_path: Path) ->
             await _finish_after_failure(handle)
 
 
+@_requires_native_supervisor
 @pytest.mark.parametrize("permission_kind", ["once", "full"])
 @pytest.mark.asyncio
 async def test_fenced_permission_blocks_interactive_input_from_home_cwd(

@@ -1,0 +1,168 @@
+{
+  "recorded_at": "2026-11-05T10:42:04.450421+00:00",
+  "base_revision": "364259daed2c11700d4064e7ca58743fd037b0b0",
+  "branch": "codex/feature-audit-repairs",
+  "working_changes": "uncommitted",
+  "review": "direct implementation and integrated self-review; no independent/delegated review",
+  "evidence_root": "/tmp/nanobot-feature-repairs-20261105.3kdy8inl",
+  "original_revision_import": "/private/tmp/nanobot-feature-repairs-20261105.3kdy8inl/original-revision/nanobot/__init__.py",
+  "original_checker_sources_match_baseline": true,
+  "final_source_and_snapshot_hashes_verified": true,
+  "baseline_source_test_file_count": 1920,
+  "final_source_test_file_count": 1922,
+  "checker_scope_file_count": 537,
+  "packages_unchanged_since_baseline": true,
+  "python": "3.13.2 (v3.13.2:4f8bb3947cf, Feb  4 2025, 11:51:10) [Clang 15.0.0 (clang-1500.3.9.4)]",
+  "checker": "basedpyright 1.40.1\nbased on pyright 1.1.414",
+  "checker_command": [
+    ".venv/bin/basedpyright",
+    "--outputjson"
+  ],
+  "checker_policy": {
+    "include": [
+      "nanobot"
+    ],
+    "exclude": [
+      "**/tests"
+    ],
+    "typeCheckingMode": "strict",
+    "pythonVersion": "3.11"
+  },
+  "pyproject_unchanged": true,
+  "type_baseline": {
+    "filesAnalyzed": 537,
+    "errorCount": 1001,
+    "warningCount": 0,
+    "informationCount": 0,
+    "timeInSec": 25.682
+  },
+  "type_final": {
+    "filesAnalyzed": 537,
+    "errorCount": 1001,
+    "warningCount": 0,
+    "informationCount": 0,
+    "timeInSec": 18.068
+  },
+  "type_comparison": {
+    "verdict": "PASS_NO_NEW_DIAGNOSTICS",
+    "strict_clean": false,
+    "baseline_diagnostics": 1001,
+    "current_diagnostics": 1001,
+    "introduced": 0,
+    "resolved": 0,
+    "new_diagnostics": [],
+    "scope": "diagnostic comparison only; frozen environment and test evidence required separately"
+  },
+  "tests": {
+    "media_backend": {
+      "passed": 21
+    },
+    "frontend_full": {
+      "files_passed": 95,
+      "tests_passed": 1468
+    },
+    "final_affected_backend": {
+      "passed": 1588,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "broad_backend_before_final_repairs": {
+      "passed": 7721,
+      "failed": 38,
+      "skipped": 16,
+      "exit_code": 1
+    },
+    "original_failed_node_selection": {
+      "passed": 16,
+      "failed": 22,
+      "exit_code": 1
+    },
+    "final_preexisting_node_selection": {
+      "failed": 22,
+      "exit_code": 1
+    },
+    "obsolete_node_rerun": {
+      "exit_code": 4,
+      "reason": "renamed registration test; superseded by final affected selection and corrected comparison"
+    }
+  },
+  "validation": {
+    "frontend_build": "passed; chunk-size warning",
+    "frontend_lint": "passed",
+    "python_lint": "passed",
+    "diff_check": "passed",
+    "full_python_suite": "not run",
+    "p6_complete": false
+  },
+  "preexisting_failure_nodeids": [
+    "nanobot/channels/websocket/tests/test_websocket_channel.py::test_handle_file_preview_allows_paths_outside_workspace_in_full_access",
+    "nanobot/channels/websocket/tests/test_websocket_channel.py::test_handle_file_preview_probe_reports_binary_file_as_unavailable",
+    "nanobot/channels/websocket/tests/test_websocket_channel.py::test_remote_owner_full_message_requires_own_device_consent",
+    "tests/agent/test_folder_access_recovery.py::test_real_file_and_exec_adapters_emit_typed_recovery",
+    "tests/agent/test_managed_exec.py::test_opaque_native_host_return_keeps_first_activation_unknown",
+    "tests/agent/test_native_process_io.py::test_communicate_sends_and_receives_large_duplex_streams",
+    "tests/agent/test_native_process_io.py::test_fenced_permission_blocks_interactive_input_from_home_cwd[full]",
+    "tests/agent/test_native_process_io.py::test_fenced_permission_blocks_interactive_input_from_home_cwd[once]",
+    "tests/agent/test_native_process_io.py::test_handle_delivers_all_input_after_child_delays_reading",
+    "tests/agent/test_native_process_io.py::test_kill_services_control_while_output_pipe_is_full",
+    "tests/agent/test_native_process_io.py::test_once_retirement_closes_owned_interactive_stdin",
+    "tests/agent/test_native_process_io.py::test_session_write_delivers_all_input_after_child_delays_reading",
+    "tests/webui/test_gateway_webui_smoke.py::test_gateway_webui_bootstrap_message_and_thread_hydration",
+    "tests/webui/test_linked_file_preview.py::test_cp01_relative_shared_file_opens_on_desktop_and_mobile[../external area/report v1.txt]",
+    "tests/webui/test_linked_file_preview.py::test_cp01_relative_shared_file_opens_on_desktop_and_mobile[external area/report v1.txt]",
+    "tests/webui/test_linked_file_preview.py::test_cp02_absolute_markdown_link_needs_no_tool_output",
+    "tests/webui/test_permission_v2_api.py::test_allow_once_does_not_reauthorize_while_prior_once_tree_is_active",
+    "tests/webui/test_permission_v2_api.py::test_old_generation_once_residual_projects_without_current_request",
+    "tests/webui/test_permission_v2_api.py::test_real_mode_conflict_is_serialized_and_cached_as_typed_websocket_frame",
+    "tests/webui/test_remote_access_settings.py::test_owner_pairing_start_requires_consent_and_exposes_pending",
+    "tests/webui/test_remote_access_settings.py::test_remote_access_settings_routes",
+    "tests/webui/test_workspace_directories.py::test_roots_response_is_bounded"
+  ],
+  "artifact_sha256": {
+    "source-before.json": "bf58616df2697070e272df011339bf1fc1ff5fdad37cba67685972e426fc73c8",
+    "environment-before.json": "bf61b5cd847e6ab95b222fdec0629b6ad5f144e386778d93b64d311e4aee0da4",
+    "strict-before.json": "949d73553e47472864634d29ed68d7039c40e4cb259c108ab96e2600d36c38cc",
+    "source-final.json": "192f0ef36c864aced2287044289468545b61334867f05ea94a5c29dc68ce50dd",
+    "environment-final.json": "2b33950a81b7b6d4e8e636df7a0632fecf2f612cf2a537e9f48a7144df17de5f",
+    "strict-final-verified.json": "15b37d1e81e8f8a19b0327d5542771008bbed0f05268103087c8702b1e8871c1",
+    "strict-final-verified.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "types-final-comparison.json": "06f87afe2a7a6003f5595794545176ef00b60459d3908af13e1b3174d2a5eb4d",
+    "backend-acceptance-command.json": "4e3b2d4a1514640137c9c23b349e56ce88895cc425144f09e712d3cff70946d4",
+    "backend-acceptance.log": "d0a7b248cc68459c533b4ae20a32346ed3aeffae7673ce0a8c96f644c1aa89ce",
+    "backend-acceptance.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "backend-failed-nodeids.json": "33c16298d43f7e20b21a60efa5a0569390639c9e58db83427c82347390ec5cc3",
+    "backend-final-command.json": "a6a286d4da64fc86b8527f376d275de8eb0f94d38ccdb597fce6a100d1c15c7d",
+    "backend-final.log": "2b03702b1ec859a462ddb9a3195e0ac1cee3a2767c1395cd49830c3e195dcc30",
+    "backend-final.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "original-failures-command.json": "81f560ffdeeab2bae1872310326fbb06e678afb1dcfb672d78cbfa50cc3571be",
+    "original-failures.log": "852bc66ecb0caf24d4c8f5a430b2c70e81688c505eae77b5b1769b8aafbe774c",
+    "original-failures.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "preexisting-failures-final-command.json": "a9a728923cdca3e53dc5955c8bcc37cbcf9ed7af827e64acc07b21033d353372",
+    "preexisting-failures-final.log": "19460befd9c5d6e3d8f91c64db95f8ee3942fcbf433a1028baa7774aac73aa6e",
+    "preexisting-failures-final.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "final-failures.log": "379a9a84046ca0886cead4c3eb423469ec3a4777e220cc6ab842ab999dda8441",
+    "final-failures.exit": "7de1555df0c2700329e815b93b32c571c3ea54dc967b89e81ab73b9972b72d1d",
+    "frontend-acceptance.log": "0b95a96dcdb588ab786b0a553a0a5513e8936dea3aa65f725a2bc7e5187d0fc2",
+    "frontend-build-final.log": "393d640be786f9b39fd2bd4d453f505cb5d0f6e512bdaa9890b953c52cbd0cba",
+    "frontend-lint.log": "7c1979025cac23454028571a1c026151977bfc38b6c467b39e68b2247ba92c88",
+    "media-tests.log": "9af5ee5b0d4b05b6500e3db2470ffa539e4101b6cfe108948e08106b5ca1992c",
+    "ruff-acceptance.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "ruff-acceptance-command.json": "1c2da0cf37f051241fbaff00b6c870a2a9e05aceb1036e6f5804287011c2537a",
+    "ruff-acceptance.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "diff-check.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "source-final-before-label.json": "5fd1e7dc8c4fd6f8fbcbc8f24ad1589efedb3015643b3618c2ebecb6068a8046",
+    "frontend-acceptance-label-review.log": "95e71f8735c9e4f8f9119a8ca1a4481e8351768c023f4bdca794c14d31b67219",
+    "frontend-lint.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "frontend-build-final.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "frontend-acceptance.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "source-final-label-review.json": "a61ae0c93ab66aafc4b0915aba29dc75dd15c87d3f3d62c4fb5ecc2539adb429"
+  },
+  "checker_python_sources_unchanged_after_frontend_assertions": true,
+  "frontend_followup": {
+    "product_sources_match_checked_source": true,
+    "only_additional_source_change": "webui/src/tests/generated-assets-sheet.test.tsx",
+    "final_full_suite_passed": true,
+    "intermediate_incorrect_assertion_log": "frontend-acceptance-label-review.log"
+  }
+}

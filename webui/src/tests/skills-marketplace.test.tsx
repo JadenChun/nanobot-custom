@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SkillsMarketplace } from "@/components/settings/SkillsMarketplace";
@@ -10,7 +10,7 @@ import {
   searchMarketplaceSkills,
 } from "@/lib/api";
 import type { NanobotClient } from "@/lib/nanobot-client";
-import { SKILLS_CHANGED_EVENT } from "@/lib/skill-events";
+import { notifySkillsChanged } from "@/lib/skill-events";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { useSkills, useSkillsCatalog } from "@/hooks/useSkills";
 
@@ -53,6 +53,72 @@ function marketplace(
 }
 
 describe("useSkills", () => {
+  it("distinguishes a failed initial load from an empty catalog and retries", async () => {
+    vi.mocked(fetchSkills).mockReset().mockRejectedValueOnce(new Error("offline"));
+    const { result } = renderHook(() => useSkillsCatalog(() => "tok"));
+    expect(result.current.loading).toBe(true);
+    expect(result.current.catalog_complete).toBe(false);
+    await waitFor(() => expect(result.current.error).toContain("Unable to load"));
+    expect(result.current.skills).toEqual([]);
+    vi.mocked(fetchSkills).mockResolvedValueOnce({ skills: [], catalog_complete: true });
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.catalog_complete).toBe(true));
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("retains the last successful catalog on refresh failure", async () => {
+    const skill = { name: "retained", description: "Known skill", source: "workspace", available: true };
+    vi.mocked(fetchSkills).mockReset().mockResolvedValueOnce({
+      skills: [skill], catalog_complete: false, catalog_notice: "Restricted library",
+    });
+    const { result } = renderHook(() => useSkillsCatalog(() => "tok"));
+    await waitFor(() => expect(result.current.skills).toEqual([skill]));
+    vi.mocked(fetchSkills).mockRejectedValueOnce(new Error("offline"));
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.error).toBeTruthy());
+    expect(result.current.skills).toEqual([skill]);
+    expect(result.current.catalog_complete).toBe(false);
+    expect(result.current.catalog_notice).toBe("Restricted library");
+  });
+
+  it("clears the prior credentials' catalog and ignores their pending response", async () => {
+    const skill = { name: "private", description: "Private skill", source: "workspace", available: true };
+    vi.mocked(fetchSkills).mockReset().mockResolvedValueOnce({ skills: [skill] });
+    let token = "old";
+    const getToken = () => token;
+    const { result, rerender } = renderHook(() => useSkillsCatalog(getToken));
+    await waitFor(() => expect(result.current.skills).toEqual([skill]));
+    let resolveOld!: (payload: Awaited<ReturnType<typeof fetchSkills>>) => void;
+    vi.mocked(fetchSkills).mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    act(() => result.current.refresh());
+    vi.mocked(fetchSkills).mockRejectedValueOnce(new Error("new token offline"));
+    token = "new";
+    rerender();
+    expect(result.current.skills).toEqual([]);
+    await act(async () => resolveOld({ skills: [skill], catalog_complete: true }));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => notifySkillsChanged({ skills: [skill], catalog_complete: true }, "old"));
+    expect(result.current.skills).toEqual([]);
+    expect(result.current.catalog_complete).toBe(false);
+    expect(result.current.error).toBeTruthy();
+  });
+
+  it("shows retry instead of an empty or restricted catalog on transport failure", () => {
+    const retry = vi.fn();
+    render(
+      <ClientProvider client={client} token="tok">
+        <SkillsCatalogSettings skills={[]} catalogComplete={false}
+          error="Unable to load skills." onRetry={retry} />
+      </ClientProvider>,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Unable to load skills.");
+    expect(screen.queryByText("No matching skills.")).toBeNull();
+    expect(screen.queryByText(/Some configured skill sources/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
   it("does not let an older request overwrite a newer skill event", async () => {
     let resolveSkills!: (value: Awaited<ReturnType<typeof fetchSkills>>) => void;
     vi.mocked(fetchSkills).mockReset().mockImplementationOnce(
@@ -71,9 +137,7 @@ describe("useSkills", () => {
 
     expect(fetchSkills).toHaveBeenCalledTimes(1);
     act(() => {
-      window.dispatchEvent(new CustomEvent(SKILLS_CHANGED_EVENT, {
-        detail: { skills: [installed] },
-      }));
+      notifySkillsChanged({ skills: [installed] }, "tok");
     });
     expect(result.current).toEqual([installed]);
 
@@ -100,13 +164,11 @@ describe("useSkills", () => {
     await act(async () => {});
 
     act(() => {
-      window.dispatchEvent(new CustomEvent(SKILLS_CHANGED_EVENT, {
-        detail: {
+      notifySkillsChanged({
           skills: [shared],
           catalog_complete: false,
           catalog_notice: "A configured shared skill library is restricted by policy.",
-        },
-      }));
+      }, "tok");
     });
     expect(result.current.catalog_complete).toBe(false);
     expect(result.current.skills[0]).toMatchObject({
@@ -115,9 +177,7 @@ describe("useSkills", () => {
     });
 
     act(() => {
-      window.dispatchEvent(new CustomEvent(SKILLS_CHANGED_EVENT, {
-        detail: { skills: [shared] },
-      }));
+      notifySkillsChanged({ skills: [shared] }, "tok");
     });
     expect(result.current.catalog_notice).toBe(
       "A configured shared skill library is restricted by policy.",

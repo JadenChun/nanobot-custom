@@ -93,6 +93,44 @@ def test_hello_is_read_only_and_does_not_return_credentials(tmp_path: Path) -> N
     assert not (workspace / ".nanobot").exists()
 
 
+@pytest.mark.parametrize("platform_name", ["Darwin", "Windows"])
+def test_desktop_start_reports_unsupported_platform_without_launching(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+) -> None:
+    config_path = tmp_path / "profile" / "config.json"
+    _prepared_config(config_path, tmp_path / "workspace")
+    adapter = DesktopAdapter()
+    try:
+        adapter.handle("hello", {"config_path": str(config_path), "workspace": None})
+        runtime = adapter._runtime
+        assert runtime is not None
+        monkeypatch.setattr(runtime, "platform_name", platform_name)
+        launches: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        def fail_if_launched(*args: object, **kwargs: object) -> None:
+            launches.append((args, kwargs))
+            pytest.fail("unsupported desktop platforms must not launch a process")
+
+        monkeypatch.setattr(runtime, "_popen", fail_if_launched)
+        result = adapter.handle("start", {})
+
+        assert result["state"] == "unavailable"
+        assert result["code"] == "gateway_platform_unsupported"
+        assert result["handle"] is None
+        assert launches == []
+        assert runtime._owned_process is None
+        assert runtime._desktop_lease is None
+        assert not runtime.paths.state_path.exists()
+    finally:
+        adapter.close()
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux PID birth identity and pidfd lifecycle",
+)
 def test_desktop_start_returns_handle_without_waiting_for_readiness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -153,6 +191,10 @@ def test_desktop_start_returns_handle_without_waiting_for_readiness(
         adapter.close()
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux PID birth identity and pidfd lifecycle",
+)
 def test_desktop_created_gateway_rejects_port_proof_mismatch_without_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -256,6 +298,10 @@ def test_desktop_created_gateway_rejects_port_proof_mismatch_without_mutation(
         adapter.close()
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux PID birth identity and pidfd lifecycle",
+)
 def test_desktop_start_keeps_admission_handle_if_state_is_replaced_before_response(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -481,6 +527,10 @@ def test_child_resolves_environment_references_before_provider_and_gateway(
     assert config_path.read_bytes() == before
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux PID birth identity and pidfd lifecycle",
+)
 def test_desktop_lifecycle_controls_one_isolated_child_and_confirms_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -646,6 +696,10 @@ def test_desktop_lifecycle_controls_one_isolated_child_and_confirms_exit(
         adapter.close()
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux PID birth identity and pidfd lifecycle",
+)
 def test_desktop_adopts_normal_on_demand_gateway_and_promotes_its_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1030,6 +1084,10 @@ def test_desktop_adopts_normal_on_demand_gateway_and_promotes_its_lease(
         adapter.close()
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux PID birth identity and pidfd lifecycle",
+)
 def test_simultaneous_desktop_acquisitions_start_one_gateway(tmp_path: Path) -> None:
     from nanobot.gateway.runtime import GatewayClientLease
 
@@ -1108,6 +1166,10 @@ def test_simultaneous_desktop_acquisitions_start_one_gateway(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("listener", ["gateway", "websocket"])
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="requires Linux PID birth identity and pidfd lifecycle",
+)
 def test_desktop_refuses_foreign_listener_without_starting(
     tmp_path: Path,
     listener: str,

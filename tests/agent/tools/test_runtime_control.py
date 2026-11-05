@@ -38,9 +38,7 @@ async def _make_loop(
         )
 
     loop = await admitted(tmp_path, build)
-    # Runtime inspection is optional, not in the foreground default manifest.
-    assert loop.tools.get("my") is None
-    loop.tools.register(MyTool(AgentRuntimeControl(loop), modify_allowed=allow_set))
+    assert isinstance(loop.tools.get("my"), MyTool)
     return loop
 
 
@@ -51,7 +49,7 @@ def _my_tool(loop: AgentLoop) -> MyTool:
 
 
 @pytest.mark.asyncio
-async def test_optional_my_tool_uses_managed_runtime_control(tmp_path: Path, admitted_async) -> None:
+async def test_default_my_tool_uses_managed_runtime_control(tmp_path: Path, admitted_async) -> None:
     loop = await _make_loop(tmp_path, admitted_async)
     tool = _my_tool(loop)
 

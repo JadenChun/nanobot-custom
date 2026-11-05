@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.runtime_control import AgentRuntimeControl
-from nanobot.agent.tools.self import MyTool
+from nanobot.agent.tools.self import MyTool, MyToolConfig
+from nanobot.config.schema import ToolsConfig
 from tests.agent import p6_admitted_fixtures
 
 admitted_async = p6_admitted_fixtures.admitted_async
@@ -22,11 +22,12 @@ async def test_my_tool_max_iterations_syncs_subagent_limit(tmp_path, admitted_as
             max_iterations=40, session_manager=inputs.sessions,
             tool_registry=inputs.tools, cron_service=inputs.cron,
             turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+            tools_config=ToolsConfig(my=MyToolConfig(allow_set=True)),
         )
 
     loop = await admitted_async(tmp_path, build)
-    assert loop.tools.get("my") is None
-    tool = MyTool(runtime_control=AgentRuntimeControl(loop))
+    tool = loop.tools.get("my")
+    assert isinstance(tool, MyTool)
 
     result = await tool.execute(action="set", key="max_iterations", value=80)
 

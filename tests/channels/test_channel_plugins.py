@@ -2423,6 +2423,7 @@ def test_enable_optional_feature_refreshes_feishu_identity(
     monkeypatch.setattr(loader, "_current_config_path", config_path)
     _stub_channel_packages(monkeypatch, "feishu")
     monkeypatch.setattr("nanobot.optional_features.optional_dependency_groups", lambda: {})
+    monkeypatch.setattr("nanobot.optional_features.extra_installed", lambda *_args: True)
     monkeypatch.setattr(feishu_module, "FEISHU_AVAILABLE", True)
     monkeypatch.setattr(
         feishu_module,
@@ -2434,7 +2435,14 @@ def test_enable_optional_feature_refreshes_feishu_identity(
         },
     )
 
-    payload = enable_optional_feature("feishu", config_path=config_path)
+    def installer_must_not_run(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("metadata refresh must not request package installation")
+
+    payload = enable_optional_feature(
+        "feishu",
+        config_path=config_path,
+        runner=installer_must_not_run,
+    )
 
     instance = payload["features"][0]["instances"][0]
     assert instance["display_name"] == "Xubin Ren的智能助手"

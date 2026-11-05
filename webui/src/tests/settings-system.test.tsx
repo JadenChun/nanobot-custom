@@ -151,6 +151,27 @@ describe("Settings system domains", () => {
     expect(await screen.findByRole("heading", { name: "Daily summary" })).toBeInTheDocument();
   });
 
+  it.each([true, false, undefined])("gates Run now on the server capability %s", async (supported) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/settings") return jsonResponse(settingsPayload());
+      if (url === "/api/webui/automations") return jsonResponse({ jobs: [{
+        id: "job-capability", name: "Capability test", enabled: true,
+        schedule: { kind: "every", every_ms: 60_000 }, payload: { message: "Check work" },
+        state: {}, origin: { channel: "telegram", chat_id: "42" },
+        execution: supported === undefined ? undefined : {
+          manual_run_supported: supported,
+          unavailable_reason: supported ? null : "Scheduled execution is inactive.",
+        },
+      }] });
+      return jsonResponse({});
+    }));
+    renderSettingsView({ initialSection: "automations", initialSettings: settingsPayload(), showSidebar: false });
+    const run = await screen.findByRole("button", { name: "Run now" });
+    if (supported) expect(run).toBeEnabled();
+    else expect(run).toBeDisabled();
+  });
+
   it("coalesces focus refreshes while automations are already loading", async () => {
     let resolveAutomations!: (response: Response) => void;
     const pendingAutomations = new Promise<Response>((resolve) => {

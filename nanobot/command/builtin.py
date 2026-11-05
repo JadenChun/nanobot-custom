@@ -765,7 +765,7 @@ async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
     if not git.is_initialized():
         if store.get_last_dream_cursor() == 0:
             msg = (
-                "Dream has not run yet. Run `/dream`, or wait for the next scheduled Dream cycle.\n\n"
+                "Dream has not run yet. Run `/dream` to consolidate memory.\n\n"
                 "Use `/dream-prompt` to see or change how Dream organizes memory."
             )
         else:
@@ -1057,7 +1057,11 @@ async def cmd_trigger(ctx: CommandContext) -> OutboundMessage:
         content=(
             f"Trigger created: {trigger.name}\n"
             f"ID: {trigger.id}\n\n"
-            f"Command:\n{command}"
+            f"Command:\n{command}\n\n"
+            + ("Local trigger delivery is active in this gateway."
+               if store.delivery_active else
+               "Delivery is inactive. Start a gateway with gateway.localTriggers=true; "
+               "queued messages are retained until delivery is enabled.")
         ),
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )

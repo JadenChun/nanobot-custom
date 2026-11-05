@@ -320,6 +320,15 @@ class CronJobState:
         )
 
 
+@dataclass(frozen=True)
+class CronRuntimeStatus:
+    """Detached runtime view; definitions remain independent of execution state."""
+
+    state: CronJobState = field(default_factory=CronJobState)
+    pending: bool = False
+    delivery_status: str | None = None
+
+
 @dataclass
 class CronJob:
     """A scheduled job."""

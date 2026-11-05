@@ -69,9 +69,7 @@ class GatewayCronOptions:
     drain_timeout: float = 5.0
     poll_interval: float = 1.0
 
-    @staticmethod
-    def manual_authorizer(_job_id: str, _instance: str, _revision: str) -> bool:
-        return False
+    manual_authorizer: Callable[[str, str, str], bool] = lambda _job, _instance, _revision: False
 
 
 class TriggerCapability:
@@ -128,7 +126,8 @@ class CronRuntime:
                                    self.store, injection.clock, self._dispatch,
                                    refresh_committed_revisions=isinstance(injection, GatewayCronOptions))
         self._accepting = False
-        self._tasks: set[asyncio.Task[ClaimedTextCompositionResult]] = set()
+        self._tasks: set[asyncio.Task[object]] = set()
+        self._submitted_runs: dict[str, asyncio.Task[object]] = {}
         self._task_errors: list[BaseException] = []
         self._capabilities: dict[int, tuple[TriggerCapability, tuple[CronRuntime, str, str | None, str, dict[str, object], int, int]]] = {}
         self._controllers: dict[int, tuple[InternalController, str, int]] = {}
@@ -234,6 +233,9 @@ class CronRuntime:
                     for job_id, reason in sorted(self._recovery_fences.items())
                 ]}
 
+    def recovery_diagnostic(self, job_id: str) -> str | None:
+        return self._recovery_fences.get(job_id)
+
     async def run_due_quota_retries(self) -> None:
         if self.quota_recovery is None or self._quota_controller is None:
             return
@@ -250,23 +252,24 @@ class CronRuntime:
             await self.execute_now(capability)
 
     async def _dispatch(self, claim: OccurrenceClaim, pre_begin: Callable[[], object]) -> object:
+        return await asyncio.shield(self._start_dispatch(claim, pre_begin))
+
+    def _start_dispatch(
+        self, claim: OccurrenceClaim, pre_begin: Callable[[], object],
+    ) -> asyncio.Task[object]:
         if not self._accepting:
             raise SchedulerConflictError("cron ingress fenced")
-        if claim.identity.job_id in self._recovery_fences:
-            occurrence_store = cast(CronOccurrenceStore, self.service.occurrence_store)
-            with occurrence_store.acquire_execution_fence(claim) as fence:
-                occurrence_store.begin_execution(claim, fence)
-                return self.service.complete_occurrence(
-                    claim,
-                    {
-                        "status": "skipped",
-                        "reason": "execution_recovery_required",
-                        "delivery": {"version": 1, "deliver": False, "messages": []},
-                    },
-                    run_id=claim.run_id,
-                    fence=fence,
-                )
-        async def compose() -> ClaimedTextCompositionResult:
+        async def compose() -> object:
+            if claim.identity.job_id in self._recovery_fences:
+                occurrence_store = cast(CronOccurrenceStore, self.service.occurrence_store)
+                with occurrence_store.acquire_execution_fence(claim) as fence:
+                    occurrence_store.begin_execution(claim, fence)
+                    return self.service.complete_occurrence(
+                        claim,
+                        {"status": "skipped", "reason": "execution_recovery_required",
+                         "delivery": {"version": 1, "deliver": False, "messages": []}},
+                        run_id=claim.run_id, fence=fence,
+                    )
             async def admitted() -> ClaimedTextCompositionResult:
                 return await compose_claimed_text_occurrence(
                     self.service, self.agent, claim, self.sender, visible_sessions=self.sessions,
@@ -281,9 +284,9 @@ class CronRuntime:
         task = asyncio.create_task(compose())
         self._tasks.add(task)
         task.add_done_callback(self._completed_task)
-        return await asyncio.shield(task)
+        return task
 
-    def _completed_task(self, task: asyncio.Task[ClaimedTextCompositionResult]) -> None:
+    def _completed_task(self, task: asyncio.Task[object]) -> None:
         self._tasks.discard(task)
         if not task.cancelled() and task.exception() is not None:
             self._task_errors.append(cast(BaseException, task.exception()))
@@ -335,7 +338,7 @@ class CronRuntime:
         self._controllers[id(controller)] = (controller, name, os.getpid())
         return controller
 
-    async def execute_now(self, capability: TriggerCapability) -> object:
+    def _claim_triggered(self, capability: TriggerCapability) -> tuple[OccurrenceClaim, CronDefinition]:
         issued = self._capabilities.get(id(capability))
         if issued is None or issued[0] is not capability or capability.pid != os.getpid() or issued[1] != self._capability_binding(capability):
             raise PermissionError("foreign or changed trigger capability")
@@ -353,8 +356,27 @@ class CronRuntime:
         claim = cast(CronOccurrenceStore, self.service.occurrence_store).claim_triggered(identity,
             job_snapshot=definition.to_wire(), destination_policy=destination_policy(definition),
             owner=cast(CronOccurrenceRuntime, self.service.occurrence_runtime).owner)
+        return claim, definition
+
+    async def execute_now(self, capability: TriggerCapability) -> object:
+        claim, definition = self._claim_triggered(capability)
         return await self._dispatch(claim, lambda: self._definition(definition.job_id,
             definition.job_instance_id, definition.definition_revision))
+
+    def submit_now(self, capability: TriggerCapability) -> None:
+        """Admit one occurrence synchronously and retain ownership of its task."""
+        try:
+            claim, definition = self._claim_triggered(capability)
+        finally:
+            self._capabilities.pop(id(capability), None)
+        # An acknowledgement can be lost while the occurrence is still active.
+        # An exact retained request must join existing work, not start it twice.
+        if claim.run_id in self._submitted_runs:
+            return
+        task = self._start_dispatch(claim, lambda: self._definition(definition.job_id,
+            definition.job_instance_id, definition.definition_revision))
+        self._submitted_runs[claim.run_id] = task
+        task.add_done_callback(lambda _task: self._submitted_runs.pop(claim.run_id, None))
 
     def stop_claiming(self) -> None:
         self._accepting = False
@@ -385,7 +407,7 @@ class CronRuntime:
 
     async def _drain_bounded(
         self,
-        tasks: set[asyncio.Task[ClaimedTextCompositionResult]],
+        tasks: set[asyncio.Task[object]],
         *,
         already_cancelled: bool = False,
     ) -> None:
@@ -407,7 +429,7 @@ class CronRuntime:
 
     async def _join_gracefully(
         self,
-        tasks: set[asyncio.Task[ClaimedTextCompositionResult]],
+        tasks: set[asyncio.Task[object]],
     ) -> None:
         pending = {task for task in tasks if not task.done()}
         if not pending:

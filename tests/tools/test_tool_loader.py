@@ -458,12 +458,14 @@ def test_mcp_wrappers_not_discoverable():
 # --- Task 10: Integration test ---
 
 
-def test_loader_registers_same_tools_as_old_hardcoded(loader_context):
-    """Verify the loader produces the same tool set as the old _register_default_tools."""
+@pytest.mark.parametrize("my_enabled", [True, False])
+def test_loader_registers_the_foreground_manifest_with_config_gates(loader_context, my_enabled):
+    """Normal construction must honor the runtime-inspection configuration gate."""
     from nanobot.agent.tools.loader import ToolLoader
     from nanobot.agent.tools.registry import ToolRegistry
 
     ctx = loader_context
+    ctx.config.my.enable = my_enabled
     registry = ToolRegistry()
     loader = ToolLoader()
     registered = loader.load(ctx, registry)
@@ -474,12 +476,15 @@ def test_loader_registers_same_tools_as_old_hardcoded(loader_context):
         "web_search", "web_fetch",
         "message", "cron", "plan_task", "delegate_task", "review_work", "explore",
         "repository_catalog", "save_knowledge",
+        "create_goal", "update_goal",
     }
+    if my_enabled:
+        expected.add("my")
     actual = set(registered)
     assert expected <= actual, f"Missing tools: {expected - actual}"
     assert actual == expected
     assert set(registry.tool_names) == expected
-    assert not actual & {"find_files", "grep", "spawn", "spawn_pipeline", "my"}
+    assert not actual & {"find_files", "grep", "spawn", "spawn_pipeline"}
 
 
 def test_non_core_loader_scope_stays_closed_without_registry_mutation():
