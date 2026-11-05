@@ -719,6 +719,39 @@ def test_recovery_tail_check_reads_only_the_active_transcript(tmp_path, monkeypa
     assert reads == [active_path]
 
 
+def test_unfinished_tail_recovers_from_newest_session_turn(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    key = "websocket:tail-repair"
+    append_transcript_object(
+        key,
+        {"event": "user", "chat_id": "tail-repair", "text": "continue", "turn_id": "turn-1"},
+    )
+    append_transcript_object(
+        key,
+        {
+            "event": "message",
+            "chat_id": "tail-repair",
+            "turn_id": "turn-1",
+            "kind": "progress",
+            "text": "",
+            "tool_events": [],
+        },
+    )
+    session_messages = [
+        {"role": "user", "content": "continue"},
+        {"role": "assistant", "content": "old answer"},
+        {"role": "user", "content": "continue"},
+        {"role": "assistant", "content": "final answer"},
+    ]
+
+    out = build_webui_thread_response(key, session_messages=session_messages)
+
+    assert out is not None
+    assert out["has_pending_tool_calls"] is False
+    assert out["completed_turn_ids"] == ["turn-1"]
+    assert any(message.get("content") == "final answer" for message in out["messages"])
+
+
 def test_thread_response_reports_active_registry_without_transcript(
     tmp_path,
     monkeypatch,
