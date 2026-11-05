@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -120,6 +122,28 @@ async def test_create_goal_rejects_without_explicit_goal_permission(tmp_path):
     assert "create_goal is unavailable for this turn" in str(out)
     assert "/goal <task>" in str(out)
     assert GOAL_STATE_KEY not in sess.metadata
+
+
+@pytest.mark.parametrize("existing", [False, True])
+async def test_nonpersistent_request_cannot_load_or_mutate_durable_goal(tmp_path, existing):
+    sm = SessionManager(tmp_path)
+    create, update, ctx = _tools(sm)
+    if existing:
+        await _execute(create, ctx, objective="Keep this durable objective")
+    cached = sm.get_cached(ctx.session_key)
+    before = deepcopy(cached.metadata) if cached is not None else None
+    transient = replace(ctx, persistent_session=False)
+
+    assert await create._provide_runtime_context(transient) is None
+    assert "requires" in str(await _execute(create, transient, objective="Temporary"))
+    assert "requires" in str(await _execute(update, transient, action="complete"))
+
+    assert sm.get_cached(ctx.session_key) is cached
+    if cached is not None:
+        assert cached.metadata == before
+        assert SessionManager(tmp_path).get_or_create(ctx.session_key).metadata == before
+    else:
+        assert sm.read_session_snapshot(ctx.session_key) is None
 
 
 @pytest.mark.asyncio
@@ -439,7 +463,7 @@ async def test_update_goal_without_active_is_noop_message(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_goal_tools_require_explicit_registration(tmp_path, admitted_async):
+async def test_normal_goal_registration_preserves_the_tool_contract(tmp_path, admitted_async):
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings()
@@ -453,13 +477,6 @@ async def test_goal_tools_require_explicit_registration(tmp_path, admitted_async
         )
 
     loop = await admitted_async(tmp_path, build)
-    # The accepted foreground manifest defers goal enablement. Preserve the
-    # optional tools' schema contract without enabling them by default.
-    assert not loop.tools.has("create_goal")
-    assert not loop.tools.has("update_goal")
-    loop.tools.register(CreateGoalTool(loop.sessions, loop.bus))
-    loop.tools.register(UpdateGoalTool(loop.sessions, loop.bus))
-
     create = loop.tools.get("create_goal")
     update = loop.tools.get("update_goal")
     assert create is not None and create.name == "create_goal"

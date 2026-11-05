@@ -35,6 +35,8 @@ from nanobot.context_repo.catalog import CatalogRevisionConflictError
 from nanobot.context_repo.manager import ContextRepoManager
 from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.cron.definition_store import DefinitionStoreConflictError
+from nanobot.cron.occurrence_store import OccurrenceConflictError
+from nanobot.cron.scheduler_store import SchedulerConflictError
 from nanobot.cron.service import (
     CronDefinitionConflictError,
     CronDefinitionTokenRequiredError,
@@ -1885,7 +1887,13 @@ class GatewayHTTPHandler:
                 {
                     "deleted": False,
                     "blocked_by_automations": True,
-                    "automations": serialize_automation_jobs(automation_jobs),
+                    "automations": serialize_automation_jobs(
+                        automation_jobs, cron_service=self.cron_service,
+                        trigger_delivery_active=(
+                            self.local_trigger_store.delivery_active
+                            if self.local_trigger_store is not None else False
+                        ),
+                    ),
                 }
             )
         if automation_jobs:
@@ -2082,8 +2090,10 @@ class GatewayHTTPHandler:
             elif action == "run":
                 if not job.enabled:
                     return _http_error(409, "automation is disabled")
-                task = asyncio.create_task(self.cron_service.run_job(job_id, force=False))
-                task.add_done_callback(self._log_automation_run_result)
+                if not await self.cron_service.run_job(
+                    job_id, force=False, request_id=_query_first(query, "request_id"),
+                ):
+                    return _http_error(409, "automation execution is unavailable")
             elif action == "update":
                 values = _automation_values_from_request(request)
                 if values is None:
@@ -2115,6 +2125,8 @@ class GatewayHTTPHandler:
                 409,
                 f"automation definition conflict: {exc}. Refresh and retry.",
             )
+        except (OccurrenceConflictError, SchedulerConflictError, PermissionError, ValueError) as exc:
+            return _http_error(409, f"automation admission failed: {exc}")
 
         return self._handle_webui_automations(request)
 
@@ -2151,16 +2163,6 @@ class GatewayHTTPHandler:
             return _http_error(404, "unknown automation action")
 
         return self._handle_webui_automations(request)
-
-    @staticmethod
-    def _log_automation_run_result(task: asyncio.Task[bool]) -> None:
-        try:
-            ran = task.result()
-        except Exception:
-            logger.exception("WebUI automation run-now task failed")
-            return
-        if not ran:
-            logger.warning("WebUI automation run-now task did not execute")
 
     # -- Media routes -------------------------------------------------------
 

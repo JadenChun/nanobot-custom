@@ -271,12 +271,12 @@ a chat/session with `/trigger <name>`.
 nanobot trigger trg_8K4P2Q9X "Review PR #4502"
 ```
 
-Keep `nanobot gateway` running so the message can be delivered to the linked
+Enable `gateway.localTriggers: true` and keep `nanobot gateway` running so the message can be delivered to the linked
 chat/session. The message is recorded as an automation turn in that session,
 not as a normal chat message typed by the user.
 
-The command writes to a workspace-local durable queue. If `nanobot gateway` is
-not running yet, the message waits in that workspace. If the target session is
+The command writes to a workspace-local durable queue. While delivery is disabled
+or the gateway is stopped, the message waits in that workspace. If the target session is
 already running a turn, the trigger waits for that session to become idle. If the
 gateway exits after claiming a delivery but before the linked turn completes,
 the next gateway start requeues that delivery. The queue is at-least-once, not

@@ -47,7 +47,10 @@ It is not the final memory. It is the material from which final memory is shaped
 
 ### Stage 2: Dream
 
-`Dream` is the slower, more thoughtful layer. It runs on a cron schedule by default and can also be triggered manually.
+`Dream` is the slower, more thoughtful layer. Run it manually with `/dream`.
+The normal gateway does not install periodic Dream execution, even when the
+compatibility `enabled` flag is true. Settings show configured intent and
+effective support separately.
 
 Dream reads:
 
@@ -176,13 +179,15 @@ Each workspace has its own guide. Changing this file does not affect other nanob
 
 ## Configuration
 
-Dream is configured under `agents.defaults.dream`:
+Dream is configured under `agents.defaults.dream`. The schedule fields below
+retain configuration intent; they do not activate a periodic worker:
 
 ```json
 {
   "agents": {
     "defaults": {
       "dream": {
+        "enabled": false,
         "intervalH": 2,
         "modelOverride": null
       }
@@ -193,13 +198,14 @@ Dream is configured under `agents.defaults.dream`:
 
 | Field | Meaning |
 |-------|---------|
-| `intervalH` | How often Dream runs, in hours |
-| `cron` | Cron expression override (takes precedence over `intervalH`) |
+| `enabled` | Compatibility intent; periodic execution remains inactive |
+| `intervalH` | Intended periodic frequency, in hours |
+| `cron` | Intended cron expression override (takes precedence over `intervalH`) |
 | `modelOverride` | Optional model preset name used for Dream |
 
 In practical terms:
 
-- `intervalH` is the normal way to configure Dream frequency. Internally it runs as an `every` schedule.
+- `intervalH` and `cron` describe a retained schedule; neither starts a worker in the normal gateway.
 - `cron` overrides `intervalH` when set, allowing precise cron expressions (e.g. `0 */4 * * *`).
 - `modelOverride` selects a named entry from `model_presets` for Dream. It accepts preset names only; raw model identifiers are not supported. If omitted, Dream uses the main agent's selected runtime.
 

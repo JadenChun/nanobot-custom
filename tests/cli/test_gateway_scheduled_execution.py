@@ -1,12 +1,18 @@
 """A real gateway-owned timer reaches the canonical runner and a local receipt adapter."""
 
 import asyncio
+import json
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+from websockets.datastructures import Headers
+from websockets.http11 import Request
+
 from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
 from nanobot.channels.telegram.runtime import TelegramChannel
+from nanobot.channels.websocket.runtime import WebSocketConfig
 from nanobot.cli import gateway_runtime
 from nanobot.config.schema import Config
 from nanobot.cron.gateway import GatewayCron, validate_gateway_job
@@ -15,9 +21,11 @@ from nanobot.cron.types import CronSchedule
 from nanobot.providers.base import LLMResponse
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.providers.unconfigured_provider import UnconfiguredProvider
+from nanobot.webui.gateway_services import build_gateway_services
 
 
-def test_normal_gateway_runs_due_job(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["due", "manual"])
+def test_normal_gateway_runs_due_and_manual_jobs(tmp_path, monkeypatch, mode):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config = Config.model_validate({
@@ -34,7 +42,7 @@ def test_normal_gateway_runs_due_job(tmp_path, monkeypatch):
     path.write_text(config.model_dump_json(by_alias=True))
     service = CronService(workspace / "cron" / "jobs.json")
     service.configure_gateway_execution(validate_gateway_job, lambda: {})
-    service.add_job("controlled due job", CronSchedule(kind="every", every_ms=100),
+    job = service.add_job("controlled job", CronSchedule(kind="every", every_ms=100 if mode == "due" else 3_600_000),
                     "Return the local test result", deliver=True, channel="telegram", to="42")
     provider = UnconfiguredProvider("test/task")
     provider.chat = AsyncMock(return_value=LLMResponse(content="local verified result"))
@@ -67,9 +75,52 @@ def test_normal_gateway_runs_due_job(tmp_path, monkeypatch):
 
     async def health(*_args):
         async with asyncio.timeout(10):
+            if mode == "manual":
+                while not graphs or not graphs[0].status()["enabled"]:
+                    await asyncio.sleep(0.005)
+                graph = graphs[0]
+                services = build_gateway_services(
+                    config=WebSocketConfig(), bus=graph.runtime.agent.bus,
+                    session_manager=graph.runtime.sessions, cron_service=graph.service,
+                    static_dist_path=None, workspace_path=workspace,
+                    default_restrict_to_workspace=True, config_path=path,
+                    runtime_model_name=None, runtime_surface="webui", runtime_capabilities_overrides=None,
+                )
+                token = services.tokens.issue_api_token(60)
+                headers = Headers({"Authorization": f"Bearer {token}"})
+                unauthorized = await services.endpoint.process_request(
+                    None, Request("/api/webui/automations", Headers()),
+                    is_allowed=lambda _client: True,
+                )
+                assert unauthorized.status_code == 401
+                connection = SimpleNamespace(
+                    remote_address=("127.0.0.1", 50000),
+                    request=SimpleNamespace(headers=headers),
+                )
+                response = await services.http.dispatch_webui_mutation(
+                    connection, "automation.run", {"id": job.id, "request_id": "manual-fixture"},
+                )
+                assert response.status_code == 200, response.body
+                pending = json.loads(response.body)["jobs"][0]
+                assert pending["execution"]["manual_run_supported"] is True
+                assert pending["state"]["pending"] is True
+                duplicate = await services.http.dispatch_webui_mutation(
+                    connection, "automation.run", {"id": job.id, "request_id": "manual-fixture"},
+                )
+                # An exact retained request can be acknowledged again. A new
+                # admission clock conflicts with the frozen request inputs.
+                assert duplicate.status_code in {200, 409}, duplicate.body
+                assert len(graph.service.occurrence_store.inspect_records()) == 1
             while not deliveries:
                 await asyncio.sleep(0.005)
+            while not graphs[0].service.list_deliveries() or graphs[0].service.list_deliveries()[0].status != "delivered":
+                await asyncio.sleep(0.005)
         assert graphs[0].status()["enabled"] is True
+        view = graphs[0].service.job_runtime_status(graphs[0].service.get_job(job.id))
+        assert view.state.last_status == "ok"
+        assert view.state.next_run_at_ms is not None
+        assert view.delivery_status == "delivered"
+        assert view.pending is False
 
     async def idle(*_args, **_kwargs):
         await asyncio.Event().wait()

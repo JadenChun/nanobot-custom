@@ -529,6 +529,11 @@ def trigger(
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1) from exc
     console.print(f"[green]Queued[/green] {delivery.trigger_id} ({delivery.id})")
+    console.print(
+        "Delivery requires a running gateway with gateway.localTriggers=true."
+        if runtime_config.gateway.local_triggers else
+        "Delivery is disabled in this config (gateway.localTriggers=false); message retained."
+    )
 
 
 # ============================================================================

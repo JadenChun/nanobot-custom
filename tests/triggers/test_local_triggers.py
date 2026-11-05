@@ -11,7 +11,7 @@ import pytest
 
 from nanobot.agent.automation_turns import AutomationTurnError
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.triggers.local_runner import run_local_trigger_queue
+from nanobot.triggers.local_runner import run_gateway_local_triggers, run_local_trigger_queue
 from nanobot.triggers.local_store import LocalTriggerStore, TriggerDisabledError
 from nanobot.triggers.local_types import LocalTrigger, TriggerDelivery
 from nanobot.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN_METADATA_KEY
@@ -19,6 +19,39 @@ from nanobot.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN
 
 def _channel_is_enabled(_name: str) -> bool:
     return True
+
+
+async def test_gateway_consumer_lease_and_cancelled_delivery_are_recoverable(tmp_path):
+    from filelock import Timeout
+
+    store = LocalTriggerStore(tmp_path)
+    trigger = store.create(name="Slow", channel="websocket", chat_id="chat", session_key="websocket:chat")
+    store.enqueue(trigger.id, "Wait for shutdown")
+    started = asyncio.Event()
+
+    async def submit(_message):
+        started.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(run_gateway_local_triggers(
+        store=store, submit_turn=submit, is_channel_enabled=_channel_is_enabled,
+    ))
+    try:
+        async with asyncio.timeout(2):
+            await started.wait()
+        other = LocalTriggerStore(tmp_path)
+        with pytest.raises(Timeout):
+            await run_gateway_local_triggers(
+                store=other, submit_turn=submit, is_channel_enabled=_channel_is_enabled,
+            )
+        assert other.delivery_active is False
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+    assert store.delivery_active is False
+    assert not list(store.processing_dir.glob("*.json"))
+    assert len(list(store.inbox_dir.glob("*.json"))) == 1
 
 
 def _write_delivery_file(path: Path, *, trigger_id: str, delivery_id: str) -> None:

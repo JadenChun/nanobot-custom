@@ -207,12 +207,7 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path, a
         LLMResponse(content="done", tool_calls=[], usage=None),
     ])
     loop = await _make_loop(tmp_path, admitted_async, provider, keys=("cli:direct",))
-    from nanobot.agent.tools.long_task import CreateGoalTool, UpdateGoalTool
-
-    assert not loop.tools.has("create_goal") and not loop.tools.has("update_goal")
-    # Optional legacy goal tools are explicitly installed, never enabled globally.
-    loop.tools.register(CreateGoalTool(loop.sessions, loop.bus))
-    loop.tools.register(UpdateGoalTool(loop.sessions, loop.bus))
+    assert loop.tools.has("create_goal") and loop.tools.has("update_goal")
     session = loop.sessions.get_or_create("cli:direct")
     session.add_message("user", "Let's agree on the migration implementation.")
     session.add_message("assistant", "Use the staged migration plan and run integration tests.")
@@ -501,12 +496,7 @@ async def test_non_goal_direct_turn_cannot_reuse_prior_goal_command(tmp_path, ad
         LLMResponse(content="handled as a one-time task", tool_calls=[], usage=None),
     ])
     loop = await _make_loop(tmp_path, admitted_async, provider, keys=("api:default",))
-    from nanobot.agent.tools.long_task import CreateGoalTool, UpdateGoalTool
-
-    assert not loop.tools.has("create_goal") and not loop.tools.has("update_goal")
-    # Optional legacy goal tools are explicitly installed, never enabled globally.
-    loop.tools.register(CreateGoalTool(loop.sessions, loop.bus))
-    loop.tools.register(UpdateGoalTool(loop.sessions, loop.bus))
+    assert loop.tools.has("create_goal") and loop.tools.has("update_goal")
     session = loop.sessions.get_or_create("api:default")
     session.add_message("user", "/goal old completed request")
     session.add_message("assistant", "The old request is complete.")
@@ -1043,8 +1033,8 @@ async def test_admitted_runner_reads_owned_workspace_and_restores_context(
     assert loop.workspace != tmp_path
     assert loop.sessions.has_managed_authority
     assert loop.turn_delivery_factory.bus is loop.bus
-    assert loop.tools.get("create_goal") is None
-    assert loop.tools.get("update_goal") is None
+    assert loop.tools.get("create_goal") is not None
+    assert loop.tools.get("update_goal") is not None
     outer = tmp_path / "note.txt"
     target = loop.workspace / "note.txt"
     outer.write_text("outer fixture must not be read", encoding="utf-8")

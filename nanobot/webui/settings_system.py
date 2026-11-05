@@ -112,11 +112,17 @@ def system_settings_payload(
             "gateway_host": config.gateway.host,
             "gateway_port": config.gateway.port,
             "heartbeat": {
-                "enabled": config.gateway.heartbeat.enabled,
+                "enabled": False,
+                "configured_enabled": config.gateway.heartbeat.enabled,
+                "effective_enabled": False,
+                "unavailable_reason": "Periodic Heartbeat is not installed in this runtime.",
                 "interval_s": config.gateway.heartbeat.interval_s,
             },
             "dream": {
                 "schedule": defaults.dream.describe_schedule(),
+                "configured_enabled": defaults.dream.enabled,
+                "effective_enabled": False,
+                "unavailable_reason": "Periodic Dream is not installed. Run /dream manually.",
             },
             "unified_session": defaults.unified_session,
         },

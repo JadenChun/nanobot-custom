@@ -63,7 +63,7 @@ class _GoalToolsMixin:
 
     def _session(self):
         request_ctx = current_request_context()
-        if request_ctx is None:
+        if request_ctx is None or not request_ctx.persistent_session:
             return None
         key = request_ctx.session_key
         if not key:
@@ -174,7 +174,7 @@ class CreateGoalTool(Tool, _GoalToolsMixin):
         self,
         request: RequestContext,
     ) -> RuntimeContextBlock | None:
-        if not request.session_key:
+        if not request.session_key or not request.persistent_session:
             return None
         session = self._sessions.get_or_create(request.session_key)
         goal_start_requested = explicit_goal_requested(request.metadata)
