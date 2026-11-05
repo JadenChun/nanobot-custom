@@ -240,6 +240,7 @@ export class NanobotClient {
   private goalStateByChatId = new Map<string, GoalStateWsPayload>();
   private pendingNewChat: PendingChatRequest | null = null;
   private pendingTranscriptions = new Map<string, PendingRequest<string>>();
+  private pendingAttachmentUploads = new Map<string, PendingRequest<string>>();
   private pendingSystemCommands = new Map<string, PendingRequest<void>>();
   private pendingWebUIRequests = new Map<string, PendingWebUIRequest>();
   // Frames queued while the socket is not yet OPEN
@@ -916,6 +917,32 @@ export class NanobotClient {
     });
   }
 
+  uploadAttachment(
+    chatId: string,
+    media: OutboundMedia,
+    timeoutMs: number = 120_000,
+  ): Promise<string> {
+    if (media.id) return Promise.resolve(media.id);
+    if (!media.data_url) {
+      return Promise.reject(new Error("attachment has no payload"));
+    }
+    const requestId = crypto.randomUUID();
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingAttachmentUploads.delete(requestId);
+        reject(new Error("attachment upload timed out"));
+      }, timeoutMs);
+      this.pendingAttachmentUploads.set(requestId, { resolve, reject, timer });
+      this.queueSend({
+        type: "attachment",
+        request_id: requestId,
+        chat_id: chatId,
+        data_url: media.data_url,
+        ...(media.name ? { name: media.name } : {}),
+      });
+    });
+  }
+
   /**
    * Send one WebUI mutation over the authenticated socket. Pending requests are
    * replayed with the same request_id after reconnect so the gateway can join or
@@ -1162,6 +1189,24 @@ export class NanobotClient {
       console.log("[nanobot ws inbound]", summarizeInboundWsPayload(parsed));
     }
 
+    if (parsed.event === "error" && parsed.request_id) {
+      const pending = this.pendingAttachmentUploads.get(parsed.request_id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingAttachmentUploads.delete(parsed.request_id);
+        pending.reject(new Error(parsed.reason || parsed.detail || "attachment rejected"));
+        return;
+      }
+    }
+    if (parsed.event === "attachment_stored") {
+      const pending = this.pendingAttachmentUploads.get(parsed.request_id ?? "");
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingAttachmentUploads.delete(parsed.request_id ?? "");
+        pending.resolve(parsed.id);
+      }
+      return;
+    }
     if (parsed.event === "webui_response") {
       const pending = this.pendingWebUIRequests.get(parsed.request_id);
       if (!pending) return;
@@ -1420,6 +1465,11 @@ export class NanobotClient {
       this.pendingNewChat = null;
     }
     this.rejectAllTranscriptions("socket closed");
+    for (const pending of this.pendingAttachmentUploads.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("socket closed"));
+    }
+    this.pendingAttachmentUploads.clear();
     if (!willReconnect) {
       for (const pending of this.pendingWebUIRequests.values()) {
         clearTimeout(pending.timer);

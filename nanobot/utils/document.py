@@ -9,6 +9,7 @@ from zipfile import BadZipFile, ZipFile
 
 from loguru import logger
 
+from nanobot.attachments.context import AttachmentContext
 from nanobot.utils.helpers import detect_image_mime
 
 _MAX_TEXT_LENGTH = 200_000
@@ -690,13 +691,11 @@ def reference_non_image_attachments(
     """
     image_paths: list[str] = []
     attachment_refs: list[str] = []
+    context = AttachmentContext()
     for path in media:
         path = _canonical_local_media_path(path)
         if is_image_file(path):
             image_paths.append(path)
         else:
-            attachment_refs.append(f"[Attachment: {path}]")
-    if attachment_refs:
-        suffix = "\n".join(attachment_refs)
-        content = f"{content}\n\n{suffix}" if content else suffix
-    return content, image_paths
+            attachment_refs.append(context.attachment_reference(path))
+    return context.append_references(content, attachment_refs), image_paths

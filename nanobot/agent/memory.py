@@ -723,10 +723,12 @@ class MemoryStore:
     def _format_messages(messages: list[dict[str, Any]]) -> str:
         lines: list[str] = []
         for message in messages:
+            from nanobot.attachments.context import media_paths_for_message
+
             content = content_with_media_breadcrumbs(
                 message.get("role"),
                 message.get("content", ""),
-                message.get("media"),
+                media_paths_for_message(message) or None,
             )
             if not content:
                 continue

@@ -357,11 +357,6 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
     connection = AsyncMock()
     connection.remote_address = ("127.0.0.1", 5000)
     chat_id = await _new_temporary_chat(channel, connection)
-    upload = tmp_path / "temporary-upload.txt"
-    upload.write_text("private attachment", encoding="utf-8")
-    channel.gateway.media.store_inbound_attachments = MagicMock(
-        return_value=([str(upload)], None),
-    )
 
     await channel._dispatch_envelope(
         connection,
@@ -393,6 +388,8 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
     session = sessions.get_cached(inbound.session_key)
     assert session is not None
     assert session.policy.persist is False
+    assert inbound.media
+    upload = Path(inbound.media[0])
     assert upload.exists()
     assert read_transcript_lines(inbound.session_key) == []
     assert [payload["event"] for payload in _sent_ws_payloads(connection)] == [

@@ -163,8 +163,9 @@ generated into `android/app/src/main/jniLibs/` and are not tracked. Host ABI smo
 mobile/scripts/test-cabi.sh
 ```
 
-Emulator `37.2.13` crashes in its packaged SwiftShader renderer on this Fedora 44 host when
-headless software rendering is requested (`-gpu swiftshader_indirect`, `-gpu off`, `-gpu guest`).
-The runner therefore defaults to `-gpu host`, which uses the host GPU and KVM and booted the
-API 36 image in about 17 seconds. Override with `NANOBOT_MOBILE_EMULATOR_GPU` or `--gpu` when a
-different host requires software rendering, and record the result with the evidence.
+Emulator `37.2.13` segfaults during display setup on this Fedora 44 host in every tested
+hardware/software mode except ANGLE indirect (`-gpu auto`, `host`, `swiftshader`,
+`swiftshader_indirect`, `off` and `guest` all crashed). The runner therefore defaults to
+`-gpu angle_indirect`, which booted the API 36 image in about 19 seconds on the same kernel.
+Override with `NANOBOT_MOBILE_EMULATOR_GPU` or `--gpu` when a host has a different known-good
+mode, and record the result with the evidence.

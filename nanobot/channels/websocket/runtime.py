@@ -21,6 +21,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve, unix_serv
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request as WsRequest
 
+from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import (
     OUTBOUND_META_AGENT_UI,
     InboundMessage,
@@ -468,6 +469,7 @@ class WebSocketChannel(BaseChannel):
         chat_id: str,
         content: str,
         media: list[str] | None,
+        attachments: list[AttachmentRecord] | None,
         metadata: dict[str, Any],
         is_dm: bool,
         session_key: str | None,
@@ -487,6 +489,7 @@ class WebSocketChannel(BaseChannel):
             chat_id=str(chat_id),
             content=content,
             media=media or [],
+            attachments=tuple(attachments or ()),
             metadata=message_metadata,
             session_key_override=session_key,
             require_existing_session=require_existing_session,

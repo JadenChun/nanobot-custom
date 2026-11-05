@@ -36,7 +36,7 @@ OWNER_PAIRING_SCOPES = (
     "attachment.write",
 )
 MAX_WS_FRAME_BYTES = 37_748_736  # Desktop WebUI default; supports 4 x 6 MiB attachments encoded in one frame.
-MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024  # Match the desktop single-file attachment limit.
+MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024  # Match the per-message attachment budget.
 MAX_MEDIA_RESPONSE_BYTES = 8 * 1024 * 1024  # Allow a full 6 MiB attachment plus response overhead.
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
 

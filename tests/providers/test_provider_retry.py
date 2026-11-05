@@ -422,6 +422,28 @@ _IMAGE_MSG_NO_META = [
 ]
 
 
+def test_sanitize_empty_content_keeps_image_path_reference() -> None:
+    """The provider sanitizer strips ``_meta``; the path reference must stay."""
+    content = [
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,abc"},
+            "_meta": {"path": "/media/test.png"},
+        },
+        {"type": "text", "text": "describe this"},
+        {"type": "text", "text": "[image: /media/test.png]"},
+    ]
+
+    result = LLMProvider._sanitize_empty_content(
+        [{"role": "user", "content": content}]
+    )
+
+    blocks = result[0]["content"]
+    assert isinstance(blocks, list)
+    assert all("_meta" not in block for block in blocks if isinstance(block, dict))
+    assert {"type": "text", "text": "[image: /media/test.png]"} in blocks
+
+
 @pytest.mark.asyncio
 async def test_non_transient_error_with_images_retries_without_images() -> None:
     """Any non-transient error retries once with images stripped when images are present."""

@@ -383,7 +383,7 @@ def test_get_history_synthesizes_image_breadcrumb_from_media_kwarg():
     follow-up reply has a referent instead of trailing an empty user row."""
     session = Session(key="test:media")
     session.messages.append(
-        {"role": "user", "content": "look", "media": ["/m/a.png", "/m/b.png"]}
+        {"role": "user", "content": "look", "attachments": [{"version": 1, "id": "att_a", "sha256": "", "mime": "image/png", "bytes": 0, "name": "a.png", "source": "legacy", "created_at": 0, "storage_key": "/m/a.png"}, {"version": 1, "id": "att_b", "sha256": "", "mime": "image/png", "bytes": 0, "name": "b.png", "source": "legacy", "created_at": 0, "storage_key": "/m/b.png"}]}
     )
     session.messages.append({"role": "assistant", "content": "nice"})
 
@@ -400,7 +400,7 @@ def test_get_history_synthesizes_breadcrumb_for_image_only_turn():
     strings — the LLM would otherwise see a bare user turn followed by an
     unexplained assistant answer."""
     session = Session(key="test:image-only")
-    session.messages.append({"role": "user", "content": "", "media": ["/m/pic.png"]})
+    session.messages.append({"role": "user", "content": "", "attachments": [{"version": 1, "id": "att_pic", "sha256": "", "mime": "image/png", "bytes": 0, "name": "pic.png", "source": "legacy", "created_at": 0, "storage_key": "/m/pic.png"}]})
     session.messages.append({"role": "assistant", "content": "I see a cat"})
 
     history = session.get_history(max_messages=500)

@@ -1667,7 +1667,10 @@ injecting their contents into the model prompt. When file tools are enabled, the
 can inspect supported text, PDF, DOCX, XLSX, and PPTX files on demand with `read_file`,
 or pass the original path to another tool when exact file bytes are required. The deprecated
 `channels.extractDocumentText` setting is accepted for compatibility but ignored.
-Normal tool workspace and media access rules still apply to attachment paths.
+Image attachments are still delivered as vision blocks, and the current turn also carries
+an `[image: path]` reference so tools that need the original file (for example an image
+editor) can resolve it without guessing. Normal tool workspace and media access rules
+still apply to attachment paths.
 
 `channels.transcriptionProvider` and `channels.transcriptionLanguage` are deprecated compatibility fields. They remain as a read-only fallback for older configs, but new configuration should use top-level `transcription.provider` and `transcription.language`.
 

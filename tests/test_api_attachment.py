@@ -443,6 +443,6 @@ async def test_docx_upload_passes_media_path(aiohttp_client, tmp_path) -> None:
         call_kwargs = call_args.kwargs
         media = call_kwargs.get("media", [])
         assert len(media) == 1
-        assert "report.docx" in media[0]
+        assert media[0].endswith(".docx")
     finally:
         os.chdir(original_cwd)

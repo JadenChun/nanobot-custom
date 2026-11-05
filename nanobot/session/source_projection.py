@@ -11,6 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
+from nanobot.attachments.context import media_paths_for_message
 from nanobot.runtime_context import public_history_message
 from nanobot.session.source import (
     SourceValidationError,
@@ -160,7 +161,9 @@ def project_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
         content = row.get('content')
         if isinstance(content, dict):
             row['content'] = json.dumps(content, ensure_ascii=False)
-        row['content'] = content_with_media_breadcrumbs(row['role'], row.get('content'), event.get('media'))
+        row['content'] = content_with_media_breadcrumbs(
+            row['role'], row.get('content'), media_paths_for_message(event) or None,
+        )
         messages.append(row)
         identities.append(event['_event_id'])
     return messages, identities

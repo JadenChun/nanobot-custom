@@ -259,7 +259,7 @@ class TestConsolidatorSummarize:
             {
                 "role": "user",
                 "content": "",
-                "media": [path],
+                "attachments": [{"version": 1, "id": "att_clip", "sha256": "", "mime": "video/mp4", "bytes": 0, "name": "clip.mp4", "source": "legacy", "created_at": 0, "storage_key": "/home/user/.nanobot/media/websocket/clip.mp4"}],
                 "timestamp": "2026-07-27",
             }
         ])

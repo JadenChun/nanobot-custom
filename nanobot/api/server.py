@@ -7,6 +7,7 @@ All requests route to a single persistent API session.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hmac
 import time
 import uuid
@@ -16,11 +17,20 @@ from aiohttp import web
 from loguru import logger
 
 from nanobot.agent.turn import TurnSource
+from nanobot.attachments.ingress import AttachmentIngress
+from nanobot.attachments.policy import (
+    AUDIO_MIME_ALLOWED,
+    UPLOAD_MIME_ALLOWED,
+    AttachmentIngressLimits,
+    AttachmentPolicy,
+)
+from nanobot.attachments.store import AttachmentStore
 from nanobot.config.paths import get_media_dir
 from nanobot.providers.base import LLMUsage
 from nanobot.utils.helpers import safe_filename
 from nanobot.utils.media_decode import (
     MAX_FILE_SIZE,
+    decode_data_url,
 )
 from nanobot.utils.media_decode import (
     FileSizeExceeded as _FileSizeExceeded,
@@ -217,6 +227,48 @@ def _require_json_string(value: object, field: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _api_attachment_policy() -> AttachmentPolicy:
+    return AttachmentPolicy(
+        limits=AttachmentIngressLimits(
+            max_count=16,
+            max_file_bytes=MAX_FILE_SIZE,
+            max_total_bytes=64 * 1024 * 1024,
+        ),
+        allowed_mime=(
+            UPLOAD_MIME_ALLOWED
+            | AUDIO_MIME_ALLOWED
+            | frozenset({"application/octet-stream"})
+        ),
+        max_videos=4,
+    )
+
+
+def _api_attachment_ingress() -> AttachmentIngress:
+    media_root = get_media_dir()
+    store = AttachmentStore(
+        media_root / "attachments",
+        media_root=media_root,
+        logger=logger,
+    )
+    return AttachmentIngress(store, policy=_api_attachment_policy(), logger=logger)
+
+
+def _store_api_media(media_inputs: list[dict[str, Any]]) -> list[str]:
+    if not media_inputs:
+        return []
+    paths, rejection = _api_attachment_ingress().accept_and_commit(
+        media_inputs,
+        source="api",
+    )
+    if rejection is None:
+        return paths
+    if rejection == "size":
+        raise _FileSizeExceeded(
+            f"File exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit"
+        )
+    raise ValueError(f"attachment rejected: {rejection}")
+
+
 def _parse_json_content(body: dict[str, Any]) -> tuple[str, list[str]]:
     """Parse JSON request body. Returns (text, media_paths)."""
     messages_value = cast(object, body.get("messages"))
@@ -233,8 +285,7 @@ def _parse_json_content(body: dict[str, Any]) -> tuple[str, list[str]]:
         raise ValueError("Only a single user message is supported")
 
     user_content = message.get("content", "")
-    media_dir = get_media_dir("api")
-    media_paths: list[str] = []
+    media_inputs: list[dict[str, Any]] = []
 
     if isinstance(user_content, list):
         text_parts: list[str] = []
@@ -259,9 +310,15 @@ def _parse_json_content(body: dict[str, Any]) -> tuple[str, list[str]]:
                     "messages[0].content[].image_url.url",
                 )
                 if url.startswith("data:"):
-                    saved = _save_base64_data_url(url, media_dir)
-                    if saved:
-                        media_paths.append(saved)
+                    decoded = decode_data_url(url)
+                    if decoded is None:
+                        continue
+                    _, raw = decoded
+                    if len(raw) > MAX_FILE_SIZE:
+                        raise _FileSizeExceeded(
+                            f"File exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit"
+                        )
+                    media_inputs.append({"data_url": url})
                 elif url:
                     raise ValueError(
                         "Remote image URLs are not supported. "
@@ -273,17 +330,16 @@ def _parse_json_content(body: dict[str, Any]) -> tuple[str, list[str]]:
     else:
         raise ValueError("Invalid content format")
 
-    return text, media_paths
+    return text, _store_api_media(media_inputs)
 
 
 async def _parse_multipart(request: web.Request) -> tuple[str, list[str], str | None, str | None]:
     """Parse multipart/form-data. Returns (text, media_paths, session_id, model)."""
-    media_dir = get_media_dir("api")
     reader = await request.multipart()
     text = ""
     session_id = None
     model = None
-    media_paths: list[str] = []
+    media_inputs: list[dict[str, Any]] = []
 
     while True:
         part: Any = await reader.next()
@@ -301,16 +357,22 @@ async def _parse_multipart(request: web.Request) -> tuple[str, list[str], str | 
                 raise _FileSizeExceeded(
                     f"File '{part.filename}' exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit"
                 )
-            base = safe_filename(part.filename or "upload.bin")
-            filename = f"{uuid.uuid4().hex[:12]}_{base}"
-            dest = media_dir / filename
-            dest.write_bytes(raw)
-            media_paths.append(str(dest))
+            filename = safe_filename(part.filename or "upload.bin") or "upload.bin"
+            media_type = (
+                part.headers.get("Content-Type")
+                if getattr(part, "headers", None)
+                else None
+            ) or "application/octet-stream"
+            encoded = base64.b64encode(raw).decode()
+            media_inputs.append({
+                "data_url": f"data:{media_type};base64,{encoded}",
+                "name": filename,
+            })
 
     if not text:
         text = "请分析上传的文件"
 
-    return text, media_paths, session_id, model
+    return text, _store_api_media(media_inputs), session_id, model
 
 
 # ---------------------------------------------------------------------------

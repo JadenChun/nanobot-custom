@@ -141,7 +141,7 @@ async def test_edge_handshake_read_media_scopes_and_unknown_routes(edge_setup) -
     assert payload["principal"] == "mobile:install-0001"
     assert payload["socket_epoch"] == 7
     assert payload["capabilities"]["chat"] is True
-    assert payload["limits"]["max_attachment_bytes"] == 6 * 1024 * 1024
+    assert payload["limits"]["max_attachment_bytes"] == 24 * 1024 * 1024
 
     read = await edge.handle(None, request("/mobile/v1/read?cursor=next", pair.access_token))
     assert read is not None and read.status_code == 200
