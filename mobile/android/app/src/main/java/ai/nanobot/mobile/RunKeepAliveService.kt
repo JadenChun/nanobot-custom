@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -52,7 +51,6 @@ class RunKeepAliveService : Service() {
         RunKeepAliveRegistry.clear()
         stopSelf()
     }
-    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -72,7 +70,6 @@ class RunKeepAliveService : Service() {
                 buildNotification(),
                 type,
             )
-            resetWakeLock()
             handler.removeCallbacks(timeout)
             handler.postDelayed(timeout, MAX_RUNTIME_MS)
             START_NOT_STICKY
@@ -92,32 +89,12 @@ class RunKeepAliveService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(timeout)
-        releaseWakeLock()
         RunKeepAliveRegistry.clear()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun resetWakeLock() {
-        releaseWakeLock()
-        val power = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = power.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "Nanobot::RunKeepAlive",
-        ).apply {
-            setReferenceCounted(false)
-            acquire(MAX_RUNTIME_MS)
-        }
-    }
-
-    private fun releaseWakeLock() {
-        wakeLock?.let { lock ->
-            if (lock.isHeld) lock.release()
-        }
-        wakeLock = null
-    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

@@ -76,11 +76,11 @@ does not lose the notification. Only runs started from this phone notify the
 phone.
 
 While a phone-started run is active, the Android client starts a `dataSync`
-foreground service with a low-importance ongoing notification and a partial
-wake lock. This keeps the process, WebSocket and WebView JavaScript alive after
-the app is backgrounded, so the completion event can still produce a local
-notification. The service stops on completion, stop, failure, or when the app
-is destroyed/killed.
+foreground service. The service shows a low-importance ongoing notification.
+The service keeps the process, the WebSocket, and the WebView JavaScript out of
+Android's cached-app freezer after the app goes to the background. The CPU can
+sleep between events. Incoming WebSocket frames wake the CPU. The service stops
+on completion, stop, failure, app destruction, or app termination.
 
 `dataSync` foreground services are limited to six hours per 24-hour period on
 Android 15+. The service implements `onTimeout()` and stops itself. Once the
