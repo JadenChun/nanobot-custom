@@ -1793,11 +1793,9 @@ def test_full_selected_during_a_running_turn_applies_to_the_next_request(
 ) -> None:
     home = tmp_path / "agent"
     project = tmp_path / "project"
-    other = tmp_path / "other"
     instance = tmp_path / "instance"
     home.mkdir()
     project.mkdir()
-    other.mkdir()
     manager = SessionManager(home, sessions_root=tmp_path / "sessions")
     key = "websocket:mode-next"
     scope = default_workspace_scope(project, True)
@@ -1848,19 +1846,13 @@ def test_full_selected_during_a_running_turn_applies_to_the_next_request(
         assert controller.scope_for_session_key(key).access_mode == "full"
 
         next_scope = controller.scope_for_message(
-            {
-                "workspace_scope": {
-                    "project_path": str(other),
-                    "access_mode": "full",
-                    "restrict_to_workspace": False,
-                }
-            },
+            {},
             chat_id="mode-next",
             chat_running=True,
             controls_available=True,
         )
         assert next_scope.access_mode == "full"
-        assert next_scope.project_path == other.resolve()
+        assert next_scope.project_path == project.resolve()
         reference = controller.ingress_full_reference(
             "mode-next",
             local_ui=True,

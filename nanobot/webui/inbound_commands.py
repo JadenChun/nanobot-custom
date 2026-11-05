@@ -91,9 +91,13 @@ REQUEST_SETTINGS_VERSION = 1
 
 _REQUEST_SETTINGS_FIELDS = frozenset({
     "request_settings_version",
-    "source_token",
     "request_intent",
     "target_turn_id",
+})
+
+_MESSAGE_LEVEL_CONTROL_FIELDS = frozenset({
+    "workspace_scope",
+    "source_token",
     "full_confirmation_id",
 })
 
@@ -101,10 +105,15 @@ _REQUEST_SETTINGS_FIELDS = frozenset({
 def request_settings_error(
     envelope: dict[str, Any],
     *,
-    current_source_token: str | None,
     active_turn_id: str | None,
 ) -> tuple[str, str] | None:
     """Validate the versioned request-settings envelope without side effects."""
+    control_field = next(
+        (field for field in _MESSAGE_LEVEL_CONTROL_FIELDS if field in envelope),
+        None,
+    )
+    if control_field is not None:
+        return "invalid_request_settings", control_field
     version = envelope.get("request_settings_version")
     negotiated = any(field in envelope for field in _REQUEST_SETTINGS_FIELDS)
     if version is None:
@@ -127,19 +136,6 @@ def request_settings_error(
             or target != active_turn_id
         ):
             return "not_admitted", "steering_target_changed"
-    source_token = envelope.get("source_token")
-    if current_source_token is not None:
-        if not isinstance(source_token, str):
-            return "invalid_request_settings", "source_token"
-        if source_token != current_source_token:
-            return "source_changed", "source_token"
-    elif source_token is not None:
-        if not isinstance(source_token, str):
-            return "invalid_request_settings", "source_token"
-        return "source_changed", "source_token"
-    confirmation = envelope.get("full_confirmation_id")
-    if confirmation is not None and not isinstance(confirmation, str):
-        return "invalid_request_settings", "full_confirmation_id"
     return None
 
 
@@ -832,7 +828,6 @@ class WebUICommandRouter:
         )
         settings_error = request_settings_error(
             envelope,
-            current_source_token=current_source_token,
             active_turn_id=websocket_turn_id(chat_id),
         )
         if settings_error is not None:

@@ -1969,13 +1969,10 @@ export type Outbound =
       mcp_presets?: OutboundMcpPresetMention[];
       session_mentions?: SessionMention[];
       quoted_context?: string;
-      workspace_scope?: WorkspaceScopePayload;
       turn_id?: string;
       request_settings_version?: 1;
-      source_token?: string;
       request_intent?: "new" | "steer";
       target_turn_id?: string;
-      full_confirmation_id?: string;
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;

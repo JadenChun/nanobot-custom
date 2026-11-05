@@ -343,8 +343,6 @@ async def test_attach_exposes_the_session_canonical_model_preset(bus, tmp_path) 
 @pytest.mark.asyncio
 async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
     sessions = SessionManager(tmp_path)
-    selected_project = tmp_path / "selected-project"
-    selected_project.mkdir()
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"]},
         bus,
@@ -367,10 +365,6 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
             "content": "read this",
             "media": [{"data_url": "data:text/plain;base64,cHJpdmF0ZQ=="}],
             "cli_apps": [{"name": "drawio"}],
-            "workspace_scope": {
-                "project_path": str(tmp_path),
-                "access_mode": "restricted",
-            },
             "turn_id": "turn-1",
             "webui": True,
         },
@@ -381,10 +375,7 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
     assert inbound.session_key_override == f"websocket:{chat_id}"
     assert inbound.require_existing_session is True
     assert inbound.metadata["cli_apps"] == [{"name": "drawio"}]
-    assert inbound.metadata[WORKSPACE_SCOPE_METADATA_KEY] == {
-        "project_path": str(tmp_path.resolve()),
-        "access_mode": "restricted",
-    }
+    assert inbound.metadata[WORKSPACE_SCOPE_METADATA_KEY]
     session = sessions.get_cached(inbound.session_key)
     assert session is not None
     assert session.policy.persist is False
@@ -1863,7 +1854,7 @@ async def test_webui_scope_rejects_missing_project_path(bus: MagicMock, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_webui_message_scope_change_while_running_uses_submitted_snapshot(
+async def test_webui_message_rejects_workspace_scope(
     bus: MagicMock, tmp_path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     default_workspace = tmp_path / "default"
@@ -1915,14 +1906,12 @@ async def test_webui_message_scope_change_while_running_uses_submitted_snapshot(
         wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
 
     payload = json.loads(conn.send.await_args.args[0])
-    assert payload["event"] == "message_accepted"
+    assert payload["event"] == "error"
+    assert payload["detail"] == "invalid_request_settings"
+    assert payload["reason"] == "workspace_scope"
     assert payload["chat_id"] == "chat-running"
     assert payload["turn_id"] == "turn-scope-rejected"
-    bus.publish_inbound.assert_awaited_once()
-    inbound = bus.publish_inbound.await_args.args[0]
-    assert inbound.workspace_scope is not None
-    assert inbound.workspace_scope.project_path == other.resolve()
-    assert inbound.workspace_scope.access_mode == "restricted"
+    bus.publish_inbound.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -2042,7 +2031,7 @@ async def test_remote_webui_scope_allows_access_reduction(
 
 
 @pytest.mark.asyncio
-async def test_remote_access_reduction_rejects_stale_in_flight_message_scope(
+async def test_remote_access_reduction_applies_to_in_flight_message(
     bus: MagicMock,
     tmp_path,
     monkeypatch,
@@ -2079,10 +2068,7 @@ async def test_remote_access_reduction_rejects_stale_in_flight_message_scope(
                 "chat_id": chat_id,
                 "content": "hello",
                 "webui": True,
-                "workspace_scope": {
-                    "project_path": str(default_workspace),
-                    "access_mode": "full",
-                },
+                "turn_id": "race-turn",
             },
         )
     )
@@ -2103,14 +2089,17 @@ async def test_remote_access_reduction_rejects_stale_in_flight_message_scope(
     release_hydrate.set()
     await message_task
 
-    assert sessions.read_session_file(f"websocket:{chat_id}") is None
+    assert sessions.read_session_file(f"websocket:{chat_id}") is not None
     assert channel.gateway.workspaces.scope_for_session_key(
         f"websocket:{chat_id}"
     ).access_mode == "restricted"
-    payload = json.loads(message_conn.send.await_args.args[0])
-    assert payload["event"] == "error"
-    assert payload["detail"] == "workspace_scope_rejected"
-    bus.publish_inbound.assert_not_awaited()
+    payloads = [json.loads(call.args[0]) for call in message_conn.send.await_args_list]
+    accepted = [item for item in payloads if item.get("event") == "message_accepted"]
+    assert len(accepted) == 1
+    bus.publish_inbound.assert_awaited_once()
+    inbound = bus.publish_inbound.await_args.args[0]
+    assert inbound.workspace_scope is not None
+    assert inbound.workspace_scope.access_mode == "restricted"
 
 
 @pytest.mark.asyncio
@@ -6574,9 +6563,6 @@ async def test_webui_message_rejects_missing_version_before_effects(
         expected_generation=session.generation,
         expected_incarnation=session.incarnation,
     )
-    token = channel.gateway.workspaces.source_token("version-required")
-    assert token is not None
-
     await channel._dispatch_envelope(
         conn,
         "webui-client",
@@ -6586,7 +6572,6 @@ async def test_webui_message_rejects_missing_version_before_effects(
             "content": "hello",
             "webui": True,
             "request_intent": "new",
-            "source_token": token,
         },
     )
 
@@ -6598,7 +6583,7 @@ async def test_webui_message_rejects_missing_version_before_effects(
 
 
 @pytest.mark.asyncio
-async def test_webui_message_rejects_stale_source_and_accepts_current_source(
+async def test_webui_message_rejects_source_token_and_accepts_server_scope(
     bus: MagicMock,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -6624,13 +6609,12 @@ async def test_webui_message_rejects_stale_source_and_accepts_current_source(
         expected_generation=session.generation,
         expected_incarnation=session.incarnation,
     )
-    token = channel.gateway.workspaces.source_token("source-token")
-    assert token is not None
     envelope = {
         "type": "message",
         "chat_id": "source-token",
         "content": "hello",
         "webui": True,
+        "turn_id": "turn-plain",
         "request_settings_version": 1,
         "request_intent": "new",
     }
@@ -6641,16 +6625,21 @@ async def test_webui_message_rejects_stale_source_and_accepts_current_source(
         {**envelope, "source_token": "tok-stale"},
     )
     payload = json.loads(conn.send.await_args.args[0])
-    assert payload["detail"] == "source_changed"
+    assert payload["detail"] == "invalid_request_settings"
     assert payload["reason"] == "source_token"
     bus.publish_inbound.assert_not_awaited()
 
-    await channel._dispatch_envelope(
-        conn,
-        "webui-client",
-        {**envelope, "source_token": token},
-    )
+    await channel._dispatch_envelope(conn, "webui-client", envelope)
     bus.publish_inbound.assert_awaited_once()
+    payloads = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+    assert any(
+        item.get("event") == "message_accepted"
+        and item.get("turn_id") == "turn-plain"
+        for item in payloads
+    )
+    inbound = bus.publish_inbound.await_args.args[0]
+    assert inbound.workspace_scope is not None
+    assert inbound.workspace_scope.project_path == default_workspace.resolve()
 
 
 @pytest.mark.asyncio
@@ -6703,7 +6692,6 @@ async def test_webui_message_source_reset_during_hydration_is_rejected_before_ef
             "turn_id": "turn-source-race",
             "request_settings_version": 1,
             "request_intent": "new",
-            "source_token": token,
         },
     )
 
@@ -6747,11 +6735,6 @@ async def test_webui_new_request_rejected_when_chat_becomes_busy_during_hydratio
         expected_generation=session.generation,
         expected_incarnation=session.incarnation,
     )
-    token = channel.gateway.workspaces.source_token("busy-hydration-race")
-    assert token is not None
-    waiting_workspace = tmp_path / "waiting-workspace"
-    waiting_workspace.mkdir()
-    waiting_scope = default_workspace_scope(waiting_workspace, True)
     real_hydrate = channel.webui_hydrate
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -6770,8 +6753,6 @@ async def test_webui_new_request_rejected_when_chat_becomes_busy_during_hydratio
         "turn_id": "submission-N",
         "request_settings_version": 1,
         "request_intent": "new",
-        "source_token": token,
-        "workspace_scope": waiting_scope.metadata(),
     }
     waiting_task = asyncio.create_task(
         channel._dispatch_envelope(waiting_conn, "waiting-client", envelope)
@@ -6788,7 +6769,6 @@ async def test_webui_new_request_rejected_when_chat_becomes_busy_during_hydratio
                 **envelope,
                 "turn_id": "admitted-R",
                 "content": "active R",
-                "workspace_scope": scope.metadata(),
             },
         )
         release.set()
@@ -6843,8 +6823,6 @@ async def test_webui_steer_rejects_target_replaced_during_hydration_before_effec
         expected_generation=session.generation,
         expected_incarnation=session.incarnation,
     )
-    token = channel.gateway.workspaces.source_token("steer-hydration-race")
-    assert token is not None
     first_owner = wth.register_queued_websocket_turn_if_idle(
         "steer-hydration-race",
         "turn-1",
@@ -6874,8 +6852,6 @@ async def test_webui_steer_rejects_target_replaced_during_hydration_before_effec
             "request_settings_version": 1,
             "request_intent": "steer",
             "target_turn_id": "turn-1",
-            "source_token": token,
-            "workspace_scope": scope.metadata(),
         },
     )
 
@@ -6940,10 +6916,8 @@ async def test_busy_new_request_is_not_admitted_but_matching_steer_is(
 ) -> None:
     default_workspace = tmp_path / "default"
     project_a = tmp_path / "project-a"
-    project_b = tmp_path / "project-b"
     default_workspace.mkdir()
     project_a.mkdir()
-    project_b.mkdir()
     sessions = SessionManager(tmp_path / "sessions")
     _relocate_instance_root(monkeypatch, tmp_path)
     channel = WebSocketChannel(
@@ -6963,8 +6937,6 @@ async def test_busy_new_request_is_not_admitted_but_matching_steer_is(
         expected_generation=session.generation,
         expected_incarnation=session.incarnation,
     )
-    token = channel.gateway.workspaces.source_token("busy-intent")
-    assert token is not None
     turn_owner = wth.register_queued_websocket_turn_if_idle(
         "busy-intent",
         "turn-active",
@@ -6984,8 +6956,6 @@ async def test_busy_new_request_is_not_admitted_but_matching_steer_is(
                 "turn_id": "turn-busy",
                 "request_settings_version": 1,
                 "request_intent": "new",
-                "source_token": token,
-                "workspace_scope": scope_b_payload(project_b),
                 "media": [{"data_url": "data:text/plain;base64,aGVsbG8="}],
             },
         )
@@ -7008,42 +6978,11 @@ async def test_busy_new_request_is_not_admitted_but_matching_steer_is(
                 "request_settings_version": 1,
                 "request_intent": "steer",
                 "target_turn_id": "turn-active",
-                "source_token": token,
-                "workspace_scope": scope_a.metadata(),
             },
         )
         bus.publish_inbound.assert_awaited_once()
-
-        await channel._dispatch_envelope(
-            conn,
-            "webui-client",
-            {
-                "type": "message",
-                "chat_id": "busy-intent",
-                "content": "wrong context",
-                "webui": True,
-                "turn_id": "turn-steer-wrong",
-                "request_settings_version": 1,
-                "request_intent": "steer",
-                "target_turn_id": "turn-active",
-                "source_token": token,
-                "workspace_scope": scope_b_payload(project_b),
-            },
-        )
-        rejected = json.loads(conn.send.await_args.args[0])
-        assert rejected["detail"] == "not_admitted"
-        assert rejected["reason"] == "steering_context_changed"
-        assert bus.publish_inbound.await_count == 1
     finally:
         wth.clear_websocket_turn_if_current("busy-intent", turn_owner)
-
-
-def scope_b_payload(project: Path) -> dict[str, object]:
-    return {
-        "project_path": str(project),
-        "access_mode": "restricted",
-        "restrict_to_workspace": True,
-    }
 
 
 @pytest.mark.asyncio
@@ -7089,8 +7028,6 @@ async def test_remote_owner_full_message_requires_own_device_consent(
     owner = sessions.desktop_permissions
     source = workspaces._source_binding(key)
     assert source is not None
-    token = workspaces.source_token("remote-owner-full")
-    assert token is not None
     current = workspaces._permission_projection(
         key,
         source,
@@ -7119,12 +7056,6 @@ async def test_remote_owner_full_message_requires_own_device_consent(
             "turn_id": turn_id,
             "request_settings_version": 1,
             "request_intent": "new",
-            "source_token": token,
-            "workspace_scope": {
-                "project_path": str(project),
-                "access_mode": "full",
-                "restrict_to_workspace": False,
-            },
         }
 
     await channel._dispatch_envelope(conn, "webui-client", envelope("turn-a"))
@@ -7195,9 +7126,6 @@ async def test_concurrent_new_webui_submissions_reserve_only_one_turn(
         expected_generation=session.generation,
         expected_incarnation=session.incarnation,
     )
-    token = channel.gateway.workspaces.source_token("concurrent-new")
-    assert token is not None
-
     def envelope(turn_id: str) -> dict[str, object]:
         return {
             "type": "message",
@@ -7207,7 +7135,6 @@ async def test_concurrent_new_webui_submissions_reserve_only_one_turn(
             "turn_id": turn_id,
             "request_settings_version": 1,
             "request_intent": "new",
-            "source_token": token,
         }
 
     await asyncio.gather(

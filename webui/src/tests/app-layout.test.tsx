@@ -942,11 +942,7 @@ describe("App layout", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(sendMessageSpy).toHaveBeenCalled());
     const options = sendMessageSpy.mock.calls.at(-1)?.[3];
-    expect(options?.workspaceScope).toMatchObject({
-      project_path: "/tmp/workspace",
-      access_mode: "restricted",
-      restrict_to_workspace: true,
-    });
+    expect(options?.workspaceScope).toBeUndefined();
   });
 
   it("preserves the first message when the gateway rejects a project", async () => {

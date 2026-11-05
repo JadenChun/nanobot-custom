@@ -1463,20 +1463,6 @@ export function ThreadShell({
     wasShowingHeroComposerRef.current = showHeroComposer;
   }, [showHeroComposer]);
 
-  const withWorkspaceScope = useCallback(
-    (options?: SendOptions): SendOptions | undefined => {
-      const effective = options?.workspaceScope ?? workspaceScope;
-      const sourceToken = options?.sourceToken ?? workspacePermissions?.source_token;
-      if (!effective && !sourceToken) return options;
-      return {
-        ...(options ?? {}),
-        ...(effective ? { workspaceScope: effective } : {}),
-        ...(sourceToken ? { sourceToken } : {}),
-      };
-    },
-    [workspacePermissions?.source_token, workspaceScope],
-  );
-
   const refreshModelSettings = useCallback(async () => {
     try {
       setSettings(await fetchSettings(getToken()));
@@ -2068,7 +2054,7 @@ export function ThreadShell({
     async (content: string, images?: SendAttachment[], options?: SendOptions) => {
       if (booting) return false;
       setBooting(true);
-      pendingFirstRef.current = { content, images, options: withWorkspaceScope(options) };
+      pendingFirstRef.current = { content, images, options };
       setPendingFirstTargetChatId(null);
       const newId = await onCreateChat?.(workspaceScope, content, localModelPreset);
       if (!newId) {
@@ -2083,7 +2069,7 @@ export function ThreadShell({
       setPendingFirstTargetChatId(newId);
       return true;
     },
-    [booting, client, localModelPreset, onCreateChat, withWorkspaceScope, workspaceScope],
+    [booting, client, localModelPreset, onCreateChat, workspaceScope],
   );
 
   const handleDraftFullAccess = useCallback(async (draft: string) => {
@@ -2114,7 +2100,7 @@ export function ThreadShell({
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
       setFallbackModelName(null);
-      const submitted = send(content, images, withWorkspaceScope(options));
+      const submitted = send(content, images, options);
       if (
         chatId
         && submitted
@@ -2137,7 +2123,7 @@ export function ThreadShell({
       }
       return submitted;
     },
-    [chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, send, withWorkspaceScope, workspaceAccessRequest],
+    [chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, send, workspaceAccessRequest],
   );
 
   const handleAdmissionRejectedPromptRestored = useCallback((turnId: string) => {
@@ -2424,7 +2410,7 @@ export function ThreadShell({
           workspaceControls={workspaceControls}
           workspaces={workspaces}
           onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled}
+          workspaceScopeDisabled={workspaceScopeDisabled || turnActive}
           workspaceError={workspaceError}
           onPickWorkspaceFolder={
             workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
@@ -2500,7 +2486,7 @@ export function ThreadShell({
           workspaceControls={workspaceControls}
           workspaces={workspaces}
           onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled}
+          workspaceScopeDisabled={workspaceScopeDisabled || turnActive}
           workspaceError={workspaceError}
           onPickWorkspaceFolder={
             workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined

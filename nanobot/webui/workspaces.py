@@ -603,15 +603,15 @@ class WebUIWorkspaceController:
             raise FolderGrantsUnavailableError("folder grants are unavailable")
         return self.focus_owner.discover(path, trusted_ui=trusted_ui)
 
-    def scope_from_envelope(
+    def _scope_from_request(
         self,
-        envelope: dict[str, Any],
+        raw: Any,
         *,
         session_key: str | None,
         controls_available: bool,
     ) -> WorkspaceScope:
+        """Resolve one requested scope against the current session scope."""
         current = self.scope_for_session_key(session_key) if session_key else self.default_scope()
-        raw = envelope.get(WORKSPACE_SCOPE_METADATA_KEY)
         if raw is None:
             scope = current
         else:
@@ -641,6 +641,19 @@ class WebUIWorkspaceController:
         if not controls_available and not _scope_change_is_non_escalating(current, scope):
             raise WorkspaceScopeError("workspace controls are localhost-only", status=403)
         return scope
+
+    def scope_from_envelope(
+        self,
+        envelope: dict[str, Any],
+        *,
+        session_key: str | None,
+        controls_available: bool,
+    ) -> WorkspaceScope:
+        return self._scope_from_request(
+            envelope.get(WORKSPACE_SCOPE_METADATA_KEY),
+            session_key=session_key,
+            controls_available=controls_available,
+        )
 
     def ingress_full_reference(
         self,
@@ -1549,11 +1562,10 @@ class WebUIWorkspaceController:
         chat_running: bool,
         controls_available: bool,
     ) -> WorkspaceScope:
-        # A message envelope is a submitted request snapshot. The running turn
-        # keeps its captured scope, so a queued next request may carry a
-        # different project/mode once its authority has been validated.
-        return self.scope_from_envelope(
-            envelope,
+        # Messages use the server-owned session scope. A scope change is an
+        # explicit control mutation, never a property of a chat message.
+        return self._scope_from_request(
+            None,
             session_key=webui_session_key(chat_id),
             controls_available=controls_available,
         )
