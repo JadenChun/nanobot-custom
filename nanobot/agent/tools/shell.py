@@ -324,16 +324,20 @@ class ExecTool(Tool):
 
     def _input_path_is_private(self, resolved: Path) -> bool:
         from nanobot.config.paths import get_data_dir, get_media_dir
+        from nanobot.security.runtime_boundary import is_private_runtime_path
 
         media = get_media_dir().resolve(strict=False)
         if resolved.is_relative_to(media):
             return False
-        data = get_data_dir().resolve(strict=False)
-        if resolved.is_relative_to(data):
-            return True
         policy = self.resource_policy
         grants = policy.folder_grants if policy is not None else None
-        return bool(grants is not None and grants.is_private_path(resolved))
+        if grants is not None:
+            return grants.is_private_path(resolved)
+        return is_private_runtime_path(
+            resolved,
+            instance_root=get_data_dir().resolve(strict=False),
+            agent_home=policy.workspace if policy is not None else None,
+        )
 
     def _stage_input_files(
         self,
