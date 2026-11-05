@@ -120,6 +120,10 @@ export function showTaskNotification({
   tag?: string;
   title?: string;
 }): void {
+  // The desktop shell dispatches ``nanobot:desktop-hide`` before hiding the
+  // window. Suppress even the browser Notification fallback in that state:
+  // activating a stale notification must not pull the hidden window back.
+  if (!desktopWindowOpen) return;
   if (isDesktopShell()) {
     if (!clientWindowIsOpen()) return;
     const query = new URLSearchParams({ title, body });
