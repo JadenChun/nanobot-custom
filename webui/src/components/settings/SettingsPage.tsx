@@ -46,6 +46,9 @@ interface SettingsPageProps {
   skills: SkillSummary[];
   skillsCatalogComplete: boolean;
   skillsCatalogNotice?: string;
+  skillsCatalogLoading?: boolean;
+  skillsCatalogError?: string | null;
+  onRetrySkillsCatalog?: () => void;
   onLogout?: () => void;
   isRestarting: boolean;
   hostChromeInset: boolean;
@@ -63,6 +66,9 @@ export function SettingsPage({
   skills,
   skillsCatalogComplete,
   skillsCatalogNotice,
+  skillsCatalogLoading,
+  skillsCatalogError,
+  onRetrySkillsCatalog,
   onLogout,
   isRestarting,
   hostChromeInset,
@@ -498,6 +504,9 @@ export function SettingsPage({
             skills={skills}
             catalogComplete={skillsCatalogComplete}
             catalogNotice={skillsCatalogNotice}
+            loading={skillsCatalogLoading}
+            error={skillsCatalogError}
+            onRetry={onRetrySkillsCatalog}
           />
         );
       case "folders":

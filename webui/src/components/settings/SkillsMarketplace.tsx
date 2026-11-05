@@ -175,6 +175,7 @@ export function SkillsMarketplace({
     setSelected(null);
     onInstallingChange(skill.id);
     setError("");
+    const scope = getToken();
     try {
       const payload = await installMarketplaceSkill(
         client,
@@ -183,7 +184,7 @@ export function SkillsMarketplace({
         skill.skill_id,
         skill.version,
       );
-      notifySkillsChanged(payload);
+      notifySkillsChanged(payload, scope);
       setResults((current) =>
         current.map((item) =>
           item.id === skill.id ? { ...item, installed: true } : item,

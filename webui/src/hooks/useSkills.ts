@@ -1,49 +1,94 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchSkills } from "@/lib/api";
-import { isSkillsPayload, SKILLS_CHANGED_EVENT } from "@/lib/skill-events";
+import { isSkillsPayload, skillsEventMatchesScope, SKILLS_CHANGED_EVENT } from "@/lib/skill-events";
 import type { SkillsPayload, SkillSummary } from "@/lib/types";
 
-export function useSkillsCatalog(getToken: () => string): SkillsPayload {
-  const [catalog, setCatalog] = useState<SkillsPayload>({
-    skills: [],
-    catalog_complete: true,
+interface CatalogState {
+  token: string;
+  catalog: SkillsPayload;
+  loading: boolean;
+  error: string | null;
+}
+
+export function useSkillsCatalog(getToken: () => string) {
+  // getToken is stable in ClientProvider; its returned credentials are not.
+  const token = getToken();
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+  const versionRef = useRef(0);
+  const [state, setState] = useState<CatalogState>({
+    token, catalog: { skills: [] }, loading: true, error: null,
   });
 
+  const refresh = useCallback(() => {
+    const version = ++versionRef.current;
+    setState((current) => ({
+      token,
+      catalog: current.token === token ? current.catalog : { skills: [] },
+      loading: true,
+      error: null,
+    }));
+    void fetchSkills(token)
+      .then((payload) => {
+        if (version !== versionRef.current || tokenRef.current !== token) return;
+        setState((current) => ({
+          token,
+          catalog: mergeSkillsCatalog(current.catalog, payload),
+          loading: false,
+          error: null,
+        }));
+      })
+      .catch(() => {
+        if (version !== versionRef.current || tokenRef.current !== token) return;
+        setState((current) => ({
+          ...current,
+          loading: false,
+          error: "Unable to load skills. Check your connection and retry.",
+        }));
+      });
+  }, [token]);
+
   useEffect(() => {
-    let cancelled = false;
-    let payloadVersion = 0;
-    const refresh = () => {
-      const version = payloadVersion;
-      fetchSkills(getToken())
-        .then((payload) => {
-          if (!cancelled && version === payloadVersion) {
-            setCatalog((current) => mergeSkillsCatalog(current, payload));
-          }
-        })
-        .catch(() => {
-          if (!cancelled && version === payloadVersion) {
-            setCatalog((current) => ({ ...current, skills: [] }));
-          }
-        });
-    };
     const onSkillsChanged = (event: Event) => {
+      const scopeMatches = skillsEventMatchesScope(event, token);
+      if (scopeMatches === undefined) {
+        // Unscoped invalidations can refresh, but cannot supply private rows.
+        refresh();
+        return;
+      }
+      if (!scopeMatches) return;
       const payload = (event as CustomEvent<unknown>).detail;
-      if (!cancelled && isSkillsPayload(payload)) {
-        payloadVersion += 1;
-        setCatalog((current) => mergeSkillsCatalog(current, payload));
+      if (tokenRef.current === token && isSkillsPayload(payload)) {
+        versionRef.current += 1;
+        setState((current) => ({
+          token,
+          catalog: mergeSkillsCatalog(
+            current.token === token ? current.catalog : { skills: [] }, payload,
+          ),
+          loading: false,
+          error: null,
+        }));
       }
     };
-
     refresh();
     window.addEventListener(SKILLS_CHANGED_EVENT, onSkillsChanged);
     return () => {
-      cancelled = true;
+      versionRef.current += 1;
       window.removeEventListener(SKILLS_CHANGED_EVENT, onSkillsChanged);
     };
-  }, [getToken]);
+  }, [token, refresh]);
 
-  return catalog;
+  const current = state.token === token ? state : {
+    token, catalog: { skills: [] }, loading: true, error: null,
+  };
+  return {
+    ...current.catalog,
+    catalog_complete: current.catalog.catalog_complete ?? false,
+    loading: current.loading,
+    error: current.error,
+    refresh,
+  };
 }
 
 export function useSkills(getToken: () => string): SkillSummary[] {
@@ -54,7 +99,7 @@ function mergeSkillsCatalog(current: SkillsPayload, next: SkillsPayload): Skills
   const hasCompleteness = typeof next.catalog_complete === "boolean";
   const catalogComplete = hasCompleteness
     ? next.catalog_complete
-    : current.catalog_complete;
+    : current.catalog_complete ?? true;
   return {
     skills: catalogComplete === false
       ? next.skills.map((skill) =>
