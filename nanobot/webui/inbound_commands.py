@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from loguru import logger
 from websockets.asyncio.server import ServerConnection
 
+from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import INBOUND_META_USER_SHELL
 from nanobot.command.builtin import USER_SHELL_COMMAND, builtin_command_starts_agent_turn
 from nanobot.runtime_context import (
@@ -223,6 +224,7 @@ class WebUICommandTransport(Protocol):
         chat_id: str,
         content: str,
         media: list[str] | None,
+        attachments: list[AttachmentRecord] | None,
         metadata: dict[str, Any],
         is_dm: bool,
         session_key: str | None,
@@ -513,6 +515,83 @@ class WebUICommandRouter:
             )
             return None
 
+    def _attachment_installation_id(self, connection: ServerConnection) -> str:
+        identity = getattr(connection, "mobile_identity", None)
+        installation = getattr(identity, "installation_id", None)
+        if isinstance(installation, str) and installation:
+            return installation
+        return "local"
+
+    def _attachment_source(self, connection: ServerConnection) -> str:
+        return "mobile" if self._attachment_installation_id(connection) != "local" else "websocket"
+
+    async def _handle_attachment_upload(
+        self,
+        connection: ServerConnection,
+        envelope: dict[str, Any],
+    ) -> None:
+        request_id = envelope.get("request_id")
+        request_field = {"request_id": request_id} if isinstance(request_id, str) else {}
+        data_url = envelope.get("data_url")
+        if not isinstance(data_url, str) or not data_url:
+            raw = envelope.get("data_base64")
+            mime = envelope.get("mime")
+            if isinstance(raw, str) and raw and isinstance(mime, str) and mime:
+                data_url = f"data:{mime};base64,{raw}"
+        if not isinstance(data_url, str) or not data_url:
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="attachment_rejected",
+                reason="malformed",
+                **request_field,
+            )
+            return
+        name = envelope.get("name")
+        item = {
+            "data_url": data_url,
+            "name": name if isinstance(name, str) else None,
+        }
+        source = self._attachment_source(connection)
+        batch = self._media.attachment_ingress.accept_batch([item], source=source)
+        if batch.rejection is not None:
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="attachment_rejected",
+                reason=batch.rejection,
+                **request_field,
+            )
+            return
+        records, rejection = self._media.attachment_ingress.commit_batch(batch.staged)
+        if rejection is not None or not records:
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="attachment_rejected",
+                reason=rejection or "storage",
+                **request_field,
+            )
+            return
+        record = records[0]
+        chat_id = envelope.get("chat_id")
+        session_key = webui_session_key(chat_id) if is_valid_webui_chat_id(chat_id) else None
+        self._media.upload_registry.add(
+            record,
+            installation_id=self._attachment_installation_id(connection),
+            session_key=session_key,
+            source=source,
+        )
+        await self._transport.webui_send_event(
+            connection,
+            "attachment_stored",
+            id=record.id,
+            name=record.name,
+            mime=record.mime,
+            bytes=record.bytes,
+            **request_field,
+        )
+
     async def dispatch(
         self,
         connection: ServerConnection,
@@ -533,6 +612,9 @@ class WebUICommandRouter:
                     pass
                 return
         command_type = envelope.get("type")
+        if command_type == "attachment":
+            await self._handle_attachment_upload(connection, envelope)
+            return
         if command_type == "webui_request":
             await self.start_webui_request(connection, envelope)
             return
@@ -856,7 +938,17 @@ class WebUICommandRouter:
         try:
             raw_media = envelope.get("media")
             media_paths: list[str] = []
+            media_records: tuple[AttachmentRecord, ...] = ()
             media_names: list[str | None] = []
+            bound_records: list[AttachmentRecord] = []
+            staged: list[Any] = []
+            media_committed = False
+
+            def discard_staged() -> None:
+                if staged and not media_committed:
+                    self._media.attachment_ingress.discard_batch(staged)
+                    staged.clear()
+
             if raw_media is not None:
                 if not isinstance(raw_media, list):
                     await self._transport.webui_send_event(
@@ -867,26 +959,65 @@ class WebUICommandRouter:
                         **rejection_fields,
                     )
                     return
-                media_paths, reason = self._media.store_inbound_attachments(
-                    cast(list[Any], raw_media)
-                )
-                if reason is not None:
+                id_items: list[dict[str, Any]] = []
+                data_items: list[Any] = []
+                for item in cast(list[Any], raw_media):
+                    if isinstance(item, dict) and isinstance(item.get("id"), str):
+                        id_items.append(cast(dict[str, Any], item))
+                    else:
+                        data_items.append(item)
+                if id_items and len(id_items) + len(data_items) > self._media.attachment_limits.max_count:
                     await self._transport.webui_send_event(
                         connection,
                         "error",
                         detail="attachment_rejected",
-                        reason=reason,
+                        reason="too_many_attachments",
                         **rejection_fields,
                     )
                     return
-                for item in cast(list[Any], raw_media):
-                    attachment = cast(dict[str, Any], item) if isinstance(item, dict) else {}
-                    name = attachment.get("name")
-                    media_names.append((safe_filename(name) or None) if isinstance(name, str) else None)
-                if temporary_policy is not None:
-                    self._temporary_chats.register_media(connection, chat_id, media_paths)
+                installation_id = self._attachment_installation_id(connection)
+                if id_items:
+                    for item in id_items:
+                        record = self._media.upload_registry.bind(
+                            str(item["id"]),
+                            installation_id=installation_id,
+                            session_key=webui_session_key(chat_id),
+                        )
+                        if record is None:
+                            discard_staged()
+                            await self._transport.webui_send_event(
+                                connection,
+                                "error",
+                                detail="attachment_rejected",
+                                reason="expired",
+                                **rejection_fields,
+                            )
+                            return
+                        bound_records.append(record)
+                        media_paths.append(str(self._media.attachment_store.path_for(record)))
+                        media_names.append(record.name)
+                if data_items:
+                    batch = self._media.attachment_ingress.accept_batch(
+                        data_items,
+                        source=self._attachment_source(connection),
+                    )
+                    if batch.rejection is not None:
+                        await self._transport.webui_send_event(
+                            connection,
+                            "error",
+                            detail="attachment_rejected",
+                            reason=batch.rejection,
+                            **rejection_fields,
+                        )
+                        return
+                    staged = list(batch.staged)
+                    for item in data_items:
+                        attachment = cast(dict[str, Any], item) if isinstance(item, dict) else {}
+                        name = attachment.get("name")
+                        media_names.append((safe_filename(name) or None) if isinstance(name, str) else None)
 
-            if not content.strip() and not media_paths:
+            if not content.strip() and not staged and not bound_records:
+                discard_staged()
                 await self._transport.webui_send_event(
                     connection,
                     "error",
@@ -915,6 +1046,7 @@ class WebUICommandRouter:
                 turn_id=turn_id,
             )
             if scope is None:
+                discard_staged()
                 return
             if queued_owner is not None:
                 bind_queued_websocket_turn_scope(chat_id, queued_owner, scope.metadata())
@@ -929,6 +1061,7 @@ class WebUICommandRouter:
                         reason=reason,
                         **rejection_fields,
                     )
+                    discard_staged()
                     return
             permission_reference = None
             if scope.access_mode == "full":
@@ -959,6 +1092,7 @@ class WebUICommandRouter:
                         reason="full_access_unavailable",
                         **rejection_fields,
                     )
+                    discard_staged()
                     return
                 if temporary_policy is None:
                     self._workspaces.mark_full_request_admitted(chat_id)
@@ -973,6 +1107,7 @@ class WebUICommandRouter:
                     detail="access_denied",
                     **rejection_fields,
                 )
+                discard_staged()
                 return
 
             metadata: dict[str, Any] = {
@@ -1030,6 +1165,7 @@ class WebUICommandRouter:
                         reason=reason,
                         **rejection_fields,
                     )
+                    discard_staged()
                     return
 
             if (
@@ -1043,7 +1179,32 @@ class WebUICommandRouter:
                     reason="source_token",
                     **rejection_fields,
                 )
+                discard_staged()
                 return
+
+            if staged:
+                records, rejection = self._media.attachment_ingress.commit_batch(staged)
+                if rejection is not None:
+                    await self._transport.webui_send_event(
+                        connection,
+                        "error",
+                        detail="attachment_rejected",
+                        reason=rejection,
+                        **rejection_fields,
+                    )
+                    discard_staged()
+                    return
+                media_paths.extend(
+                    str(self._media.attachment_store.path_for(record))
+                    for record in records
+                )
+                media_records = tuple([*bound_records, *records])
+                media_committed = True
+                staged.clear()
+            else:
+                media_records = tuple(bound_records)
+            if temporary_policy is not None and media_paths:
+                self._temporary_chats.register_media(connection, chat_id, media_paths)
 
             try:
                 if is_webui and (
@@ -1054,6 +1215,7 @@ class WebUICommandRouter:
                         content,
                         metadata=metadata,
                         media_paths=media_paths or None,
+                        attachments=[record.to_dict() for record in media_records] or None,
                         cli_apps=cli_apps or None,
                         mcp_presets=mcp_presets or None,
                         session_mentions=session_mentions or None,
@@ -1075,6 +1237,7 @@ class WebUICommandRouter:
                     chat_id=chat_id,
                     content=dispatch_content,
                     media=media_paths or None,
+                    attachments=list(media_records) or None,
                     metadata=metadata,
                     is_dm=False,
                     session_key=(
@@ -1095,6 +1258,8 @@ class WebUICommandRouter:
             finally:
                 if not accepted and queued_owner is not None:
                     clear_websocket_turn_if_current(chat_id, queued_owner)
+                if not media_committed:
+                    discard_staged()
 
             if is_webui:
                 await self.broadcast_user_message(

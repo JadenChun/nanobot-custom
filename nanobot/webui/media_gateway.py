@@ -10,12 +10,14 @@ from typing import Any
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
+from nanobot.attachments.ingress import AttachmentIngress
+from nanobot.attachments.models import AttachmentRecord
+from nanobot.attachments.policy import AttachmentPolicy, AttachmentRejection
+from nanobot.attachments.store import AttachmentStore
+from nanobot.attachments.uploads import UploadRegistry
 from nanobot.config.paths import get_media_dir
 from nanobot.context_repo.policy import ResourceAccessPolicy
-from nanobot.webui.attachment_ingress import (
-    AttachmentIngressResult,
-    store_inbound_attachments,
-)
+from nanobot.webui.attachment_ingress import AttachmentIngressResult
 from nanobot.webui.ingress_policy import AttachmentIngressLimits
 from nanobot.webui.media_api import (
     serve_signed_media,
@@ -48,6 +50,18 @@ class WebUIMediaGateway:
         self.secret = secret or secrets.token_bytes(32)
         self.attachment_limits = attachment_limits or AttachmentIngressLimits()
         self._resource_policy = resource_policy
+        media_root = self._media_dir(None)
+        self.attachment_store = AttachmentStore(
+            media_root / "attachments",
+            media_root=media_root,
+            logger=logger,
+        )
+        self.attachment_ingress = AttachmentIngress(
+            self.attachment_store,
+            policy=AttachmentPolicy(limits=self.attachment_limits),
+            logger=logger,
+        )
+        self.upload_registry = UploadRegistry()
 
     def set_resource_policy(self, policy: ResourceAccessPolicy | None) -> None:
         """Attach the gateway's shared live folder and managed-repository policy."""
@@ -55,12 +69,28 @@ class WebUIMediaGateway:
 
     def store_inbound_attachments(self, media: list[Any]) -> AttachmentIngressResult:
         """Validate and persist attachments from an inbound WebUI message."""
-        return store_inbound_attachments(
-            media,
-            media_dir=self._media_dir("websocket"),
-            logger=self.logger,
-            limits=self.attachment_limits,
-        )
+        result = self.attachment_ingress.accept_batch(media, source="websocket")
+        if result.rejection is not None:
+            return [], result.rejection
+        records, rejection = self.attachment_ingress.commit_batch(result.staged)
+        if rejection is not None:
+            return [], rejection
+        return [str(self.attachment_store.path_for(record)) for record in records], None
+
+    def store_inbound_records(
+        self,
+        media: list[Any],
+        *,
+        source: str = "websocket",
+    ) -> tuple[list[AttachmentRecord], AttachmentRejection | None]:
+        """Validate and persist attachments, returning their canonical records."""
+        result = self.attachment_ingress.accept_batch(media, source=source)
+        if result.rejection is not None:
+            return [], result.rejection
+        records, rejection = self.attachment_ingress.commit_batch(result.staged)
+        if rejection is not None:
+            return [], rejection
+        return list(records), None
 
     def serve_signed_media(
         self,

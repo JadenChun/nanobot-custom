@@ -33,6 +33,7 @@ from filelock import FileLock
 from loguru import logger
 
 from nanobot.agent.memory_recovery import MEMORY_RECEIPT_FILENAME, require_memory_receipt_recovery
+from nanobot.attachments.context import media_paths_for_message
 from nanobot.config.paths import get_default_sessions_root, get_legacy_sessions_dir
 from nanobot.providers.base import ProviderConversationState
 from nanobot.runtime_context import (
@@ -812,10 +813,11 @@ class Session:
             # image used to be. Without this, an image-only user turn
             # replays as an empty user message — the assistant's reply then
             # looks like it's responding to nothing.
+            media_paths = media_paths_for_message(message)
             content = content_with_media_breadcrumbs(
                 role,
                 content,
-                message.get("media"),
+                media_paths or None,
             )
             cli_apps = cast(object, message.get("cli_apps"))
             if (

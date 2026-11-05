@@ -16,6 +16,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+from nanobot.attachments.models import AttachmentRecord
+
 if TYPE_CHECKING:
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.base import ToolDenialKind
@@ -182,7 +184,7 @@ class TurnCallbacks:
     on_error: Callback | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class TurnRequest:
     """Immutable input contract for one turn."""
 
@@ -192,7 +194,8 @@ class TurnRequest:
     session_key: str | None = None
     route: DeliveryTarget | None = None
     sender_id: str = "user"
-    media: tuple[str, ...] = ()
+    attachments: tuple[AttachmentRecord, ...] = ()
+    _media_paths: tuple[str, ...] = field(default=(), repr=False, compare=False, init=False)
     hooks: tuple[Any, ...] = ()
     history_mode: HistoryMode = HistoryMode.SESSION
     trace_mode: TraceMode = TraceMode.NONE
@@ -209,18 +212,83 @@ class TurnRequest:
     # channel-layer name while ``prompt`` remains the canonical field.
     message: str | None = None
 
-    def __post_init__(self) -> None:
-        if self.content and self.prompt and self.content != self.prompt:
+    def __init__(
+        self,
+        prompt: str = "",
+        content: str = "",
+        source: TurnSource = TurnSource.DIRECT,
+        session_key: str | None = None,
+        route: DeliveryTarget | None = None,
+        sender_id: str = "user",
+        media: tuple[str, ...] | list[str] | None = None,
+        attachments: tuple[AttachmentRecord, ...] = (),
+        hooks: tuple[Any, ...] = (),
+        history_mode: HistoryMode = HistoryMode.SESSION,
+        trace_mode: TraceMode = TraceMode.NONE,
+        delivery_target: DeliveryTarget | None = None,
+        scheduled_link: ScheduledTurnLink | None = None,
+        approval_grant: ApprovalGrant | None = None,
+        approval: ApprovalGrant | None = None,
+        callbacks: TurnCallbacks | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        run_id: str | None = None,
+        tool_names: tuple[str, ...] | None = None,
+        scheduled: ScheduledTurnLink | None = None,
+        message: str | None = None,
+    ) -> None:
+        if content and prompt and content != prompt:
             raise ValueError("prompt and content must match when both are supplied")
-        canonical_content = self.content or self.prompt or self.message or ""
-        object.__setattr__(self, "content", canonical_content)
+        canonical_content = content or prompt or message or ""
         object.__setattr__(self, "prompt", canonical_content)
-        if not isinstance(cast(object, self.media), tuple):
-            object.__setattr__(self, "media", tuple(self.media))
-        if not isinstance(cast(object, self.hooks), tuple):
-            object.__setattr__(self, "hooks", tuple(self.hooks))
-        if self.tool_names is not None and not isinstance(cast(object, self.tool_names), tuple):
-            object.__setattr__(self, "tool_names", tuple(self.tool_names))
+        object.__setattr__(self, "content", canonical_content)
+        object.__setattr__(
+            self, "source",
+            source if isinstance(source, TurnSource) else TurnSource(str(source)),
+        )
+        object.__setattr__(self, "session_key", session_key)
+        object.__setattr__(self, "route", route)
+        object.__setattr__(self, "sender_id", sender_id)
+        object.__setattr__(self, "attachments", tuple(attachments))
+        media_paths = tuple(str(path) for path in (media or ()) if path)
+        if not media_paths:
+            media_paths = tuple(
+                record.storage_key
+                for record in self.attachments
+                if record.storage_key
+            )
+        object.__setattr__(self, "_media_paths", media_paths)
+        object.__setattr__(self, "hooks", tuple(hooks))
+        object.__setattr__(
+            self,
+            "history_mode",
+            history_mode if isinstance(history_mode, HistoryMode) else HistoryMode(str(history_mode)),
+        )
+        object.__setattr__(
+            self,
+            "trace_mode",
+            trace_mode if isinstance(trace_mode, TraceMode) else TraceMode(str(trace_mode)),
+        )
+        object.__setattr__(self, "delivery_target", delivery_target)
+        object.__setattr__(self, "scheduled_link", scheduled_link)
+        object.__setattr__(self, "approval_grant", approval_grant)
+        object.__setattr__(self, "approval", approval or ApprovalGrant())
+        object.__setattr__(self, "callbacks", callbacks or TurnCallbacks())
+        object.__setattr__(self, "metadata", metadata or {})
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(
+            self, "tool_names",
+            tuple(tool_names) if tool_names is not None else None,
+        )
+        object.__setattr__(self, "scheduled", scheduled)
+        object.__setattr__(self, "message", message)
+        if self._media_paths:
+            self._adopt_media()
+        if self.message is not None:
+            if self.prompt and self.prompt != self.message:
+                raise ValueError("prompt and message must match when both are supplied")
+            object.__setattr__(self, "content", self.message)
+            object.__setattr__(self, "prompt", self.message)
+        object.__setattr__(self, "message", self.content)
         if self.route is None and self.delivery_target is not None:
             object.__setattr__(self, "route", self.delivery_target)
         elif self.delivery_target is None and self.route is not None:
@@ -233,18 +301,39 @@ class TurnRequest:
             object.__setattr__(self, "scheduled", self.scheduled_link)
         elif self.scheduled_link is None and self.scheduled is not None:
             object.__setattr__(self, "scheduled_link", self.scheduled)
-        if not isinstance(cast(object, self.source), TurnSource):
-            object.__setattr__(self, "source", TurnSource(str(self.source)))
-        if not isinstance(cast(object, self.history_mode), HistoryMode):
-            object.__setattr__(self, "history_mode", HistoryMode(str(self.history_mode)))
-        if not isinstance(cast(object, self.trace_mode), TraceMode):
-            object.__setattr__(self, "trace_mode", TraceMode(str(self.trace_mode)))
-        if self.message is not None:
-            if self.prompt and self.prompt != self.message:
-                raise ValueError("prompt and message must match when both are supplied")
-            object.__setattr__(self, "content", self.message)
-            object.__setattr__(self, "prompt", self.message)
-        object.__setattr__(self, "message", self.content)
+
+    def _adopt_media(self) -> None:
+        from nanobot.attachments.adoption import adopt_media_paths
+
+        result = adopt_media_paths(
+            list(self._media_paths),
+            source=self.source.value,
+            existing=self.attachments,
+        )
+        if result.records:
+            object.__setattr__(self, "attachments", (*self.attachments, *result.records))
+        content = self.content
+        for original, canonical in result.replacements:
+            content = content.replace(original, canonical)
+            for marker in (
+                "image", "file", "video", "animation", "voice", "audio", "Attachment",
+            ):
+                content = content.replace(f"[{marker}: {canonical}]", "")
+        for path in self._media_paths:
+            name = Path(path).name
+            for marker in (
+                "image", "file", "video", "animation", "voice", "audio", "attachment",
+            ):
+                content = content.replace(f"[{marker}: {name}]", "")
+            content = content.replace(f"[attachment: {name} — saved to {path}]", "")
+        if content != self.content:
+            object.__setattr__(self, "content", content)
+            object.__setattr__(self, "prompt", content)
+
+    @property
+    def media(self) -> tuple[str, ...]:
+        """Compatibility view of adapter acquisition paths."""
+        return self._media_paths
 
     @property
     def delivery(self) -> DeliveryTarget | None:

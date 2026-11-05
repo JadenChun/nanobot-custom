@@ -270,11 +270,32 @@ class TestBuildUserContent:
         builder = _builder(tmp_path)
         result = builder.build_user_content("hello", [str(png)])
         assert isinstance(result, list)
-        assert len(result) == 2
+        assert len(result) == 3
         assert result[0]["type"] == "image_url"
         assert result[0]["image_url"]["url"].startswith("data:image/png;base64,")
         assert result[1]["type"] == "text"
         assert result[1]["text"] == "hello"
+        assert result[2] == {"type": "text", "text": f"[image: {png}]"}
+
+    def test_image_only_turn_gets_path_reference(self, tmp_path):
+        png = tmp_path / "test.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        builder = _builder(tmp_path)
+        result = builder.build_user_content("", [str(png)])
+        assert isinstance(result, list)
+        text_parts = [block["text"] for block in result if block["type"] == "text"]
+        assert f"[image: {png}]" in text_parts
+
+    def test_existing_image_reference_is_not_duplicated(self, tmp_path):
+        png = tmp_path / "test.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        builder = _builder(tmp_path)
+        original = f"look at this\n[image: {png}]"
+        result = builder.build_user_content(original, [str(png)])
+        assert isinstance(result, list)
+        text_parts = [block["text"] for block in result if block["type"] == "text"]
+        assert text_parts.count(original) == 1
+        assert any(f"[image: {png}]" in text for text in text_parts)
 
     def test_image_meta_includes_path(self, tmp_path):
         png = tmp_path / "test.png"

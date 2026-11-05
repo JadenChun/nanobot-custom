@@ -19,6 +19,7 @@ from nanobot.agent.turn import (
     TurnSource,
 )
 from nanobot.agent.turn import TurnContext as RunTurnContext
+from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ChannelsConfig
@@ -74,7 +75,7 @@ async def _execute_inbound(loop: AgentLoop, msg: InboundMessage) -> None:
             session_key=msg.session_key,
             sender_id=msg.sender_id,
             source=loop._inbound_turn_source(msg),
-            media=tuple(msg.media),
+            attachments=msg.attachments,
             metadata=dict(msg.metadata),
             route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id),
         ),
@@ -133,6 +134,128 @@ async def test_document_attachment_is_referenced_and_read_on_demand(
 
     assert "1| name,value" in result
     assert "2| nanobot,1" in result
+
+
+@pytest.mark.asyncio
+async def test_image_attachment_is_referenced_for_path_tools(tmp_path: Path, admitted_async) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    image_path = tmp_path / "bedroom.png"
+    image_path.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
+        )
+    )
+
+    loop = await _make_loop(tmp_path, admitted_async)
+    msg = InboundMessage(
+        channel="websocket",
+        sender_id="u",
+        chat_id="c",
+        content="edit this photo",
+        media=[str(image_path)],
+    )
+    ctx = _turn_context(loop, msg)
+
+    await loop._restore_turn(ctx)
+
+    # Persistence keeps the user text and media path separate; the path-aware
+    # reference is added only to the model-visible turn.
+    assert ctx.msg.content == "edit this photo"
+    assert ctx.msg.media == [str(image_path.resolve())]
+
+    current = loop.context.build_current_message(
+        ctx.msg.content,
+        media=list(ctx.msg.media),
+    )
+    content = current["content"]
+    assert isinstance(content, list)
+    text_parts = [
+        block["text"]
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    assert f"[image: {image_path.resolve()}]" in text_parts
+
+
+@pytest.mark.asyncio
+async def test_channel_media_is_adopted_into_canonical_store(
+    tmp_path: Path,
+    admitted_async,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    media_root = tmp_path / "media"
+    channel_dir = media_root / "telegram"
+    channel_dir.mkdir(parents=True)
+    image_path = channel_dir / "photo.png"
+    image_path.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
+        )
+    )
+    monkeypatch.setattr("nanobot.config.paths.get_media_dir", lambda *_: media_root)
+
+    loop = await _make_loop(tmp_path, admitted_async)
+    msg = InboundMessage(
+        channel="telegram",
+        sender_id="u",
+        chat_id="channel-adoption",
+        content=f"look\n[image: {image_path}]",
+        media=[str(image_path)],
+    )
+    ctx = _turn_context(loop, msg)
+
+    await loop._restore_turn(ctx)
+
+    assert len(ctx.msg.attachments) == 1
+    record = ctx.msg.attachments[0]
+    assert record.source == "telegram"
+    assert record.sha256
+    canonical = Path(ctx.msg.media[0])
+    assert canonical.is_relative_to(media_root / "attachments")
+    assert canonical.is_file()
+    assert image_path.is_file()
+    assert ctx.msg.content.strip() == "look"
+
+
+@pytest.mark.asyncio
+async def test_attachment_record_survives_session_reload(tmp_path: Path, admitted_async) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    image_path = tmp_path / "photo.png"
+    image_path.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
+        )
+    )
+    record = AttachmentRecord(
+        id="att_fixture",
+        sha256="a" * 64,
+        mime="image/png",
+        bytes=image_path.stat().st_size,
+        name="photo.png",
+        source="mobile",
+        created_at=1_793_803_728.0,
+    )
+
+    loop = await _make_loop(tmp_path, admitted_async)
+    loop._run_agent_loop = AsyncMock(side_effect=RuntimeError("interrupt"))  # type: ignore[method-assign]
+    msg = InboundMessage(
+        channel="websocket",
+        sender_id="u",
+        chat_id="attachment-record",
+        content="edit this",
+        attachments=(record,),
+    )
+
+    with pytest.raises(RuntimeError, match="interrupt"):
+        await _execute_inbound(loop, msg)
+
+    loop.sessions.invalidate("websocket:attachment-record")
+    persisted = loop.sessions.get_or_create("websocket:attachment-record")
+
+    assert persisted.messages[0]["attachments"] == [record.to_dict()]
+    assert "media" not in persisted.messages[0]
 
 
 @pytest.mark.asyncio
@@ -414,10 +537,14 @@ async def test_canonical_attachment_input_is_durable_before_runner(
     assert observed_inputs[0].current_message == expected_content
     assert observed_inputs[0].media == (expected_media or None)
     assert early_events[0]["content"] == expected_content
+    assert "media" not in early_events[0]
+    stored_paths = {
+        record["storage_key"] for record in early_events[0].get("attachments", [])
+    }
     if expected_media:
-        assert early_events[0]["media"] == expected_media
-    else:
-        assert "media" not in early_events[0]
+        assert expected_media[0] in stored_paths
+    if media_kind != "image":
+        assert str(doc_path.resolve()) in stored_paths
     assert early_events[0]["_event_id"] == context.source_input_event_id
     assert early_events[0]["_run_id"] == request.run_id
     assert context.source_writer is not None

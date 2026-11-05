@@ -1201,22 +1201,34 @@ class AgentLoop:
             extra.pop("_run_id", None)
             if run_id:
                 extra["_run_id"] = run_id
+            attachments = getattr(msg, "attachments", ()) or ()
+            if attachments:
+                extra["attachments"] = [record.to_dict() for record in attachments]
+                extra.pop("media", None)
             run_context = trace_owner.run_context if trace_owner is not None else None
             writer = run_context.source_writer if run_context is not None else None
             if writer is not None and run_context is not None:
                 request = run_context.request
                 # Approval expansion/runtime instructions stay in the projection.
                 original = request.content if request is not None else text
+                if request is not None and msg.content.startswith(request.content):
+                    # Preserve normalized document references added during restore.
+                    original = msg.content
                 _, automation = automation_history_overrides(msg.metadata)
                 source_extra = {key: value for key, value in extra.items()
                                 if key not in {RUNTIME_CONTEXT_HISTORY_META, "_run_id", "media"}}
-                retained_media = list(request.media) if request is not None else media_paths
+                retained_media = (
+                    list(request.media)
+                    if request is not None and request.media
+                    else media_paths
+                )
                 if msg.is_user_input and retained_media:
                     # Normalize the original input, not its approval/runtime expansion.
                     original, retained_media = reference_non_image_attachments(original, retained_media)
                 if pending_followup_id(msg) is not None and request is not None:
                     original_message = dataclasses.replace(
-                        msg, content=request.content, media=list(request.media),
+                        msg, content=request.content,
+                        attachments=getattr(msg, "attachments", ()),
                         metadata=dict(request.metadata),
                     )
                     copy_pending_followup_proof(msg, original_message)
@@ -1228,7 +1240,8 @@ class AgentLoop:
                                  if event["_event_id"] == binding.event_id)
                 else:
                     entry = writer.append_message({**source_extra, "role": "user", "content": original,
-                        **({"media": retained_media} if retained_media else {}), **automation,
+                        **({"media": retained_media} if retained_media and not attachments else {}),
+                        **automation,
                         **({"_command": True} if kwargs.get("_command") else {})})
                 run_context.source_input_event_id = entry["_event_id"]
                 self._capture_trace_row(trace_owner, entry, is_input=True)
@@ -2901,7 +2914,9 @@ class AgentLoop:
                 source=self._inbound_turn_source(msg),
                 route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id,
                                      message_id=msg.metadata.get('message_id')),
-                sender_id=msg.sender_id, media=tuple(msg.media), metadata=dict(msg.metadata))
+                sender_id=msg.sender_id, media=tuple(msg.media),
+                attachments=msg.attachments,
+                metadata=dict(msg.metadata))
             await self.execute_turn(request, _options=_TurnExecutionOptions(
                 inbound=msg, admission_scope=partial(self._bus_turn_scope, msg, settlement=_compact_settlement), raise_errors=True,
                 trusted_foreground_activity=self._trusted_foreground_inbound(msg),
@@ -3638,10 +3653,25 @@ class AgentLoop:
                                 routing_metadata = dict(request.metadata)
                                 if target.message_id is not None:
                                     routing_metadata["message_id"] = target.message_id
-                                envelope = options.inbound or InboundMessage(channel=target.channel,
-                                    chat_id=target.chat_id or '', sender_id=request.sender_id, content=content)
-                                msg = dataclasses.replace(envelope, channel=target.channel, chat_id=target.chat_id or '',
-                                    content=content, media=list(request.media), metadata=routing_metadata, session_key_override=key)
+                                envelope = options.inbound or InboundMessage(
+                                    channel=target.channel,
+                                    chat_id=target.chat_id or '',
+                                    sender_id=request.sender_id,
+                                    content=content,
+                                    media=list(request.media) if request.media else None,
+                                    attachments=request.attachments,
+                                )
+                                msg = dataclasses.replace(
+                                    envelope,
+                                    channel=target.channel,
+                                    chat_id=target.chat_id or '',
+                                    content=content,
+                                    attachments=request.attachments or envelope.attachments,
+                                    metadata=routing_metadata,
+                                    session_key_override=key,
+                                )
+                                if hasattr(envelope, "_media_paths"):
+                                    object.__setattr__(msg, "_media_paths", envelope._media_paths)
                                 copy_pending_followup_proof(envelope, msg)
                                 if options.silent_output:
                                     io.delivery = self.turn_delivery_factory.silent(msg, key)
@@ -3993,16 +4023,71 @@ class AgentLoop:
             metadata=meta,
         )
 
+    def _attachment_records_for_media(
+        self,
+        media: list[str],
+        *,
+        source: str,
+    ) -> tuple[tuple[Any, ...], list[str], list[tuple[str, str]]]:
+        """Adopt adapter media through the shared canonical adoption service."""
+        from nanobot.attachments.adoption import adopt_media_paths
+
+        result = adopt_media_paths(media, source=source, logger=logger)
+        return result.records, list(result.paths), list(result.replacements)
+
     async def _restore_turn(self, ctx: TurnContext) -> None:
         """Restore checkpoint / pending user turn; reference non-image attachments."""
         msg = ctx.msg
+        attachments = getattr(msg, "attachments", ()) or ()
+        if ctx.kind is TurnKind.USER and msg.media and not attachments:
+            attachments, canonical_paths, replacements = self._attachment_records_for_media(
+                list(msg.media),
+                source=msg.channel,
+            )
+            if attachments:
+                content = msg.content
+                for original, canonical in replacements:
+                    content = content.replace(original, canonical)
+                    # Successful channel markers are replaced by the canonical
+                    # AttachmentContext projection; remove them here so channel
+                    # adapters do not own prompt formatting.
+                    for marker in (
+                        "image", "file", "video", "animation", "voice", "audio",
+                        "Attachment",
+                    ):
+                        content = content.replace(f"[{marker}: {canonical}]", "")
+                content = "\n".join(line for line in content.splitlines() if line.strip())
+                ctx.msg = dataclasses.replace(
+                    msg,
+                    content=content,
+                    media=canonical_paths,
+                    attachments=attachments,
+                )
+                msg = ctx.msg
 
-        if ctx.kind is TurnKind.USER and msg.media:
+        if ctx.kind is TurnKind.USER and (msg.media or attachments):
+            media_paths = [] if attachments else list(msg.media)
+            if attachments:
+                from nanobot.attachments.context import FilesystemAttachmentResolver
+                from nanobot.config.paths import get_media_dir
+
+                attachment_root = get_media_dir()
+                resolver = FilesystemAttachmentResolver(
+                    media_root=attachment_root,
+                    attachments_root=attachment_root / "attachments",
+                )
+                for record in attachments:
+                    resolved = resolver.resolve(record)
+                    if resolved is not None:
+                        resolved_text = str(resolved)
+                        if resolved_text not in media_paths:
+                            media_paths.append(resolved_text)
             new_content, image_paths = reference_non_image_attachments(
                 msg.content,
-                msg.media,
+                media_paths,
             )
-            ctx.msg = dataclasses.replace(msg, content=new_content, media=image_paths)
+            ctx.msg = dataclasses.replace(msg, content=new_content, attachments=msg.attachments)
+            object.__setattr__(ctx.msg, "_media_paths", tuple(image_paths))
             copy_pending_followup_proof(msg, ctx.msg)
             msg = ctx.msg
 
@@ -4680,6 +4765,13 @@ class AgentLoop:
         content: list[object],
     ) -> list[object]:
         """Strip volatile multimodal payloads before writing session history."""
+        text_blobs = "\n".join(
+            cast(str, block.get("text", ""))
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") in ("text", "input_text", "output_text")
+            and isinstance(block.get("text"), str)
+        )
         filtered: list[object] = []
         for block in content:
             if not isinstance(block, dict):
@@ -4693,6 +4785,10 @@ class AgentLoop:
             ).startswith("data:image/"):
                 internal_meta = cast(dict[str, Any], block_data.get("_meta") or {})
                 path = cast(str, internal_meta.get("path", ""))
+                if path and f"[image: {path}]" in text_blobs:
+                    # The model-visible text already carries the reference;
+                    # keep it instead of adding a duplicate placeholder.
+                    continue
                 filtered.append(
                     {"type": "text", "text": image_placeholder_text(path)}
                 )

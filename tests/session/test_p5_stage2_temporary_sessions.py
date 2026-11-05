@@ -1,5 +1,6 @@
 """Real temporary manager/channel lifecycle proofs on isolated copied roots."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -213,17 +214,17 @@ async def test_real_channel_temporary_lifecycle_and_late_events(tmp_path, manage
             channel._temporary_chats.validate_workspace_update(chat_id)
         with pytest.raises(TemporaryChatError, match="^temporary_chat_unavailable$"):
             channel._temporary_chats.validate_attach(chat_id)
-        upload = tmp_path / "private-upload.txt"
-        upload.write_text("attachment")
-        channel.gateway.media.store_inbound_attachments = MagicMock(return_value=([str(upload)], None))
         await channel._dispatch_envelope(owner, "webui", {"type": "message", "chat_id": chat_id,
             "content": "private", "webui": True, "turn_id": "turn-1",
             "media": [{"data_url": "data:text/plain;base64,cHJpdmF0ZQ=="}],
-            "workspace_scope": {"project_path": str(tmp_path), "access_mode": "restricted"}})
+            "workspace_scope": {"project_path": str(workspace), "access_mode": "restricted"}})
         assert manager.get_cached(key) is session
         assert state(manager) == before
         assert manager.read_session_metadata(key) is None
         assert read_transcript_lines(key) == []
+        inbound = bus.publish_inbound.await_args_list[0].args[0]
+        upload = Path(inbound.media[0])
+        assert upload.exists()
         if disposal == "discard":
             await channel._dispatch_envelope(owner, "webui", {"type": "discard_temporary_chat", "chat_id": chat_id})
         else:

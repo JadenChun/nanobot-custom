@@ -1408,7 +1408,34 @@ export function useNanobotStream(
       delete clientOptions.sideChannel;
       delete clientOptions.finalizeActiveTurn;
       delete clientOptions.continueActiveTurn;
-      client.sendMessage(chatId, outboundContent, wireMedia, clientOptions);
+      const needsUpload = !!wireMedia?.some(
+        (media) => !!media.data_url && !media.id,
+      );
+      if (
+        needsUpload
+        && wireMedia
+        && typeof client.uploadAttachment === "function"
+      ) {
+        void (async () => {
+          try {
+            const uploaded = await Promise.all(
+              wireMedia.map(async (media) => {
+                if (media.id || !media.data_url) {
+                  return media;
+                }
+                const id = await client.uploadAttachment(chatId, media);
+                return { id, ...(media.name ? { name: media.name } : {}) };
+              }),
+            );
+            client.sendMessage(chatId, outboundContent, uploaded, clientOptions);
+          } catch {
+            // Upload-first is an optimization; the inline envelope remains valid.
+            client.sendMessage(chatId, outboundContent, wireMedia, clientOptions);
+          }
+        })();
+      } else {
+        client.sendMessage(chatId, outboundContent, wireMedia, clientOptions);
+      }
       return { turnId, userMessageId, sideChannel };
     },
     [chatId, clearActivitySegment, client, flushPendingStreamEvents],

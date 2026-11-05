@@ -100,7 +100,8 @@ async def test_real_gateway_edge_read_media_attachment_logout(tmp_path: Path) ->
             {"type": "attachment", "data_base64": base64.b64encode(json.dumps(attachment).encode()).decode()},
         )
         assert stored["ok"] is True
-        assert stored["result"]["paths"]
+        assert stored["result"]["id"].startswith("att_")
+        assert stored["result"]["name"] == "pixel.png"
 
         logged_out = await edge.handle_ws_frame(
             AccessIdentity("install-edge-1", ("device.self.logout",), 0, 1),

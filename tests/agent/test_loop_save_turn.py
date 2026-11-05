@@ -918,6 +918,13 @@ def test_build_and_save_preserves_multimodal_user_block_starting_with_runtime_ta
     loop._save_turn(session, messages, skip=1)
 
     assert {"type": "text", "text": user_text} in session.messages[0]["content"]
+    text_parts = [
+        block["text"]
+        for block in session.messages[0]["content"]
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    assert text_parts.count(user_text) == 1
+    assert sum(part.count(f"[image: {image}]") for part in text_parts) == 1
 
 
 def test_save_turn_keeps_string_when_only_runtime_context() -> None:
@@ -1606,7 +1613,11 @@ async def test_process_message_persists_media_paths_on_user_turn(_make_full_loop
     persisted = loop.sessions.get_or_create("websocket:c-media")
     assert [m["role"] for m in persisted.messages] == ["user"]
     assert persisted.messages[0]["content"] == "look"
-    assert persisted.messages[0]["media"] == [str(img_a), str(img_b)]
+    assert "media" not in persisted.messages[0]
+    stored = {
+        record["storage_key"] for record in persisted.messages[0]["attachments"]
+    }
+    assert stored == {str(img_a), str(img_b)}
 
 
 @pytest.mark.asyncio
@@ -1615,7 +1626,7 @@ async def test_process_message_persists_media_only_turn_without_text(_make_full_
 
     The old early-persist gate skipped messages without text, leaving pure
     image turns un-checkpointed. They now materialise as an empty-content
-    user row with ``media`` attached.
+    user row with canonical ``attachments``.
     """
     img = tmp_path / "only.png"
     img.write_bytes(_PNG_1X1)
@@ -1638,7 +1649,10 @@ async def test_process_message_persists_media_only_turn_without_text(_make_full_
     assert len(persisted.messages) == 1
     assert persisted.messages[0]["role"] == "user"
     assert persisted.messages[0]["content"] == ""
-    assert persisted.messages[0]["media"] == [str(img)]
+    assert "media" not in persisted.messages[0]
+    assert [record["storage_key"] for record in persisted.messages[0]["attachments"]] == [
+        str(img)
+    ]
 
 
 @pytest.mark.asyncio

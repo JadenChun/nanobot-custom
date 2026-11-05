@@ -1808,6 +1808,14 @@ export type InboundEvent =
       state: SidebarStatePayload;
     }
   | { event: "settings_updated" }
+  | {
+      event: "attachment_stored";
+      request_id?: string;
+      id: string;
+      name: string;
+      mime: string;
+      bytes: number;
+    }
   | { event: "transcription_result"; request_id: string; text: string }
   | {
       event: "transcription_error";
@@ -1837,6 +1845,8 @@ export type InboundEvent =
       chat_id?: string;
       detail?: string;
       reason?: string;
+      /** Correlates an attachment upload failure with its pending frame. */
+      request_id?: string;
       /** Present when this error rejects a specific outbound WebUI turn. */
       turn_id?: string;
     };
@@ -1849,7 +1859,10 @@ export type InboundEvent =
  * the session is replayed.
  */
 export interface OutboundMedia {
-  data_url: string;
+  /** Inline legacy payload. Official clients upload first and send an id. */
+  data_url?: string;
+  /** Server-issued upload id from an ``attachment`` frame. */
+  id?: string;
   name?: string;
 }
 
@@ -1938,6 +1951,15 @@ export type Outbound =
   | { type: "discard_temporary_chat"; chat_id: string }
   | { type: "set_workspace_scope"; chat_id: string; workspace_scope: WorkspaceScopePayload }
   | { type: "transcribe_audio"; request_id: string; data_url: string; duration_ms?: number }
+  | {
+      type: "attachment";
+      request_id: string;
+      chat_id?: string;
+      data_url?: string;
+      data_base64?: string;
+      mime?: string;
+      name?: string;
+    }
   | {
       type: "message";
       chat_id: string;

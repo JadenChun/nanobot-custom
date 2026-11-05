@@ -64,7 +64,7 @@ def build_mobile_edge(
             },
         )
 
-    async def attachment_handler(_identity: Any, body: bytes) -> dict[str, Any]:
+    async def attachment_handler(identity: Any, body: bytes) -> dict[str, Any]:
         try:
             payload = json.loads(body)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -77,12 +77,27 @@ def build_mobile_edge(
         media_type = payload_dict.get("media_type", "application/octet-stream")
         if not isinstance(data, str) or not isinstance(name, str) or not isinstance(media_type, str):
             raise ValueError("attachment fields are invalid")
-        paths, rejection = media.store_inbound_attachments(
-            [{"data_url": f"data:{media_type};base64,{data}", "name": name}]
+        records, rejection = media.store_inbound_records(
+            [{"data_url": f"data:{media_type};base64,{data}", "name": name}],
+            source="mobile",
         )
         if rejection is not None:
             return {"error": rejection}
-        return {"paths": paths}
+        if not records:
+            return {"error": "decode"}
+        record = records[0]
+        media.upload_registry.add(
+            record,
+            installation_id=str(identity.installation_id),
+            session_key=None,
+            source="mobile",
+        )
+        return {
+            "id": record.id,
+            "name": record.name,
+            "mime": record.mime,
+            "bytes": record.bytes,
+        }
 
     async def logout_handler(identity: Any) -> dict[str, Any]:
         await asyncio.to_thread(client.revoke, identity.installation_id)

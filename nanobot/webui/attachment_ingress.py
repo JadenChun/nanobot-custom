@@ -1,79 +1,32 @@
-"""Validation and persistence for inbound WebUI message attachments."""
+"""Compatibility wrapper for the canonical attachment ingress.
+
+New code should import from :mod:`nanobot.attachments`. This module remains for
+existing WebUI tests and callers until the W6 removal gate.
+"""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
-from nanobot.utils.media_decode import FileSizeExceeded, save_base64_data_url
-from nanobot.webui.ingress_policy import (
-    DEFAULT_WEBUI_INGRESS_POLICY,
+from nanobot.attachments.ingress import AttachmentIngress, extract_data_url_mime
+from nanobot.attachments.models import AttachmentRecord
+from nanobot.attachments.policy import (
     AttachmentIngressLimits,
+    AttachmentPolicy,
+    AttachmentRejection,
 )
+from nanobot.attachments.store import AttachmentStore
+from nanobot.webui.ingress_policy import DEFAULT_WEBUI_INGRESS_POLICY
 
-AttachmentRejection = Literal[
-    "malformed",
-    "too_many_images",
-    "too_many_videos",
-    "too_many_attachments",
-    "total_size",
-    "mime",
-    "size",
-    "decode",
-]
 AttachmentIngressResult = tuple[list[str], AttachmentRejection | None]
 
-_MAX_VIDEOS_PER_MESSAGE = 1
-_MAX_VIDEO_BYTES = 20 * 1024 * 1024
-
-_IMAGE_MIME_ALLOWED: frozenset[str] = frozenset({
-    "image/png",
-    "image/jpeg",
-    "image/webp",
-    "image/gif",
-})
-
-_VIDEO_MIME_ALLOWED: frozenset[str] = frozenset({
-    "video/mp4",
-    "video/webm",
-    "video/quicktime",
-})
-
-_DOCUMENT_MIME_ALLOWED: frozenset[str] = frozenset({
-    "application/json",
-    "application/pdf",
-    "application/toml",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/x-yaml",
-    "application/xhtml+xml",
-    "application/xml",
-    "application/yaml",
-    "text/csv",
-    "text/html",
-    "text/markdown",
-    "text/plain",
-    "text/xml",
-    "text/yaml",
-})
-
-_UPLOAD_MIME_ALLOWED: frozenset[str] = (
-    _IMAGE_MIME_ALLOWED | _VIDEO_MIME_ALLOWED | _DOCUMENT_MIME_ALLOWED
-)
-
-_DATA_URL_MIME_RE = re.compile(r"^data:([^;,]+)(?:;[^,]*)*;base64,", re.DOTALL)
-
-
-def extract_data_url_mime(url: Any) -> str | None:
-    """Return the normalized MIME from a base64 data URL, else ``None``."""
-    if not isinstance(url, str):
-        return None
-    match = _DATA_URL_MIME_RE.match(url)
-    if match is None:
-        return None
-    return match.group(1).strip().lower() or None
+__all__ = [
+    "AttachmentIngressResult",
+    "extract_data_url_mime",
+    "store_inbound_attachments",
+    "store_inbound_records",
+]
 
 
 def store_inbound_attachments(
@@ -82,91 +35,51 @@ def store_inbound_attachments(
     media_dir: Path,
     logger: Any,
     limits: AttachmentIngressLimits = DEFAULT_WEBUI_INGRESS_POLICY.attachments,
+    store_root: Path | None = None,
+    media_root: Path | None = None,
+    source: str = "websocket",
 ) -> AttachmentIngressResult:
-    """Validate and atomically persist one WebUI message's attachments.
+    """Validate and persist one inbound batch through the canonical service."""
+    records, rejection = store_inbound_records(
+        media,
+        media_dir=media_dir,
+        logger=logger,
+        limits=limits,
+        store_root=store_root,
+        media_root=media_root,
+        source=source,
+    )
+    if rejection is not None:
+        return [], rejection
+    store = AttachmentStore(
+        Path(store_root or media_dir),
+        media_root=Path(media_root or media_dir),
+        logger=logger,
+    )
+    return [str(store.path_for(record)) for record in records], None
 
-    The caller owns transport-level error mapping. This function owns the
-    WebUI upload policy and removes files already written when a later item
-    makes the batch invalid.
-    """
-    image_count = 0
-    video_count = 0
-    document_count = 0
-    for item in media:
-        attachment = cast(dict[str, Any], item) if isinstance(item, dict) else None
-        mime = (
-            extract_data_url_mime(attachment.get("data_url", ""))
-            if attachment is not None
-            else None
-        )
-        if mime in _VIDEO_MIME_ALLOWED:
-            video_count += 1
-        elif mime in _IMAGE_MIME_ALLOWED:
-            image_count += 1
-        elif mime in _DOCUMENT_MIME_ALLOWED:
-            document_count += 1
-    if image_count > limits.max_count:
-        return [], "too_many_images"
-    if video_count > _MAX_VIDEOS_PER_MESSAGE:
-        return [], "too_many_videos"
-    if image_count + document_count > limits.max_count:
-        return [], "too_many_attachments"
 
-    paths: list[str] = []
-    total_attachment_bytes = 0
-
-    def abort(reason: AttachmentRejection) -> AttachmentIngressResult:
-        for path in paths:
-            try:
-                Path(path).unlink(missing_ok=True)
-            except OSError as exc:
-                logger.warning("failed to unlink partial media {}: {}", path, exc)
-        return [], reason
-
-    for item in media:
-        if not isinstance(item, dict):
-            return abort("malformed")
-        attachment = cast(dict[str, Any], item)
-        data_url = attachment.get("data_url")
-        if not isinstance(data_url, str) or not data_url:
-            return abort("malformed")
-        mime = extract_data_url_mime(data_url)
-        if mime is None:
-            return abort("decode")
-        if mime not in _UPLOAD_MIME_ALLOWED:
-            return abort("mime")
-        is_video = mime in _VIDEO_MIME_ALLOWED
-        is_document = mime in _DOCUMENT_MIME_ALLOWED
-        max_bytes = (
-            _MAX_VIDEO_BYTES if is_video
-            else limits.max_file_bytes
-        )
-        name = (
-            attachment.get("name")
-            if is_document and isinstance(attachment.get("name"), str)
-            else None
-        )
-        try:
-            saved = save_base64_data_url(
-                data_url,
-                media_dir,
-                max_bytes=max_bytes,
-                filename=name,
-            )
-        except FileSizeExceeded:
-            return abort("size")
-        except Exception as exc:
-            logger.warning("media decode failed: {}", exc)
-            return abort("decode")
-        if saved is None:
-            return abort("decode")
-        paths.append(saved)
-        if not is_video:
-            try:
-                total_attachment_bytes += Path(saved).stat().st_size
-            except OSError as exc:
-                logger.warning("failed to stat inbound attachment {}: {}", saved, exc)
-                return abort("decode")
-            if total_attachment_bytes > limits.max_total_bytes:
-                return abort("total_size")
-    return paths, None
+def store_inbound_records(
+    media: list[Any],
+    *,
+    media_dir: Path,
+    logger: Any,
+    limits: AttachmentIngressLimits = DEFAULT_WEBUI_INGRESS_POLICY.attachments,
+    store_root: Path | None = None,
+    media_root: Path | None = None,
+    source: str = "websocket",
+) -> tuple[list[AttachmentRecord], AttachmentRejection | None]:
+    """Validate and persist one inbound batch, returning canonical records."""
+    root = Path(store_root or media_dir)
+    base = Path(media_root or media_dir)
+    store = AttachmentStore(root, media_root=base, logger=logger)
+    ingress = AttachmentIngress(
+        store,
+        policy=AttachmentPolicy(limits=limits),
+        logger=logger,
+    )
+    result = ingress.accept_batch(cast(list[Any], media), source=source)
+    if result.rejection is not None:
+        return [], result.rejection
+    records, rejection = ingress.commit_batch(result.staged)
+    return list(records), rejection

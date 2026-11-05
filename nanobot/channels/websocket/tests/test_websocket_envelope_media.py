@@ -353,8 +353,9 @@ async def test_message_with_multiple_images(tmp_path) -> None:
     assert message.content == "a couple"
     paths = message.media
     assert len(paths) == 3
-    # Saved filenames must be unique.
-    assert len({Path(p).name for p in paths}) == 3
+    # Identical bytes share one content-addressed blob.
+    assert len(set(paths)) == 1
+    assert all(Path(path).is_file() for path in paths)
 
 
 @pytest.mark.asyncio
@@ -484,7 +485,6 @@ async def test_message_with_pdf_forwards_saved_path(tmp_path) -> None:
     saved = Path(paths[0])
     assert saved.exists()
     assert saved.suffix == ".pdf"
-    assert saved.name.endswith("_report.pdf")
     assert saved.read_bytes() == b"%PDF-1.4"
 
 
@@ -512,8 +512,12 @@ async def test_message_with_csv_forwards_saved_path(tmp_path) -> None:
     paths = message.media
     saved = Path(paths[0])
     assert saved.suffix == ".csv"
-    assert saved.name.endswith("_report.csv")
     assert saved.read_bytes() == b"name,value\nnanobot,1"
+    assert len(message.attachments) == 1
+    record = message.attachments[0]
+    assert record.name == "report.csv"
+    assert record.mime == "text/csv"
+    assert record.source == "websocket"
 
 
 @pytest.mark.asyncio
@@ -709,3 +713,48 @@ async def test_non_string_content_still_rejected() -> None:
     _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["detail"] == "missing content"
+
+
+@pytest.mark.asyncio
+async def test_upload_then_message_by_attachment_id(tmp_path) -> None:
+    """Upload-first path: a stored attachment ID can be bound by a later message."""
+    channel = _make_channel()
+    connection = _make_connection()
+
+    with patch("nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path):
+        await channel._dispatch_envelope(
+            connection,
+            "client-1",
+            {
+                "type": "attachment",
+                "chat_id": "abc123",
+                "name": "photo.png",
+                "data_url": _tiny_png_data_url(),
+            },
+        )
+        stored = None
+        for call in connection.send.await_args_list:
+            frame = json.loads(call.args[0])
+            if frame.get("event") == "attachment_stored":
+                stored = frame
+                break
+        assert stored is not None
+        connection.send.reset_mock()
+
+        await channel._dispatch_envelope(
+            connection,
+            "client-1",
+            {
+                "type": "message",
+                "chat_id": "abc123",
+                "content": "edit this",
+                "media": [{"id": stored["id"]}],
+            },
+        )
+
+    message = _published_message(channel)
+    assert len(message.attachments) == 1
+    assert message.attachments[0].id == stored["id"]
+    assert message.attachments[0].name == "photo.png"
+    assert len(message.media) == 1
+    assert Path(message.media[0]).is_file()

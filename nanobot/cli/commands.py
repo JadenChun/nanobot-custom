@@ -120,6 +120,9 @@ console = Console()
 artifacts_app = typer.Typer(help="Manage browser test artifacts")
 app.add_typer(artifacts_app, name="artifacts")
 
+attachments_app = typer.Typer(help="Manage inbound attachments")
+app.add_typer(attachments_app, name="attachments")
+
 
 @contextmanager
 def _admitted_browser_artifacts_dir(
@@ -200,6 +203,96 @@ def artifacts_clean(
             else:
                 shutil.rmtree(target)
         console.print(f"[green]✓[/green] Removed {len(targets)} item(s) from {artifacts_dir}")
+
+@attachments_app.command("prune")
+def attachments_prune(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    grace_days: int = typer.Option(7, "--grace-days", help="Keep unreferenced blobs newer than this"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report removals without deleting"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Remove attachment blobs no live session references."""
+    from nanobot.attachments.lifecycle import prune_unreferenced
+    from nanobot.attachments.store import AttachmentStore
+    from nanobot.config.paths import get_attachments_dir, get_default_sessions_root, get_media_dir
+
+    runtime_config = _load_runtime_config(config, workspace)
+    if runtime_config.runtime_data_dir is not None:
+        sessions_root = runtime_config.runtime_data_dir / "sessions"
+    elif config:
+        sessions_root = Path(config).expanduser().resolve(strict=False).parent / "sessions"
+    else:
+        sessions_root = get_default_sessions_root()
+    store = AttachmentStore(get_attachments_dir(), media_root=get_media_dir())
+    grace_seconds = max(0, grace_days) * 24 * 60 * 60
+    preview = prune_unreferenced(
+        store,
+        sessions_root,
+        grace_seconds=grace_seconds,
+        dry_run=True,
+    )
+    if not preview:
+        console.print("No unreferenced attachment blobs to remove.")
+        return
+    if dry_run:
+        console.print(f"Would remove {len(preview)} unreferenced attachment blob(s).")
+        for path in preview[:20]:
+            console.print(f"  {path}")
+        return
+    if not yes and not typer.confirm(
+        f"Remove {len(preview)} unreferenced attachment blob(s)?", default=False,
+    ):
+        console.print("Cancelled.")
+        raise typer.Exit(1)
+    removed = prune_unreferenced(
+        store,
+        sessions_root,
+        grace_seconds=grace_seconds,
+        dry_run=False,
+    )
+    console.print(f"Removed {len(removed)} unreferenced attachment blob(s).")
+
+
+@attachments_app.command("migrate")
+def attachments_migrate(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report migrations without writing"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Rewrite legacy media paths in session history as attachment records."""
+    from nanobot.attachments.lifecycle import migrate_legacy_media
+    from nanobot.attachments.store import AttachmentStore
+    from nanobot.config.paths import get_attachments_dir, get_default_sessions_root, get_media_dir
+
+    runtime_config = _load_runtime_config(config, workspace)
+    if runtime_config.runtime_data_dir is not None:
+        sessions_root = runtime_config.runtime_data_dir / "sessions"
+    elif config:
+        sessions_root = Path(config).expanduser().resolve(strict=False).parent / "sessions"
+    else:
+        sessions_root = get_default_sessions_root()
+    store = AttachmentStore(get_attachments_dir(), media_root=get_media_dir())
+    preview = migrate_legacy_media(sessions_root, store, dry_run=True)
+    if preview.events_migrated == 0:
+        console.print("No legacy media events need migration.")
+        return
+    console.print(
+        f"Would migrate {preview.events_migrated} event(s) in "
+        f"{preview.files_changed} file(s); {preview.events_skipped} skipped."
+    )
+    if dry_run:
+        return
+    if not yes and not typer.confirm("Apply attachment migration?", default=False):
+        console.print("Cancelled.")
+        raise typer.Exit(1)
+    report = migrate_legacy_media(sessions_root, store, dry_run=False)
+    console.print(
+        f"Migrated {report.events_migrated} event(s) in {report.files_changed} file(s); "
+        f"{report.records_created} record(s) created, {report.events_skipped} skipped."
+    )
+
 
 def version_callback(value: bool):
     if value:

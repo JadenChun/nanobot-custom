@@ -129,7 +129,10 @@ async def test_known_assistant_is_durable_before_observer_failure(store, observe
 def test_projection_preserves_media_and_removes_only_marked_runtime_context():
     from nanobot.runtime_context import RUNTIME_CONTEXT_HISTORY_META
     events = [{'_event_id': 'one', 'role': 'user', 'content': 'input\n\nold runtime',
-               'media': ['/fixture/image.png'], RUNTIME_CONTEXT_HISTORY_META: {'version': 1, 'suffix': 'old runtime'}},
+               'attachments': [{'version': 1, 'id': 'att_fixture', 'sha256': '', 'mime': 'image/png',
+                                'bytes': 0, 'name': 'image.png', 'source': 'legacy', 'created_at': 0,
+                                'storage_key': '/fixture/image.png'}],
+               RUNTIME_CONTEXT_HISTORY_META: {'version': 1, 'suffix': 'old runtime'}},
               {'_event_id': 'two', '_parent_stream_id': 'root', 'role': 'assistant', 'content': 'private child'}]
     from copy import deepcopy
     original = deepcopy(events)

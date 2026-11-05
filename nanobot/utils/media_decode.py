@@ -58,6 +58,34 @@ class FileSizeExceededError(Exception):
 FileSizeExceeded = FileSizeExceededError
 
 
+def mime_extension(mime_type: str) -> str:
+    """Return the storage extension for a validated MIME type."""
+    return (
+        _MIME_EXTENSION_OVERRIDES.get(mime_type)
+        or mimetypes.guess_extension(mime_type)
+        or ".bin"
+    )
+
+
+def decode_data_url(data_url: str) -> tuple[str, bytes] | None:
+    """Decode a base64 data URL into ``(mime, bytes)``.
+
+    Returns ``None`` for a malformed URL or an empty payload. The caller owns
+    size policy.
+    """
+    match = _DATA_URL_RE.match(data_url)
+    if not match:
+        return None
+    mime_type, b64_payload = match.group(1).strip().lower(), match.group(2)
+    try:
+        raw = base64.b64decode(b64_payload, validate=True)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    return mime_type, raw
+
+
 def save_base64_data_url(
     data_url: str,
     media_dir: Path,
@@ -71,20 +99,14 @@ def save_base64_data_url(
     base64 payload itself is malformed. Raises :class:`FileSizeExceeded`
     when the decoded payload is larger than ``max_bytes`` (default 10 MB).
     """
-    m = _DATA_URL_RE.match(data_url)
-    if not m:
+    decoded = decode_data_url(data_url)
+    if decoded is None:
         return None
-    mime_type, b64_payload = m.group(1).strip().lower(), m.group(2)
-    try:
-        raw = base64.b64decode(b64_payload, validate=True)
-    except Exception:
-        return None
-    if not raw:
-        return None
+    mime_type, raw = decoded
     limit = DEFAULT_MAX_BYTES if max_bytes is None else max_bytes
     if len(raw) > limit:
         raise FileSizeExceeded(f"File exceeds {limit // (1024 * 1024)}MB limit")
-    ext = _MIME_EXTENSION_OVERRIDES.get(mime_type) or mimetypes.guess_extension(mime_type) or ".bin"
+    ext = mime_extension(mime_type)
     base = safe_filename(filename or "")
     stem = Path(base).stem[:80] if base else ""
     saved_name = f"{uuid.uuid4().hex[:12]}_{stem}{ext}" if stem else f"{uuid.uuid4().hex[:12]}{ext}"

@@ -1,8 +1,6 @@
 """Context builder for assembling agent prompts."""
 
-import base64
 import json
-import mimetypes
 import platform
 import uuid
 from dataclasses import dataclass
@@ -17,6 +15,7 @@ from nanobot.agent.tools import mcp as mcp_tools
 from nanobot.agent.tools import sessions as session_tools
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.apps.cli import utils as cli_app_utils
+from nanobot.attachments.context import AttachmentContext
 from nanobot.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
     RUNTIME_CONTROL_SESSION_DISCARD,
@@ -44,7 +43,7 @@ from nanobot.session.source_projection import RuntimeNode, SourceNode
 from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.session.summary import SessionSummary
 from nanobot.utils import helpers
-from nanobot.utils.helpers import detect_image_mime, load_bundled_template
+from nanobot.utils.helpers import load_bundled_template
 from nanobot.utils.prompt_templates import render_template
 
 
@@ -129,6 +128,7 @@ class ContextBuilder:
         sessions_root: Path | None = None,
         resource_policy: ResourceAccessPolicy | None = None,
         folder_grants: FolderGrantView | None = None,
+        attachment_context: AttachmentContext | None = None,
     ):
         self.workspace = workspace
         self.timezone = timezone
@@ -138,6 +138,7 @@ class ContextBuilder:
         self.repositories = RepositoryCatalog.for_workspace(workspace, sessions_root=sessions_root)
         self.resource_policy = resource_policy
         self.folder_grants = folder_grants
+        self.attachments = attachment_context or AttachmentContext()
         self.skills = SkillsLoader(
             workspace,
             disabled_skills=set(disabled_skills) if disabled_skills else None,
@@ -594,27 +595,4 @@ class ContextBuilder:
         image_paths: list[str] | None,
     ) -> str | list[dict[str, Any]]:
         """Build user message content from prefiltered image paths."""
-        if not image_paths:
-            return text
-
-        image_blocks: list[dict[str, Any]] = []
-        for path in image_paths:
-            p = Path(path)
-            if not p.is_file():
-                continue
-            raw = p.read_bytes()
-            # Re-detect from the bytes used for the request: the file may have
-            # changed since attachment routing, and the data URL needs its MIME.
-            mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
-            if not mime or not mime.startswith("image/"):
-                continue
-            b64 = base64.b64encode(raw).decode()
-            image_blocks.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64}"},
-                "_meta": {"path": str(p)},
-            })
-
-        if not image_blocks:
-            return text
-        return image_blocks + [{"type": "text", "text": text}]
+        return self.attachments.user_content_from_paths(text, image_paths)

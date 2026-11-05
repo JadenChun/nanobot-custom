@@ -397,16 +397,11 @@ def content_with_media_breadcrumbs(
     media: Any,
 ) -> Any:
     """Append persisted user-media breadcrumbs to plain-text content."""
-    if role != "user" or not isinstance(content, str) or not isinstance(media, list):
-        return content
-    breadcrumbs = "\n".join(
-        image_placeholder_text(path)
-        for path in cast(list[object], media)
-        if isinstance(path, str) and path
+    from nanobot.attachments.context import (
+        content_with_media_breadcrumbs as _content_with_media_breadcrumbs,
     )
-    if not breadcrumbs:
-        return content
-    return f"{content}\n{breadcrumbs}" if content else breadcrumbs
+
+    return _content_with_media_breadcrumbs(role, content, media)
 
 
 def truncate_text(text: str, max_chars: int) -> str:

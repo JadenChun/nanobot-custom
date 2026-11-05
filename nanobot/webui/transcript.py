@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
+from nanobot.attachments.context import media_paths_for_message
 from nanobot.config.paths import get_webui_dir
 from nanobot.runtime_context import public_history_message
 from nanobot.session.automation_turns import is_automation_kind
@@ -846,6 +847,7 @@ class WebUITranscriptRecorder:
         *,
         metadata: dict[str, Any],
         media_paths: list[str] | None = None,
+        attachments: Sequence[Mapping[str, Any]] | None = None,
         cli_apps: list[dict[str, Any]] | None = None,
         mcp_presets: list[dict[str, Any]] | None = None,
         session_mentions: Sequence[Mapping[str, Any]] | None = None,
@@ -856,6 +858,7 @@ class WebUITranscriptRecorder:
             chat_id,
             text,
             media_paths=media_paths,
+            attachments=attachments,
             cli_apps=cli_apps,
             mcp_presets=mcp_presets,
             session_mentions=session_mentions,
@@ -1091,12 +1094,18 @@ def build_user_transcript_event(
     text: str,
     *,
     media_paths: list[Any] | None = None,
+    attachments: Sequence[Mapping[str, Any]] | None = None,
     cli_apps: list[Any] | None = None,
     mcp_presets: list[Any] | None = None,
     session_mentions: Sequence[Any] | None = None,
 ) -> dict[str, Any] | None:
     paths = [str(path) for path in (media_paths or []) if path]
-    if not text and not paths:
+    records = [
+        dict(attachment)
+        for attachment in (attachments or [])
+        if isinstance(attachment, Mapping)
+    ]
+    if not text and not paths and not records:
         return None
     event: dict[str, Any] = {
         "event": "user",
@@ -1105,6 +1114,8 @@ def build_user_transcript_event(
     }
     if paths:
         event["media_paths"] = paths
+    if records:
+        event["attachments"] = records
     apps = [
         dict(cast(Mapping[str, Any], app))
         for app in (cli_apps or [])
@@ -1151,7 +1162,8 @@ def _session_user_event(
         return None
     content = message.get("content")
     text = content if isinstance(content, str) else ""
-    media = message.get("media")
+    media = media_paths_for_message(message)
+    attachments = message.get("attachments")
     cli_apps = message.get("cli_apps")
     mcp_presets = message.get("mcp_presets")
     session_mentions = message.get("session_mentions")
@@ -1159,7 +1171,12 @@ def _session_user_event(
     return build_user_transcript_event(
         chat_id,
         text,
-        media_paths=cast(list[Any], media) if isinstance(media, list) else None,
+        media_paths=media or None,
+        attachments=(
+            [dict(item) for item in cast(list[Any], attachments) if isinstance(item, Mapping)]
+            if isinstance(attachments, list)
+            else None
+        ),
         cli_apps=cast(list[Any], cli_apps) if isinstance(cli_apps, list) else None,
         mcp_presets=cast(list[Any], mcp_presets) if isinstance(mcp_presets, list) else None,
         session_mentions=(

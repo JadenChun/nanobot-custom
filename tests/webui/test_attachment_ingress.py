@@ -10,6 +10,7 @@ import pytest
 from nanobot.webui.attachment_ingress import (
     extract_data_url_mime,
     store_inbound_attachments,
+    store_inbound_records,
 )
 from nanobot.webui.ingress_policy import AttachmentIngressLimits
 
@@ -42,7 +43,7 @@ def test_extract_data_url_mime_normalizes_only_base64_data_urls(
 
 
 def test_store_inbound_document_preserves_safe_name(tmp_path: Path) -> None:
-    paths, rejection = store_inbound_attachments(
+    records, rejection = store_inbound_records(
         [
             {
                 "data_url": _data_url("text/csv", b"name,value\nnanobot,1"),
@@ -54,10 +55,13 @@ def test_store_inbound_document_preserves_safe_name(tmp_path: Path) -> None:
     )
 
     assert rejection is None
-    assert len(paths) == 1
-    saved = Path(paths[0])
-    assert saved.parent == tmp_path
-    assert saved.name.endswith("_report.csv")
+    assert len(records) == 1
+    record = records[0]
+    assert record.name == "report.csv"
+    assert record.mime == "text/csv"
+    assert record.sha256
+    saved = tmp_path / record.sha256[:2] / f"{record.sha256}.csv"
+    assert saved.is_file()
     assert saved.read_bytes() == b"name,value\nnanobot,1"
 
 

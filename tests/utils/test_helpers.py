@@ -131,6 +131,14 @@ def test_content_with_media_breadcrumbs_preserves_valid_paths():
     )
 
 
+def test_content_with_media_breadcrumbs_does_not_duplicate_existing_reference():
+    assert content_with_media_breadcrumbs(
+        "user",
+        "edit this\n[image: /media/photo.jpg]",
+        ["/media/photo.jpg"],
+    ) == "edit this\n[image: /media/photo.jpg]"
+
+
 def test_content_with_media_breadcrumbs_only_rewrites_plain_user_content():
     structured = [{"type": "text", "text": "hello"}]
 
