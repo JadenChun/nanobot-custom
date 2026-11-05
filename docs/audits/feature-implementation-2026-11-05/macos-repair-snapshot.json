@@ -1,0 +1,487 @@
+{
+  "recorded_at": "2026-11-05T11:59:29.737814+00:00",
+  "scope": "F-005 Darwin peer authentication and retained backend failure repairs; earlier batches preserved",
+  "branch": "codex/feature-audit-repairs",
+  "verdict": "PASS",
+  "graph_status": "CLOSED_PASS",
+  "acceptance_criteria": "AC1-AC7 in macos-repair-plan.md",
+  "committed": false,
+  "clean_codebase": false,
+  "p6_complete": false,
+  "evidence_root": "/tmp/nanobot-macos-repairs-20261105.s00w7c6h",
+  "evidence_pointer": ".git/macos-repairs-evidence",
+  "environment": {
+    "python": "3.13.2 (v3.13.2:4f8bb3947cf, Feb  4 2025, 11:51:10) [Clang 15.0.0 (clang-1500.3.9.4)]",
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "checker": "basedpyright 1.40.1\nbased on pyright 1.1.414",
+    "package_count": 183,
+    "final_inventory_matches_frozen_baseline": true,
+    "pyproject_sha256": "9d99c2b43d52f1f915273b16963e44fd500e17b56cb2127d57aef681e8c0f0d4",
+    "dependency_or_lockfile_change_in_final_result": false
+  },
+  "source": {
+    "baseline_manifest": "source-before.json",
+    "baseline_file_count": 1922,
+    "passing_full_run_manifest": "source-accepted.json",
+    "complete_manifest": "source-complete.json",
+    "complete_file_count": 1923,
+    "production_checker_inputs": 537,
+    "built_asset_files": 590,
+    "changed_paths": [
+      "nanobot/channels/websocket/tests/test_websocket_channel.py",
+      "nanobot/remote/ipc.py",
+      "tests/agent/test_folder_access_recovery.py",
+      "tests/agent/test_managed_exec.py",
+      "tests/agent/test_native_process_io.py",
+      "tests/channels/test_channel_plugins.py",
+      "tests/context_repo/test_sandbox_write_policy.py",
+      "tests/desktop/test_adapter.py",
+      "tests/remote/test_peer_credentials.py",
+      "tests/security/test_folder_grants.py",
+      "tests/security/test_native_receipt_publication.py",
+      "tests/session/test_p5_stage2_temporary_sessions.py",
+      "tests/webui/test_gateway_webui_smoke.py",
+      "tests/webui/test_permission_v2_api.py",
+      "tests/webui/test_workspace_directories.py"
+    ],
+    "production_behavior_changed_paths": [
+      "nanobot/remote/ipc.py"
+    ],
+    "post_full_run_source_delta": [
+      "tests/remote/test_peer_credentials.py"
+    ],
+    "production_other_source_assets_packages_match_passing_full_run": true
+  },
+  "validation": {
+    "remote_and_dependent": {
+      "passed": 151,
+      "exit": 0,
+      "log": "remote.log"
+    },
+    "initial_affected": {
+      "passed": 291,
+      "skipped": 22,
+      "warnings": 4,
+      "exit": 0,
+      "log": "affected.log"
+    },
+    "retained_selection": {
+      "passed": 15,
+      "skipped": 7,
+      "exit": 0,
+      "log": "retained.log"
+    },
+    "six_correction_modules": {
+      "passed": 182,
+      "skipped": 16,
+      "warnings": 10,
+      "exit": 0,
+      "log": "round1-owning-modules.log"
+    },
+    "unsupported_desktop": {
+      "passed": 2,
+      "exit": 0,
+      "log": "round1-desktop-unsupported-platform.log"
+    },
+    "full_backend": {
+      "passed": 17001,
+      "skipped": 75,
+      "warnings": 42,
+      "subtests_passed": 6,
+      "seconds": 907.55,
+      "exit": 0,
+      "command": [
+        ".venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-rfs",
+        "--disable-warnings",
+        "--durations=25",
+        "--basetemp=/tmp/nmr-final-mf5nq3ri"
+      ],
+      "started_at": "2026-11-05T11:30:00.438711+00:00",
+      "completed_at": "2026-11-05T11:45:10.714476+00:00",
+      "log": "full-backend-final.log",
+      "no_failure_based_exclusions": true,
+      "full_suite_repeated_after_final_peer_fixture_change": false
+    },
+    "final_peer_normal": {
+      "passed": 19,
+      "exit": 0,
+      "log": "round2-peer-normal.log"
+    },
+    "final_peer_missing_getuid": {
+      "passed": 18,
+      "skipped": 1,
+      "exit": 0,
+      "log": "round2-peer-no-getuid.log",
+      "skip": "real kernel IPC only"
+    },
+    "root_peer": {
+      "passed": 19,
+      "exit": 0,
+      "log": "peer-root-acceptance.log"
+    },
+    "strict": {
+      "before_errors": 1001,
+      "final_errors": 1001,
+      "files_analyzed": 537,
+      "checker_exit": 1,
+      "introduced_signatures": 0,
+      "resolved_signatures": 0,
+      "comparator_verdict": "PASS_NO_NEW_DIAGNOSTICS"
+    },
+    "ruff": "PASS; full runtime and changed tests, plus supplemental final peer file",
+    "diff_check": "PASS",
+    "prior_frontend": {
+      "passed": 1468,
+      "build": "PASS",
+      "lint": "PASS",
+      "rerun_in_this_batch": false,
+      "record": "repair-results.md"
+    },
+    "counts_overlap": true
+  },
+  "retained_22_cases": [
+    {
+      "nodeid": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_handle_file_preview_allows_paths_outside_workspace_in_full_access",
+      "cause": "Authorization fixture assumed native supervisor availability",
+      "result": "passed",
+      "repair": "per-test capability fixture; consent checks retained"
+    },
+    {
+      "nodeid": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_handle_file_preview_probe_reports_binary_file_as_unavailable",
+      "cause": "Supported image represented an unsupported binary",
+      "result": "passed",
+      "repair": "NUL-containing generic .bin fixture"
+    },
+    {
+      "nodeid": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_remote_owner_full_message_requires_own_device_consent",
+      "cause": "Authorization fixture assumed native supervisor availability",
+      "result": "passed",
+      "repair": "per-test capability fixture; consent checks retained"
+    },
+    {
+      "nodeid": "tests/agent/test_folder_access_recovery.py::test_real_file_and_exec_adapters_emit_typed_recovery",
+      "cause": "Real command success required without sandbox confinement",
+      "result": "passed",
+      "repair": "assert actual capability outcome and typed recovery"
+    },
+    {
+      "nodeid": "tests/agent/test_managed_exec.py::test_opaque_native_host_return_keeps_first_activation_unknown",
+      "cause": "Policy fixture assumed Linux host identity",
+      "result": "passed",
+      "repair": "test-local stable identity"
+    },
+    {
+      "nodeid": "tests/agent/test_native_process_io.py::test_communicate_sends_and_receives_large_duplex_streams",
+      "cause": "Linux native process I/O and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/agent/test_native_process_io.py::test_fenced_permission_blocks_interactive_input_from_home_cwd[full]",
+      "cause": "Linux native process I/O and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/agent/test_native_process_io.py::test_fenced_permission_blocks_interactive_input_from_home_cwd[once]",
+      "cause": "Linux native process I/O and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/agent/test_native_process_io.py::test_handle_delivers_all_input_after_child_delays_reading",
+      "cause": "Linux native process I/O and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/agent/test_native_process_io.py::test_kill_services_control_while_output_pipe_is_full",
+      "cause": "Linux native process I/O and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/agent/test_native_process_io.py::test_once_retirement_closes_owned_interactive_stdin",
+      "cause": "Linux native process I/O and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/agent/test_native_process_io.py::test_session_write_delivers_all_input_after_child_delays_reading",
+      "cause": "Linux native process I/O and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/webui/test_gateway_webui_smoke.py::test_gateway_webui_bootstrap_message_and_thread_hydration",
+      "cause": "Real command success required without sandbox confinement",
+      "result": "passed",
+      "repair": "verify actual unavailable response in transport and history"
+    },
+    {
+      "nodeid": "tests/webui/test_linked_file_preview.py::test_cp01_relative_shared_file_opens_on_desktop_and_mobile[../external area/report v1.txt]",
+      "cause": "Darwin peer authentication unavailable",
+      "result": "passed",
+      "repair": "kernel peer credentials"
+    },
+    {
+      "nodeid": "tests/webui/test_linked_file_preview.py::test_cp01_relative_shared_file_opens_on_desktop_and_mobile[external area/report v1.txt]",
+      "cause": "Darwin peer authentication unavailable",
+      "result": "passed",
+      "repair": "kernel peer credentials"
+    },
+    {
+      "nodeid": "tests/webui/test_linked_file_preview.py::test_cp02_absolute_markdown_link_needs_no_tool_output",
+      "cause": "Darwin peer authentication unavailable",
+      "result": "passed",
+      "repair": "kernel peer credentials"
+    },
+    {
+      "nodeid": "tests/webui/test_permission_v2_api.py::test_allow_once_does_not_reauthorize_while_prior_once_tree_is_active",
+      "cause": "Policy fixture assumed host identity/native capability",
+      "result": "passed",
+      "repair": "test-local identity and capability fixtures"
+    },
+    {
+      "nodeid": "tests/webui/test_permission_v2_api.py::test_old_generation_once_residual_projects_without_current_request",
+      "cause": "Policy fixture assumed host identity/native capability",
+      "result": "passed",
+      "repair": "test-local identity and capability fixtures"
+    },
+    {
+      "nodeid": "tests/webui/test_permission_v2_api.py::test_real_mode_conflict_is_serialized_and_cached_as_typed_websocket_frame",
+      "cause": "Policy fixture assumed host identity/native capability",
+      "result": "passed",
+      "repair": "test-local identity and capability fixtures"
+    },
+    {
+      "nodeid": "tests/webui/test_remote_access_settings.py::test_owner_pairing_start_requires_consent_and_exposes_pending",
+      "cause": "Darwin peer authentication unavailable",
+      "result": "passed",
+      "repair": "kernel peer credentials"
+    },
+    {
+      "nodeid": "tests/webui/test_remote_access_settings.py::test_remote_access_settings_routes",
+      "cause": "Darwin peer authentication unavailable",
+      "result": "passed",
+      "repair": "kernel peer credentials"
+    },
+    {
+      "nodeid": "tests/webui/test_workspace_directories.py::test_roots_response_is_bounded",
+      "cause": "Response-bound fixture exceeded Darwin PATH_MAX",
+      "result": "passed",
+      "repair": "short root and test-local response limit"
+    }
+  ],
+  "additional_17_cases": [
+    {
+      "nodeid": "tests/context_repo/test_sandbox_write_policy.py::test_sandbox_file_reads_cannot_reach_gateway_process_environment",
+      "cause": "Linux /proc environment paths",
+      "result": "skipped",
+      "repair": "targeted Linux capability mark"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_desktop_start_returns_handle_without_waiting_for_readiness",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_desktop_created_gateway_rejects_port_proof_mismatch_without_mutation",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_desktop_start_keeps_admission_handle_if_state_is_replaced_before_response",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_desktop_lifecycle_controls_one_isolated_child_and_confirms_exit",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_desktop_adopts_normal_on_demand_gateway_and_promotes_its_lease",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_simultaneous_desktop_acquisitions_start_one_gateway",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_desktop_refuses_foreign_listener_without_starting[gateway]",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/desktop/test_adapter.py::test_desktop_refuses_foreign_listener_without_starting[websocket]",
+      "cause": "Linux PID birth identity/pidfd lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks and additive unsupported-platform coverage"
+    },
+    {
+      "nodeid": "tests/security/test_folder_grants.py::test_first_activation_waits_for_owned_native_process_reservation",
+      "cause": "Policy fixture assumed host identity",
+      "result": "passed",
+      "repair": "test-local stable identity"
+    },
+    {
+      "nodeid": "tests/security/test_native_receipt_publication.py::test_receipt_is_private_single_link_and_cannot_be_replayed",
+      "cause": "Linux /proc identity and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks"
+    },
+    {
+      "nodeid": "tests/security/test_native_receipt_publication.py::test_activation_waits_for_receipt_publication_and_consumes_valid_proof",
+      "cause": "Linux /proc identity and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks"
+    },
+    {
+      "nodeid": "tests/security/test_native_receipt_publication.py::test_receipt_lock_timeout_is_retryable_and_does_not_latch_store",
+      "cause": "Linux /proc identity and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks"
+    },
+    {
+      "nodeid": "tests/security/test_native_receipt_publication.py::test_invalid_receipt_evidence_keeps_admission_blocked[corrupt]",
+      "cause": "Linux /proc identity and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks"
+    },
+    {
+      "nodeid": "tests/security/test_native_receipt_publication.py::test_invalid_receipt_evidence_keeps_admission_blocked[hardlink]",
+      "cause": "Linux /proc identity and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks"
+    },
+    {
+      "nodeid": "tests/security/test_native_receipt_publication.py::test_invalid_receipt_evidence_keeps_admission_blocked[permissive-mode]",
+      "cause": "Linux /proc identity and receipt lifecycle",
+      "result": "skipped",
+      "repair": "targeted Linux capability marks"
+    },
+    {
+      "nodeid": "tests/session/test_p5_stage2_temporary_sessions.py::test_temporary_submitted_sandbox_wins_when_full_is_enabled",
+      "cause": "Policy fixture assumed native capability",
+      "result": "passed",
+      "repair": "per-test capability fixture"
+    }
+  ],
+  "targeted_linux_skips_added": {
+    "native_io": 7,
+    "proc_environment": 1,
+    "desktop_lifecycle": 8,
+    "native_receipts": 6,
+    "total": 22
+  },
+  "initial_nonacceptance_run": {
+    "result": {
+      "passed": 16997,
+      "failed": 17,
+      "skipped": 60,
+      "warnings": 40,
+      "subtests_passed": 6,
+      "seconds": 894.9,
+      "exit": 1
+    },
+    "accepted": false,
+    "environment_mutation": {
+      "added": [
+        "lark-oapi==1.7.5",
+        "pycryptodome==4.3.0",
+        "requests-toolbelt==1.0.0"
+      ],
+      "changed": [
+        "websockets==16.1.1 -> 15.0.1"
+      ],
+      "installer_mtime_utc": "2026-11-05T11:08:58Z",
+      "offending_test": "tests/channels/test_channel_plugins.py::test_enable_optional_feature_refreshes_feishu_identity",
+      "controlled_probe": "installer-isolation-probe.json"
+    },
+    "restored_inventory": "environment-restored.json",
+    "installer_test_repair": "Per-test installed-dependency fixture and forbidden installer runner",
+    "baseline_desktop_replay_limitation": "Desktop baseline replay lacks ignored built WebUI assets and fails on webui_assets_unavailable before the platform gate. Matching failure nodes do not establish matching desktop causes. Current desktop failures and unchanged production Linux-only start_desktop guard establish the platform classification."
+  },
+  "review": {
+    "role": "development_analysis_medium",
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "max",
+    "report": "review-terminal.txt",
+    "recommendation": "PASS",
+    "material_unresolved_findings": 0,
+    "root_verdict": "root-final-verdict.json",
+    "test_fixture_correction_rounds": 2
+  },
+  "limits": [
+    "Final peer fixture changed after passing full suite and has focused supplemental validation; no whole-suite rerun after that change",
+    "1001 strict errors remain; no P6, clean-codebase, architecture or release completion",
+    "Real Linux kernel IPC/native lifecycle/confinement and native Windows execution remain unqualified by this Darwin run",
+    "Different-UID real IPC denial changes expected UID; no separately launched second OS account",
+    "Missing-getuid probe is a simulation, not native Windows qualification",
+    "75 skips include optional SDK and native platform requirements",
+    "Native mobile/browser/clipboard, live external delivery and installation/update qualification remain open"
+  ],
+  "evidence_sha256": {
+    "source-before.json": "192f0ef36c864aced2287044289468545b61334867f05ea94a5c29dc68ce50dd",
+    "source-accepted.json": "938f92af4f873dffd2a834ce5f3211f5d9cd20d490475ded76dd8651fbf6e951",
+    "source-complete.json": "78316e490544d9bcb1c3ff460b0d0b60dbdc14e5caa7e96a9ca6ec66a400b7c9",
+    "environment-before.json": "0e1fe08b28b01750dfcb6f62403bfe40ad3fbdf140c2a0fd9eefec2f45781619",
+    "environment-restored.json": "5efa8446a188157d7e43a0b524825ca4c8f2c8a48cf4c078b8af66ce2d7ac5f6",
+    "environment-accepted.json": "2f56bb50581ef0732c51980e62668f391627cc63a83d71e9c6d97d7cc67f8004",
+    "environment-complete.json": "9ae502f5f9599aca1530cc0c0f68d81ef25194ddb49cbc2df59e3055cdc361c3",
+    "strict-before.json": "a6cac2c34b9075feccec23e7cff07b464077cd064f5d7a463739ea8dfe46f93d",
+    "strict-final.json": "0ade50b7c05458e04f6da22feb310d4cab9773985c81123eedb241cfd906e4a7",
+    "strict-final-command.json": "d69b45643acdf6b94b11838b1d711e5269ed4fbfaa0fff3b48e446b1ef04c32e",
+    "types-final-comparison.json": "06f87afe2a7a6003f5595794545176ef00b60459d3908af13e1b3174d2a5eb4d",
+    "production-inputs-tested.json": "09abf89be315219ee9eb406986f6cdb31ccf3d36c33bbdd2ade39aab512702e6",
+    "webui-bundle-before-full.json": "d9eb7bdf27f1b6470b66694eb47143d0b2499afd86eb49b1cdbfef7db9248a99",
+    "red.log": "6ba858ff951c669bad1687b6576d6963acc80c2679dd33644a7f9eb23311afed",
+    "peer-red.log": "d1e246e993094b04d90f9e8e49902af626c48f3e342227efc6eb6020fa804c10",
+    "remote.log": "06258f31f70a6e8e8049682cd08ec5d8336ece42f85236dd80d617c8a40a6b2e",
+    "affected.log": "853a8f30ef0f58b8cc6aad5593743557f7ce07d7a208e76238f657aef2bff964",
+    "retained.log": "5181e5c067ba41bef7d0ebe5fe2e0a3456e21fd5a444c8810e81f5d199b2de1d",
+    "retained-command.json": "0e376e0e862e6c47acc011760af28d223b4308233c8cfa046b759a8532899a5d",
+    "full-backend.log": "8d6c6dfd14a68ee8500a69ac6864f0e7d453367e3a53e559fb3e7a9eaa68ea77",
+    "initial-full-run-attribution.json": "be2ecc5902c47dba63f11fb15ef877c605583dc17f84315eea0fd75d6f3c1842",
+    "additional-current-red.log": "3c20334ee03a721d1301aba2d73265a175c33359b1eb7840e7094374c31c103f",
+    "additional-baseline-red.log": "e6238f2e189b227c6b67aa965cda62ce2933572252a426aad0737e29b6f13569",
+    "installer-isolation-probe.json": "bb7bd5961e05e4e1a604e012fa0177824025aeef9b0351894bf0232cab35e003",
+    "round1-validation.json": "d64332d016deb12d66aac007ad686b77646d7ec98cfd28896fae9b68e8710b00",
+    "round1-owning-modules.log": "3043563f5ef2ffccb302f2a9ab3220d7748ba375f476aa83242e484add46db5c",
+    "round1-desktop-unsupported-platform.log": "421fb2c529dd4ac79f09a4dcd48f26ceff204311da4c0ae18b27c8223100621e",
+    "round2-validation.json": "9dfe7828e237dfb88bbdd8d322e6b66cb664c9b0a20761c0883dce9f331f0455",
+    "round2-peer-normal.log": "a7eb8bc5ad8343f602b587751aad8c6aaa550146154bfd93099ccbfe7f4dbb9e",
+    "round2-peer-no-getuid.log": "20264d3c0dab5723f3d99987e3a21ae5964c760888c04268d72dfed8951e234f",
+    "round2-ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "full-backend-final.log": "55dff6225d4c2a4ca70720d2915fc0c67c607eb1a12ac81d0ee0ccc5ebdca009",
+    "full-backend-final.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "full-backend-final-command.json": "5e6afdab9de27c9a205b9c3cc0bcb71219bd5ec73983bb2ba2f13a5645468511",
+    "full-backend-final-verification.json": "bb2fc8e8ee75760c90a1437072e815e5a5f2b31d3e3d1c8346cc46595cb7389d",
+    "peer-root-acceptance.log": "64670b3f031118cada81400ba819f49c1e57e4dcc2ee4999a8837533b83a2648",
+    "peer-root-acceptance.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "peer-root-acceptance-command.json": "6228fbbdd30afade1a326fe7240a1d76e06ddaaf3483d9e1fc698df038ff5aea",
+    "ruff-final.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "ruff-final.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "complete-batch.diff": "10716d3c37163e5743e1ab0f856b6e17852a31bbccc5d5d7f678f3e4f022bff9",
+    "peer-portability.diff": "f3ecc1a050ff117f0e84c44213ea9aa46d164575644c15d205774434eabf9973",
+    "complete-source-verification.json": "e807b2312db84caaf6eabadb9c3c42b112d274604263c346f9790611c37b14cd",
+    "root-final-precheck.json": "c2e864fca1f8f3c79b4b4b48d6bf9a33206b8e6b0a6f9623ae497c44907d8867",
+    "review-terminal.txt": "7d8a5c7b24423ab91b362646e08b999d16def9dbb4816e067d320d6245efe1ca",
+    "review-terminal-verification.json": "d38841487768d0d94a25137f7d9948b8390431d8b3fe3efc0dac19281b91c77e",
+    "root-final-verdict.json": "c92d987ac9f692ae0158e32a3a98a6ecaacad4ed4242b2428368263e61e35306"
+  }
+}

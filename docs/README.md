@@ -78,6 +78,9 @@ These pages explain implementation and extension points. You do not need them to
 | Goal | Read |
 |---|---|
 | Understand source ownership and runtime flow | [Architecture](./architecture.md) |
+| Review feature implementation gaps and acceptance criteria | [Feature implementation audit](./feature-implementation-audit-2026-11-05.md) |
+| Review completed feature repairs and their validation limits | [Feature repair results](./audits/feature-implementation-2026-11-05/repair-results.md) |
+| Follow the code-quality audit scope and stages | [Code-quality audit charter](./code-quality-audit-2026-11-04.md) |
 | Review future agent-managed sessions and the SuperAgent study | [SuperAgent research and session direction](./superagent-research-and-session-direction.md) |
 | Review the retired H1/concurrency cleanup | [Telegram H1 and global concurrency cleanup plan](./telegram-h1-concurrency-cleanup-plan.md) |
 | Set up a development environment | [Development](./development.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) |
