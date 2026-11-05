@@ -14,6 +14,10 @@ import type {
   WorkspacePermissionProjection,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
+import {
+  startMobileRunKeepAlive,
+  stopMobileRunKeepAlive,
+} from "./mobile-run-keep-alive";
 
 /** WebSocket readyState constants, referenced by value to stay portable
  * across runtimes that don't expose a global ``WebSocket`` (tests, SSR). */
@@ -81,6 +85,26 @@ type SessionUpdateHandler = (
 type SidebarStateUpdateHandler = (state: SidebarStatePayload) => void;
 type SettingsUpdatedHandler = () => void;
 type RunStatusHandler = (chatId: string, startedAt: number | null) => void;
+
+/** Terminal run event consumed by the global task-notification hook. */
+export type TaskNotificationEvent =
+  | {
+      kind: "turn_end";
+      chatId: string;
+      turnId?: string;
+      outcome?: string;
+      failureKind?: string;
+      failureMessage?: string;
+      failureErrorKind?: string;
+      failureAttempts?: number;
+    }
+  | {
+      kind: "recovery";
+      chatId: string;
+      status: "awaiting_user" | "failed";
+    };
+
+type TaskNotificationHandler = (event: TaskNotificationEvent) => void;
 
 /** Structured errors surfaced to the UI.
  *
@@ -207,7 +231,12 @@ export class NanobotClient {
   private sidebarStateUpdateHandlers = new Set<SidebarStateUpdateHandler>();
   private settingsUpdatedHandlers = new Set<SettingsUpdatedHandler>();
   private runStatusHandlers = new Set<RunStatusHandler>();
+  private taskNotificationHandlers = new Set<TaskNotificationHandler>();
   private errorHandlers = new Set<ErrorHandler>();
+  /** Runs submitted by this client, keyed by chat id so any ending turn can notify. */
+  private ownedRunTurnIdsByChatId = new Map<string, Set<string>>();
+  /** Side-channel turns stay quiet even when their chat has an owned run. */
+  private sideChannelTurnIdsByChatId = new Map<string, Set<string>>();
   // chat_id -> handlers listening on it
   private chatHandlers = new Map<string, Set<EventHandler>>();
   /** Inbound frames received while no subscriber is registered (e.g. user switched away). */
@@ -330,6 +359,18 @@ export class NanobotClient {
     };
   }
 
+  /**
+   * Subscribe to terminal run events independent of the mounted chat view.
+   * The app-level notification hook uses this so leaving a chat does not lose
+   * a completion notification.
+   */
+  onTaskNotification(handler: TaskNotificationHandler): Unsubscribe {
+    this.taskNotificationHandlers.add(handler);
+    return () => {
+      this.taskNotificationHandlers.delete(handler);
+    };
+  }
+
   /** Subscribe to transport-level faults (see :type:`StreamError`). */
   onError(handler: ErrorHandler): Unsubscribe {
     this.errorHandlers.add(handler);
@@ -354,6 +395,9 @@ export class NanobotClient {
     const unsettled = [...(this.unsettledRunTurnIdsByChatId.get(chatId) ?? [])];
     for (const turnId of unsettled) this.settleRunTurn(chatId, turnId);
     this.latestRunTurnIdByChatId.delete(chatId);
+    this.clearOwnedRuns(chatId);
+    this.clearSideChannelTurns(chatId);
+    stopMobileRunKeepAlive(chatId);
     if (this.runStartedAtByChatId.delete(chatId)) {
       this.emitRunStatus(chatId, null);
     }
@@ -546,6 +590,9 @@ export class NanobotClient {
       if (unsettledTurnIds.size === 0) this.unsettledRunTurnIdsByChatId.delete(chatId);
     }
     this.settleNonLifecycleCanonicalSends(chatId, completed, observed, snapshot);
+    this.clearOwnedRuns(chatId);
+    this.clearSideChannelTurns(chatId);
+    stopMobileRunKeepAlive(chatId);
     if (this.runStartedAtByChatId.delete(chatId)) {
       this.emitRunStatus(chatId, null);
     }
@@ -581,6 +628,135 @@ export class NanobotClient {
 
   private runSendKey(chatId: string, turnId: string): string {
     return `${chatId}\u0000${turnId}`;
+  }
+
+  private ownRun(chatId: string, turnId: string): void {
+    const turns = this.ownedRunTurnIdsByChatId.get(chatId) ?? new Set<string>();
+    turns.add(turnId);
+    this.ownedRunTurnIdsByChatId.set(chatId, turns);
+  }
+
+  private disownRun(chatId: string, turnId: string): void {
+    const turns = this.ownedRunTurnIdsByChatId.get(chatId);
+    if (!turns) return;
+    turns.delete(turnId);
+    if (turns.size === 0) this.ownedRunTurnIdsByChatId.delete(chatId);
+  }
+
+  private moveOwnedRun(chatId: string, fromTurnId: string, toTurnId: string): void {
+    const turns = this.ownedRunTurnIdsByChatId.get(chatId);
+    if (!turns?.delete(fromTurnId)) return;
+    turns.add(toTurnId);
+  }
+
+  private clearOwnedRuns(chatId: string): void {
+    this.ownedRunTurnIdsByChatId.delete(chatId);
+  }
+
+  private hasOwnedRun(chatId: string): boolean {
+    return (this.ownedRunTurnIdsByChatId.get(chatId)?.size ?? 0) > 0;
+  }
+
+  private isOwnedRun(chatId: string, turnId: string): boolean {
+    return this.ownedRunTurnIdsByChatId.get(chatId)?.has(turnId) ?? false;
+  }
+
+  private addSideChannelTurn(chatId: string, turnId: string): void {
+    const turns = this.sideChannelTurnIdsByChatId.get(chatId) ?? new Set<string>();
+    turns.add(turnId);
+    this.sideChannelTurnIdsByChatId.set(chatId, turns);
+  }
+
+  private hasSideChannelTurn(chatId: string, turnId: string): boolean {
+    return this.sideChannelTurnIdsByChatId.get(chatId)?.has(turnId) ?? false;
+  }
+
+  private consumeSideChannelTurn(chatId: string, turnId: string): boolean {
+    const turns = this.sideChannelTurnIdsByChatId.get(chatId);
+    if (!turns) return false;
+    const existed = turns.delete(turnId);
+    if (turns.size === 0) this.sideChannelTurnIdsByChatId.delete(chatId);
+    return existed;
+  }
+
+  private clearSideChannelTurns(chatId: string): void {
+    this.sideChannelTurnIdsByChatId.delete(chatId);
+  }
+
+  private emitTaskNotification(event: TaskNotificationEvent): void {
+    for (const handler of this.taskNotificationHandlers) {
+      try {
+        handler(event);
+      } catch {
+        // A notification subscriber must not stall transport bookkeeping.
+      }
+    }
+  }
+
+  /**
+   * Emit before dispatching the event to chat subscribers. The recovery
+   * handler calls finishRunLocally(), which clears ownership; notifying first
+   * preserves the interruption/completion alert.
+   */
+  private emitTaskNotificationForEvent(chatId: string, ev: InboundEvent): void {
+    if (!this.hasOwnedRun(chatId)) return;
+    if (ev.event === "turn_end") {
+      const turnId = typeof ev.turn_id === "string" ? ev.turn_id : undefined;
+      if (turnId && this.hasSideChannelTurn(chatId, turnId)) return;
+      const attempts = typeof ev.failure_attempts === "number"
+        && Number.isInteger(ev.failure_attempts)
+        && ev.failure_attempts > 0
+        ? ev.failure_attempts
+        : undefined;
+      this.emitTaskNotification({
+        kind: "turn_end",
+        chatId,
+        ...(turnId ? { turnId } : {}),
+        ...(typeof ev.outcome === "string" ? { outcome: ev.outcome } : {}),
+        ...(typeof ev.failure_kind === "string" ? { failureKind: ev.failure_kind } : {}),
+        ...(typeof ev.failure_message === "string" ? { failureMessage: ev.failure_message } : {}),
+        ...(typeof ev.failure_error_kind === "string"
+          ? { failureErrorKind: ev.failure_error_kind }
+          : {}),
+        ...(attempts !== undefined ? { failureAttempts: attempts } : {}),
+      });
+      return;
+    }
+    if (ev.event === "recovery_state") {
+      if (ev.status !== "awaiting_user" && ev.status !== "failed") return;
+      this.emitTaskNotification({ kind: "recovery", chatId, status: ev.status });
+    }
+  }
+
+  /**
+   * Release the Android keepalive after the chat hook has seen the event.
+   * Side-channel turns must not end an owned chat's keepalive.
+   */
+  private settleKeepAliveForEvent(chatId: string, ev: InboundEvent): void {
+    if (!this.hasOwnedRun(chatId)) return;
+    if (ev.event === "turn_end") {
+      const turnId = typeof ev.turn_id === "string" ? ev.turn_id : undefined;
+      const sideChannel = turnId ? this.consumeSideChannelTurn(chatId, turnId) : false;
+      if (!sideChannel) {
+        this.clearOwnedRuns(chatId);
+        stopMobileRunKeepAlive(chatId);
+        return;
+      }
+      if (!this.hasOwnedRun(chatId)) stopMobileRunKeepAlive(chatId);
+      return;
+    }
+    if (
+      ev.event === "recovery_state"
+      && (
+        ev.status === "awaiting_user"
+        || ev.status === "failed"
+        || ev.status === "recovered"
+      )
+    ) {
+      this.clearOwnedRuns(chatId);
+      this.clearSideChannelTurns(chatId);
+      stopMobileRunKeepAlive(chatId);
+    }
   }
 
   private trackPendingMessageSend(
@@ -633,7 +809,21 @@ export class NanobotClient {
     // run identity.
     if (ev.turn_id && ev.turn_id !== activeTurnId) {
       const pending = this.pendingMessageSends.get(this.runSendKey(ev.chat_id, ev.turn_id));
-      if (pending?.startsNewRun) this.settleRunTurn(ev.chat_id, ev.turn_id);
+      if (pending?.startsNewRun) {
+        this.settleRunTurn(ev.chat_id, ev.turn_id);
+        if (this.isOwnedRun(ev.chat_id, ev.turn_id)) {
+          if (ev.starts_turn === true) {
+            // The gateway assigned a canonical turn id to this client's run.
+            this.moveOwnedRun(ev.chat_id, ev.turn_id, activeTurnId);
+          } else {
+            // Another client won the run; this message became a steer.
+            this.disownRun(ev.chat_id, ev.turn_id);
+            if (!this.hasOwnedRun(ev.chat_id)) {
+              stopMobileRunKeepAlive(ev.chat_id);
+            }
+          }
+        }
+      }
     }
     if (this.latestRunTurnIdByChatId.get(ev.chat_id) !== activeTurnId) {
       this.advanceRunGeneration(ev.chat_id, activeTurnId);
@@ -651,9 +841,15 @@ export class NanobotClient {
 
   private recordRunRejection(chatId: string, turnId?: string): void {
     if (!turnId) return;
+    const rejectedOwned = this.isOwnedRun(chatId, turnId);
     const rejectedLatest = this.latestRunTurnIdByChatId.get(chatId) === turnId;
     this.settleRunTurn(chatId, turnId);
     this.prunePendingInboundTurn(chatId, turnId);
+    this.consumeSideChannelTurn(chatId, turnId);
+    if (rejectedOwned) {
+      this.disownRun(chatId, turnId);
+      if (!this.hasOwnedRun(chatId)) stopMobileRunKeepAlive(chatId);
+    }
     if (!rejectedLatest) return;
 
     const unsettled = this.unsettledRunTurnIdsByChatId.get(chatId);
@@ -852,6 +1048,9 @@ export class NanobotClient {
       // ignore
     }
     this.clearTemporaryChats();
+    this.ownedRunTurnIdsByChatId.clear();
+    this.sideChannelTurnIdsByChatId.clear();
+    stopMobileRunKeepAlive();
     this.setStatus("closed");
   }
 
@@ -1055,6 +1254,8 @@ export class NanobotClient {
       turnId?: string;
       /** False for side-channel or injected messages that do not own a lifecycle. */
       startsNewRun?: boolean;
+      /** Internal/side-channel turns never raise completion notifications. */
+      sideChannel?: boolean;
     },
   ): void {
     const temporary = this.temporaryChatIds.has(chatId);
@@ -1102,7 +1303,12 @@ export class NanobotClient {
     }
     if (options?.turnId && !isSystemCommandTurnId(options.turnId)) {
       const startsNewRun = options.startsNewRun !== false;
-      if (startsNewRun) this.advanceRunGeneration(chatId, options.turnId);
+      if (startsNewRun) {
+        this.advanceRunGeneration(chatId, options.turnId);
+        this.ownRun(chatId, options.turnId);
+        startMobileRunKeepAlive(chatId);
+      }
+      if (options.sideChannel) this.addSideChannelTurn(chatId, options.turnId);
       this.trackPendingMessageSend(chatId, options.turnId, startsNewRun);
     }
     this.queueSend(frame);
@@ -1380,9 +1586,23 @@ export class NanobotClient {
       if (this.isCanonicalCompletedTurnEvent(chatId, parsed)) return;
       const supersededRunCompletion = this.isSupersededRunCompletion(chatId, parsed);
       this.recordGoalStatusForRunStrip(chatId, parsed);
-      if (supersededRunCompletion) return;
+      if (supersededRunCompletion) {
+        if (parsed.event === "turn_end") {
+          const turnId = typeof parsed.turn_id === "string" ? parsed.turn_id : undefined;
+          if (turnId) {
+            this.disownRun(chatId, turnId);
+            this.consumeSideChannelTurn(chatId, turnId);
+          }
+          if (!this.hasOwnedRun(chatId)) stopMobileRunKeepAlive(chatId);
+        }
+        return;
+      }
       this.recordGoalStateSnapshot(chatId, parsed);
+      // Notify before dispatch: the recovery handler calls finishRunLocally(),
+      // which clears ownership. Keepalive release waits until after dispatch.
+      this.emitTaskNotificationForEvent(chatId, parsed);
       this.dispatch(chatId, parsed);
+      this.settleKeepAliveForEvent(chatId, parsed);
     }
   }
 
@@ -1658,6 +1878,10 @@ export class NanobotClient {
     this.chatHandlers.delete(chatId);
     this.pendingInboundByChat.delete(chatId);
     const wasRunning = this.runStartedAtByChatId.delete(chatId);
+    const hadOwnedRun = this.hasOwnedRun(chatId);
+    this.clearOwnedRuns(chatId);
+    this.clearSideChannelTurns(chatId);
+    if (wasRunning || hadOwnedRun) stopMobileRunKeepAlive(chatId);
     this.runGenerationByChatId.delete(chatId);
     this.latestRunTurnIdByChatId.delete(chatId);
     this.unsettledRunTurnIdsByChatId.delete(chatId);

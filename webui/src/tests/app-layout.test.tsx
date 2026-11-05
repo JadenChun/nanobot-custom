@@ -268,6 +268,7 @@ vi.mock("@/lib/nanobot-client", async (importOriginal) => {
       runStatusHandlers.add(handler);
       return () => runStatusHandlers.delete(handler);
     };
+    onTaskNotification = () => () => {};
     getRunStartedAt = () => null;
     getRunTurnId = () => null;
     getRunGeneration = () => 0;

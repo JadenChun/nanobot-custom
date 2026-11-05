@@ -7,6 +7,11 @@
  * by Android local notifications. Regular browsers fall back to the Notification
  * API, then to the service worker path required by mobile browsers.
  */
+import type { TFunction } from "i18next";
+
+import type { TaskNotificationEvent } from "@/lib/nanobot-client";
+import { resolveModelRequestFailureCopy } from "@/lib/model-request-failure";
+
 interface MobileTaskNotificationBridge {
   requestPermission?: () => Promise<boolean> | boolean;
   notify?: (options: {
@@ -85,6 +90,33 @@ export async function requestTaskNotificationPermission(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Completion/failure/interruption text shared by every client surface. */
+export function buildTaskNotificationBody(
+  event: TaskNotificationEvent,
+  t: TFunction,
+): string {
+  if (event.kind === "recovery") {
+    return event.status === "failed"
+      ? t("recovery.failed", { defaultValue: "Task recovery failed" })
+      : t("recovery.interrupted", { defaultValue: "Task interrupted" });
+  }
+  if (event.outcome === "failed" && event.failureKind === "model") {
+    return resolveModelRequestFailureCopy(
+      {
+        ...(event.failureErrorKind ? { errorKind: event.failureErrorKind } : {}),
+        ...(event.failureAttempts !== undefined
+          ? { attempts: event.failureAttempts }
+          : {}),
+      },
+      t,
+    ).body;
+  }
+  if (event.outcome === "failed") {
+    return event.failureMessage || "This turn failed and has ended.";
+  }
+  return t("recovery.completed", { defaultValue: "Task completed" });
 }
 
 function notificationOptions(body: string, tag?: string): NotificationOptions {

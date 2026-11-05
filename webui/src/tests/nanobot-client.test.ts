@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NanobotClient } from "@/lib/nanobot-client";
+import {
+  DEFAULT_LOCAL_PREFS,
+  LOCAL_PREFS_STORAGE_KEY,
+  writeLocalPreferences,
+} from "@/lib/local-preferences";
 import type { SidebarStatePayload } from "@/lib/types";
 import { folderAccessSessionUpdatedFixture } from "./fixtures/folder-access-request";
 
@@ -64,10 +69,14 @@ function lastSocket(): FakeSocket {
 beforeEach(() => {
   FakeSocket.instances = [];
   vi.useFakeTimers();
+  writeLocalPreferences({ ...DEFAULT_LOCAL_PREFS, browserNotifications: true });
+  window.nanobotMobileRunKeepAlive = { start: vi.fn(), stop: vi.fn() };
 });
 
 afterEach(() => {
   Reflect.deleteProperty(window, "nanobotHost");
+  delete window.nanobotMobileRunKeepAlive;
+  window.localStorage.removeItem(LOCAL_PREFS_STORAGE_KEY);
   vi.useRealTimers();
 });
 
@@ -2369,6 +2378,186 @@ describe("versioned request settings", () => {
       target_turn_id: "turn-active",
       source_token: "tok-live",
     });
+  });
+});
+
+describe("mobile run keepalive and centralized task notifications", () => {
+  function createClient() {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+    return { client, socket };
+  }
+
+  it("starts for a phone-started run and notifies centrally on turn_end", () => {
+    const start = vi.fn();
+    const stop = vi.fn();
+    window.nanobotMobileRunKeepAlive = { start, stop };
+    const { client, socket } = createClient();
+    const notifications: unknown[] = [];
+    const chatEvents: string[] = [];
+    client.onTaskNotification((event) => notifications.push(event));
+    client.onChat("chat-1", () => chatEvents.push("chat"));
+
+    client.sendMessage("chat-1", "hello", undefined, { turnId: "turn-1" });
+    expect(start).toHaveBeenCalledWith("chat-1");
+
+    socket.fakeMessage({
+      event: "turn_end",
+      chat_id: "chat-1",
+      turn_id: "turn-1",
+      outcome: "completed",
+    });
+
+    expect(notifications).toEqual([{
+      kind: "turn_end",
+      chatId: "chat-1",
+      turnId: "turn-1",
+      outcome: "completed",
+    }]);
+    expect(chatEvents).toEqual(["chat"]);
+    expect(stop).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("still notifies when no chat view is mounted", () => {
+    const { client, socket } = createClient();
+    const notification = vi.fn();
+    client.onTaskNotification(notification);
+    client.sendMessage("chat-2", "hello", undefined, { turnId: "turn-2" });
+
+    socket.fakeMessage({
+      event: "turn_end",
+      chat_id: "chat-2",
+      turn_id: "turn-2",
+      outcome: "completed",
+    });
+
+    expect(notification).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "turn_end",
+      chatId: "chat-2",
+      turnId: "turn-2",
+    }));
+  });
+
+  it("does not start for side-channel or steer messages", () => {
+    const start = vi.fn();
+    window.nanobotMobileRunKeepAlive = { start, stop: vi.fn() };
+    const { client, socket } = createClient();
+
+    client.sendMessage("chat-3", "side", undefined, {
+      turnId: "side-1",
+      sideChannel: true,
+      startsNewRun: false,
+    });
+    client.sendMessage("chat-3", "steer", undefined, {
+      turnId: "steer-1",
+      startsNewRun: false,
+    });
+
+    expect(start).not.toHaveBeenCalled();
+    socket.fakeMessage({
+      event: "turn_end",
+      chat_id: "chat-3",
+      turn_id: "side-1",
+      outcome: "completed",
+    });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("does not stop keepalive on a socket drop", () => {
+    const stop = vi.fn();
+    window.nanobotMobileRunKeepAlive = { start: vi.fn(), stop };
+    const { client, socket } = createClient();
+    client.sendMessage("chat-4", "hello", undefined, { turnId: "turn-4" });
+
+    socket.fakeCloseWithCode(1006);
+
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("stops keepalive when a new run is rejected", () => {
+    const stop = vi.fn();
+    window.nanobotMobileRunKeepAlive = { start: vi.fn(), stop };
+    const { client, socket } = createClient();
+    const notification = vi.fn();
+    client.onTaskNotification(notification);
+    client.sendMessage("chat-5", "hello", undefined, { turnId: "turn-5" });
+
+    socket.fakeMessage({
+      event: "error",
+      chat_id: "chat-5",
+      turn_id: "turn-5",
+      detail: "message_rejected",
+    });
+
+    expect(stop).toHaveBeenCalledWith("chat-5");
+    expect(notification).not.toHaveBeenCalled();
+  });
+
+  it("stops keepalive when the user stops the run locally", () => {
+    const stop = vi.fn();
+    window.nanobotMobileRunKeepAlive = { start: vi.fn(), stop };
+    const { client } = createClient();
+    client.sendMessage("chat-6", "hello", undefined, { turnId: "turn-6" });
+
+    client.finishRunLocally("chat-6");
+
+    expect(stop).toHaveBeenCalledWith("chat-6");
+  });
+
+  it("does not start keepalive when task notifications are disabled", () => {
+    const start = vi.fn();
+    window.nanobotMobileRunKeepAlive = { start, stop: vi.fn() };
+    writeLocalPreferences({ ...DEFAULT_LOCAL_PREFS, browserNotifications: false });
+    const { client } = createClient();
+
+    client.sendMessage("chat-7", "hello", undefined, { turnId: "turn-7" });
+
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("notifies and stops keepalive when recovery fails", () => {
+    const stop = vi.fn();
+    window.nanobotMobileRunKeepAlive = { start: vi.fn(), stop };
+    const { client, socket } = createClient();
+    const notification = vi.fn();
+    client.onTaskNotification(notification);
+    client.sendMessage("chat-8", "hello", undefined, { turnId: "turn-8" });
+
+    socket.fakeMessage({
+      event: "recovery_state",
+      chat_id: "chat-8",
+      status: "failed",
+      recovery_id: "recovery-1",
+    });
+
+    expect(notification).toHaveBeenCalledWith({
+      kind: "recovery",
+      chatId: "chat-8",
+      status: "failed",
+    });
+    expect(stop).toHaveBeenCalledWith("chat-8");
+  });
+
+  it("does not notify for a recovered recovery state", () => {
+    const { client, socket } = createClient();
+    const notification = vi.fn();
+    client.onTaskNotification(notification);
+    client.sendMessage("chat-9", "hello", undefined, { turnId: "turn-9" });
+
+    socket.fakeMessage({
+      event: "recovery_state",
+      chat_id: "chat-9",
+      status: "recovered",
+      recovery_id: "recovery-2",
+    });
+
+    expect(notification).not.toHaveBeenCalled();
   });
 });
 

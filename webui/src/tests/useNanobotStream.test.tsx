@@ -2855,8 +2855,7 @@ describe("useNanobotStream", () => {
 
     const call = fake.client.sendMessage.mock.calls.at(-1)!;
     const turnId = call[3]?.turnId;
-    expect(call[3]).not.toHaveProperty("sideChannel");
-    expect(call[3]).toMatchObject({ startsNewRun: false });
+    expect(call[3]).toMatchObject({ sideChannel: true, startsNewRun: false });
     expect(result.current.isStreaming).toBe(false);
 
     act(() => {
@@ -2908,7 +2907,7 @@ describe("useNanobotStream", () => {
     });
 
     const newCall = fake.client.sendMessage.mock.calls.at(-1)!;
-    expect(newCall[3]).not.toHaveProperty("sideChannel");
+    expect(newCall[3]).toMatchObject({ sideChannel: true });
     expect(newCall[3]).not.toHaveProperty("finalizeActiveTurn");
     expect(result.current.isStreaming).toBe(false);
     expect(result.current.messages.find((message) => message.content === "partial answer"))
