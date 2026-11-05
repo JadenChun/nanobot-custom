@@ -169,7 +169,12 @@ export function GeneratedAssetsSheet({
                 </SheetTitle>
                 {activeTotal > 0 ? (
                   <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                    {t("thread.generatedAssets.total", { count: activeTotal })}
+                    {activeNext
+                      ? t("thread.generatedAssets.loaded", {
+                          count: activeTotal,
+                          defaultValue: "{{count}} loaded",
+                        })
+                      : t("thread.generatedAssets.total", { count: activeTotal })}
                   </span>
                 ) : null}
               </div>
@@ -216,9 +221,13 @@ export function GeneratedAssetsSheet({
               </div>
             ) : activeTotal === 0 ? (
               <div className="mx-auto max-w-sm py-16 text-center text-sm text-muted-foreground">
-                {t(libraryMode
-                  ? "thread.generatedAssets.emptyLibrary"
-                  : "thread.generatedAssets.empty")}
+                {libraryMode && activeNext
+                  ? t("thread.generatedAssets.moreSessions", {
+                      defaultValue: "No media found yet. Load more to check the remaining chats.",
+                    })
+                  : t(libraryMode
+                    ? "thread.generatedAssets.emptyLibrary"
+                    : "thread.generatedAssets.empty")}
               </div>
             ) : view === "flat" ? (
               <div

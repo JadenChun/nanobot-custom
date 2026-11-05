@@ -258,6 +258,10 @@ export interface SessionGeneratedAssetsPayload {
   schemaVersion: number;
   sessionKey: string;
   total: number;
+  /** Library totals count only this page; session totals cover the session. */
+  totalScope?: "page";
+  complete?: boolean;
+  sessionsScanned?: number;
   groups: GeneratedAssetGroup[];
   next?: string | null;
 }

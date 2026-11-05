@@ -63,7 +63,7 @@ from nanobot.webui.file_preview import (
 )
 from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
 from nanobot.webui.generated_asset_index import (
-    load_all_generated_asset_groups,
+    build_generated_asset_library_page,
     load_or_build_generated_asset_index,
 )
 from nanobot.webui.generated_assets import build_generated_assets_payload_from_groups
@@ -1767,8 +1767,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         raw_limit = _query_first(query, "limit")
         raw_cursor = _query_first(query, "cursor")
-        limit: int | None = None
-        cursor = 0
+        limit = 50
         if raw_limit is not None and raw_limit.strip():
             try:
                 limit = int(raw_limit)
@@ -1776,29 +1775,20 @@ class GatewayHTTPHandler:
                 return _http_error(400, "invalid limit")
             if not 1 <= limit <= 500:
                 return _http_error(400, "invalid limit")
-        if raw_cursor is not None and raw_cursor.strip():
-            try:
-                cursor = int(raw_cursor)
-            except ValueError:
-                return _http_error(400, "invalid cursor")
-            if cursor < 0:
-                return _http_error(400, "invalid cursor")
         try:
-            groups = await asyncio.to_thread(
-                load_all_generated_asset_groups,
+            payload = await asyncio.to_thread(
+                build_generated_asset_library_page,
                 get_webui_dir(),
-            )
-            payload = build_generated_assets_payload_from_groups(
-                groups,
-                session_key="*",
                 media_root=get_media_dir(),
                 sign_path=lambda path: self.media.sign_or_stage_media_path(
                     path,
                     allow_folder_grants=False,
                 ),
-                cursor=cursor,
+                cursor=raw_cursor,
                 limit=limit,
             )
+        except ValueError:
+            return _http_error(400, "invalid cursor")
         except Exception:
             self._log.exception("generated asset library projection failed")
             return _http_error(500, "generated_assets_unavailable")

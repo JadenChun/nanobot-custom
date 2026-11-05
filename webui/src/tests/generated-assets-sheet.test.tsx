@@ -131,6 +131,7 @@ describe("GeneratedAssetsSheet", () => {
     await user.click(screen.getByRole("button", { name: "Open generated assets" }));
     await user.click(screen.getByRole("button", { name: "By tool call" }));
     expect(await screen.findByText("first batch prompt")).toBeInTheDocument();
+    expect(screen.getByText("2 loaded")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load more" }));
 
     expect(await screen.findByText("second batch prompt")).toBeInTheDocument();
@@ -184,6 +185,10 @@ describe("GeneratedAssetsSheet", () => {
         if (url.includes("/api/generated-assets?")) {
           return Promise.resolve(response({
             ...payload,
+            sessionKey: "*",
+            total: 2,
+            totalScope: "page",
+            next: '["websocket:next",0]',
             groups: [{ ...payload.groups[0], sessionKey: "websocket:lib" }],
           }));
         }
@@ -198,6 +203,7 @@ describe("GeneratedAssetsSheet", () => {
     await user.click(screen.getByRole("button", { name: "All sessions" }));
 
     expect(await screen.findByTestId("generated-assets-library")).toBeInTheDocument();
+    expect(screen.getByText("2 loaded")).toBeInTheDocument();
     expect(screen.getByTitle("websocket:lib")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/generated-assets?limit=50"),

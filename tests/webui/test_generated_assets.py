@@ -605,6 +605,93 @@ async def test_global_generated_asset_library_aggregates_sessions(assets_client)
     }
 
 
+@pytest.mark.parametrize("session_count", [0, 200, 205])
+async def test_library_traverses_all_sessions_without_duplicate_groups(
+    assets_client, session_count: int,
+) -> None:
+    from urllib.parse import urlencode
+
+    _project, instance, services, token = assets_client
+    path = _media_file(instance / "media", "library-page.png")
+    expected: set[tuple[str, str]] = set()
+    for index in range(session_count):
+        key = f"websocket:page-{index:03d}"
+        # Multiple groups in a session exercise the within-session continuation.
+        events = [_event(call_id=f"call-{n}", result={"artifacts": [_artifact(path)]})
+                  for n in range(2)]
+        append_transcript_object(key, {"event": "message", "tool_events": events})
+        expected.update((key, f"legacy:0|call-{n}") for n in range(2))
+
+    cursor = None
+    seen: list[tuple[str, str]] = []
+    while True:
+        query = {"limit": "37"}
+        if cursor is not None:
+            query["cursor"] = cursor
+        response = await services.endpoint.process_request(
+            None,
+            Request(f"/api/generated-assets?{urlencode(query)}",
+                    Headers({"Authorization": f"Bearer {token}"})),
+            is_allowed=lambda _client: True,
+        )
+        assert response.status_code == 200, response.body
+        payload = json.loads(response.body)
+        assert payload["totalScope"] == "page"
+        assert payload["sessionsScanned"] <= 200
+        assert len(payload["groups"]) <= 37
+        assert payload["total"] == sum(len(group["artifacts"]) for group in payload["groups"])
+        seen.extend((group["sessionKey"], group["id"]) for group in payload["groups"])
+        cursor = payload["next"]
+        assert payload["complete"] == (cursor is None)
+        if cursor is None:
+            break
+    assert len(seen) == len(set(seen))
+    assert set(seen) == expected
+
+
+async def test_library_continues_past_a_full_empty_session_batch(assets_client) -> None:
+    from urllib.parse import urlencode
+
+    _project, instance, services, token = assets_client
+    for index in range(200):
+        append_transcript_object(f"websocket:empty-{index:03d}", {"event": "user", "text": "hi"})
+    path = _media_file(instance / "media", "recent.png")
+    append_transcript_object("websocket:z-recent", {
+        "event": "message",
+        "tool_events": [_event(result={"artifacts": [_artifact(path)]})],
+    })
+    headers = Headers({"Authorization": f"Bearer {token}"})
+    first = await services.endpoint.process_request(
+        None, Request("/api/generated-assets", headers), is_allowed=lambda _client: True,
+    )
+    payload = json.loads(first.body)
+    assert payload["groups"] == []
+    assert payload["sessionsScanned"] == 200
+    assert payload["complete"] is False
+    second = await services.endpoint.process_request(
+        None, Request(f"/api/generated-assets?{urlencode({'cursor': payload['next']})}", headers),
+        is_allowed=lambda _client: True,
+    )
+    payload = json.loads(second.body)
+    assert payload["groups"][0]["sessionKey"] == "websocket:z-recent"
+    assert payload["sessionsScanned"] == 1
+    assert payload["complete"] is True
+
+
+@pytest.mark.parametrize("cursor", ["-1", "nonsense", '["key", true]', '["key", -1]'])
+async def test_library_rejects_invalid_cursors(assets_client, cursor: str) -> None:
+    from urllib.parse import urlencode
+
+    _project, _instance, services, token = assets_client
+    response = await services.endpoint.process_request(
+        None,
+        Request(f"/api/generated-assets?{urlencode({'cursor': cursor})}",
+                Headers({"Authorization": f"Bearer {token}"})),
+        is_allowed=lambda _client: True,
+    )
+    assert response.status_code == 400
+
+
 def test_forked_session_keeps_generated_asset_references(assets_client) -> None:
     _project, instance, _services, _token = assets_client
     path = _media_file(instance / "media")
