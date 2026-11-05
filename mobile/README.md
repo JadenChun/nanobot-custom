@@ -114,6 +114,36 @@ The script packages `mobile/www-shared` and the native transport, runs `assemble
 checks `zipalign` and `apksigner`, and writes the APK, certificate report and SHA-256 under
 `mobile/evidence/<date>-m22-release/`. Release tasks fail closed when signing material is absent.
 
+## Debug and release side by side
+
+Debug builds use a separate application ID and label so they can be installed beside the
+release app:
+
+| Build | Application ID | Label | Signing |
+|---|---|---|---|
+| Release | `ai.nanobot.mobile` | Nanobot Mobile | release keystore |
+| Debug | `ai.nanobot.mobile.debug` | Nanobot Dev | debug keystore |
+
+The debug app has its own app data, custody, pairing and embedded Tailscale state, so development
+does not overwrite the release app or require re-pairing it.
+
+Build and install the shared-WebUI dev app:
+
+```bash
+mobile/scripts/build-debug.sh
+adb install -r mobile/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+`build-debug.sh` packages `mobile/www-shared`. The `nanobot://pair` scheme is shared by both
+apps, so Android may show an app chooser; choose **Nanobot Dev** when testing the dev build.
+
+Release builds and in-place release updates keep their existing flow:
+
+```bash
+mobile/scripts/build-release.sh
+mobile/scripts/install-release-update.sh <serial> mobile/evidence/<date>-m22-release/nanobot-mobile-release.apk
+```
+
 ## Isolated toolchain
 
 All build inputs stay inside this checkout and are ignored by Git:
@@ -137,7 +167,8 @@ cd android && ./gradlew :app:assembleDebug
 ```
 
 `M01` also ships a fixture-only JNI/CMake probe (`android/app/src/main/cpp/probe.c`) that reports
-the executing ABI and page size. It grants no network, file or credential authority.
+the executing ABI and page size. It grants no network, file or credential authority. The fixture
+debug build installs as `ai.nanobot.mobile.debug`, so it can coexist with the release app.
 
 ## Emulator qualification
 
@@ -146,9 +177,10 @@ mobile/scripts/qualify-emulator.sh --evidence-dir <private-run-directory>
 mobile/scripts/qualify-emulator.sh --evidence-dir <private-run-directory> --native-tests
 ```
 
-The runner builds, creates/reuses an x86_64 API 36 AVD, installs the debug APK, waits for the
-native probe marker, captures a screenshot and cleans up the emulator unless `--keep-emulator`
-is passed. Evidence stays under the gitignored `mobile/evidence/`.
+The runner builds, creates/reuses an x86_64 API 36 AVD, installs the fixture debug APK
+(`ai.nanobot.mobile.debug`), waits for the native probe marker, captures a screenshot and cleans
+up the emulator unless `--keep-emulator` is passed. Evidence stays under the gitignored
+`mobile/evidence/`.
 
 `--native-tests` also runs the Android instrumentation suite, which loads the JNI/native-network
 seam and checks ABI version, invalid-config fail-closed behavior and unknown-handle errors.

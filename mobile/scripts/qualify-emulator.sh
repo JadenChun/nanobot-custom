@@ -162,8 +162,8 @@ if [[ "${native_tests}" -eq 1 ]]; then
   adb -s "${serial}" install -r -t "${apk}"
 fi
 adb -s "${serial}" logcat -c
-adb -s "${serial}" shell am force-stop ai.nanobot.mobile
-adb -s "${serial}" shell am start -W -n ai.nanobot.mobile/.MainActivity
+adb -s "${serial}" shell am force-stop ai.nanobot.mobile.debug
+adb -s "${serial}" shell am start -W -n ai.nanobot.mobile.debug/ai.nanobot.mobile.MainActivity
 
 probe_ok=0
 for _ in $(seq 1 90); do
@@ -181,7 +181,7 @@ adb -s "${serial}" shell getprop ro.product.cpu.abi >"${evidence_dir}/abi.txt"
 adb -s "${serial}" shell getprop ro.build.version.sdk >>"${evidence_dir}/abi.txt"
 adb -s "${serial}" shell getprop ro.build.version.release >>"${evidence_dir}/abi.txt"
 adb -s "${serial}" exec-out screencap -p >"${evidence_dir}/fixture-shell.png" || true
-adb -s "${serial}" shell dumpsys package ai.nanobot.mobile >"${evidence_dir}/package-dump.txt" || true
+adb -s "${serial}" shell dumpsys package ai.nanobot.mobile.debug >"${evidence_dir}/package-dump.txt" || true
 
 if [[ "${probe_ok}" -ne 1 ]]; then
   echo "native probe marker missing" >&2

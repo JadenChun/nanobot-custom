@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prove that an in-place APK update preserves encrypted custody and network-state files.
-# The installed app must be the debuggable test build. Set ALLOW_UNINSTALL=1 to replace
-# a release build (this clears existing app data).
+# This targets the debuggable dev build (ai.nanobot.mobile.debug), so it can run alongside
+# a release install without touching release data.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,16 +21,14 @@ fi
 ADB=(adb -s "${SERIAL}")
 APP_APK="$(cd "${MOBILE_ROOT}/android" && pwd)/app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="$(cd "${MOBILE_ROOT}/android" && pwd)/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+DEBUG_PACKAGE="ai.nanobot.mobile.debug"
 SEED_CLASS="ai.nanobot.mobile.network.UpdatePersistenceSeedInstrumentedTest"
 VERIFY_CLASS="ai.nanobot.mobile.network.UpdatePersistenceVerifyInstrumentedTest"
 
-if "${ADB[@]}" shell pm list packages | grep -q '^package:ai.nanobot.mobile$'; then
-  if ! "${ADB[@]}" shell dumpsys package ai.nanobot.mobile | grep -q 'debuggable=true'; then
-    if [[ "${ALLOW_UNINSTALL:-0}" != "1" ]]; then
-      echo "release build installed; set ALLOW_UNINSTALL=1 to clear it for this test" >&2
-      exit 2
-    fi
-    "${ADB[@]}" uninstall ai.nanobot.mobile >/dev/null
+if "${ADB[@]}" shell pm list packages | grep -q "^package:${DEBUG_PACKAGE}$"; then
+  if ! "${ADB[@]}" shell dumpsys package "${DEBUG_PACKAGE}" | grep -q 'debuggable=true'; then
+    echo "unexpected non-debug package at ${DEBUG_PACKAGE}" >&2
+    exit 2
   fi
 fi
 
@@ -39,7 +37,7 @@ fi
 
 echo "seeding custody and network state"
 "${ADB[@]}" shell am instrument -w -e class "${SEED_CLASS}" \
-  ai.nanobot.mobile.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/nanobot-update-seed.txt
+  "${DEBUG_PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner" | tee /tmp/nanobot-update-seed.txt
 grep -Eq 'OK \(1 test\)|OK \(1 test\)' /tmp/nanobot-update-seed.txt
 
 echo "updating target APK in place"
@@ -47,7 +45,7 @@ echo "updating target APK in place"
 
 echo "verifying custody and network state"
 "${ADB[@]}" shell am instrument -w -e class "${VERIFY_CLASS}" \
-  ai.nanobot.mobile.test/androidx.test.runner.AndroidJUnitRunner | tee /tmp/nanobot-update-verify.txt
+  "${DEBUG_PACKAGE}.test/androidx.test.runner.AndroidJUnitRunner" | tee /tmp/nanobot-update-verify.txt
 grep -Eq 'OK \(1 test\)|OK \(1 test\)' /tmp/nanobot-update-verify.txt
 
 echo "PASS: custody and network state survived adb install -r"
