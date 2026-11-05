@@ -340,6 +340,7 @@ export function useNanobotStream(
   const lastStreamFlushAtRef = useRef(Number.NEGATIVE_INFINITY);
   const suppressStreamUntilTurnEndRef = useRef(false);
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
+  const ownedTurnIdsRef = useRef<Set<string>>(new Set());
 
   const dismissStreamError = useCallback(() => setStreamError(null), []);
 
@@ -988,6 +989,8 @@ export function useNanobotStream(
         const completedTurnId = typeof ev.turn_id === "string" ? ev.turn_id : null;
         const sideChannelTurn = completedTurnId !== null
           && sideChannelTurnIdsRef.current.has(completedTurnId);
+        const ownedTurn = completedTurnId !== null
+          && ownedTurnIdsRef.current.delete(completedTurnId);
         if (completedTurnId) sideChannelTurnIdsRef.current.delete(completedTurnId);
         if ("goal_state" in ev && ev.goal_state != null && typeof ev.goal_state === "object") {
           setGoalState(ev.goal_state);
@@ -1043,7 +1046,7 @@ export function useNanobotStream(
           return finalized;
         });
         suppressStreamUntilTurnEndRef.current = false;
-        if (!sideChannelTurn) {
+        if (!sideChannelTurn && ownedTurn) {
           notifyInBackground(
             modelFailure
               ? resolveModelRequestFailureCopy(modelFailure, t).body
@@ -1357,6 +1360,7 @@ export function useNanobotStream(
         setRetryStatus(null);
       }
       const turnId = crypto.randomUUID();
+      ownedTurnIdsRef.current.add(turnId);
       const userMessageId = crypto.randomUUID();
       if (sideChannel) sideChannelTurnIdsRef.current.add(turnId);
       const previews = hasAttachments ? images!.map((i) => i.preview) : undefined;
