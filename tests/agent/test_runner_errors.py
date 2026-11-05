@@ -331,7 +331,53 @@ async def test_runner_turns_final_request_budget_rejection_into_context_error():
 
 
 @pytest.mark.asyncio
-async def test_runner_does_not_retry_ordinary_read_file_error_when_fail_fast_is_enabled():
+async def test_runner_recovers_from_ordinary_tool_error_when_fail_fast_is_enabled():
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="checking",
+            tool_calls=[ToolCallRequest(
+                id="call_bad",
+                name="read_file",
+                arguments={"path": "/tmp/missing.txt"},
+            )],
+            usage=None,
+        ),
+        LLMResponse(content="used another path", tool_calls=[], usage=None),
+    ])
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value=ToolResult.error("Error: File not found: /tmp/missing.txt"))
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "read it"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == 2
+    assert result.final_content == "used another path"
+    assert result.stop_reason == "completed"
+    assert any(
+        message.get("role") == "system"
+        and "Fix the arguments or choose a different approach" in message.get("content", "")
+        for message in result.messages
+    )
+    assert any(
+        message.get("role") == "tool"
+        and "File not found: /tmp/missing.txt" in message.get("content", "")
+        for message in result.messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_stops_after_repeating_the_same_tool_error():
     from nanobot.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
@@ -353,12 +399,55 @@ async def test_runner_does_not_retry_ordinary_read_file_error_when_fail_fast_is_
         initial_messages=[{"role": "user", "content": "read it"}],
         tools=tools,
         model="test-model",
-        max_iterations=2,
+        max_iterations=5,
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         fail_on_tool_error=True,
     ))
 
-    assert provider.chat_with_retry.await_count == 1
+    assert provider.chat_with_retry.await_count == 2
+    assert result.stop_reason == "tool_error"
+
+
+@pytest.mark.asyncio
+async def test_runner_limits_distinct_tool_error_recoveries():
+    from nanobot.agent.runner import AgentRunner
+
+    def failing_call(call_id: str, path: str) -> LLMResponse:
+        return LLMResponse(
+            content="checking",
+            tool_calls=[ToolCallRequest(
+                id=call_id,
+                name="read_file",
+                arguments={"path": path},
+            )],
+            usage=None,
+        )
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        failing_call("call_1", "/tmp/missing-1.txt"),
+        failing_call("call_2", "/tmp/missing-2.txt"),
+        failing_call("call_3", "/tmp/missing-3.txt"),
+    ])
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(side_effect=[
+        ToolResult.error("Error: File not found: /tmp/missing-1.txt"),
+        ToolResult.error("Error: File not found: /tmp/missing-2.txt"),
+        ToolResult.error("Error: File not found: /tmp/missing-3.txt"),
+    ])
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "read it"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == 3
     assert result.stop_reason == "tool_error"
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import time
 import uuid
@@ -124,6 +125,11 @@ _MANAGED_CAPABILITY_RECOVERY_NOTE = (
     "external capability through another tool. Continue with a permitted tool or "
     "explain the limitation to the user."
 )
+_TOOL_ERROR_RECOVERY_NOTE = (
+    "A tool call failed. Treat the error as data, not as a reason to stop. "
+    "Fix the arguments or choose a different approach. Do not repeat the same call "
+    "unchanged. If the error is a permission or policy denial, do not try to bypass it."
+)
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
@@ -139,6 +145,37 @@ def _restore_outer_whitespace(content: str, original: str | None) -> str:
     leading = original[:leading_size]
     trailing = original[-trailing_size:] if trailing_size else ""
     return f"{leading}{content}{trailing}"
+
+
+def _tool_error_signature(
+    terminal: ToolOutcome,
+    tool_calls: Sequence[ToolCallRequest],
+    events: Sequence[dict[str, Any]],
+) -> str | None:
+    """Return a stable signature for the failing calls in one tool batch."""
+    error_calls = [
+        {"name": tool_call.name, "arguments": tool_call.arguments}
+        for tool_call, event in zip(tool_calls, events)
+        if event.get("status") == "error"
+    ]
+    if not error_calls:
+        return None
+    return json.dumps(
+        {"error": str(terminal.content or ""), "calls": error_calls},
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _is_non_recoverable_tool_error(content: str) -> bool:
+    """Return whether a dispatched error describes an unavailable or blocked tool."""
+    lowered = content.lower()
+    return (
+        ("error: tool '" in lowered and "not found" in lowered)
+        or "is unavailable for this turn" in lowered
+        or "requires an active chat session" in lowered
+        or "command blocked by resource policy" in lowered
+    )
 
 
 def _context_budget_error_response(
@@ -186,6 +223,9 @@ class AgentRunSpec:
     tool_policy: ToolPolicy | None = None
     turn_context: TurnContext | None = None
     fail_on_tool_error: bool = False
+    # Bounded continuation after ordinary tool errors. Policy/security denials
+    # and repeated identical failures stay terminal.
+    max_tool_error_recoveries: int = 2
     transcript_input: TranscriptInput | None = None
     transcript_builder: TranscriptBuilder | None = None
     hook: AgentHook | None = None
@@ -736,6 +776,8 @@ class AgentRunner:
         missing_skill_recovery_attempted = False
         context_repo_exec_recovery_attempted = False
         pre_dispatch_denial_recovery_attempted = False
+        tool_error_recoveries = 0
+        tool_error_signatures: set[str] = set()
         # Segments from one uninterrupted length-recovery chain. Tool work or
         # injected user input starts a new logical answer and clears the chain.
         length_recovery_parts: list[str] = []
@@ -877,6 +919,15 @@ class AgentRunner:
                 if terminal is None:
                     terminal = next((r for r in results if isinstance(r, ToolOutcome)
                                      and r.stop_reason == "folder_access_required"), None)
+                tool_error_signature: str | None = None
+                repeated_tool_error = False
+                if terminal is not None and terminal.stop_reason == "tool_error":
+                    tool_error_signature = _tool_error_signature(
+                        terminal, response.tool_calls, new_events,
+                    )
+                    if tool_error_signature is not None:
+                        repeated_tool_error = tool_error_signature in tool_error_signatures
+                        tool_error_signatures.add(tool_error_signature)
                 recoverable_skill_read = (
                     terminal is not None
                     and spec.fail_on_tool_error
@@ -904,6 +955,34 @@ class AgentRunner:
                     }
                     and not pre_dispatch_denial_recovery_attempted
                     and iteration + 1 < spec.max_iterations
+                )
+                recoverable_tool_error = (
+                    terminal is not None
+                    and spec.fail_on_tool_error
+                    and terminal.stop_reason == "tool_error"
+                    and terminal.recovery_kind is None
+                    and not repeated_tool_error
+                    and tool_error_signature is not None
+                    and tool_error_recoveries < max(0, spec.max_tool_error_recoveries)
+                    and iteration + 1 < spec.max_iterations
+                    and not any(
+                        event.get("_prepare_error_kind") is not None
+                        for event in new_events
+                    )
+                    and not any(
+                        str(event.get("detail", "")).startswith((
+                            "ssrf_violation: ",
+                            "workspace_violation: ",
+                            "workspace_violation_escalated: ",
+                        ))
+                        for event in new_events
+                    )
+                    and not _is_non_recoverable_tool_error(str(terminal.content or ""))
+                    and not terminal.policy_metadata
+                    # Dream advances its cursor only on a completed response; a
+                    # failed consolidation edit must remain terminal so the
+                    # batch is retried rather than silently skipped.
+                    and not (spec.session_key or "").startswith("dream:")
                 )
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
                 public_events = [
@@ -1000,6 +1079,20 @@ class AgentRunner:
                             if recovery_kind is ToolDenialKind.MANAGED_UNAVAILABLE
                             else _PRIVATE_NETWORK_RECOVERY_NOTE
                         ),
+                    }, request_state.source)
+                if recoverable_tool_error and terminal is not None:
+                    tool_error_recoveries += 1
+                    detail = " ".join(str(terminal.content or "").split())[:160]
+                    logger.info(
+                        "Recovering from tool error ({}/{}): {}",
+                        tool_error_recoveries,
+                        spec.max_tool_error_recoveries,
+                        detail,
+                    )
+                    terminal = None
+                    self._append_bound_message(messages, {
+                        "role": "system",
+                        "content": _TOOL_ERROR_RECOVERY_NOTE,
                     }, request_state.source)
                 if terminal is not None:
                     unknown_rejection = (

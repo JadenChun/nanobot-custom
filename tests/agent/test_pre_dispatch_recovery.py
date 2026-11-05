@@ -270,6 +270,12 @@ async def test_tool_supplied_recovery_kind_is_not_authority() -> None:
         allow_pre_dispatch_recovery=True,
     ))
 
-    assert provider.chat_with_retry.await_count == 1
-    assert result.stop_reason == "tool_error"
+    # The tool-supplied kind cannot authorize the typed private-network
+    # recovery note. The ordinary one-shot tool-error continuation still runs.
+    assert provider.chat_with_retry.await_count == 2
+    assert result.stop_reason == "completed"
+    assert result.final_content == "must not be requested"
     assert calls == ["spoofed"]
+    guidance = [message["content"] for message in result.messages if message.get("role") == "system"]
+    assert any("Fix the arguments or choose a different approach" in content for content in guidance)
+    assert not any("non-bypassable security boundary" in content for content in guidance)
