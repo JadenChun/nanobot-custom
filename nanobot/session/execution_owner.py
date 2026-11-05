@@ -13,7 +13,7 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, AsyncGenerator, Generator, NoReturn, cast
+from typing import TYPE_CHECKING, AsyncGenerator, Callable, Generator, NoReturn, cast
 
 from filelock import FileLock, Timeout
 
@@ -229,6 +229,8 @@ async def acquire_execution(
     *,
     run_id: str,
     expected_source: WorkspaceAccessSourceBinding | None = None,
+    wait_for_lock: bool = True,
+    validate_snapshot: Callable[[SourceSnapshot], None] | None = None,
 ) -> AsyncGenerator[ExecutionOwner, None]:
     if not isinstance(cast(object, run_id), str) or not run_id.strip():
         raise ExecutionOwnershipError()
@@ -247,6 +249,8 @@ async def acquire_execution(
                 lock.acquire(timeout=0)
                 break
             except Timeout:
+                if not wait_for_lock:
+                    raise ExecutionBusyError() from None
                 await asyncio.sleep(0.05)
         with backend.locked_session_files():
             snapshot = backend.source.load_source_snapshot(key)
@@ -259,6 +263,8 @@ async def acquire_execution(
                 }
             ):
                 raise SessionWriteConflict()
+            if validate_snapshot is not None:
+                validate_snapshot(snapshot)
             metadata = snapshot.header["metadata"]
             recovery_required = (
                 "execution_lease" in metadata

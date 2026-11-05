@@ -52,6 +52,7 @@ _upgrade_events = select_legacy_source_event_upgrader()
 
 if TYPE_CHECKING:
     from nanobot.session.execution_owner import ExecutionOwner as _ExecutionOwner
+    from nanobot.session.source_store import SourceSnapshot
 
 Mode = Literal["legacy", "canonical"]
 SessionModeBinding = tuple[str, int, Mode, str, int]
@@ -86,6 +87,22 @@ class _JournalCommon(TypedDict):
     source_binding: NotRequired[dict[str, object] | None]
     source_input_digest: NotRequired[str | None]
     source_input_size: NotRequired[int | None]
+    archive_identity: NotRequired[str | None]
+    archive_digest: NotRequired[str | None]
+
+
+class SessionInterruptionRecoveryRefusedError(SessionModeError):
+    """A session cannot be reconciled from its cron interruption evidence."""
+
+
+class SessionModeRecordError(SessionModeError):
+    """Only the requested key's mode record bytes or local binding are invalid."""
+
+    def __init__(self, session_key: str) -> None:
+        super().__init__(_MODE_ERROR)
+        # The owner supplies the requested storage key, never a decoded record field.
+        self.session_key = session_key
+
 
 _MODE_ERROR = "session mode evidence is invalid; offline recovery is required"
 _JOURNAL_PHASES = {
@@ -125,7 +142,12 @@ _JOURNAL_FIELDS = {
     "source_input_size",
     "timestamp",
     "previous_record_digest",
+    "archive_identity",
+    "archive_digest",
 }
+_LEGACY_JOURNAL_FIELDS = _JOURNAL_FIELDS - {"archive_identity", "archive_digest"}
+_INTERRUPTION_ARCHIVE_DIRECTORY = ".session-mode/cron-interruptions"
+_INTERRUPTION_ARCHIVE_LIMIT = 67_108_864
 _OPERATIONS = {"bootstrap", "create", "convert", "reset", "delete", "fork", "export"}
 
 
@@ -456,6 +478,27 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _interruption_identity(
+    source_identity: dict[str, object],
+) -> str:
+    return _digest(_canonical_json(source_identity))
+
+
+def _interruption_source_digest(snapshot: SourceSnapshot) -> str:
+    header = deepcopy(snapshot.header)
+    header.pop("revision", None)
+    metadata = header.get("metadata")
+    if not isinstance(metadata, dict):
+        raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+    cast(dict[str, object], metadata).pop("execution_lease", None)
+    cast(dict[str, object], metadata).pop("execution_recovery_required", None)
+    return _digest(_canonical_json({"header": header, "events": snapshot.events}))
+
+
+def _interruption_events_digest(events: list[dict[str, object]]) -> str:
+    return _digest(_canonical_json({"events": events}))
+
+
 def _aware_timestamp(value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
@@ -704,6 +747,223 @@ class SessionModeResolver:
 
     def _record_name(self, key: str) -> str:
         return f".session-mode/records/{self.backend.storage_key(key)}.json"
+
+    @staticmethod
+    def _interruption_archive_name(identity: str) -> str:
+        if not _digest_or_none(identity):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        return f"{_INTERRUPTION_ARCHIVE_DIRECTORY}/{identity}.json"
+
+    def _read_interruption_archive(
+        self,
+        identity: str,
+        expected_digest: str,
+    ) -> tuple[dict[str, object], bytes]:
+        if not _digest_or_none(identity) or not _digest_or_none(expected_digest):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        name = self._interruption_archive_name(identity)
+        if not self.storage.exists(name):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        raw = self.storage.read(name, limit=_INTERRUPTION_ARCHIVE_LIMIT)
+        if _digest(raw) != expected_digest:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        try:
+            archive = _parse_json(raw)
+        except SessionModeError as exc:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR) from exc
+        expected_fields = {
+            "schema_version",
+            "archive_identity",
+            "source_identity",
+            "occurrence_id",
+            "outcome",
+            "source_digest",
+            "prefix_digest",
+            "interrupted_digest",
+            "interrupted_events",
+            "unresolved_execution_id",
+        }
+        source_identity = archive.get("source_identity")
+        tail = archive.get("interrupted_events")
+        unresolved_execution_id = archive.get("unresolved_execution_id")
+        if (
+            set(archive) != expected_fields
+            or _canonical_json(archive) != raw
+            or type(archive.get("schema_version")) is not int
+            or archive.get("schema_version") != 1
+            or archive.get("archive_identity") != identity
+            or not isinstance(source_identity, dict)
+            or set(cast(dict[object, object], source_identity))
+            != {"store_identity", "session_key", "incarnation", "generation", "run_id"}
+            or not isinstance(archive.get("occurrence_id"), str)
+            or not _digest_or_none(archive.get("occurrence_id"))
+            or archive.get("outcome") != "unknown"
+            or not _digest_or_none(archive.get("source_digest"))
+            or not _digest_or_none(archive.get("prefix_digest"))
+            or not _digest_or_none(archive.get("interrupted_digest"))
+            or not isinstance(tail, list)
+            or not tail
+            or not isinstance(unresolved_execution_id, str)
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        tail_rows = cast(list[object], tail)
+        if not all(isinstance(item, dict) for item in tail_rows):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        tail_events = cast(list[dict[str, object]], tail_rows)
+        source = cast(dict[str, object], source_identity)
+        run_id = source.get("run_id")
+        generation = source.get("generation")
+        occurrence_id = cast(str, archive["occurrence_id"])
+        occurrence_run_prefix = f"cron-occurrence-{occurrence_id}-"
+        occurrence_run_suffix = (
+            run_id[len(occurrence_run_prefix):]
+            if isinstance(run_id, str) and run_id.startswith(occurrence_run_prefix)
+            else ""
+        )
+        if (
+            not isinstance(source.get("store_identity"), str)
+            or not source["store_identity"]
+            or not isinstance(source.get("session_key"), str)
+            or not source["session_key"]
+            or not isinstance(source.get("incarnation"), str)
+            or not source["incarnation"]
+            or type(generation) is not int
+            or generation < 0
+            or not isinstance(run_id, str)
+            or not occurrence_run_suffix.isdecimal()
+            or int(occurrence_run_suffix or "0") < 1
+            or identity != _interruption_identity(source)
+            or _digest(_canonical_json({"events": tail_events})) != archive["interrupted_digest"]
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        from nanobot.session.source import validate_execution_links
+
+        try:
+            unresolved = validate_execution_links(tail_events)
+        except SourceValidationError as exc:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR) from exc
+        if (
+            unresolved != frozenset({unresolved_execution_id})
+            or tail_events[0].get("role") != "user"
+            or tail_events[-1].get("role") != "assistant"
+            or tail_events[-1].get("_run_id") != run_id
+            or any(item.get("_run_id") != run_id for item in tail_events)
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        return archive, raw
+
+    def publish_cron_interruption_archive(
+        self,
+        key: str,
+        snapshot: SourceSnapshot,
+        *,
+        occurrence_id: str,
+        run_id: str,
+        prefix_events: list[dict[str, object]],
+        interrupted_events: list[dict[str, object]],
+        unresolved_execution_id: str,
+    ) -> tuple[str, str]:
+        """Publish exact private unknown-outcome evidence before its bound reset."""
+
+        from nanobot.session.source import validate_execution_links
+
+        if not self.backend.session_files_locked:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        resolved = self.resolve(key)
+        metadata_value = snapshot.header.get("metadata")
+        if not isinstance(metadata_value, dict) or not all(
+            isinstance(name, str) for name in cast(dict[object, object], metadata_value)
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        metadata = cast(dict[str, object], metadata_value)
+        current_lease = metadata.get("execution_lease")
+        if (
+            resolved.state != "active"
+            or resolved.mode != "canonical"
+            or snapshot.state.session_key != key
+            or self.backend.source.store_identity_differs(snapshot.state.store_identity)
+            or snapshot.header["metadata"].get("source_schema_version") != 1
+            or not isinstance(current_lease, dict)
+            or cast(dict[object, object], current_lease).get("run_id") != run_id
+            or prefix_events + interrupted_events != snapshot.events
+            or not interrupted_events
+            or validate_execution_links(snapshot.events)
+            != frozenset({unresolved_execution_id})
+            or validate_execution_links(prefix_events)
+            or interrupted_events[0].get("role") != "user"
+            or interrupted_events[-1].get("role") != "assistant"
+            or any(event.get("_run_id") != run_id for event in interrupted_events)
+            or interrupted_events[-1].get("_run_id") != run_id
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        intent_ids = interrupted_events[-1].get("_execution_ids")
+        if (
+            not isinstance(intent_ids, list)
+            or unresolved_execution_id not in cast(list[object], intent_ids)
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        source_identity: dict[str, object] = {
+            "store_identity": snapshot.state.store_identity,
+            "session_key": key,
+            "incarnation": snapshot.state.incarnation,
+            "generation": snapshot.state.generation,
+            "run_id": run_id,
+        }
+        identity = _interruption_identity(source_identity)
+        archive: dict[str, object] = {
+            "schema_version": 1,
+            "archive_identity": identity,
+            "source_identity": source_identity,
+            "occurrence_id": occurrence_id,
+            "outcome": "unknown",
+            "source_digest": _interruption_source_digest(snapshot),
+            "prefix_digest": _interruption_events_digest(prefix_events),
+            "interrupted_digest": _interruption_events_digest(interrupted_events),
+            "interrupted_events": deepcopy(interrupted_events),
+            "unresolved_execution_id": unresolved_execution_id,
+        }
+        raw = _canonical_json(archive)
+        if len(raw) > _INTERRUPTION_ARCHIVE_LIMIT:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        name = self._interruption_archive_name(identity)
+        if self.storage.exists(name):
+            if self.storage.read(name, limit=_INTERRUPTION_ARCHIVE_LIMIT) != raw:
+                raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        else:
+            self.storage.write(
+                name, raw, replace=False, limit=_INTERRUPTION_ARCHIVE_LIMIT,
+            )
+        return identity, _digest(raw)
+
+    def _validate_interruption_archive_for_reset(
+        self,
+        key: str,
+        snapshot: SourceSnapshot,
+        replacement_events: list[dict[str, object]],
+        *,
+        identity: str,
+        digest: str,
+    ) -> dict[str, object]:
+        archive, _raw = self._read_interruption_archive(identity, digest)
+        source_identity = cast(dict[str, object], archive["source_identity"])
+        tail = cast(list[dict[str, object]], archive["interrupted_events"])
+        if (
+            source_identity.get("store_identity") != snapshot.state.store_identity
+            or source_identity.get("session_key") != key
+            or source_identity.get("incarnation") != snapshot.state.incarnation
+            or source_identity.get("generation") != snapshot.state.generation
+            or _interruption_source_digest(snapshot) != archive["source_digest"]
+            or len(snapshot.events) < len(tail)
+            or snapshot.events[-len(tail):] != tail
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        prefix = snapshot.events[:-len(tail)]
+        if (
+            prefix != replacement_events
+            or _interruption_events_digest(prefix) != archive["prefix_digest"]
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        return archive
 
     def _source_inventory(self) -> tuple[_SourceInventory, ...]:
         if not self.backend.session_files_locked:
@@ -963,7 +1223,7 @@ class SessionModeResolver:
         for sequence, name in enumerate(entries, 1):
             value = _parse_json(self.storage.read(f"{directory}/{name}"))
             if (
-                set(value) != _JOURNAL_FIELDS
+                set(value) not in (_LEGACY_JOURNAL_FIELDS, _JOURNAL_FIELDS)
                 or name != f"{sequence:04d}-{value.get('phase')}.json"
                 or type(value.get("schema_version")) is not int
                 or value.get("schema_version") != 1
@@ -998,6 +1258,16 @@ class SessionModeResolver:
                 or not _digest_or_none(value.get("sidecar_digest"))
                 or not _digest_or_none(value.get("source_record_digest"))
                 or not _digest_or_none(value.get("source_input_digest"))
+                or (
+                    set(value) == _JOURNAL_FIELDS
+                    and (
+                        value.get("operation") != "reset"
+                        or not isinstance(value.get("archive_identity"), str)
+                        or not _digest_or_none(value.get("archive_identity"))
+                        or not isinstance(value.get("archive_digest"), str)
+                        or not _digest_or_none(value.get("archive_digest"))
+                    )
+                )
                 or (
                     value.get("sidecar_bytes") is not None
                     and not isinstance(value.get("sidecar_bytes"), str)
@@ -1099,7 +1369,7 @@ class SessionModeResolver:
         first = records[0]
         if any(
             item["operation"] != operation
-            or any(item[name] != first[name] for name in immutable)
+            or any(item.get(name) != first.get(name) for name in immutable)
             for item in records
         ):
             raise _fail()
@@ -1150,6 +1420,8 @@ class SessionModeResolver:
         source_binding: dict[str, object] | None = None,
         source_input_digest: str | None = None,
         source_input_size: int | None = None,
+        archive_identity: str | None = None,
+        archive_digest: str | None = None,
     ) -> None:
         directory = f".session-mode/journals/{operation_id}"
         existing = self._journal_records(operation_id) if self.storage.exists(directory) else []
@@ -1175,6 +1447,8 @@ class SessionModeResolver:
             source_binding = cast(dict[str, object] | None, first["source_binding"])
             source_input_digest = cast(str | None, first["source_input_digest"])
             source_input_size = cast(int | None, first["source_input_size"])
+            archive_identity = cast(str | None, first.get("archive_identity"))
+            archive_digest = cast(str | None, first.get("archive_digest"))
         sequence = len(existing) + 1
         previous = _digest(_canonical_json(existing[-1])) if existing else None
         record: dict[str, object] = {
@@ -1207,6 +1481,15 @@ class SessionModeResolver:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "previous_record_digest": previous,
         }
+        if archive_identity is not None or archive_digest is not None:
+            if (
+                operation != "reset"
+                or not _digest_or_none(archive_identity)
+                or not _digest_or_none(archive_digest)
+            ):
+                raise _fail()
+            record["archive_identity"] = archive_identity
+            record["archive_digest"] = archive_digest
         self.storage.write(
             f"{directory}/{sequence:04d}-{phase}.json",
             _canonical_json(record),
@@ -1312,7 +1595,13 @@ class SessionModeResolver:
             if self.storage.exists(f"{self.backend.storage_key(key)}.jsonl") or self.storage.exists(sidecar_name):
                 raise _fail()
             return None
-        record = _parse_json(self.storage.read(name))
+        # Storage and shared-authority failures must retain their original type.
+        # Only this pure parser is known to be examining the requested record bytes.
+        record_bytes = self.storage.read(name)
+        try:
+            record = _parse_json(record_bytes)
+        except SessionModeError as exc:
+            raise SessionModeRecordError(key) from exc
         expected = {
             "schema_version", "registry_id", "record_revision", "session_key", "storage_key",
             "state", "mode", "source_schema_version", "incarnation", "generation",
@@ -1338,7 +1627,7 @@ class SessionModeResolver:
             or record.get("state") not in {"active", "deleted", "quarantined"}
             or not self._hex32(record.get("committed_operation_id"))
         ):
-            raise _fail()
+            raise SessionModeRecordError(key)
         if record["state"] != "active":
             if self.storage.exists(f"{self.backend.storage_key(key)}.jsonl") or self.storage.exists(sidecar_name):
                 raise _fail()
@@ -1347,7 +1636,7 @@ class SessionModeResolver:
                 or record["source_schema_version"] is not None
                 or record["transition_digest"] is not None
             ):
-                raise _fail()
+                raise SessionModeRecordError(key)
             journal = self._journal_records(cast(str, record["committed_operation_id"]))
             if any(entry["registry_id"] != registry["registry_id"] for entry in journal):
                 raise _fail()
@@ -1363,7 +1652,7 @@ class SessionModeResolver:
             return record
         mode = record.get("mode")
         if mode not in {"legacy", "canonical"}:
-            raise _fail()
+            raise SessionModeRecordError(key)
         if (
             record.get("source_schema_version") != (1 if mode == "canonical" else None)
             or (
@@ -1371,9 +1660,9 @@ class SessionModeResolver:
                 and type(record.get("source_schema_version")) is not int
             )
         ):
-            raise _fail()
+            raise SessionModeRecordError(key)
         if record.get("transition_digest") is None:
-            raise _fail()
+            raise SessionModeRecordError(key)
         journal = self._journal_records(cast(str, record["committed_operation_id"]))
         if any(entry["registry_id"] != registry["registry_id"] for entry in journal):
             raise _fail()
@@ -1979,6 +2268,244 @@ class SessionModeResolver:
             self._reconcile_incomplete(key, registry)
             return self.resolve(key)
 
+    def _pending_cron_interruption_reset(
+        self, key: str
+    ) -> tuple[str, list[dict[str, object]], dict[str, object]] | None:
+        """Find one fully validated archive-bound reset without changing it."""
+        self._require_open()
+        registry = self._witnesses()
+        if registry is None:
+            return None
+        incomplete: list[tuple[str, list[dict[str, object]]]] = []
+        candidates: list[tuple[str, list[dict[str, object]]]] = []
+        for operation_id in self.storage.list(".session-mode/journals"):
+            if not self._hex32(operation_id):
+                raise _fail()
+            journal = self._journal_records(operation_id)
+            if any(entry["registry_id"] != registry["registry_id"] for entry in journal):
+                raise _fail()
+            last = journal[-1]
+            if last["phase"] in {"complete", "aborted"}:
+                continue
+            implicated = {last.get("source_key"), last.get("target_key")}
+            if key not in implicated and not implicated.issubset({None}):
+                continue
+            incomplete.append((operation_id, journal))
+            if (
+                last.get("operation") == "reset"
+                and last.get("source_key") == key
+                and last.get("target_key") == key
+                and isinstance(last.get("archive_identity"), str)
+                and isinstance(last.get("archive_digest"), str)
+            ):
+                candidates.append((operation_id, journal))
+        if len(candidates) != 1 or len(incomplete) != 1:
+            if incomplete:
+                raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+            return None
+
+        operation_id, journal = candidates[0]
+        first = journal[0]
+        identity = cast(str, first["archive_identity"])
+        digest = cast(str, first["archive_digest"])
+        archive, _raw = self._read_interruption_archive(identity, digest)
+        source_identity = cast(dict[str, object], archive["source_identity"])
+        if (
+            self.backend.source.store_identity_differs(
+                cast(str, source_identity.get("store_identity"))
+            )
+            or source_identity.get("session_key") != key
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        return operation_id, journal, archive
+
+    @_locked_operation()
+    def peek_cron_interruption_reset_occurrence(self, key: str) -> tuple[str, str] | None:
+        """Read the claimed occurrence and run bound to a reset, without source locking."""
+        pending = self._pending_cron_interruption_reset(key)
+        if pending is None:
+            return None
+        _operation_id, _journal, archive = pending
+        source_identity = cast(dict[str, object], archive["source_identity"])
+        return cast(str, archive["occurrence_id"]), cast(str, source_identity["run_id"])
+
+    @_locked_operation(execution=True)
+    def recover_cron_interruption_reset(
+        self,
+        key: str,
+        *,
+        expected_occurrence_id: str,
+    ) -> Literal["none", "aborted", "completed"]:
+        """Reconcile only the archive-bound reset peeked for a held occurrence."""
+
+        if not _digest_or_none(expected_occurrence_id):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        pending = self._pending_cron_interruption_reset(key)
+        if pending is None:
+            return "none"
+        operation_id, journal, archive = pending
+        first, last = journal[0], journal[-1]
+        identity = cast(str, first["archive_identity"])
+        archive_digest = cast(str, first["archive_digest"])
+        if archive.get("occurrence_id") != expected_occurrence_id:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        source_identity = cast(dict[str, object], archive["source_identity"])
+        tail = cast(list[dict[str, object]], archive["interrupted_events"])
+        if (
+            first.get("input_digest") is None
+            or first.get("output_digest") is None
+            or first.get("input_size") is None
+            or first.get("output_size") is None
+            or first.get("prior_record") is None
+            or first.get("target_record") is None
+            or self.backend.source.store_identity_differs(
+                cast(str, source_identity.get("store_identity"))
+            )
+            or source_identity.get("session_key") != key
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+
+        source_name = f"{self.backend.storage_key(key)}.jsonl"
+        sidecar_name = f"{self.backend.storage_key(key)}.checkpoint.json"
+        if self.storage.exists(sidecar_name):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        source_bytes = self.storage.read(source_name, limit=67_108_864)
+        source_digest = _digest(source_bytes)
+        current_snapshot = self.backend.source.load_source_snapshot(key)
+        source_generation = source_identity.get("generation")
+        source_incarnation = source_identity.get("incarnation")
+        if (
+            current_snapshot.state.store_identity != source_identity.get("store_identity")
+            or current_snapshot.state.session_key != key
+            or current_snapshot.state.incarnation != source_incarnation
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+
+        record_name = self._record_name(key)
+        if not self.storage.exists(record_name):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        record_bytes = self.storage.read(record_name)
+        prior_bytes = cast(str, first["prior_record"]).encode("utf-8")
+        target_bytes = cast(str, first["target_record"]).encode("utf-8")
+        output_matches = (
+            source_digest == first["output_digest"]
+            and len(source_bytes) == first["output_size"]
+        )
+        metadata_value = current_snapshot.header.get("metadata")
+        metadata = (
+            cast(dict[str, object], metadata_value)
+            if isinstance(metadata_value, dict)
+            and all(
+                isinstance(name, str)
+                for name in cast(dict[object, object], metadata_value)
+            )
+            else {}
+        )
+        lease = metadata.get("execution_lease")
+        recovery_fence_valid = (
+            metadata.get("execution_recovery_required") is True
+        )
+        if lease is not None:
+            lease_fields = {
+                "schema_version", "token", "run_id", "incarnation", "generation",
+                "acquired_at", "recovery_required",
+            }
+            recovery_fence_valid = (
+                isinstance(lease, dict)
+                and set(cast(dict[object, object], lease)) == lease_fields
+                and type(cast(dict[object, object], lease).get("schema_version")) is int
+                and cast(dict[object, object], lease).get("schema_version") == 1
+                and isinstance(cast(dict[object, object], lease).get("token"), str)
+                and bool(cast(dict[object, object], lease).get("token"))
+                and cast(dict[object, object], lease).get("run_id") == source_identity.get("run_id")
+                and cast(dict[object, object], lease).get("incarnation") == source_identity.get("incarnation")
+                and type(cast(dict[object, object], lease).get("generation")) is int
+                and cast(dict[object, object], lease).get("generation") == source_identity.get("generation")
+                and _aware_timestamp(cast(dict[object, object], lease).get("acquired_at"))
+                and type(cast(dict[object, object], lease).get("recovery_required")) is bool
+                and cast(dict[object, object], lease).get("recovery_required") is True
+            )
+        preimage_matches = (
+            current_snapshot.state.generation == source_generation
+            and _interruption_source_digest(current_snapshot) == archive["source_digest"]
+            and len(current_snapshot.events) >= len(tail)
+            and current_snapshot.events[-len(tail):] == tail
+            and _interruption_events_digest(current_snapshot.events[:-len(tail)])
+            == archive["prefix_digest"]
+            and _interruption_events_digest(current_snapshot.events[-len(tail):])
+            == archive["interrupted_digest"]
+            and recovery_fence_valid
+            and record_bytes == prior_bytes
+        )
+        if preimage_matches:
+            if last["phase"] != "prepared":
+                raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+            self._append_journal(
+                operation_id,
+                phase="aborted",
+                operation="reset",
+                registry_id=cast(str, first["registry_id"]),
+                source_key=key,
+                target_key=key,
+                prior_record_digest=cast(str | None, first["prior_record_digest"]),
+                target_binding=cast(dict[str, object] | None, first["target_binding"]),
+                archive_identity=identity,
+                archive_digest=archive_digest,
+            )
+            self.resolve(key)
+            return "aborted"
+
+        if not output_matches or record_bytes not in {prior_bytes, target_bytes}:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        if last["phase"] == "mode_committed" and record_bytes != target_bytes:
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        target_header, target_events = validate_source_session_bytes(
+            source_bytes,
+            expected_key=key,
+        )
+        target_value = _parse_json(target_bytes)
+        if (
+            type(source_generation) is not int
+            or current_snapshot.state.generation != source_generation + 1
+            or current_snapshot.state.incarnation != source_identity.get("incarnation")
+            or _interruption_events_digest(target_events) != archive["prefix_digest"]
+            or target_header["metadata"].get("execution_lease") is not None
+            or "execution_lease" in target_header["metadata"]
+            or "execution_recovery_required" in target_header["metadata"]
+            or target_value.get("session_key") != key
+            or target_value.get("mode") != "canonical"
+            or target_value.get("incarnation") != source_identity.get("incarnation")
+            or target_value.get("generation") != source_generation + 1
+            or self._binding(target_value) != first.get("target_binding")
+        ):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
+        common: _JournalCommon = {
+            "operation": "reset",
+            "registry_id": cast(str, first["registry_id"]),
+            "source_key": key,
+            "target_key": key,
+            "prior_record_digest": cast(str | None, first["prior_record_digest"]),
+            "prior_record": cast(str | None, first["prior_record"]),
+            "target_record": cast(str | None, first["target_record"]),
+            "target_binding": cast(dict[str, object] | None, first["target_binding"]),
+            "input_digest": cast(str | None, first["input_digest"]),
+            "input_size": cast(int | None, first["input_size"]),
+            "output_digest": cast(str | None, first["output_digest"]),
+            "output_size": cast(int | None, first["output_size"]),
+            "archive_identity": identity,
+            "archive_digest": archive_digest,
+        }
+        if last["phase"] == "prepared":
+            self._append_journal(operation_id, phase="target_installed", **common)
+        if record_bytes == prior_bytes:
+            self.storage.write(record_name, target_bytes)
+        phases = [entry["phase"] for entry in journal]
+        if "mode_committed" not in phases:
+            self._append_journal(operation_id, phase="mode_committed", **common)
+        self._append_journal(operation_id, phase="complete", **common)
+        self.resolve(key)
+        return "completed"
+
     def _ensure_registry_for_first_write(self) -> dict[str, object]:
         registry = self._witnesses()
         if registry is not None:
@@ -2389,11 +2916,15 @@ class SessionModeResolver:
         *,
         owner: object | None = None,
         fault_after: str | None = None,
+        archive_identity: str | None = None,
+        archive_digest: str | None = None,
     ) -> ResolvedSessionMode:
         """Journal and install one frozen reset under execution-before-files order."""
 
         from nanobot.session.execution_owner import ExecutionOwner, execution_transaction
 
+        if (archive_identity is None) != (archive_digest is None):
+            raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
         self._reject_files_held()
         with execution_transaction(
             self.backend,
@@ -2405,7 +2936,12 @@ class SessionModeResolver:
             # The transaction admitted None or an exact ExecutionOwner before
             # entering this sole call to the internal reset implementation.
             return self._reset_unlocked(
-                key, replacement_events, owner=cast("ExecutionOwner | None", owner), fault_after=fault_after
+                key,
+                replacement_events,
+                owner=cast("ExecutionOwner | None", owner),
+                fault_after=fault_after,
+                archive_identity=archive_identity,
+                archive_digest=archive_digest,
             )
 
     def _reset_unlocked(
@@ -2415,12 +2951,18 @@ class SessionModeResolver:
         *,
         owner: _ExecutionOwner | None,
         fault_after: str | None,
+        archive_identity: str | None = None,
+        archive_digest: str | None = None,
     ) -> ResolvedSessionMode:
 
         current = self.resolve(key)
         if current.state != "active":
+            if archive_identity is not None:
+                raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
             raise _fail()
         if current.mode == "legacy":
+            if archive_identity is not None:
+                raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
             if owner is not None:
                 raise _fail()
             item = self._inventory_for_key(key)
@@ -2502,6 +3044,15 @@ class SessionModeResolver:
         ):
             raise ExecutionOwnershipError()
         snapshot = reset_input.snapshot(self.backend.source)
+        archive: dict[str, object] | None = None
+        if archive_identity is not None and archive_digest is not None:
+            archive = self._validate_interruption_archive_for_reset(
+                key,
+                snapshot,
+                replacement_events,
+                identity=archive_identity,
+                digest=archive_digest,
+            )
         planned_at = datetime.now(timezone.utc).isoformat()
         plan = self.backend.source.plan_source_reset(
             snapshot,
@@ -2538,6 +3089,9 @@ class SessionModeResolver:
             "input_digest": _digest(input_bytes), "input_size": len(input_bytes),
             "output_digest": _digest(plan.target_bytes), "output_size": len(plan.target_bytes),
         }
+        if archive is not None:
+            common["archive_identity"] = archive_identity
+            common["archive_digest"] = archive_digest
         self._append_journal(operation_id, phase="prepared", **common)
         if fault_after == "prepared":
             raise RuntimeError("injected session-mode fault")
@@ -3016,6 +3570,7 @@ __all__ = [
     "LockedSessionSnapshot",
     "SessionModeBinding",
     "SessionModeError",
+    "SessionModeRecordError",
     "SessionModeResolver",
     "SessionExportTransaction",
 ]

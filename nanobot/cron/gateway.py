@@ -126,7 +126,8 @@ class GatewayCron:
             if self._state == "stopping":
                 return
             self._validate_jobs()
-            self.runtime.acquire()
+            if not await self.runtime.acquire_for_gateway():
+                return
             self._import_retry_budget()
             self._state = "running"
             # The gateway awaits this task alongside its channels and agent.

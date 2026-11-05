@@ -1513,6 +1513,56 @@ class CronOccurrenceStore:
             self._assert_namespace(record)
             return record
 
+    @staticmethod
+    def _serialized_record(record: OccurrenceRecord) -> bytes:
+        return CronOccurrenceStore._wire_record(
+            occurrence_id=record.occurrence_id,
+            identity=record.identity,
+            state=record.state,
+            owner=record.owner,
+            generation=record.generation,
+            job_snapshot=record.job_snapshot,
+            destination_policy=record.destination_policy,
+            completion=record.completion,
+            reconciliation=record.reconciliation,
+        )
+
+    @contextmanager
+    def hold_claimed_for_recovery(
+        self, expected: OccurrenceRecord
+    ) -> Generator[OccurrenceRecord, None, None]:
+        """Hold one exact claimed timer occurrence without issuing execution authority.
+
+        The occurrence execution lock is retained while recovery owns the source.
+        The ledger lock is held only for durable entry and exit rechecks, so no
+        scheduler or claim mutation lock is held during source and archive work.
+        """
+        if (
+            type(expected) is not OccurrenceRecord
+            or type(expected.identity) is not ScheduledOccurrenceIdentity
+            or expected.state != "claimed"
+            or expected.completion is not None
+            or expected.reconciliation is not None
+            or _occurrence_id(expected.identity) != expected.occurrence_id
+        ):
+            raise OccurrenceOwnershipError("recovery requires one exact claimed timer occurrence")
+        self._assert_namespace(expected)
+        expected_bytes = self._serialized_record(expected)
+        with self._held_execution_lock(expected.occurrence_id):
+            with self._held_lock() as held:
+                current = self._read_record(held, expected.occurrence_id, durable=True)
+                self._assert_namespace(current)
+                if self._serialized_record(current) != expected_bytes:
+                    raise OccurrenceOwnershipError("claimed occurrence changed before recovery")
+            try:
+                yield current
+            finally:
+                with self._held_lock() as held:
+                    current = self._read_record(held, expected.occurrence_id, durable=True)
+                    self._assert_namespace(current)
+                    if self._serialized_record(current) != expected_bytes:
+                        raise OccurrenceOwnershipError("claimed occurrence changed during recovery")
+
     def get_completed_durable(self, occurrence_id: str) -> OccurrenceRecord:
         """Read one completed record only after reproving record and directory durability.
 

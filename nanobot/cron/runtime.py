@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, NoReturn, SupportsIndex, cast
 
+from loguru import logger
+
 from nanobot.cron.canonical_execution import SilentCronAgent
 from nanobot.cron.channel_sender import CronChannelSender, ExactChannelAuthority
 from nanobot.cron.completion import CronCompletionProjector
@@ -16,6 +18,7 @@ from nanobot.cron.composition import ClaimedTextCompositionResult, compose_claim
 from nanobot.cron.definition_store import CronDefinition
 from nanobot.cron.delivery_runtime import CronDeliveryRuntime
 from nanobot.cron.delivery_store import CronDeliveryOutboxStore
+from nanobot.cron.interruption_recovery import recover_interrupted_cron_sources
 from nanobot.cron.job_hooks import CronJobHooks
 from nanobot.cron.occurrence import CronOccurrenceRuntime, destination_policy
 from nanobot.cron.occurrence_store import (
@@ -129,26 +132,76 @@ class CronRuntime:
         self._task_errors: list[BaseException] = []
         self._capabilities: dict[int, tuple[TriggerCapability, tuple[CronRuntime, str, str | None, str, dict[str, object], int, int]]] = {}
         self._controllers: dict[int, tuple[InternalController, str, int]] = {}
+        self._recovery_fences: dict[str, str] = {}
         self._close_task: asyncio.Task[None] | None = None
+        self._startup_task: asyncio.Task[object] | None = None
         self._timer_task: asyncio.Task[None] | None = None
         self._shutdown_mode: Literal["bounded", "graceful", "forced"] = "bounded"
         self._shutdown_changed = asyncio.Event()
 
-    def acquire(self) -> None:
+    def _require_acquisition_allowed(self) -> None:
         if self._close_task is not None:
             raise SchedulerConflictError("closed cron runtime cannot reacquire")
-        if self._shutdown_mode != "bounded":
+        if self._shutdown_mode != "bounded" or self._shutdown_changed.is_set():
             raise SchedulerConflictError("stopping cron runtime cannot acquire")
+
+    def _acquire_scheduler(self) -> None:
+        self._require_acquisition_allowed()
         self.scheduler.acquire_and_reconcile()
+
+    def _activate_after_recovery(self) -> None:
+        if self.quota_recovery is not None:
+            self.quota_recovery.recover(self.service)
         self._accepting = True
+        if self.quota_recovery is not None:
+            self._quota_controller = self.construct_internal_controller("quota-retry")
+
+    def acquire(self) -> None:
+        """Synchronous acquisition retained for existing offline callers."""
+        self._acquire_scheduler()
         try:
-            if self.quota_recovery is not None:
-                self.quota_recovery.recover(self.service)
-                self._quota_controller = self.construct_internal_controller("quota-retry")
+            self._activate_after_recovery()
         except BaseException:
             self.stop_claiming()
             self.scheduler.release_lease()
             raise
+
+    async def acquire_for_gateway(self) -> bool:
+        """Acquire, reconcile interruption evidence, then activate gateway cron."""
+        if not isinstance(self.injection, GatewayCronOptions):
+            raise SchedulerConflictError("gateway acquisition requires production cron options")
+        task = asyncio.current_task()
+        if task is None:
+            raise SchedulerConflictError("gateway acquisition requires an asyncio task")
+        self._startup_task = cast(asyncio.Task[object], task)
+        try:
+            self._acquire_scheduler()
+            try:
+                occurrences = cast(CronOccurrenceStore, self.service.occurrence_store)
+                self._recovery_fences = await recover_interrupted_cron_sources(
+                    self.sessions,
+                    self.service,
+                    occurrences,
+                )
+                for job_id, reason in sorted(self._recovery_fences.items()):
+                    logger.warning("Cron job {} fenced during interruption recovery: {}", job_id, reason)
+                if (
+                    self._close_task is not None
+                    or self._shutdown_mode != "bounded"
+                    or self._shutdown_changed.is_set()
+                ):
+                    self.stop_claiming()
+                    self.scheduler.release_lease()
+                    return False
+                self._activate_after_recovery()
+                return True
+            except BaseException:
+                self.stop_claiming()
+                self.scheduler.release_lease()
+                raise
+        finally:
+            if self._startup_task is task:
+                self._startup_task = None
 
     def start_timer_task(self) -> None:
         """Separate explicit offline injection; acquisition itself starts no task."""
@@ -175,7 +228,11 @@ class CronRuntime:
         return {"enabled": running, "state": "running" if running else "inactive",
                 "jobs": len(self.service.list_jobs(include_disabled=True)),
                 "active_executions": len(self._tasks),
-                "quota_retries": [item.model_dump() for item in pending]}
+                "quota_retries": [item.model_dump() for item in pending],
+                "recovery_required": [
+                    {"job_id": job_id, "reason": reason}
+                    for job_id, reason in sorted(self._recovery_fences.items())
+                ]}
 
     async def run_due_quota_retries(self) -> None:
         if self.quota_recovery is None or self._quota_controller is None:
@@ -195,6 +252,20 @@ class CronRuntime:
     async def _dispatch(self, claim: OccurrenceClaim, pre_begin: Callable[[], object]) -> object:
         if not self._accepting:
             raise SchedulerConflictError("cron ingress fenced")
+        if claim.identity.job_id in self._recovery_fences:
+            occurrence_store = cast(CronOccurrenceStore, self.service.occurrence_store)
+            with occurrence_store.acquire_execution_fence(claim) as fence:
+                occurrence_store.begin_execution(claim, fence)
+                return self.service.complete_occurrence(
+                    claim,
+                    {
+                        "status": "skipped",
+                        "reason": "execution_recovery_required",
+                        "delivery": {"version": 1, "deliver": False, "messages": []},
+                    },
+                    run_id=claim.run_id,
+                    fence=fence,
+                )
         async def compose() -> ClaimedTextCompositionResult:
             async def admitted() -> ClaimedTextCompositionResult:
                 return await compose_claimed_text_occurrence(
@@ -359,6 +430,10 @@ class CronRuntime:
 
     async def _close(self) -> None:
         self.stop_claiming()
+        startup = self._startup_task
+        if startup is not None and startup is not asyncio.current_task() and not startup.done():
+            startup.cancel()
+            await asyncio.gather(startup, return_exceptions=True)
         if self._timer_task is not None:
             self._timer_task.cancel()
             await asyncio.gather(self._timer_task, return_exceptions=True)

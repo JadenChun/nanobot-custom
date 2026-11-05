@@ -201,6 +201,45 @@ def test_claim_freezes_snapshot_and_destination_policy_and_rejects_conflicts(tmp
         )
 
 
+def test_claimed_recovery_hold_is_lock_only_and_preserves_durable_record(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    claim = _claim(store)
+    expected = store.get(claim.occurrence_id)
+    original = (store.root / f"{claim.occurrence_id}.json").read_bytes()
+    observer = CronOccurrenceStore(store.root, namespace=NAMESPACE)
+
+    with store.hold_claimed_for_recovery(expected) as held:
+        assert held == expected
+        with pytest.raises(OccurrenceExecutionBusyError):
+            with observer.hold_claimed_for_recovery(expected):
+                pytest.fail("a second recovery owner acquired the same occurrence")
+        assert store.get(claim.occurrence_id) == expected
+        assert (store.root / f"{claim.occurrence_id}.json").read_bytes() == original
+
+    assert store.get(claim.occurrence_id).state == "claimed"
+    assert (store.root / f"{claim.occurrence_id}.json").read_bytes() == original
+
+
+def test_claimed_recovery_hold_compares_canonical_types_exactly(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    claim = store.claim_scheduled(
+        job_id="job-a",
+        job_revision=7,
+        scheduled_fire_time_ms=1_700_000_000_000,
+        job_snapshot={"value": 1},
+        destination_policy=DESTINATION_POLICY,
+        owner="worker-a",
+    )
+    expected = store.get(claim.occurrence_id)
+    original = (store.root / f"{claim.occurrence_id}.json").read_bytes()
+    expected.job_snapshot["value"] = True
+
+    assert expected.job_snapshot == store.get(claim.occurrence_id).job_snapshot
+    with pytest.raises(OccurrenceOwnershipError, match="changed before recovery"):
+        with store.hold_claimed_for_recovery(expected):
+            pytest.fail("a bool/int-equal Python mapping passed canonical record validation")
+    assert (store.root / f"{claim.occurrence_id}.json").read_bytes() == original
+
 def test_path_shaped_job_ids_use_safe_distinct_digest_keys(tmp_path: Path) -> None:
     store = _store(tmp_path)
     first = _claim(store, job_id="../../same")

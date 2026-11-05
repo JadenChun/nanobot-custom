@@ -2693,20 +2693,86 @@ class SessionManager:
         self.invalidate(key)
         return result
 
+    def peek_cron_interruption_reset_occurrence(self, key: str) -> tuple[str, str] | None:
+        """Read the claimed occurrence and run bound to a pending cron reset."""
+        if self._mode_resolver is None:
+            return None
+        return self._mode_resolver.peek_cron_interruption_reset_occurrence(key)
+
+    def recover_cron_interruption_reset(
+        self, key: str, *, expected_occurrence_id: str
+    ) -> Literal["none", "aborted", "completed"]:
+        """Use the narrow archive-bound reset reconciler for one held occurrence."""
+        if self._mode_resolver is None:
+            return "none"
+        result = self._mode_resolver.recover_cron_interruption_reset(
+            key, expected_occurrence_id=expected_occurrence_id
+        )
+        if result == "completed":
+            self.invalidate(key)
+        return result
+
+    def publish_cron_interruption_archive(
+        self,
+        key: str,
+        *,
+        owner: object,
+        occurrence_id: str,
+        run_id: str,
+        prefix_events: list[dict[str, object]],
+        interrupted_events: list[dict[str, object]],
+        unresolved_execution_id: str,
+    ) -> tuple[str, str]:
+        """Durably retain exact uncertain cron history under its source owner."""
+        from nanobot.session.execution_owner import ExecutionOwner
+        from nanobot.session.session_mode import SessionInterruptionRecoveryRefusedError
+
+        if self._mode_resolver is None or type(owner) is not ExecutionOwner:
+            raise SessionInterruptionRecoveryRefusedError(
+                "session mode evidence is invalid; offline recovery is required"
+            )
+        with owner.transaction(self._jsonl_store, key):
+            snapshot = self._jsonl_store.source.load_source_snapshot(key)
+            return self._mode_resolver.publish_cron_interruption_archive(
+                key,
+                snapshot,
+                occurrence_id=occurrence_id,
+                run_id=run_id,
+                prefix_events=prefix_events,
+                interrupted_events=interrupted_events,
+                unresolved_execution_id=unresolved_execution_id,
+            )
+
     def reset_session(
         self,
         key: str,
         *,
         owner: object | None = None,
         replacement_events: list[dict[str, Any]] | None = None,
+        cron_interruption_archive_identity: str | None = None,
+        cron_interruption_archive_digest: str | None = None,
     ) -> Session | None:
         """Sole persistence seam for clearing one managed or unmanaged session."""
 
+        if (cron_interruption_archive_identity is None) != (
+            cron_interruption_archive_digest is None
+        ):
+            from nanobot.session.session_mode import SessionInterruptionRecoveryRefusedError
+
+            raise SessionInterruptionRecoveryRefusedError(
+                "session mode evidence is invalid; offline recovery is required"
+            )
         events = replacement_events or []
         self._retire_permissions_for_lifecycle(key, "session_reset")
         if self._mode_resolver is not None:
             resolved = self._mode_resolver.resolve(key)
             if resolved.state in {"absent", "deleted"}:
+                if cron_interruption_archive_identity is not None:
+                    from nanobot.session.session_mode import SessionInterruptionRecoveryRefusedError
+
+                    raise SessionInterruptionRecoveryRefusedError(
+                        "session mode evidence is invalid; offline recovery is required"
+                    )
                 self._mode_resolver.ensure_canonical(key)
                 self.invalidate(key)
                 return self._jsonl_store.source.load_source_snapshot(key).to_session()
@@ -2717,9 +2783,17 @@ class SessionManager:
                     key,
                     cast(list[dict[str, object]], events),
                     owner=owner,
+                    archive_identity=cron_interruption_archive_identity,
+                    archive_digest=cron_interruption_archive_digest,
                 )
                 self.invalidate(key)
                 return self._jsonl_store.source.load_source_snapshot(key).to_session()
+            if cron_interruption_archive_identity is not None:
+                from nanobot.session.session_mode import SessionInterruptionRecoveryRefusedError
+
+                raise SessionInterruptionRecoveryRefusedError(
+                    "session mode evidence is invalid; offline recovery is required"
+                )
             self._mode_resolver.reset(
                 key,
                 cast(list[dict[str, object]], events),
@@ -2729,6 +2803,12 @@ class SessionManager:
             return self._jsonl_store.load(key)
         source_backend = self.source_backend(key)
         if source_backend is not None:
+            if cron_interruption_archive_identity is not None:
+                from nanobot.session.session_mode import SessionInterruptionRecoveryRefusedError
+
+                raise SessionInterruptionRecoveryRefusedError(
+                    "session mode evidence is invalid; offline recovery is required"
+                )
             snapshot = source_backend.source.load_source_snapshot(key)
             reset = source_backend.source.reset_source_session(
                 key,
@@ -2738,6 +2818,12 @@ class SessionManager:
             )
             self.invalidate(key)
             return reset.to_session()
+        if cron_interruption_archive_identity is not None:
+            from nanobot.session.session_mode import SessionInterruptionRecoveryRefusedError
+
+            raise SessionInterruptionRecoveryRefusedError(
+                "session mode evidence is invalid; offline recovery is required"
+            )
         session = self._cached(key) or self._load(key)
         if session is None:
             session = Session(key=key, messages=deepcopy(events))
@@ -2877,6 +2963,15 @@ class SessionManager:
         if payload is not None and "source_schema_version" in payload.get("metadata", {}):
             return self._jsonl_store
         return None
+
+    def has_runtime_checkpoint(self, key: str) -> bool:
+        """Check for any checkpoint entry without reading or repairing its contents."""
+        path = self._jsonl_store.get_runtime_checkpoint_path(key)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return False
+        return True
 
     def read_existing_canonical_source(
         self,
