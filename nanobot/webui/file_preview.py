@@ -98,9 +98,13 @@ def file_preview_reference(
         references = [path for text in replies for path in _preview_text_references(text)]
         if requested not in references:
             continue
-        if Path(requested).expanduser().is_absolute():
+        try:
+            requested_path = Path(requested).expanduser()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise WebUIFilePreviewError(400, "invalid path") from exc
+        if requested_path.is_absolute():
             try:
-                matches.add(Path(requested).expanduser().resolve(strict=False))
+                matches.add(requested_path.resolve(strict=False))
             except (OSError, ValueError, RuntimeError) as exc:
                 raise WebUIFilePreviewError(400, "invalid path") from exc
             continue
@@ -126,11 +130,18 @@ def _absolute_preview_paths(text: str) -> set[Path]:
     paths: set[Path] = set()
     for value in [*text.splitlines(), *_preview_text_references(text)]:
         value = _clean_preview_path(value.strip().strip("\"'"))
-        if value and len(value) <= 4096 and Path(value).expanduser().is_absolute():
-            try:
-                paths.add(Path(value).expanduser().resolve(strict=False))
-            except (OSError, ValueError, RuntimeError):
-                continue
+        if not value or len(value) > 4096:
+            continue
+        try:
+            candidate = Path(value).expanduser()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if not candidate.is_absolute():
+            continue
+        try:
+            paths.add(candidate.resolve(strict=False))
+        except (OSError, ValueError, RuntimeError):
+            continue
     return paths
 
 

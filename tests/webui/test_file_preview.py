@@ -25,6 +25,19 @@ def test_restricted_preview_allows_media_file(tmp_path: Path, monkeypatch: pytes
     assert Path(payload["path"]) == uploaded.resolve()
 
 
+def test_preview_paths_ignore_tilde_traceback_markers(tmp_path: Path) -> None:
+    from nanobot.webui.file_preview import _absolute_preview_paths
+
+    target = tmp_path / "Sena.md"
+    target.write_text("content", encoding="utf-8")
+
+    paths = _absolute_preview_paths(
+        f"Traceback (most recent call last):\n~~~~~~~~~~~~~^^^^^^\n{target}"
+    )
+
+    assert target.resolve(strict=False) in paths
+
+
 def test_restricted_preview_rejects_other_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
