@@ -25,7 +25,12 @@
               notifications: [{
                 id: Math.floor(Date.now() % 2147483647),
                 title: options.title || "nanobot",
-                body: options.body || ""
+                body: options.body || "",
+                // This is an immediate notification, not a scheduled alarm.
+                // Without this, Capacitor asks for exact-alarm access on
+                // Android 12+, which blocks delivery when the app is in the
+                // background and can leave the promise pending forever.
+                isExactNotification: false
               }]
             });
           } catch (_) {
@@ -35,6 +40,15 @@
       };
     }
   }
+
+  window.nanobotMobileRunKeepAlive = {
+    start: async function (chatId) {
+      await plugin.startRunKeepAlive({ chatId: chatId });
+    },
+    stop: async function (chatId) {
+      await plugin.stopRunKeepAlive({ chatId: chatId });
+    }
+  };
 
   var transport = {
     start: async function (origin, installationId, hostname) {

@@ -70,8 +70,24 @@ See `docs/mobile-client-tasks.md`.
 The shared WebUI **Task notifications** setting is bridged to Capacitor Local
 Notifications. Android 13+ asks for notification permission when the setting is
 enabled, and a completed turn shows a system notification while the app is not
-focused. Background delivery still depends on Android keeping the app process
-and its WebSocket alive; the v1 client does not use push delivery.
+focused. Completion alerts are emitted by the shared client rather than an
+individual chat view, so leaving the thread or navigating elsewhere in the app
+does not lose the notification. Only runs started from this phone notify the
+phone.
+
+While a phone-started run is active, the Android client starts a `dataSync`
+foreground service with a low-importance ongoing notification and a partial
+wake lock. This keeps the process, WebSocket and WebView JavaScript alive after
+the app is backgrounded, so the completion event can still produce a local
+notification. The service stops on completion, stop, failure, or when the app
+is destroyed/killed.
+
+`dataSync` foreground services are limited to six hours per 24-hour period on
+Android 15+. The service implements `onTimeout()` and stops itself. Once the
+quota is exhausted, Android rejects another `dataSync` foreground service until
+the app is brought to the foreground. Swiping the app from Recents, exiting it,
+or force-stopping it ends background monitoring; the v1 client still does not
+use push delivery.
 
 ## Owner pairing (2026-11-03)
 

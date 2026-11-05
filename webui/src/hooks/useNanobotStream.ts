@@ -1,10 +1,8 @@
 import { acceptsCompactionPhase } from "../../../packages/client-events/notifications";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
 
 import { useClient } from "@/providers/ClientProvider";
 import { toMediaAttachment } from "@/lib/media";
-import { resolveModelRequestFailureCopy } from "@/lib/model-request-failure";
 import {
   mergeToolProgressEvents,
   mergeToolProgressTraceLines,
@@ -29,8 +27,6 @@ import {
 } from "@/lib/thread-event-projection";
 import type { UIMessageTurnFields } from "@/lib/thread-event-projection";
 import { formatQuotedUserMessage } from "@/lib/user-message-quote";
-import { readLocalPreferences } from "@/lib/local-preferences";
-import { showTaskNotification } from "@/lib/task-notifications";
 import type {
   InboundEvent,
   OutboundCliAppMention,
@@ -313,7 +309,6 @@ export function useNanobotStream(
   dismissStreamError: () => void;
 } {
   const { client } = useClient();
-  const { t } = useTranslation();
   const initialRunStartedAt = chatId ? client.getRunStartedAt(chatId) : null;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [messageOwnerChatId, setMessageOwnerChatId] = useState(chatId);
@@ -340,20 +335,8 @@ export function useNanobotStream(
   const lastStreamFlushAtRef = useRef(Number.NEGATIVE_INFINITY);
   const suppressStreamUntilTurnEndRef = useRef(false);
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
-  const ownedTurnIdsRef = useRef<Set<string>>(new Set());
 
   const dismissStreamError = useCallback(() => setStreamError(null), []);
-
-  const notifyInBackground = useCallback((body: string) => {
-    if (
-      !readLocalPreferences().browserNotifications
-      || (document.visibilityState === "visible" && document.hasFocus())
-    ) return;
-    showTaskNotification({
-      body,
-      tag: chatId ? `nanobot-turn-${chatId}` : undefined,
-    });
-  }, [chatId]);
 
   const clearPendingStreamWork = useCallback(() => {
     if (streamFrameRef.current !== null) {
@@ -987,10 +970,6 @@ export function useNanobotStream(
 
       if (ev.event === "turn_end") {
         const completedTurnId = typeof ev.turn_id === "string" ? ev.turn_id : null;
-        const sideChannelTurn = completedTurnId !== null
-          && sideChannelTurnIdsRef.current.has(completedTurnId);
-        const ownedTurn = completedTurnId !== null
-          && ownedTurnIdsRef.current.delete(completedTurnId);
         if (completedTurnId) sideChannelTurnIdsRef.current.delete(completedTurnId);
         if ("goal_state" in ev && ev.goal_state != null && typeof ev.goal_state === "object") {
           setGoalState(ev.goal_state);
@@ -1046,15 +1025,6 @@ export function useNanobotStream(
           return finalized;
         });
         suppressStreamUntilTurnEndRef.current = false;
-        if (!sideChannelTurn && ownedTurn) {
-          notifyInBackground(
-            modelFailure
-              ? resolveModelRequestFailureCopy(modelFailure, t).body
-              : ev.outcome === "failed"
-                ? ev.failure_message || "This turn failed and has ended."
-              : t("recovery.completed", { defaultValue: "Task completed" }),
-          );
-        }
         onTurnEnd?.();
         return;
       }
@@ -1090,13 +1060,6 @@ export function useNanobotStream(
           clearPendingStreamWork();
           closeActiveAssistantStream();
           clearActivitySegment();
-          if (ev.status !== "recovered") {
-            notifyInBackground(
-              ev.status === "failed"
-                ? t("recovery.failed", { defaultValue: "Task recovery failed" })
-                : t("recovery.interrupted", { defaultValue: "Task interrupted" }),
-            );
-          }
         }
         return;
       }
@@ -1333,10 +1296,8 @@ export function useNanobotStream(
     ensureActivitySegmentId,
     flushPendingStreamEvents,
     isSideChannelEvent,
-    notifyInBackground,
     onTurnEnd,
     schedulePendingStreamFlush,
-    t,
   ]);
 
   const send = useCallback(
@@ -1360,7 +1321,6 @@ export function useNanobotStream(
         setRetryStatus(null);
       }
       const turnId = crypto.randomUUID();
-      ownedTurnIdsRef.current.add(turnId);
       const userMessageId = crypto.randomUUID();
       if (sideChannel) sideChannelTurnIdsRef.current.add(turnId);
       const previews = hasAttachments ? images!.map((i) => i.preview) : undefined;
@@ -1409,7 +1369,6 @@ export function useNanobotStream(
         ...((sideChannel || continueActiveTurn) ? { startsNewRun: false } : {}),
       };
       delete clientOptions.quotedContext;
-      delete clientOptions.sideChannel;
       delete clientOptions.finalizeActiveTurn;
       delete clientOptions.continueActiveTurn;
       const needsUpload = !!wireMedia?.some(

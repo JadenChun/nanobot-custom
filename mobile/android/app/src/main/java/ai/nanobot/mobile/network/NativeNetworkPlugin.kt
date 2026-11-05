@@ -30,6 +30,8 @@ import java.nio.charset.StandardCharsets
 import ai.nanobot.mobile.attachments.AttachmentLimits
 import ai.nanobot.mobile.attachments.AttachmentPolicy
 import ai.nanobot.mobile.MainActivity
+import ai.nanobot.mobile.RunKeepAliveRegistry
+import ai.nanobot.mobile.RunKeepAliveService
 import ai.nanobot.mobile.links.PairingChallenge
 import ai.nanobot.mobile.links.PairingChallengeCodec
 import ai.nanobot.mobile.links.PairingLinkParser
@@ -74,6 +76,49 @@ class NativeNetworkPlugin : Plugin() {
     @PluginMethod
     fun abiVersion(call: PluginCall) {
         call.resolve(JSObject().put("version", NativeNetwork.abiVersion()))
+    }
+
+    /**
+     * Keep the process alive while a phone-started run is active. Android
+     * requires the foreground service to be started while the app is visible;
+     * a background start is rejected and treated as best-effort.
+     */
+    @PluginMethod
+    fun startRunKeepAlive(call: PluginCall) {
+        val chatId = call.getString("chatId")?.trim()
+        if (chatId.isNullOrBlank()) {
+            call.reject("chatId is required")
+            return
+        }
+        RunKeepAliveRegistry.add(chatId)
+        try {
+            RunKeepAliveService.start(context.applicationContext)
+            call.resolve(JSObject().put("running", true))
+        } catch (exception: Exception) {
+            RunKeepAliveRegistry.remove(chatId)
+            call.reject(exception.message ?: "foreground service start failed")
+        }
+    }
+
+    @PluginMethod
+    fun stopRunKeepAlive(call: PluginCall) {
+        val chatId = call.getString("chatId")?.trim()
+        if (chatId.isNullOrBlank()) {
+            RunKeepAliveRegistry.clear()
+        } else {
+            RunKeepAliveRegistry.remove(chatId)
+        }
+        if (RunKeepAliveRegistry.isEmpty()) {
+            // Let the completion notification cross the bridge before the
+            // foreground service is removed.
+            val appContext = context.applicationContext
+            mainHandler.postDelayed({
+                if (RunKeepAliveRegistry.isEmpty()) {
+                    RunKeepAliveService.stop(appContext)
+                }
+            }, 300)
+        }
+        call.resolve()
     }
 
     @PluginMethod
@@ -1080,6 +1125,8 @@ class NativeNetworkPlugin : Plugin() {
 
     @PluginMethod
     fun logout(call: PluginCall) {
+        RunKeepAliveRegistry.clear()
+        RunKeepAliveService.stop(context.applicationContext)
         val serverReachable = call.getBoolean("serverReachable") ?: false
         val current = transportHandle
         if (current != 0L) {
@@ -1102,6 +1149,8 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     override fun handleOnDestroy() {
+        RunKeepAliveRegistry.clear()
+        RunKeepAliveService.stop(context.applicationContext)
         stopInternal()
         pollExecutor.shutdownNow()
         operationExecutor.shutdownNow()

@@ -46,6 +46,7 @@ import { useSkillsCatalog } from "@/hooks/useSkills";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useTaskNotifications } from "@/hooks/useTaskNotifications";
 import { ThemeProvider, useTheme } from "@/hooks/useTheme";
 import { logoFallbackUrls } from "@/lib/provider-brand";
 import { cn } from "@/lib/utils";
@@ -1015,6 +1016,7 @@ function Shell({
   const { t, i18n } = useTranslation();
   const { client, getToken } = useClient();
   const { theme, toggle } = useTheme();
+  useTaskNotifications();
   const {
     sessions,
     loading,

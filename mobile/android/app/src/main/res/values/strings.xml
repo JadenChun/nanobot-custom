@@ -5,4 +5,8 @@
     <string name="package_name">ai.nanobot.mobile</string>
     <string name="custom_url_scheme">ai.nanobot.mobile</string>
     <string name="back_press_again">Press back again to exit</string>
+    <string name="run_keepalive_channel_name">Background task</string>
+    <string name="run_keepalive_channel_description">Keeps Nanobot connected while a task is running</string>
+    <string name="run_keepalive_title">Nanobot is working</string>
+    <string name="run_keepalive_text">Waiting for the current task to finish</string>
 </resources>
