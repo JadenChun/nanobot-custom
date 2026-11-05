@@ -1387,6 +1387,19 @@ def _find_unique_session_turn_by_user(
     return matches[0] if len(matches) == 1 else None
 
 
+def _find_tail_session_turn(
+    session_turns: list[_SessionBackfillTurn],
+    user_event: dict[str, Any],
+) -> _SessionBackfillTurn | None:
+    """Match the unfinished tail to the newest session turn when it is ambiguous."""
+    if not session_turns:
+        return None
+    signature = _user_recovery_signature(user_event)
+    if _user_recovery_signature(session_turns[-1].user_event) == signature:
+        return session_turns[-1]
+    return _find_unique_session_turn_by_user(session_turns, user_event)
+
+
 def _is_recoverable_answer_record(record: dict[str, Any]) -> bool:
     event = record.get("event")
     if event in {"delta", "stream_end"}:
@@ -1457,6 +1470,69 @@ def _recover_incomplete_turns(
         completed_end.pop(WEBUI_TRANSCRIPT_INCOMPLETE_KEY, None)
         recovered.append(completed_end)
     return recovered
+
+
+def _needs_unfinished_tail_repair(lines: list[dict[str, Any]]) -> bool:
+    """Whether the newest transcript group has no terminal turn record."""
+    turns = _split_transcript_turns(lines)
+    if not turns:
+        return False
+    last = turns[-1]
+    return bool(last) and last[-1].get("event") != "turn_end" and any(
+        record.get("event") == "user" for record in last
+    )
+
+
+def _repair_unfinished_tail(
+    lines: list[dict[str, Any]],
+    session_turns: list[_SessionBackfillTurn],
+) -> list[dict[str, Any]]:
+    """Close a stale tail from the durable session's newest completed turn.
+
+    A gateway restart can leave the active transcript without its final
+    ``turn_end``. The session history still has the completed answer; use the
+    newest matching session turn to restore the answer and close the project.
+    """
+    turns = _split_transcript_turns(lines)
+    if not turns:
+        return lines
+    last = turns[-1]
+    if not last or last[-1].get("event") == "turn_end":
+        return lines
+    user_events = [record for record in last if record.get("event") == "user"]
+    if len(user_events) != 1:
+        return lines
+    user_event = user_events[0]
+    session_turn = _find_tail_session_turn(session_turns, user_event)
+    if session_turn is None or not session_turn.assistant_records:
+        return lines
+
+    turn_id = user_event.get("turn_id")
+    stable_end_ms = int(time.time() * 1000)
+    answer_records: list[dict[str, Any]] = []
+    for index, source in enumerate(session_turn.assistant_records):
+        answer = dict(source)
+        if isinstance(turn_id, str) and turn_id:
+            answer["turn_id"] = turn_id
+            answer["turn_phase"] = "answer"
+        answer["created_at_ms"] = max(
+            0,
+            stable_end_ms - len(session_turn.assistant_records) + index,
+        )
+        answer_records.append(answer)
+
+    repaired = [
+        record for record in last if not _is_recoverable_answer_record(record)
+    ]
+    repaired.extend(answer_records)
+    repaired.append({
+        "event": "turn_end",
+        "chat_id": user_event.get("chat_id", ""),
+        "turn_id": turn_id,
+        "outcome": "completed",
+        "created_at_ms": stable_end_ms,
+    })
+    return [*_flatten_turns(turns[:-1]), *repaired]
 
 
 def _with_backfilled_user(
@@ -2742,14 +2818,21 @@ def build_webui_thread_response(
         return None
     needs_user_backfill = _needs_user_event_backfill(lines)
     needs_incomplete_recovery = _needs_incomplete_turn_recovery(lines)
+    needs_tail_repair = (
+        active_turn_started_at is None
+        and _needs_unfinished_tail_repair(lines)
+    )
     if (
         session_messages is None
         and session_messages_loader is not None
-        and (needs_user_backfill or needs_incomplete_recovery)
+        and (needs_user_backfill or needs_incomplete_recovery or needs_tail_repair)
     ):
         session_messages = session_messages_loader()
-    if session_messages and (needs_user_backfill or needs_incomplete_recovery):
+    if session_messages and (needs_user_backfill or needs_incomplete_recovery or needs_tail_repair):
         session_turns = _session_backfill_turns(session_key, session_messages)
+        if needs_tail_repair:
+            lines = _repair_unfinished_tail(lines, session_turns)
+            needs_incomplete_recovery = _needs_incomplete_turn_recovery(lines)
         if needs_user_backfill:
             lines = _inject_missing_user_events(lines, session_turns)
         if needs_incomplete_recovery:
