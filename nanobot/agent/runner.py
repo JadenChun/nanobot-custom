@@ -147,6 +147,16 @@ def _restore_outer_whitespace(content: str, original: str | None) -> str:
     return f"{leading}{content}{trailing}"
 
 
+def _internal_recovery_message(content: str) -> dict[str, str]:
+    """Build a portable in-conversation note for recovery guidance.
+
+    Some model chat templates reject system messages after the leading system
+    prompt. A user message carries the same instruction without violating that
+    ordering rule.
+    """
+    return {"role": "user", "content": f"[Internal recovery note] {content}"}
+
+
 def _tool_error_signature(
     terminal: ToolOutcome,
     tool_calls: Sequence[ToolCallRequest],
@@ -1020,13 +1030,10 @@ class AgentRunner:
                 if spec.turn_context is not None and spec.turn_context.artifact_handoff_notices:
                     references = tuple(spec.turn_context.artifact_handoff_notices)
                     spec.turn_context.artifact_handoff_notices.clear()
-                    notice = {
-                        "role": "system",
-                        "content": (
-                            "Verified child artifact handoff is available for this invocation only:\n"
-                            + "\n".join(references)
-                        ),
-                    }
+                    notice = _internal_recovery_message(
+                        "Verified child artifact handoff is available for this invocation only:\n"
+                        + "\n".join(references)
+                    )
                     self._append_bound_message(messages, notice, request_state.source, None)
                 checkpoint_model_messages = (
                     self.context_governor.prepare_messages_for_model(
@@ -1057,29 +1064,31 @@ class AgentRunner:
                 if recoverable_exec_denial:
                     context_repo_exec_recovery_attempted = True
                     terminal = None
-                    self._append_bound_message(messages, {
-                        "role": "system",
-                        "content": (
+                    self._append_bound_message(
+                        messages,
+                        _internal_recovery_message(
                             "Command execution is disabled for that context repository. "
                             "Do not retry through exec, another shell, or an interpreter, "
                             "and do not change its permissions. Use read_file or list_dir "
                             "for permitted file inspection. If no permitted tool can "
                             "complete the task, explain the limitation to the user."
                         ),
-                    }, request_state.source)
+                        request_state.source,
+                    )
                 if recoverable_pre_dispatch_denial:
                     assert terminal is not None
                     pre_dispatch_denial_recovery_attempted = True
                     recovery_kind = terminal.recovery_kind
                     terminal = None
-                    self._append_bound_message(messages, {
-                        "role": "system",
-                        "content": (
+                    self._append_bound_message(
+                        messages,
+                        _internal_recovery_message(
                             _MANAGED_CAPABILITY_RECOVERY_NOTE
                             if recovery_kind is ToolDenialKind.MANAGED_UNAVAILABLE
                             else _PRIVATE_NETWORK_RECOVERY_NOTE
                         ),
-                    }, request_state.source)
+                        request_state.source,
+                    )
                 if recoverable_tool_error and terminal is not None:
                     tool_error_recoveries += 1
                     detail = " ".join(str(terminal.content or "").split())[:160]
@@ -1090,10 +1099,11 @@ class AgentRunner:
                         detail,
                     )
                     terminal = None
-                    self._append_bound_message(messages, {
-                        "role": "system",
-                        "content": _TOOL_ERROR_RECOVERY_NOTE,
-                    }, request_state.source)
+                    self._append_bound_message(
+                        messages,
+                        _internal_recovery_message(_TOOL_ERROR_RECOVERY_NOTE),
+                        request_state.source,
+                    )
                 if terminal is not None:
                     unknown_rejection = (
                         spec.fail_on_tool_error

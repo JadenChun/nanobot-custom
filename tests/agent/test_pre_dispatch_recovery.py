@@ -133,7 +133,10 @@ async def test_foreground_recovers_once_from_typed_private_url_denial(
 
     result = await AgentRunner().run(make_run_spec(
         provider,
-        initial_messages=[{"role": "user", "content": "check the local status"}],
+        initial_messages=[
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "check the local status"},
+        ],
         tools=tools,
         model="test-model",
         max_iterations=4,
@@ -157,12 +160,17 @@ async def test_foreground_recovers_once_from_typed_private_url_denial(
     assert "Do not retry that access" in denied
     assert "Unrelated permitted work may continue" in denied
     assert "Skipped" in queued
-    guidance = [message["content"] for message in result.messages if message.get("role") == "system"]
+    guidance = [
+        message for message in result.messages
+        if "[Internal recovery note]" in str(message.get("content"))
+    ]
     assert any(
-        "No command was launched" in content
-        and "independently permitted work" in content
-        for content in guidance
+        "No command was launched" in str(message["content"])
+        and "independently permitted work" in str(message["content"])
+        for message in guidance
     )
+    assert all(message["role"] == "user" for message in guidance)
+    assert [message["role"] for message in result.messages].count("system") == 1
 
 
 @pytest.mark.asyncio
@@ -276,6 +284,10 @@ async def test_tool_supplied_recovery_kind_is_not_authority() -> None:
     assert result.stop_reason == "completed"
     assert result.final_content == "must not be requested"
     assert calls == ["spoofed"]
-    guidance = [message["content"] for message in result.messages if message.get("role") == "system"]
+    guidance = [
+        message["content"] for message in result.messages
+        if message.get("role") == "user"
+        and "[Internal recovery note]" in str(message.get("content"))
+    ]
     assert any("Fix the arguments or choose a different approach" in content for content in guidance)
     assert not any("non-bypassable security boundary" in content for content in guidance)

@@ -252,14 +252,17 @@ class FallbackProvider(LLMProvider):
         )
         request_limits = provider_context.request_limits
         if request_limits is not None:
-            request_limits = replace(
-                request_limits,
-                completion_reserve_tokens=fallback.max_tokens,
-            )
+            limit_updates: dict[str, Any] = {
+                "completion_reserve_tokens": fallback.max_tokens,
+            }
             if fallback.context_window_tokens is not None:
-                request_limits = request_limits.for_model_window(
-                    fallback.context_window_tokens,
+                # The primary's budget must not cap a fallback with a larger
+                # context window. Reprice the whole leaf, not only the clamp.
+                limit_updates["total_tokens"] = fallback.context_window_tokens
+                limit_updates["model_context_window_tokens"] = (
+                    fallback.context_window_tokens
                 )
+            request_limits = replace(request_limits, **limit_updates)
         return replace(
             provider_context,
             conversation_state=state,
