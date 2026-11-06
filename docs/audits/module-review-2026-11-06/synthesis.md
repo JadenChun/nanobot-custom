@@ -8,24 +8,26 @@ all 29 primary bodies remain credited to the supplied ledger, H01-F1–F7 retain
 conditional/structural classifications, H01-F8 remains an open contract, and six questions
 remain deferred. Fresh continuation checks found `staging` unchanged at `9562e57...`; the
 H01 acceptance publication is checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`.
-Integrated review remains pending and no repair/design is accepted. See
+Integrated review remains pending and no repair/design is accepted. [C00](reports/C00.md) is
+now coordinator-checked from its supplied 70/70 primary-body handoff with seven qualified P2
+findings and seven retained D1–D7 questions. See
 [status.json](status.json) for the eighteen streams and [scope.json](scope.json)
 for the 919 primary assignments. The earlier [33-row comparison](../architecture-review-2026-11-06/README.md)
 retains its targeted historical boundary; it is not the new deep-review synthesis.
 
 The coordinator accepted the publication foundation and committed/pushed checkpoint
 `5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. [C00/H02/H03 handoffs](handoffs/index.json)
-are saved unpublished; C00/H02 await publication and acceptance, H03 is incomplete
-(23 full/19 partial/3 unread), and twelve streams remain queued. Published evidence now
-covers 50 primary bodies. Fourteen finding entries and twelve questions remain in the
-three reports rather than becoming a whole-project conclusion; H01-F8 is explicitly open.
+remain preserved as provenance; C00 is now published/checked, H02 awaits publication/acceptance,
+H03 is incomplete (23 full/19 partial/3 unread), and twelve streams remain queued. Published
+evidence now covers 120 primary bodies. Twenty-one finding entries and nineteen questions remain
+in the four reports rather than becoming a whole-project conclusion; H01-F8 is explicitly open.
 S01-F03 is cross-referenced by S02 and counted once. H02 supplements5A/5B supply current F74/P0/R0, superseding initial F33/P4/R37; saved
 handoffs grant no published-report body or acceptance credit.
 
 The user-authorized sequence remains to inspect every module, preserve per-module Git status
 checkpoints, reconcile shared contracts and then hold the consolidated discussion. Source
-inspection has resumed. The staging check is complete with no delta; next publish/check C00,
-then H02, resume H03, then U01/D01/T01/A01/K01/E02/E01/R01/M01/X01/Q01/P01.
+inspection has resumed. The staging check is complete with no delta; H01/C00 checks are complete; next publish/check
+H02, resume H03, then U01/D01/T01/A01/K01/E02/E01/R01/M01/X01/Q01/P01.
 Fresh integrated review remains pending. No open decision blocks later source inspection.
 
 | Prior decision area | Current review-sequencing disposition |

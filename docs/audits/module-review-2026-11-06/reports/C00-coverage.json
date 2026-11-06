@@ -1,0 +1,2222 @@
+{
+  "schema_version": 1,
+  "stream_id": "C00",
+  "report": "reports/C00.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "/root/review_startup_c00",
+    "handoff": "handoffs/C00.md packets 1–3",
+    "published_by": "ChatGPT web continuation coordinator",
+    "note": "Supplied body credit is preserved from the analyst handoff; fresh coordinator reads verify material claims but do not regenerate 70-body attribution."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/__init__.py",
+    "nanobot/__main__.py",
+    "nanobot/_integration_diagnostics.py",
+    "nanobot/_migration_preflight.py",
+    "nanobot/cli/__init__.py",
+    "nanobot/cli/agent.py",
+    "nanobot/cli/commands.py",
+    "nanobot/cli/cron_delivery.py",
+    "nanobot/cli/cron_runtime.py",
+    "nanobot/cli/desktop_target.py",
+    "nanobot/cli/desktop_tui.py",
+    "nanobot/cli/entry.py",
+    "nanobot/cli/gateway.py",
+    "nanobot/cli/gateway_runtime.py",
+    "nanobot/cli/log_control.py",
+    "nanobot/cli/migration_preflight.py",
+    "nanobot/cli/models.py",
+    "nanobot/cli/onboard.py",
+    "nanobot/cli/process_identity.py",
+    "nanobot/cli/provider.py",
+    "nanobot/cli/runtime_config.py",
+    "nanobot/cli/stream.py",
+    "nanobot/cli/terminal.py",
+    "nanobot/cli/tui_launcher.py",
+    "nanobot/cli/webui.py",
+    "nanobot/cli/webui_support.py",
+    "nanobot/cli/windows_browser.py",
+    "nanobot/command/__init__.py",
+    "nanobot/command/builtin.py",
+    "nanobot/command/router.py",
+    "nanobot/config/__init__.py",
+    "nanobot/config/errors.py",
+    "nanobot/config/legacy_h1.py",
+    "nanobot/config/loader.py",
+    "nanobot/config/paths.py",
+    "nanobot/config/schema.py",
+    "nanobot/config/timezone.py",
+    "nanobot/config/watcher.py",
+    "nanobot/config_base.py",
+    "nanobot/gateway/__init__.py",
+    "nanobot/gateway/runtime.py",
+    "nanobot/gateway/service.py",
+    "nanobot/migration_guard.py",
+    "nanobot/nanobot.py",
+    "nanobot/process_runtime.py",
+    "nanobot/runtime_composition.py",
+    "nanobot/runtime_errors.py",
+    "nanobot/utils/__init__.py",
+    "nanobot/utils/artifacts.py",
+    "nanobot/utils/cancellation.py",
+    "nanobot/utils/dict_keys.py",
+    "nanobot/utils/evaluator.py",
+    "nanobot/utils/file_edit_events.py",
+    "nanobot/utils/git_sync.py",
+    "nanobot/utils/gitstore.py",
+    "nanobot/utils/helpers.py",
+    "nanobot/utils/logging_bridge.py",
+    "nanobot/utils/media_decode.py",
+    "nanobot/utils/media_tokens.py",
+    "nanobot/utils/path.py",
+    "nanobot/utils/progress_events.py",
+    "nanobot/utils/prompt_templates.py",
+    "nanobot/utils/restart.py",
+    "nanobot/utils/run_records.py",
+    "nanobot/utils/runtime.py",
+    "nanobot/utils/searchusage.py",
+    "nanobot/utils/secret_scan.py",
+    "nanobot/utils/subagent_channel_display.py",
+    "nanobot/utils/tool_hints.py",
+    "nanobot/utils/workspace_prompts.py"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/__init__.py",
+      "git_blob": "215dd80c86990637cfcb0899b24e9dd353dcac1f",
+      "sha256": "96f7b45c24f6d25d3308a799f51bdbebe951dabc44a5b873171e40ba39643b67",
+      "bytes": 3626,
+      "ranges": [
+        [
+          1,
+          120
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/__main__.py",
+      "git_blob": "b4fb3e5401f4f3d84ca304ef2dd30f7102ee3860",
+      "sha256": "c8e8dce8576f9ea153b5cd2ec5eec8235a1b697cc0c20b58e4ef6e104467946a",
+      "bytes": 146,
+      "ranges": [
+        [
+          1,
+          8
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/_integration_diagnostics.py",
+      "git_blob": "1a6f57ebffce6ea9d99631821882011f3ab25bd7",
+      "sha256": "5d17f040c8a761f58464b56f011acd2e866de311d1b85db16c0c29a2e3255791",
+      "bytes": 16511,
+      "ranges": [
+        [
+          1,
+          344
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/_migration_preflight.py",
+      "git_blob": "4f270f1f99b08fcb2d3b4fce48e650bdeafe5102",
+      "sha256": "58150630afb32266ef2dd717c02021f9c40029a5b8dc243f79c921773cb426a9",
+      "bytes": 19266,
+      "ranges": [
+        [
+          1,
+          415
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/__init__.py",
+      "git_blob": "b023cad3b1229d6e109cf1f0d9ae3d9923721f7d",
+      "sha256": "133769600c445467bfb772be9f988686fc4dbd880e9a2999094a4648a70641cf",
+      "bytes": 30,
+      "ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/agent.py",
+      "git_blob": "702083ba8c533b1c09dff625a76057ba9362dbab",
+      "sha256": "108c36d34d4d76851b7294490d02cbeaa859b784c81962b51b29818b36c00dc3",
+      "bytes": 21864,
+      "ranges": [
+        [
+          1,
+          541
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/commands.py",
+      "git_blob": "edcd475e39095ba6f89750900fa56a3da48bed06",
+      "sha256": "49d83501fe706ad923e1eef7c507c768c1a213aa62753cae862029f69611c363",
+      "bytes": 53638,
+      "ranges": [
+        [
+          1,
+          1340
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/cron_delivery.py",
+      "git_blob": "527ee61e68ef8d280ce0cd4e47efd03301bdbc4d",
+      "sha256": "2b05a891d8c1d7f63ed90f5fa3c0ad4c946840a2ed2ee51c4b704a7fcbaa61c9",
+      "bytes": 11343,
+      "ranges": [
+        [
+          1,
+          310
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/cron_runtime.py",
+      "git_blob": "b56a002f6471730cb1e82bcfd0d08d5d9cfbe0d7",
+      "sha256": "d45396c677d6ac54630d0ae6c84cf30209ea91f4f570a2bd9e5d68095c563856",
+      "bytes": 2243,
+      "ranges": [
+        [
+          1,
+          49
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/desktop_target.py",
+      "git_blob": "f32b060b68673d9a1eec4800b78090f7e1f0ff02",
+      "sha256": "3ee313e46ff127a81a34cde883a35fa4d30f68d2b731663bc060e2a51c7bcdb6",
+      "bytes": 26406,
+      "ranges": [
+        [
+          1,
+          676
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/desktop_tui.py",
+      "git_blob": "12ca8cd0f648916c56d8555923779fa66ae3996f",
+      "sha256": "337ca47ea5f4c1c5fd1df2e1d0206629e102c2e5f46e8b7ae114bc665953779f",
+      "bytes": 8476,
+      "ranges": [
+        [
+          1,
+          196
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/entry.py",
+      "git_blob": "5fd97eb600acd23cb2e9d709ca2cef7002325ded",
+      "sha256": "421e88cbe8bfbc94493123222154ac580f2f1f1119190fa269da0234e7c84bf5",
+      "bytes": 849,
+      "ranges": [
+        [
+          1,
+          27
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/gateway.py",
+      "git_blob": "57f4c862a53606374d6e9aac1b99a5f555a28ee4",
+      "sha256": "58f356a5f46121911e35b29d44f2ec6b7c09c02299795638f8f87d2f6033c363",
+      "bytes": 20766,
+      "ranges": [
+        [
+          1,
+          469
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/gateway_runtime.py",
+      "git_blob": "7a0f4a24b9cef3e3c602ac02d583a6801b7ff0c2",
+      "sha256": "13f97fab1a9250a5a683303c3c1f938125b8a66970d24ecc06f4717d9cd05155",
+      "bytes": 29466,
+      "ranges": [
+        [
+          1,
+          730
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/log_control.py",
+      "git_blob": "0a45b2ab0995a1fbafce5f2f65ca47d5ab8ddbf3",
+      "sha256": "e3af97da0c61df7b85a513323f5cb63f728433722dcab7f47062c3bbeec3ee8a",
+      "bytes": 3608,
+      "ranges": [
+        [
+          1,
+          122
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/migration_preflight.py",
+      "git_blob": "9e0b5ff191d318448d04488930fdf698b294b244",
+      "sha256": "ad0e8136fb19d6b79985f89bd642bee108214c7e16799dc93742d10073f71ed1",
+      "bytes": 1200,
+      "ranges": [
+        [
+          1,
+          31
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/models.py",
+      "git_blob": "129169ee2006d8fea71f3f0c72a063536c1119a4",
+      "sha256": "5cd68173729861e7a2b322f15cc426193ef86e496fe5f45273618da2e615e392",
+      "bytes": 778,
+      "ranges": [
+        [
+          1,
+          31
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/onboard.py",
+      "git_blob": "1d51d11615e7b3a102e62109f7b5f7a9889ca88d",
+      "sha256": "5789e36c5cfbdb17974cd9932a5b951b05b7f29a8bccd043a62efc43c814f27d",
+      "bytes": 77528,
+      "ranges": [
+        [
+          1,
+          2133
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/process_identity.py",
+      "git_blob": "26675307756c3c057c61f71b89a4799bf0837efa",
+      "sha256": "004987e2498443660c160ab83b09e019d194df956a0cbab9d5de4ede67366dda",
+      "bytes": 1848,
+      "ranges": [
+        [
+          1,
+          52
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/provider.py",
+      "git_blob": "124ca655b35bbb4907d804a34b2505b21b80c8f9",
+      "sha256": "3df0371c5e102198a2a2fa3664d5f77fd637be67e515f38a230df8713b2e0abf",
+      "bytes": 13055,
+      "ranges": [
+        [
+          1,
+          367
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/runtime_config.py",
+      "git_blob": "3614eb7e2c19ec14ea27d073be9b486b900c7e50",
+      "sha256": "98125a1ac3cac416c1b5eaaa7ef49f4aad474ae603c4f5ebdb17ce42cc024935",
+      "bytes": 6123,
+      "ranges": [
+        [
+          1,
+          185
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/stream.py",
+      "git_blob": "90bf064bb8b2ef73cf57b685d372a5c93ca10b9b",
+      "sha256": "d79e2cb5f72513712e8d5cda33783d41a3984fe4139c0e46e19569ab4d791dcd",
+      "bytes": 8108,
+      "ranges": [
+        [
+          1,
+          231
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/terminal.py",
+      "git_blob": "6fe49a1d9b6ab1260255b38b0c0c6231a7939224",
+      "sha256": "ce9f9a670a175f6276b6a7551318088814d267b8dfae58d5a157e1d4a03a0712",
+      "bytes": 13843,
+      "ranges": [
+        [
+          1,
+          431
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/tui_launcher.py",
+      "git_blob": "e12f83655ad24fc865a7d2b06543200503405fdb",
+      "sha256": "c4df4514e21c862ce3e59d9ed04e6e40cdc75d99301ecbd4fce20e4ff27465fc",
+      "bytes": 20985,
+      "ranges": [
+        [
+          1,
+          547
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/webui.py",
+      "git_blob": "5606b7b2b25ba196868298480e63b434014c7bfe",
+      "sha256": "0c5423ca2732b2fe4a90d0a985747653cbfedce48283e66f1219f036436d3b29",
+      "bytes": 15911,
+      "ranges": [
+        [
+          1,
+          395
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/webui_support.py",
+      "git_blob": "d37befafeec8aade15f72738570a8edea9f77fa5",
+      "sha256": "409561d2e23c3083c4619a2c459b99c70c8b597fc876770bd9003bbb5d0311ba",
+      "bytes": 20898,
+      "ranges": [
+        [
+          1,
+          604
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cli/windows_browser.py",
+      "git_blob": "c6170b7e6a0cabe4a4b2827276df56b8d11d5302",
+      "sha256": "29f3873473449a1797f2a50176a8b7c86a1f1538c962654127bf61bc42abf1b0",
+      "bytes": 17016,
+      "ranges": [
+        [
+          1,
+          393
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/command/__init__.py",
+      "git_blob": "84e7138c6a0a2804168c915d8b6bf46b5dbb1374",
+      "sha256": "1ad0670b918e7999ce60a1752a142fccf4c104eab8c4b11124febd5a1886b9de",
+      "bytes": 255,
+      "ranges": [
+        [
+          1,
+          6
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/command/builtin.py",
+      "git_blob": "b1b15364d22d1cdf7010405298c52d83072242a7",
+      "sha256": "91e55d3e1667600d9d4f15edabb78c995baefad599b695a0c836ac470a397507",
+      "bytes": 40790,
+      "ranges": [
+        [
+          1,
+          1142
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/command/router.py",
+      "git_blob": "ef35ea29b5eab41c47eea59b75361ad23c744adc",
+      "sha256": "6cb069b77d80afc9cc2691363ff396210adf8b8391a537bb669d53bd06653737",
+      "bytes": 6153,
+      "ranges": [
+        [
+          1,
+          170
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/__init__.py",
+      "git_blob": "048bb8e31c22ee11e52ab6b0234ef1a3fc5e9f0d",
+      "sha256": "46225d7f25ecb4347d893de2dc51c01d2654463faac7fcd1803d3fb348a74447",
+      "bytes": 2015,
+      "ranges": [
+        [
+          1,
+          74
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/errors.py",
+      "git_blob": "8ca66ab838596e4054571047055d48fcea294ec1",
+      "sha256": "fd2292ef18708d6e30cfc64f0df7d808986cfe605fd5ff9d27e87f7f55f66c3f",
+      "bytes": 3640,
+      "ranges": [
+        [
+          1,
+          112
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/legacy_h1.py",
+      "git_blob": "400030dd0a8b2c9d068a82bc7abc351f72151258",
+      "sha256": "9eccfa39094e170c437c7bb7f237b05573ca2519a790fdc820b6f433a0584fc3",
+      "bytes": 4105,
+      "ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/loader.py",
+      "git_blob": "153aaa027f1562dc62a90b72c2b26e390abe1332",
+      "sha256": "1b3ff8ca7fb4e456ff9fde07eaaf96bb565f56d28d89224675baf2d7e7b0885c",
+      "bytes": 14274,
+      "ranges": [
+        [
+          1,
+          412
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/paths.py",
+      "git_blob": "b147968dad3f2d7ad3334f4be777cc6e1dbe7fd7",
+      "sha256": "aa33abc0213fd7844c29a75a8abdb4f9b5f9ac8500fe7a1518b4226b1def368f",
+      "bytes": 3746,
+      "ranges": [
+        [
+          1,
+          106
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/schema.py",
+      "git_blob": "07f3a16786fca0beb082d7d5d3fdaeb3e98a16a8",
+      "sha256": "99ff276bcd66f6c39bfb36056b4e89159d46f7848d75f97435ec5610228d518a",
+      "bytes": 57511,
+      "ranges": [
+        [
+          1,
+          1280
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/timezone.py",
+      "git_blob": "dac2f9b40c556426cdebdc62a54a1e5bcb3e9f17",
+      "sha256": "db84bfd2dbce2ed3a1ac2db9f4cd5fff4ef4652b2dd4aecf32b35fdbe107f5f6",
+      "bytes": 534,
+      "ranges": [
+        [
+          1,
+          19
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config/watcher.py",
+      "git_blob": "32f10fac464fa460b9fab4116cd6452a8e38277a",
+      "sha256": "54324ad522518f8d007a67a64cd58eee4ba31d319319be36c6329b95b0751f7f",
+      "bytes": 725,
+      "ranges": [
+        [
+          1,
+          23
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/config_base.py",
+      "git_blob": "1972a7d37af06a62f0b5fd398b9ba8764602547b",
+      "sha256": "5579be5ae3020e339a6ad49776912fb41cc32ef6e05134feaf64160aecb56285",
+      "bytes": 498,
+      "ranges": [
+        [
+          1,
+          15
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/gateway/__init__.py",
+      "git_blob": "80fe264fd03bee8844612c3041a36f6d12309623",
+      "sha256": "7a5d23d9ba512f68c32b819d5b421e03155fd0d24df08df026354c9cc988bb7e",
+      "bytes": 560,
+      "ranges": [
+        [
+          1,
+          25
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/gateway/runtime.py",
+      "git_blob": "1e95e27c6e3ff5cfc6d946f03f0a98cfaf16aa99",
+      "sha256": "5dcae525eb60ddee36daec053beb58bfa1a09f2454afd115fff72de4b1edc6e1",
+      "bytes": 70062,
+      "ranges": [
+        [
+          1,
+          1664
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/gateway/service.py",
+      "git_blob": "5a39a89b9e42d02c00fd09019fce02fe7cc267e9",
+      "sha256": "50c9a22c5d6608d3ae2c27c5e00e4288b5005726803e1aec75626e2fedb154a4",
+      "bytes": 10214,
+      "ranges": [
+        [
+          1,
+          286
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/migration_guard.py",
+      "git_blob": "695dea76517db8c1aa44527f42705036b0dab24d",
+      "sha256": "f585045be3d996c30a4bb5c3891fb49ed627ae0601e9fd31b5c47e5a9fda4f5e",
+      "bytes": 717,
+      "ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/nanobot.py",
+      "git_blob": "5a560a75f1da3a2fcf95d0f549e36509fc1d440a",
+      "sha256": "499765ca04d67fc9999ec60027a339d371d03a565703e5780244f29b9beb78d2",
+      "bytes": 14882,
+      "ranges": [
+        [
+          1,
+          410
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/process_runtime.py",
+      "git_blob": "8959aa9010f1bcb7ae9c4af06944fece5ca4a50b",
+      "sha256": "d9abc5965eea24e63ad0304c33e617c8a126816e474638da11c49d1be8c052a0",
+      "bytes": 27449,
+      "ranges": [
+        [
+          1,
+          760
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/runtime_composition.py",
+      "git_blob": "5a32b7d4ba0aa5e730c71956fe2f9a5eb7cdb471",
+      "sha256": "bbf65687b49f4d645b71fa5de8ea84c645f50a3c7f0dc9558bec45da563320ba",
+      "bytes": 25514,
+      "ranges": [
+        [
+          1,
+          654
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/runtime_errors.py",
+      "git_blob": "79d4b75c7734c85931a22b37f89e60b04f1bde10",
+      "sha256": "460515c199f245327c342f8cc03513e3cad5f30c263dbc05e80bcc7be2499269",
+      "bytes": 205,
+      "ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/__init__.py",
+      "git_blob": "15dbe2e9888d553ac6a3a6611bb6bf4fd436ac6a",
+      "sha256": "45750cb00ecb6fa5cd51ef4b555c0da3e7d4bc36ec6e59257aab2952095b230b",
+      "bytes": 1217,
+      "ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/artifacts.py",
+      "git_blob": "fce59716838b929f4e2bed1d29c083ce0c543f1a",
+      "sha256": "842340f1fb8ca6901aa8d8b29c1515a4517e6f8b723e76a51640bd0349ee244e",
+      "bytes": 9504,
+      "ranges": [
+        [
+          1,
+          270
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/cancellation.py",
+      "git_blob": "29f68948e7ef9d1ea5c6cfea664cd90e0d80fde4",
+      "sha256": "926afd4dada35dee33c8b97aad43205520a5466aef54e034b5996cea021ea149",
+      "bytes": 210,
+      "ranges": [
+        [
+          1,
+          10
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/dict_keys.py",
+      "git_blob": "eab8926218053f62b24ee10d9063c73645839108",
+      "sha256": "52cb11210a9074db37e5c1c7ae3d5ecd3ffead8ba6765b2e3fc485d01249ad21",
+      "bytes": 426,
+      "ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/evaluator.py",
+      "git_blob": "0158e3da242b1cd62a41d346eaf887b0057d84bb",
+      "sha256": "2d3b5ffe54f2b7b82d4eb2b718add082789dac05dca72c7353c03c4c4f8b33c5",
+      "bytes": 6069,
+      "ranges": [
+        [
+          1,
+          169
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/file_edit_events.py",
+      "git_blob": "270a4ccb75b7f7fbbc19247264acb7a91071e807",
+      "sha256": "fa556eb11f2d9caf30e1c6b3ec7ad38e24927dcf08c1cfa7e6ca1b6ef5f3a07f",
+      "bytes": 14310,
+      "ranges": [
+        [
+          1,
+          495
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/git_sync.py",
+      "git_blob": "da69e54fa23be043907c3101ac97585d3465335d",
+      "sha256": "63c07801749d2e8d94c7a0d8262818effd22bae1e394eccd8f8e1e597663bcc1",
+      "bytes": 13810,
+      "ranges": [
+        [
+          1,
+          361
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/gitstore.py",
+      "git_blob": "b6a7109a25880ee1566fb2e382d78c5b754fe7b3",
+      "sha256": "62c265e38bde3e74749387a12d486ef015127754c116892196e03a27d5ea7560",
+      "bytes": 20322,
+      "ranges": [
+        [
+          1,
+          531
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/helpers.py",
+      "git_blob": "d70f47e695b6f36c1d732c28b3a3169a0da56806",
+      "sha256": "d796bd9067efa7904d13f622cfcd924465b396f633ecff46fb840434f3816e3b",
+      "bytes": 36810,
+      "ranges": [
+        [
+          1,
+          1011
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/logging_bridge.py",
+      "git_blob": "a20e2e8888aeb83016aa33162d537151e7566275",
+      "sha256": "84b74f02f4c292674919293f61f7fc1337ea1fe61d2886bd26d34587a432dab4",
+      "bytes": 1709,
+      "ranges": [
+        [
+          1,
+          47
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/media_decode.py",
+      "git_blob": "0191e2a4e08967e6754722eb0b6197ca82498b79",
+      "sha256": "68c5fa5f2ae2af6297f1fdaa87e519290a0351713dc6091c16e46f32a9e6389d",
+      "bytes": 3761,
+      "ranges": [
+        [
+          1,
+          115
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/media_tokens.py",
+      "git_blob": "6fac24311f6f874e094c7dc660db5677d83b5a94",
+      "sha256": "6ab2e7158ccf55d570dcc57b2a57548616365a3ea28b9e29c14fecf4f831b2d8",
+      "bytes": 11734,
+      "ranges": [
+        [
+          1,
+          324
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/path.py",
+      "git_blob": "32591a471acb6b843cc1bd725a9f007a05f5f3ce",
+      "sha256": "b02f84d40e9e725d33f2bc831c7133488dd853ad414f7cd3ea41439538959e3b",
+      "bytes": 3204,
+      "ranges": [
+        [
+          1,
+          107
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/progress_events.py",
+      "git_blob": "d2e352de099b6adcb8b95989dc2a23270c7646ab",
+      "sha256": "fc20d63991901980717a6528bc89fd5733bed7c0f0a52b9dc300180569430a03",
+      "bytes": 6093,
+      "ranges": [
+        [
+          1,
+          150
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/prompt_templates.py",
+      "git_blob": "27b12f79e7a0f96414aee563b8fd918a4895ad42",
+      "sha256": "6d052c2d5c0c974adb5e46cde2f3e0358f4657d3eb400c757797abd6efe39020",
+      "bytes": 1192,
+      "ranges": [
+        [
+          1,
+          35
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/restart.py",
+      "git_blob": "03cbf8b1ff95af5063e279760b297f164ce69452",
+      "sha256": "475b892fb8e763689b0fc1c6be3b0ee37132e252a44b4e9ce1b3f62d20ac45f6",
+      "bytes": 3195,
+      "ranges": [
+        [
+          1,
+          91
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/run_records.py",
+      "git_blob": "e952c02d33d84780692a711a1bf1350d3994159d",
+      "sha256": "af1b9a74e1a5dfaae0b98706e498ae617b4b3ee57d3c40910e98e868d1cdf7b4",
+      "bytes": 1702,
+      "ranges": [
+        [
+          1,
+          58
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/runtime.py",
+      "git_blob": "2d5cb027e4122fae3adc41076dd076421de746b9",
+      "sha256": "880f22f109c969e2a742d80ecf9024471de1d810f059296ec02382aca4e89051",
+      "bytes": 8082,
+      "ranges": [
+        [
+          1,
+          212
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/searchusage.py",
+      "git_blob": "af22973ddf9d9e4751f0e0df43627508307e6203",
+      "sha256": "25933741e4318e6918745fb031ce8d44e7cdd4f3458dc6827d5a419f5832cebc",
+      "bytes": 5552,
+      "ranges": [
+        [
+          1,
+          179
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/secret_scan.py",
+      "git_blob": "765170e1a0fc1f4a3d0a965ccce914f90bf238ea",
+      "sha256": "26fdad2f26a6bd00c25220e88dae6d53ab42ee194e5762586c0681210513ea0d",
+      "bytes": 5758,
+      "ranges": [
+        [
+          1,
+          158
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/subagent_channel_display.py",
+      "git_blob": "1d4bf79ea06588825bacf5a34c269ae03f4cd97b",
+      "sha256": "9de04ae84a72ddea4f32d429e89bde079eb9150ca635d4b7f0d26a6de7581afa",
+      "bytes": 1554,
+      "ranges": [
+        [
+          1,
+          45
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/tool_hints.py",
+      "git_blob": "cb5dd68547889c104049027245e652eb253a15cf",
+      "sha256": "091a6e5b6e650c654f9339906dfa31db6b2a6f57a0701e9d4928bfd1d3a7d500",
+      "bytes": 6208,
+      "ranges": [
+        [
+          1,
+          158
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/workspace_prompts.py",
+      "git_blob": "104503d8994d5a7480887350196e953578654d4f",
+      "sha256": "b75c85dd5ddf71a258ec61d9bceee3f43f583a6488e4beccaa33c5a7ed9edc96",
+      "bytes": 1910,
+      "ranges": [
+        [
+          1,
+          58
+        ]
+      ],
+      "purpose": "Supplied complete C00 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/review_startup_c00 packets 1–3; frozen inventory/tree metadata reconciled by continuation coordinator"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "path": "nanobot/channels/manager.py",
+      "ranges": [
+        [
+          1,
+          460
+        ],
+        [
+          997,
+          1065
+        ]
+      ],
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "purpose": "Supplied bounded cross-module caller/context evidence; no C00 primary credit.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "path": "nanobot/agent/loop.py",
+      "ranges": [
+        [
+          905,
+          931
+        ],
+        [
+          1300,
+          1360
+        ],
+        [
+          2190,
+          2248
+        ],
+        [
+          2515,
+          2585
+        ],
+        [
+          2970,
+          3098
+        ],
+        [
+          4160,
+          4233
+        ],
+        [
+          4270,
+          4390
+        ]
+      ],
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "purpose": "Supplied bounded cross-module caller/context evidence; no C00 primary credit.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "path": "nanobot/agent/memory.py",
+      "ranges": [
+        [
+          70,
+          165
+        ],
+        [
+          558,
+          705
+        ]
+      ],
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "purpose": "Supplied bounded cross-module caller/context evidence; no C00 primary credit.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "path": "nanobot/agent/tools/image_generation.py",
+      "ranges": [
+        [
+          40,
+          163
+        ],
+        [
+          218,
+          277
+        ]
+      ],
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "purpose": "Supplied bounded cross-module caller/context evidence; no C00 primary credit.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "path": "nanobot/agent/tools/mcp.py",
+      "ranges": [
+        [
+          915,
+          974
+        ]
+      ],
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "purpose": "Supplied bounded cross-module caller/context evidence; no C00 primary credit.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "path": "nanobot/security/network.py",
+      "ranges": [
+        [
+          1,
+          78
+        ],
+        [
+          130,
+          211
+        ]
+      ],
+      "unread_between": [
+        [
+          79,
+          129
+        ]
+      ],
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "purpose": "Supplied bounded cross-module caller/context evidence; no C00 primary credit.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    }
+  ],
+  "search_only": [
+    {
+      "query": "AGENTS.md / CONTRIBUTING.md / *composition* / *stage*",
+      "roots": [
+        ".agent",
+        "docs",
+        "nanobot",
+        "tests"
+      ],
+      "purpose": "Support/composition discovery; search hits are not body credit."
+    },
+    {
+      "query": "GitStore|auto_commit|git_store|restart|register_builtin_commands|dispatch_priority|schedule_background|dream",
+      "roots": [
+        "nanobot",
+        "tests"
+      ],
+      "purpose": "Call-site/retirement search."
+    },
+    {
+      "query": "Stage1UnavailableSessionAuthority|dispatch_bare_desktop_target|evaluate_response|get_all_models|find_model|_onboard_plugins",
+      "roots": [
+        "nanobot",
+        "tests",
+        "docs"
+      ],
+      "purpose": "Compatibility/caller search."
+    },
+    {
+      "query": "RuntimeOwnedWorkError|rollback|resist|cleanup|aclose|run_interactive|_init_prompt_session",
+      "roots": [
+        "nanobot",
+        "tests"
+      ],
+      "purpose": "Cleanup/rollback counterevidence search."
+    },
+    {
+      "query": "store_generated_image_artifact|store_generated_file_artifact|generated_image_tool_result",
+      "roots": [
+        "nanobot"
+      ],
+      "purpose": "Generated-artifact caller search."
+    },
+    {
+      "query": "validate_url_target|resolve_url_target",
+      "roots": [
+        "nanobot"
+      ],
+      "purpose": "Network-policy caller search."
+    },
+    {
+      "query": "_gateway_health_ready|_tcp_endpoint_reachable|_webui_endpoint_reachable",
+      "roots": [
+        "nanobot"
+      ],
+      "purpose": "Health-parser duplicate/caller search."
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/cli/test_agent_interactive.py",
+      "ranges": [
+        [
+          1,
+          186
+        ]
+      ],
+      "purpose": "Test source read as supporting evidence only; not executed.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/migration/test_p5_stage1_composition.py",
+      "ranges": [
+        [
+          173,
+          340
+        ]
+      ],
+      "purpose": "Test source read as supporting evidence only; not executed.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/migration/test_p5_stage3_composition.py",
+      "ranges": [
+        [
+          1,
+          168
+        ]
+      ],
+      "purpose": "Test source read as supporting evidence only; not executed.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/test_nanobot_facade.py",
+      "ranges": [
+        [
+          1620,
+          1669
+        ]
+      ],
+      "purpose": "Test source read as supporting evidence only; not executed.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/cli/test_gateway_graceful_shutdown.py",
+      "ranges": [
+        [
+          345,
+          410
+        ]
+      ],
+      "purpose": "Test source read as supporting evidence only; not executed.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/cli/test_desktop_target_entrypoints.py",
+      "ranges": [
+        [
+          1,
+          64
+        ]
+      ],
+      "purpose": "Test source read as supporting evidence only; not executed.",
+      "evidence_origin": "handoffs/C00.md packets 1–3"
+    }
+  ],
+  "support_reads": [
+    {
+      "path": "AGENTS.md",
+      "ranges": [
+        [
+          1,
+          98
+        ]
+      ],
+      "purpose": "Repository review guidance."
+    },
+    {
+      "path": ".agent/design.md",
+      "ranges": [
+        [
+          1,
+          37
+        ]
+      ],
+      "purpose": "Architecture guidance."
+    },
+    {
+      "path": ".agent/security.md",
+      "ranges": [
+        [
+          1,
+          29
+        ]
+      ],
+      "purpose": "Security guidance."
+    },
+    {
+      "path": ".agent/gotchas.md",
+      "ranges": [
+        [
+          1,
+          40
+        ]
+      ],
+      "purpose": "Known pitfalls."
+    },
+    {
+      "path": "pyproject.toml",
+      "ranges": [
+        [
+          40,
+          58
+        ]
+      ],
+      "purpose": "Dependency constraint evidence only."
+    },
+    {
+      "path": "P5 stage2 acceptance checkpoint",
+      "ranges": [
+        [
+          1,
+          105
+        ]
+      ],
+      "purpose": "Historical acceptance evidence as supplied; not current validation."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "apps/cli/src/bin.ts",
+      "ranges": [
+        [
+          1,
+          78
+        ]
+      ],
+      "git_blob": "1ae0c4a59182c3ebe7dd38fcc17292e185332cdc",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": false
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "apps/cli/src/profile-boot.ts",
+      "ranges": [
+        [
+          1,
+          353
+        ]
+      ],
+      "git_blob": "da14308bd650a7680151d2d6b3e0fc018210716e",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": true
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "apps/cli/src/process-shutdown.ts",
+      "ranges": [
+        [
+          1,
+          77
+        ]
+      ],
+      "git_blob": "e34f85f7f3a5ac533ac97a29474ac713b6a62cec",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": false
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/boot/app-boot/src/index.ts",
+      "ranges": [
+        [
+          1180,
+          1266
+        ]
+      ],
+      "git_blob": "daf1406a43919b1f0795af6c13191b99d1981eaa",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": true
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/sdk/server/src/index.ts",
+      "ranges": [
+        [
+          1,
+          104
+        ]
+      ],
+      "git_blob": "3fa37595509d1f519503d70b6f28e0b39ea744eb",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": false
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/sdk/server/src/server.ts",
+      "ranges": [
+        [
+          440,
+          500
+        ]
+      ],
+      "git_blob": "bccfa6634e071c5bf1fad2f6b2fde80b0c8e503b",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": false
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/session/session-persistence-jsonl/src/storage.ts",
+      "ranges": [
+        [
+          210,
+          262
+        ]
+      ],
+      "git_blob": "197dcbc270cd153c8cb8b897359378d46963daa8",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": true
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/session/session-persistence-jsonl/src/lease.ts",
+      "ranges": [
+        [
+          1,
+          135
+        ]
+      ],
+      "git_blob": "59dfe27fcacc9943ae0eda8fe7bde4d136c86afb",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": true
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/core/src/thread_manager/shutdown.rs",
+      "ranges": [
+        [
+          1,
+          171
+        ]
+      ],
+      "git_blob": "e622f4102446b47787203ce74e2e0699fb12270d",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": true
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/core/src/thread_manager.rs",
+      "ranges": [
+        [
+          1498,
+          1600
+        ]
+      ],
+      "git_blob": "b56485d7419e07ec28a5fbb20bfc7b22e7ada62a",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": false
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/app-server/src/request_processors/thread_processor.rs",
+      "ranges": [
+        [
+          1374,
+          1418
+        ]
+      ],
+      "git_blob": "1ef252dcbf47f9346a7539c39a7ca9a3807a290f",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": true
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/rollout/src/recorder.rs",
+      "ranges": [
+        [
+          145,
+          171
+        ],
+        [
+          2010,
+          2036
+        ]
+      ],
+      "git_blob": "7298c4188879bfcda4650880f1678d3a8c703da8",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; no parity/runtime-certification claim.",
+      "evidence_origin": "handoffs/C00.md packets 1–3",
+      "fresh_coordinator_check": true
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "commit": "44a74d3c295bd0e7f394865ffbf243920d6ee7bf",
+      "kind": "message/stat plus bounded diff",
+      "purpose": "Native SDK migration removed LiteLLM/model DB internals while preserving stubs; historical validation text is not current execution evidence."
+    },
+    {
+      "commit": "79934a5630ca419e02e124693efa938d9d3407f0",
+      "kind": "message/stat plus composition/entry/SDK diffs",
+      "purpose": "Lazy/shared composition and classic-entry migration history; not current runtime proof."
+    },
+    {
+      "commit": "b583dae3288d36bf9339c5612c622069f6d22fc6",
+      "kind": "message plus bounded nanobot diff",
+      "purpose": "Canonical direct SDK contracts/sanitized trace history."
+    },
+    {
+      "commit": "57a36ac39c8ca39a1e125e6159de7356ef13954d",
+      "kind": "subject plus bounded diff context",
+      "purpose": "Canonical source-session conversion; handoff grants no full-diff credit."
+    },
+    {
+      "commit": "e52444df2e9904f24c58d8ecf19874071b41ae94",
+      "kind": "gateway_runtime/log_control diffs",
+      "purpose": "Gateway exit/log semantics history."
+    }
+  ],
+  "current_staging_delta": {
+    "baseline": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "staging": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "status": "identical",
+    "changed_files": []
+  },
+  "history_limits": "History checks are bounded to the supplied relevant commits/diffs; commit messages and old validation results are historical intent/evidence, not current test results.",
+  "findings": [
+    {
+      "id": "C00-F01",
+      "classification": "interactive post-acquire cleanup gap",
+      "priority": "P2",
+      "confidence": "high mechanism; qualified reachability",
+      "requirement": "A successfully acquired runtime must enter owned cleanup scope before subsequent prompt/MCP/task setup can fail.",
+      "source": [
+        "nanobot/cli/agent.py:383–396,463,532–541",
+        "nanobot/cli/terminal.py:172–194"
+      ],
+      "trigger": "Classic interactive mode; composition.acquire succeeds; later prepare/prompt/MCP/bus setup fails before line 463 try.",
+      "impact": "Live/reused host can retain acquired resources until process exit or external cleanup; no permanent post-death lease/data-loss claim.",
+      "counterevidence": "One-shot path has immediate try/finally; process death releases OS locks; normal-flow test does not cover this failure chain.",
+      "smallest_alternative": "Enter owned try/finally immediately after acquire, retain incremental handles and reverse cleanup/terminal restoration.",
+      "dependencies": [
+        "H01",
+        "E01",
+        "T01",
+        "D7"
+      ]
+    },
+    {
+      "id": "C00-F02",
+      "classification": "SDK close-state/retry ambiguity",
+      "priority": "P2",
+      "confidence": "high mechanism; custom/concurrent failure incidence conditional",
+      "requirement": "Facade closure should fence new admission while preserving join/retry access to retained cleanup until release settles.",
+      "source": [
+        "nanobot/nanobot.py:107–116,390–403",
+        "nanobot/runtime_composition.py:565–615"
+      ],
+      "trigger": "Injected/custom composition close failure, concurrent close, BUILDING race or foreign-loop failure after facade sets _closed.",
+      "impact": "One boolean can make retained cleanup unreachable through facade or cause a concurrent close caller to return before release settles.",
+      "counterevidence": "Default no-channel acquisition may not suspend; normal SDK path has no cron/channel injection; ordinary close may succeed.",
+      "smallest_alternative": "Keep admission closed but retain a joinable close task/outcome and retry retained cleanup, or explicitly narrow public contract.",
+      "dependencies": [
+        "H01",
+        "H02",
+        "E02",
+        "D6",
+        "D7"
+      ]
+    },
+    {
+      "id": "C00-F03",
+      "classification": "custom partial-acquisition rollback ownership gap",
+      "priority": "P2",
+      "confidence": "high mechanism; built-in trigger unestablished",
+      "requirement": "Unsettled rollback ownership must remain reachable after partial acquisition failure.",
+      "source": [
+        "nanobot/runtime_composition.py:336–347,465–555,592–606"
+      ],
+      "trigger": "Injected factory starts resistant owned resource; later custom channel/cron acquisition fails; reverse cleanup hits RuntimeOwnedWorkError before earlier closers.",
+      "impact": "Local closer list can be lost when acquisition records FAILED without assigning _closers, preventing later retry of unresolved cleanup.",
+      "counterevidence": "No built-in constructor producing this resistant partial-build sequence established; ChannelManager has its own constructor rollback.",
+      "smallest_alternative": "Retain unresolved acquisition callbacks from first ownership, remove only settled closers, and use one recursive owned-error classifier.",
+      "dependencies": [
+        "H01",
+        "H02",
+        "E01",
+        "E02",
+        "D6",
+        "D7"
+      ]
+    },
+    {
+      "id": "C00-F04",
+      "classification": "gated truncating config writer",
+      "priority": "P2",
+      "confidence": "high mechanism; currently unreachable through guarded onboard entrypoint",
+      "requirement": "Config replacement should preserve prior complete bytes across crash/serialization/write failure.",
+      "source": [
+        "nanobot/cli/commands.py:325–335,405–455",
+        "nanobot/migration_guard.py:13–17",
+        "nanobot/config/loader.py:160–191"
+      ],
+      "trigger": "Legacy onboard gate is reactivated/bypassed and plugin defaults are written after initial atomic save.",
+      "impact": "Second open('w')/json.dump can truncate a previously valid config if the write fails; no current default corruption claim.",
+      "counterevidence": "require_runtime_ready currently always raises before onboard; canonical save_config is atomic.",
+      "smallest_alternative": "Merge defaults before one atomic save, or route the plugin-enriched JSON through the same atomic writer.",
+      "dependencies": [
+        "E01",
+        "E02",
+        "D4"
+      ]
+    },
+    {
+      "id": "C00-F05",
+      "classification": "gated wizard secret-display/echo gap",
+      "priority": "P2",
+      "confidence": "high mechanism; currently guarded",
+      "requirement": "Sensitive values should not be rendered raw or supplied as visible input defaults.",
+      "source": [
+        "nanobot/config/schema.py:572,582",
+        "nanobot/cli/onboard.py:335–385,553–638,950–956,1503–1518"
+      ],
+      "trigger": "Wizard entrypoint is reactivated/directly used with existing provider key lists or sensitive scalar edits.",
+      "impact": "Sensitive lists are joined raw; existing sensitive scalar can flow to text default; terminal capture may expose credentials.",
+      "counterevidence": "Main onboard is migration-gated; secret input helper exists; no real credential exposure observed.",
+      "smallest_alternative": "Propagate sensitivity recursively, use secret input with no secret default, and preserve explicit keep/cancel/back semantics including lists.",
+      "dependencies": [
+        "E02",
+        "S01",
+        "D4"
+      ]
+    },
+    {
+      "id": "C00-F06",
+      "classification": "captured-config versus global media/network policy",
+      "priority": "P2",
+      "confidence": "high source mechanism; multi-config product contract unresolved",
+      "requirement": "An explicitly configured runtime should not silently consult mutable process-global config path/network policy for later effects unless one-config-per-process is the contract.",
+      "source": [
+        "nanobot/nanobot.py:118–171",
+        "nanobot/config/loader.py:20–40,79–157",
+        "nanobot/config/paths.py:20–38",
+        "nanobot/utils/artifacts.py:62–90",
+        "nanobot/agent/tools/image_generation.py:107–153,218–277",
+        "nanobot/agent/tools/mcp.py:915–974",
+        "nanobot/security/network.py:31,46–75"
+      ],
+      "trigger": "SDK/custom config path or multiple config loads while generated media/network validators later consult global helpers.",
+      "impact": "Generated media can land under another/default media root and later config loads can alter process-global SSRF whitelist used by an earlier runtime.",
+      "counterevidence": "Normal CLI aligns global config path; no deployed multi-config incident or cross-user leak established.",
+      "smallest_alternative": "Pass captured media root/runtime network policy explicitly; alternatively define/enforce one-config-per-process while still aligning custom-path media.",
+      "dependencies": [
+        "H03",
+        "S01",
+        "T01",
+        "E02",
+        "P01",
+        "D2",
+        "D4"
+      ]
+    },
+    {
+      "id": "C00-F07",
+      "classification": "duplicate health parser inconsistency",
+      "priority": "P2",
+      "confidence": "high mechanism; built-in false-ready producer mismatch narrowed",
+      "requirement": "Local gateway readiness checks should use one bounded proxy-independent parser/predicate and reject malformed/non-object payloads safely.",
+      "source": [
+        "nanobot/cli/webui_support.py:398–420",
+        "nanobot/gateway/runtime.py:65–89",
+        "nanobot/cli/gateway_runtime.py:203–220"
+      ],
+      "trigger": "Local health endpoint or proxy supplies valid non-object JSON, or compatibility endpoint returns status ok with ready false.",
+      "impact": "CLI/WebUI helper can raise AttributeError and proxy behavior differs; predicates disagree on ready=false.",
+      "counterevidence": "Built-in readiness producer emits status='degraded' when ready is false, so current built-in false-ready success is not established.",
+      "smallest_alternative": "Use one proxy-free bounded parser/predicate at management edge and delegate legacy helpers to it.",
+      "dependencies": [
+        "E02",
+        "U01",
+        "D1",
+        "D4"
+      ]
+    }
+  ],
+  "finding_count_convention": "Seven distinct C00 entries; cross-module observations (GitStore, hard restart, compatibility stubs) remain tradeoffs/questions rather than extra findings.",
+  "final_discussion_questions": [
+    {
+      "id": "C00-Q1",
+      "decision": "D1",
+      "question": "What executor/client platform promise should govern managed gateway, desktop/browser attachment and platform-specific process identity?"
+    },
+    {
+      "id": "C00-Q2",
+      "decision": "D2",
+      "question": "Should runtime media/network policy be captured per configured instance, or should one-config-per-process become an explicit enforced contract?"
+    },
+    {
+      "id": "C00-Q3",
+      "decision": "D3",
+      "question": "Do retained-task/delegation goals require any new startup/session framework here? Current C00 evidence does not justify one."
+    },
+    {
+      "id": "C00-Q4",
+      "decision": "D4",
+      "question": "Which gated/public compatibility surfaces may be retired or reactivated: onboard wizard, model/evaluator stubs, Stage1 and desktop attach seams?"
+    },
+    {
+      "id": "C00-Q5",
+      "decision": "D5",
+      "question": "What MCP registration/cleanup/reload lifetime must composition expose, reconciled with H01/T01/E02?"
+    },
+    {
+      "id": "C00-Q6",
+      "decision": "D6",
+      "question": "What failure/retry contract should SDK close and explicit hard /restart provide?"
+    },
+    {
+      "id": "C00-Q7",
+      "decision": "D7",
+      "question": "What completion/quiescence guarantee is required versus bounded waits and retained ownership, including output/media/log/UI cleanup?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    {
+      "topic": "Cleanup/completion ownership",
+      "streams": [
+        "H01",
+        "H02",
+        "E01",
+        "E02"
+      ],
+      "findings": [
+        "C00-F01",
+        "C00-F02",
+        "C00-F03"
+      ],
+      "decisions": [
+        "D6",
+        "D7"
+      ]
+    },
+    {
+      "topic": "Gated compatibility/onboard surfaces",
+      "streams": [
+        "E01",
+        "E02",
+        "S01"
+      ],
+      "findings": [
+        "C00-F04",
+        "C00-F05"
+      ],
+      "decisions": [
+        "D4"
+      ]
+    },
+    {
+      "topic": "Captured versus global policy/root state",
+      "streams": [
+        "H03",
+        "S01",
+        "T01",
+        "E02",
+        "P01"
+      ],
+      "findings": [
+        "C00-F06"
+      ],
+      "decisions": [
+        "D2",
+        "D4"
+      ]
+    },
+    {
+      "topic": "Gateway readiness contracts",
+      "streams": [
+        "E02",
+        "U01"
+      ],
+      "findings": [
+        "C00-F07"
+      ],
+      "decisions": [
+        "D1",
+        "D4"
+      ]
+    },
+    {
+      "topic": "MCP registration lifetime",
+      "streams": [
+        "H01",
+        "T01",
+        "E02"
+      ],
+      "findings": [],
+      "decisions": [
+        "D5"
+      ]
+    }
+  ],
+  "coverage_counts": {
+    "primary_assignments": 70,
+    "supplied_full_primary_body_paths": 70,
+    "primary_physical_lines": 22679,
+    "primary_bytes": 863712,
+    "primary_exclusions": 0,
+    "primary_unread_paths": 0,
+    "caller_context_paths": 6,
+    "test_source_paths": 6,
+    "reference_paths": 12,
+    "findings": 7,
+    "discussion_questions": 7
+  },
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "C00 source-review publication only; no repair/product/design acceptance.",
+    "staging_check": {
+      "status": "PASS",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "baseline_comparison": "identical; no changed files"
+    },
+    "ledger_reconciliation": {
+      "status": "PASS",
+      "assigned_paths": 70,
+      "handoff_full_paths": 70,
+      "inventory_matches": 70,
+      "tree_blob_matches": 70,
+      "material_primary_gaps": 0
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "findings": [
+        "C00-F01",
+        "C00-F02",
+        "C00-F03",
+        "C00-F04",
+        "C00-F05",
+        "C00-F06",
+        "C00-F07"
+      ],
+      "note": "Freshly re-read each finding's material Nanobot trigger/guard/counterevidence, representative DSH/Codex cleanup/shutdown mechanisms, and bounded relevant history.",
+      "qualifications": [
+        "F03 remains custom/injected; no built-in resistant partial-build producer established.",
+        "F04/F05 remain gated by migration_guard.require_runtime_ready.",
+        "F06 remains conditional on the multi-config/one-config-per-process contract.",
+        "F07 does not claim the built-in gateway emits status=ok with ready=false."
+      ]
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "No clean local audit worktree in this web continuation; preserved historical validation snapshots and used source/API metadata only."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "pending until coordinator commits",
+    "decisions": "D1–D7 remain deferred."
+  },
+  "integrated_review": null,
+  "git_checkpoint": null,
+  "raw_failures_and_limits": [
+    "An initial oversized connector orchestration request exceeded the per-call tool-call limit; the same bounded source ranges were split into smaller read batches.",
+    "No repository code/tests/builds/linters/type checkers/dependency installers/apps/services/providers/sandbox probes/benchmarks were run."
+  ],
+  "limits": [
+    "Supplied 70-body attribution comes from the saved analyst handoff; coordinator verification sampled material semantics and reconciled exact frozen metadata rather than rereading every body.",
+    "External consumers, deployed configuration, OS/runtime behavior and measured performance remain unknown.",
+    "Reference comparisons are engineering mechanisms, not parity requirements; no Hermes source study was performed."
+  ]
+}

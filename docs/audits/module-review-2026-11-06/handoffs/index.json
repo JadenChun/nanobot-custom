@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "state": "PAUSED at explicit user request due quota",
+  "state": "ACTIVE after user-requested resumption",
   "date": "2026-11-06",
   "source_pins": {
     "nanobot": {
@@ -25,7 +25,7 @@
     "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
     "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
   },
-  "published_primary_body_credit_added": 0,
+  "published_primary_body_credit_added": 70,
   "handoffs": [
     {
       "stream": "C00",
@@ -38,8 +38,8 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "saved-unpublished-unaccepted",
-      "published_body_credit_added": 0,
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 70,
       "packets": [
         "1",
         "2",
@@ -89,9 +89,7 @@
     }
   ],
   "resume_order": [
-    "Compare origin/staging with pinned 9562e57f8333d7f14b6aaeae837660723a9b2650; refresh only affected evidence and preserve previous snapshots.",
-    "Finish H01 coordinator acceptance and checkpoint.",
-    "Publish/check saved C00 and H02 handoffs separately.",
+    "Publish/check saved H02 handoff, preserving supplements 5A/5B F74/P0/R0 supersession.",
     "Resume incomplete H03.",
     "U01",
     "D01",
@@ -107,5 +105,5 @@
     "P01",
     "Fresh integrated review and final consolidated D1–D7 discussion."
   ],
-  "limits": "Received analyst evidence only; hashes attest saved documents, not semantic acceptance, fresh source reads or runtime results."
+  "limits": "C00 handoff is now published/checked with fresh coordinator verification; H02/H03 remain handoff evidence. Hashes attest saved documents/provenance, not runtime results."
 }
