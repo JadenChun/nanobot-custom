@@ -173,24 +173,31 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "active-incomplete-unaccepted",
-      "published_body_credit_added": 0,
-      "note": "47/47 full; D01 source inspection complete. Provisional D01-F01/F02 only; no F03 from final surface. Runtime-controls/commands/mentions connection-rotation stale discovery retained unpromoted. Supplementary docs/reference/history reconciliation and report publication remain pending.",
-      "last_checkpoint_commit": "071dd2f736d53e5def7e85031bf819ae2c94f9ab",
+      "state": "published-unchecked",
+      "published_body_credit_added": 47,
+      "note": "D01 report/coverage published F47/P0/R0 with two P2 findings; coordinator check pending.",
+      "last_checkpoint_commit": "b3d93eee0a6df65e6ea2e20884be7e77cb0be1ba",
       "provisional_findings": [
         {
           "id": "D01-F01",
           "priority": "P2",
           "title": "Automatic follow-up dequeue can lose a queued prompt when the send fails",
-          "state": "source-established-provisional"
+          "state": "promoted-report"
         },
         {
           "id": "D01-F02",
           "priority": "P2",
           "title": "Context-panel completion can overwrite a newly switched session",
-          "state": "source-established-provisional"
+          "state": "promoted-report"
         }
-      ]
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 47,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "Continuation coordinator completed all 47 D01 primaries and published two P2 findings; coordinator check pending."
     }
   ],
   "resume_order": [

@@ -534,19 +534,19 @@
       "kind": "primary",
       "primary_target_count": 47,
       "inventory_all_roles_count": 101,
-      "status": "in-progress",
+      "status": "report-written",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
-      "report": null,
-      "coverage": null,
+      "report": "reports/D01.md",
+      "coverage": "reports/D01-coverage.json",
       "planned_report": "reports/D01.md",
       "planned_coverage": "reports/D01-coverage.json",
-      "findings_count": null,
-      "discussion_questions_count": null,
-      "published_findings_count": 0,
-      "published_discussion_questions_count": 0,
-      "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 47,
-      "architecture_judgement": null,
+      "findings_count": 2,
+      "discussion_questions_count": 5,
+      "published_findings_count": 2,
+      "published_discussion_questions_count": 5,
+      "supplied_primary_body_paths": 47,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: preserve Desktop identity/private IPC/uncertain lifecycle and TUI per-session ownership; make queue dequeue transactional with send admission and unify async session identity fencing.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -561,10 +561,10 @@
         "evidence": null
       },
       "dispatch_owner": "web-continuation-coordinator",
-      "execution_state": "active",
+      "execution_state": "completed-source-review",
       "saved_handoff": "handoffs/D01.md",
-      "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "D01 source inspection complete at 47/47 full, 0 partial/unread. Provisional D01-F01/F02 remain; no F03. Runtime-controls stale catalog after connection rotation remains an unpromoted UI question. Supplementary evidence, report publication and coordinator check remain pending."
+      "handoff_disposition": "published-unchecked",
+      "coordinator_observation": "D01 report/coverage published at F47/P0/R0 with two source-established P2 findings. Coordinator check pending; integrated review and D1–D7 remain deferred."
     },
     {
       "id": "X01",

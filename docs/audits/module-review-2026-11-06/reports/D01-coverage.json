@@ -1,0 +1,1515 @@
+{
+  "schema_version": 1,
+  "stream_id": "D01",
+  "report": "reports/D01.md",
+  "publication_state": "report-written",
+  "evidence_origin": {
+    "analyst": "ChatGPT web continuation coordinator",
+    "handoff": "handoffs/D01.md source-complete checkpoint",
+    "published_by": "ChatGPT web continuation coordinator",
+    "note": "Continuation read all 47 D01 primary implementation/tooling bodies, plus supplementary desktop/TUI docs/configs, source tests, bounded history and pinned reference mechanisms."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "assigned_primary_paths": [
+    "desktop/src-tauri/build.rs",
+    "desktop/src-tauri/src/controller.rs",
+    "desktop/src-tauri/src/lib.rs",
+    "desktop/src-tauri/src/main.rs",
+    "desktop/src-tauri/src/native.rs",
+    "desktop/src-tauri/src/preferences.rs",
+    "desktop/src-tauri/src/protocol.rs",
+    "desktop/ui/build.ts",
+    "desktop/ui/src/index.html",
+    "desktop/ui/src/main.ts",
+    "desktop/ui/src/style.css",
+    "nanobot/desktop/__init__.py",
+    "nanobot/desktop/__main__.py",
+    "nanobot/desktop/adapter.py",
+    "nanobot/desktop/gateway_child.py",
+    "nanobot/desktop/protocol.py",
+    "tui/scripts/build.ts",
+    "tui/scripts/conpty_smoke.py",
+    "tui/scripts/package-release.py",
+    "tui/scripts/prepare-target.ts",
+    "tui/scripts/pty_smoke.py",
+    "tui/scripts/release-notices.ts",
+    "tui/src/app.ts",
+    "tui/src/branch-menu.ts",
+    "tui/src/clipboard-image.ts",
+    "tui/src/command-menu.ts",
+    "tui/src/composer-draft.ts",
+    "tui/src/context-panel.ts",
+    "tui/src/desktop.ts",
+    "tui/src/diff-viewer.ts",
+    "tui/src/footer-hints.ts",
+    "tui/src/host.ts",
+    "tui/src/index.ts",
+    "tui/src/latex.ts",
+    "tui/src/mention-menu.ts",
+    "tui/src/picker-menu.ts",
+    "tui/src/platform-keys.ts",
+    "tui/src/prompt-queue.ts",
+    "tui/src/protocol.ts",
+    "tui/src/queue-preview.ts",
+    "tui/src/recovery-notice.ts",
+    "tui/src/runtime-controls.ts",
+    "tui/src/scrollbox.ts",
+    "tui/src/session-menu.ts",
+    "tui/src/skill-menu.ts",
+    "tui/src/tool-renderers.ts",
+    "tui/src/transcript.ts"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/src-tauri/build.rs",
+      "git_blob": "65bb6cb695f3ff2ecc1c5fab2e325af183c9998c",
+      "sha256": "a24ddc71c81934ad3dbeb3d3a2f2da19b8f13a8ec470c1b63e3c05856929fe82",
+      "bytes": 459,
+      "ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/src-tauri/src/controller.rs",
+      "git_blob": "9a00b5c07f0b6802961551e2c34eec5e95f9a0fd",
+      "sha256": "0b2eed7b12bb4f923687e46fc8966b8a0ebd256535a6390940e3664207086e1d",
+      "bytes": 50742,
+      "ranges": [
+        [
+          1,
+          1401
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/src-tauri/src/lib.rs",
+      "git_blob": "6b0921bc62ac35a53a3c38198161304bbb4a307a",
+      "sha256": "519368e98fe27d01491973f7e682c6250c6e2fc8cfa62d2f843bba7b4ec47e75",
+      "bytes": 75,
+      "ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/src-tauri/src/main.rs",
+      "git_blob": "a1b9908b186790b702c9a6fd71f42ad6d6a74ff1",
+      "sha256": "5d5b65372012c76765545958f279a31433177f7728f5e1e49be131b823936da2",
+      "bytes": 6751,
+      "ranges": [
+        [
+          1,
+          210
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/src-tauri/src/native.rs",
+      "git_blob": "d3716776e8e87beb73c20e5c95f35224266a8560",
+      "sha256": "e6f49646b75ca0471786ba661623947c239cd9d0be486320c11609419329dba6",
+      "bytes": 30195,
+      "ranges": [
+        [
+          1,
+          854
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/src-tauri/src/preferences.rs",
+      "git_blob": "6afac4bfa4fe529af00e3b74b40bb6fb0f722306",
+      "sha256": "327dc0b8c4b6ce566c34927d6f2eae1c50832d273371beb6085623fa0bfe54c9",
+      "bytes": 8063,
+      "ranges": [
+        [
+          1,
+          234
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/src-tauri/src/protocol.rs",
+      "git_blob": "c5e43a2f50754d09a489c560ebfaa635bfeafbc4",
+      "sha256": "d7aa8d93c0f1243b754a3712bbecd4b51e67a7a40b7a800a585c4197dcd33b2f",
+      "bytes": 17690,
+      "ranges": [
+        [
+          1,
+          525
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/ui/build.ts",
+      "git_blob": "634b0eeab9a651a1af7d06af31c31c8c37ab3ef0",
+      "sha256": "19781cc6894b3ec9edf59e60a00a7c1d464185b3e320906560af7b85190bb7ba",
+      "bytes": 1460,
+      "ranges": [
+        [
+          1,
+          36
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/ui/src/index.html",
+      "git_blob": "cf532d3993d89711d594738207fc64d6b095e323",
+      "sha256": "750945920bac43cd91cd0f04b8c0d30707ee7fd5d5fcd7afd2d62df9da0f3fe6",
+      "bytes": 2698,
+      "ranges": [
+        [
+          1,
+          57
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/ui/src/main.ts",
+      "git_blob": "b060f32abe79a282dfa8bc332340b5e30c9f9833",
+      "sha256": "928c18db5bd3f4c9160583fc6e04a7e1ed54c302453d67035ad289132f1ab908",
+      "bytes": 8331,
+      "ranges": [
+        [
+          1,
+          204
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "desktop/ui/src/style.css",
+      "git_blob": "2a9675ecb6c0b0fca8d201fcd3c186f5511d15c5",
+      "sha256": "c3cff3b7c508d0b116bd9974e4f85ede4e81fd3cdfcbec8a13adc5c56d3e9900",
+      "bytes": 2521,
+      "ranges": [
+        [
+          1,
+          94
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/desktop/__init__.py",
+      "git_blob": "d58c27924056b3f4dec05d6c0d9eb543c0eb8912",
+      "sha256": "458be8d5c949b9a1b642d5cb2f5bb644b1a614adaebaaaa94d5bb332e81df08a",
+      "bytes": 186,
+      "ranges": [
+        [
+          1,
+          6
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/desktop/__main__.py",
+      "git_blob": "9cda7a9fabcb841e70017b3da55a5bc8e1551226",
+      "sha256": "61a8476f71a4b9ae7058b505faaba1830f8ddfec50b24fd8f9b62476cd2b3bb4",
+      "bytes": 609,
+      "ranges": [
+        [
+          1,
+          27
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/desktop/adapter.py",
+      "git_blob": "d224e37e9e1fd301fe76515458ba13bac97ec0e2",
+      "sha256": "b4b09748bd83980d5f4a06ad9e047a1367ef1bf2171590b25236637a75709074",
+      "bytes": 18253,
+      "ranges": [
+        [
+          1,
+          496
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/desktop/gateway_child.py",
+      "git_blob": "cf03774ed0983aa73f0d791f4cd2386e3e0322c1",
+      "sha256": "3cad277d85b15f164a492af24b63560621944911424b65082a5dec424cebf758",
+      "bytes": 3964,
+      "ranges": [
+        [
+          1,
+          106
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/desktop/protocol.py",
+      "git_blob": "4c9659debe3db00d5e2ba398818f31fbac69ad61",
+      "sha256": "8a58016248e68ec0e70db32cec21d90921d08e9b8d220ed37631704c1e43c0fd",
+      "bytes": 5804,
+      "ranges": [
+        [
+          1,
+          165
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/scripts/build.ts",
+      "git_blob": "95b3f6d3ef0edb2ee1af9124b0d8915d74092650",
+      "sha256": "c92504ae40abd88eb6337552322a4a715e0bf45fe15bbc3ecfa479120865f314",
+      "bytes": 1295,
+      "ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/scripts/conpty_smoke.py",
+      "git_blob": "b4cd65a78448bd95e11eb315c085a96bee591071",
+      "sha256": "1fe1f082eaf39381600bd0eee816a40f109411a6bcf567eb9fb8b688373cf89b",
+      "bytes": 4873,
+      "ranges": [
+        [
+          1,
+          139
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/scripts/package-release.py",
+      "git_blob": "88e1dc56d64f5d2ee3dd7356bc5c1a8b5fdbc69d",
+      "sha256": "9a131367f0707d7223a5c077b27fe8c22008e7983ddce6d37c16e99051a321aa",
+      "bytes": 3064,
+      "ranges": [
+        [
+          1,
+          93
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/scripts/prepare-target.ts",
+      "git_blob": "7cb57b9fa36d3071a33cc21e5e32748b9768c7c8",
+      "sha256": "464892f117ccfd8c6ed5a0138e90a187cc39f4ecd21957b43db96e5fc4f0d0e5",
+      "bytes": 1268,
+      "ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/scripts/pty_smoke.py",
+      "git_blob": "f44a5e14cb24d4f20c469675e662f5f5c627a617",
+      "sha256": "47bd8583b70f8c7514fd12af244059cebb9c69dc063ec99f7b479b4d54e5c578",
+      "bytes": 6002,
+      "ranges": [
+        [
+          1,
+          172
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/scripts/release-notices.ts",
+      "git_blob": "ce2029a43b7f1e69c7571ef98d49d1c96202ce7c",
+      "sha256": "8383c56f87ce3e6ecfedbd0d806c17a802cafdee345578e142b3cb9b208c9441",
+      "bytes": 5182,
+      "ranges": [
+        [
+          1,
+          138
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/app.ts",
+      "git_blob": "9c4c965f8cc2c5f2a8458eb44fa99b16f7b11893",
+      "sha256": "730b70d978c42a5727dbe0b575e877c28c3ffa043b8d3277ced322e61522c82f",
+      "bytes": 99892,
+      "ranges": [
+        [
+          1,
+          2891
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/branch-menu.ts",
+      "git_blob": "393ea27b02ad6bd1af007cea18ddf117d7d83c0b",
+      "sha256": "102b87205b4c9cca2754281a8de457b88fb58a892c7c1b53001193892ff123a0",
+      "bytes": 1543,
+      "ranges": [
+        [
+          1,
+          41
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/clipboard-image.ts",
+      "git_blob": "ca0aaf90fb3eb6b25b3bf9256b5ee4f51be48d3c",
+      "sha256": "ab32c02e6b4ca7964114e9e86392d79396de274beef1911dedcdc725d7dd6247",
+      "bytes": 2243,
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/command-menu.ts",
+      "git_blob": "31e403318a68eb2192cc80edd6a6c8473d00aabb",
+      "sha256": "8a311f121036c7a8b2eb5250eb2abea0200b047483bddce110b288dd122ba998",
+      "bytes": 4687,
+      "ranges": [
+        [
+          1,
+          146
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/composer-draft.ts",
+      "git_blob": "04b1d391a9039cc607bbb51b538c774b3c2fbe95",
+      "sha256": "08f3e12874a6ff2915db4413cfd3e8f169a7cc0d5807eb7e977b51449464944c",
+      "bytes": 6473,
+      "ranges": [
+        [
+          1,
+          200
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/context-panel.ts",
+      "git_blob": "393791c261bd5756877951a3f6098dd1415a5fba",
+      "sha256": "e40f795cdf593debadebf8c4aa003fb89db8bdfbb535e91fc75a46f87fe28eb5",
+      "bytes": 2365,
+      "ranges": [
+        [
+          1,
+          88
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/desktop.ts",
+      "git_blob": "49309440d65af5cf59a1befe37a750dd0d3a1389",
+      "sha256": "2fc93d8a88016d3fc48f17a6f0cbdb924a965df348c8fda2e52457eba3d05971",
+      "bytes": 3831,
+      "ranges": [
+        [
+          1,
+          88
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/diff-viewer.ts",
+      "git_blob": "252a45a1f110dca6b6b7d1df777c301a1a121c0b",
+      "sha256": "0fa762a6d2833962847061e4baea053298870b644ddfdb529c1b0afeb71f2e8a",
+      "bytes": 10167,
+      "ranges": [
+        [
+          1,
+          326
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/footer-hints.ts",
+      "git_blob": "67baf706b0d7a9a48fe5540895df247805a8bc84",
+      "sha256": "b9f163f9ccb61d27ff28b69f30d6e2fca5e5aaaf7318ca9270d81cd3160a735c",
+      "bytes": 3460,
+      "ranges": [
+        [
+          1,
+          109
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/host.ts",
+      "git_blob": "47015655553aadc3862b4ec9869ce1301baccc87",
+      "sha256": "49bdaffdd1296fd520d1cca46f0d26f4f396e65cc2c6d02a47f9b390847ae4b6",
+      "bytes": 2660,
+      "ranges": [
+        [
+          1,
+          90
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/index.ts",
+      "git_blob": "ba7337354850ed4945a28ccd7130dbb945d1bb24",
+      "sha256": "1bd2e3df5b4107c8c674ed001aee600d8ab37afa4f128615964ba834c64878b0",
+      "bytes": 3391,
+      "ranges": [
+        [
+          1,
+          82
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/latex.ts",
+      "git_blob": "87bd2a915296286a509e117dd3b43c37d59c49ca",
+      "sha256": "7b03083f7a1395eb957eaeab88ac7a033b946ef9c26c3402be31a9b4a9ec4fe1",
+      "bytes": 23417,
+      "ranges": [
+        [
+          1,
+          902
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/mention-menu.ts",
+      "git_blob": "901a1bbf45a8d0f7e2127183261fb96789c6c095",
+      "sha256": "5c6e59ff50993c273feeafc57c1d49140c272307f44dcb7fca2ca0d6d296a346",
+      "bytes": 2840,
+      "ranges": [
+        [
+          1,
+          76
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/picker-menu.ts",
+      "git_blob": "75890ea4debd4542f7eee23b481c6c065b42a789",
+      "sha256": "cfd4212442cd86c3bbc8a4cb524836f29490f973b6b7f31137f1ed599ff56232",
+      "bytes": 5644,
+      "ranges": [
+        [
+          1,
+          207
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/platform-keys.ts",
+      "git_blob": "4187c988a28747bf2e9deffc11b0c294fffbb7dc",
+      "sha256": "b6dce7b90a3a21fe1d82eaf81dd216f178a0c82a453f2d6c31f215fe93c67fcb",
+      "bytes": 133,
+      "ranges": [
+        [
+          1,
+          4
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/prompt-queue.ts",
+      "git_blob": "419f0cdfcad82f0d79065ef497554d6aa89c498a",
+      "sha256": "55bcb01f14bd304e4815111a18668a7cca453215ab06865f1c0c59c50df73318",
+      "bytes": 816,
+      "ranges": [
+        [
+          1,
+          43
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/protocol.ts",
+      "git_blob": "40771f8b24ced23cfeca8f9e9fec9f071a9364ba",
+      "sha256": "7fb1aa9b5d891b14a2fee5c96d231ef040f4709d0ac6b26dd78982a9c87fc3f5",
+      "bytes": 49256,
+      "ranges": [
+        [
+          1,
+          1473
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/queue-preview.ts",
+      "git_blob": "732ebe71f1b78e339874163ed905b35f071976fb",
+      "sha256": "c51d487fb8e3c9f4e6e00e496680d238c8b28a4658deba4b230314519afcc2d2",
+      "bytes": 2781,
+      "ranges": [
+        [
+          1,
+          100
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/recovery-notice.ts",
+      "git_blob": "f3708536470f9d659d002e01d14bb96ff11a0981",
+      "sha256": "0aa199cb70255f83203f292b15a673e6fea5d30da27ceca4277a6def4127dcbf",
+      "bytes": 4797,
+      "ranges": [
+        [
+          1,
+          178
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/runtime-controls.ts",
+      "git_blob": "9f055f29a36b0e4919022851c88eba20c133d36d",
+      "sha256": "2ab20fb6f9ed7bd39b9433f95fcace367bda2af5e54064e84e555828f538d97f",
+      "bytes": 9896,
+      "ranges": [
+        [
+          1,
+          331
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/scrollbox.ts",
+      "git_blob": "ace372c1d8b5801b0fe9b785696bc6e1eff3a559",
+      "sha256": "7bcd6ddd97b1e24203d1e21f8e2a362b4e6ac87faaba96d4f12c859ae055a7a5",
+      "bytes": 606,
+      "ranges": [
+        [
+          1,
+          15
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/session-menu.ts",
+      "git_blob": "419c265ec476eb8272dfa7f8e93845f0a3510607",
+      "sha256": "89e0ac2f15eb9336a4afc13131f053fd3b20cee9585fa6fc58ab8c138e7c3b53",
+      "bytes": 9826,
+      "ranges": [
+        [
+          1,
+          290
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/skill-menu.ts",
+      "git_blob": "16f2f02160ff5da11ad5cb1b6c57d42d87bdbd82",
+      "sha256": "81f8667a934d405d5560ea6b813f27a8b4e39bc0e63503fbbe30895dfe4eb245",
+      "bytes": 2928,
+      "ranges": [
+        [
+          1,
+          87
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/tool-renderers.ts",
+      "git_blob": "9b9479eb30c5ca38bdd377620131394ed4b92a4b",
+      "sha256": "7a910ee3532bf9c11a4a1334bc30df240e7c7d96c7547c5533416344ad8dd799",
+      "bytes": 4663,
+      "ranges": [
+        [
+          1,
+          124
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/transcript.ts",
+      "git_blob": "3842d11ec0c9e5c61c722c93e24a29b357fc0c8a",
+      "sha256": "8ec9093c794b73f2aa7b719973e643c39ce741571feb84a67be9ee967590de36",
+      "bytes": 25451,
+      "ranges": [
+        [
+          1,
+          789
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh D01 source-only primary body read preserved from continuation checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/gateway/runtime.py",
+      "ranges": [
+        [
+          930,
+          1115
+        ]
+      ],
+      "purpose": "Supplementary persistent Desktop lease/start/stop ownership reconciliation; no D01 primary credit.",
+      "evidence_origin": "Fresh continuation read"
+    }
+  ],
+  "search_only": [
+    {
+      "query": "HostWebSocket literal symbol",
+      "roots": [
+        "nanobot",
+        "desktop",
+        "tui"
+      ],
+      "purpose": "Resolve prior U01 shorthand; no literal symbol found, followed by direct TUI transport read."
+    },
+    {
+      "query": "queued follow-up / takeFollowUp / Not sent",
+      "roots": [
+        "tui/src",
+        "tui/src/app.test.ts"
+      ],
+      "purpose": "D01-F01 caller/counterevidence tracing."
+    },
+    {
+      "query": "fetchSessionContext / contextPanel / session switch",
+      "roots": [
+        "tui/src",
+        "tui/src/app.test.ts"
+      ],
+      "purpose": "D01-F02 caller/counterevidence tracing."
+    },
+    {
+      "query": "release_desktop_lease / stop_desktop / desktop identity",
+      "roots": [
+        "nanobot/gateway",
+        "tests/desktop"
+      ],
+      "purpose": "Persistent gateway lifetime reconciliation."
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/app.test.ts",
+      "git_blob": "75650b7c2bc08348edd2b4b751e3bb4fe49062fa",
+      "ranges": [
+        [
+          632,
+          707
+        ],
+        [
+          1046,
+          1135
+        ],
+        [
+          1745,
+          1800
+        ],
+        [
+          3115,
+          3161
+        ]
+      ],
+      "purpose": "Normal queued follow-up, per-session queue survival, /context same-session rendering, and direct-send reconnect draft recovery; not executed.",
+      "evidence_origin": "Fresh continuation read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tui/src/prompt-queue.test.ts",
+      "git_blob": "dfa95ed146604e9c922ff187de7d4868500f5d64",
+      "ranges": [
+        [
+          1,
+          28
+        ]
+      ],
+      "purpose": "FIFO destructive take/restore queue semantics; not executed.",
+      "evidence_origin": "Fresh continuation read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/desktop/test_adapter.py",
+      "git_blob": "8d7a1dbeafa79151c61cdda71e6cf697da1bbf5c",
+      "ranges": [
+        [
+          939,
+          1020
+        ]
+      ],
+      "purpose": "Persistent gateway identity/adoption and adapter reattachment after adapter loss; not executed.",
+      "evidence_origin": "Fresh continuation read"
+    }
+  ],
+  "support_reads": [
+    {
+      "path": "docs/audits/module-review-2026-11-06/handoffs/D01.md",
+      "ranges": [
+        [
+          1,
+          223
+        ]
+      ],
+      "purpose": "Saved D01 checkpoints/provenance; no primary-body credit."
+    },
+    {
+      "path": "docs/audits/module-review-2026-11-06/scope.json",
+      "ranges": [
+        [
+          1,
+          262
+        ]
+      ],
+      "purpose": "Frozen source/reference pins and D01 denominator/staging metadata."
+    },
+    {
+      "path": "desktop/README.md",
+      "ranges": [
+        [
+          1,
+          30
+        ]
+      ],
+      "purpose": "Desktop architecture and thin-shell lifecycle intent."
+    },
+    {
+      "path": "desktop/VALIDATION.md",
+      "ranges": [
+        [
+          1,
+          218
+        ]
+      ],
+      "purpose": "Documented Desktop validation contract; commands not executed."
+    },
+    {
+      "path": "tui/README.md",
+      "ranges": [
+        [
+          1,
+          82
+        ]
+      ],
+      "purpose": "TUI user-visible queue/session/context/lifecycle contract."
+    },
+    {
+      "path": "tui/RELINKING.md",
+      "ranges": [
+        [
+          1,
+          34
+        ]
+      ],
+      "purpose": "Native package relinking/source-distribution contract."
+    },
+    {
+      "path": "tui/SOURCE_OFFER.md",
+      "ranges": [
+        [
+          1,
+          16
+        ]
+      ],
+      "purpose": "TUI source-offer/reproducibility context."
+    },
+    {
+      "path": "desktop/backend-compat.json",
+      "ranges": [
+        [
+          1,
+          6
+        ]
+      ],
+      "purpose": "Desktop protocol/backend compatibility pin."
+    },
+    {
+      "path": "desktop/src-tauri/capabilities/setup.json",
+      "ranges": [
+        [
+          1,
+          18
+        ]
+      ],
+      "purpose": "Local setup-window Tauri capability boundary."
+    },
+    {
+      "path": "desktop/src-tauri/tauri.conf.json",
+      "ranges": [
+        [
+          1,
+          54
+        ]
+      ],
+      "purpose": "Desktop bundling/security setup context."
+    },
+    {
+      "path": "tui/package.json",
+      "ranges": [
+        [
+          1,
+          20
+        ]
+      ],
+      "purpose": "Pinned OpenTUI dependency and declared check/test scripts; not executed."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/client/ui-conversation/src/client/queue/QueueDock.tsx",
+      "git_blob": "6396387a91f5ee8db0050d75a1c4c8779708e97c",
+      "ranges": [
+        [
+          105,
+          157
+        ]
+      ],
+      "purpose": "Durable queued rows/pending submissions remain projected while queue actions complete; bounded F01 comparison only.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation pinned source read"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/tui/src/chatwidget/input_queue.rs",
+      "git_blob": "bdaedab6ca43f20a16e1ba5efee0a986acca26b4",
+      "ranges": [
+        [
+          23,
+          72
+        ]
+      ],
+      "purpose": "Explicit queued/unconfirmed/rejected input state; bounded F01 architecture comparison only.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation pinned source read"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/tui/src/app/history_pagination.rs",
+      "git_blob": "f7210795b22a63e4a40e54385ba76eda5685c44b",
+      "ranges": [
+        [
+          20,
+          77
+        ]
+      ],
+      "purpose": "Thread+cursor identity carried through async history completion and stale thread result cancelled; bounded F02 comparison only.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation pinned source read"
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "commit": "4dc1c3aaeb2525c71178b1a345825ee6af7065ed",
+      "kind": "follow-up queue introduction",
+      "purpose": "Introduced explicit queue preview/edit/restore and auto-drain; current failure restoration gap traces to this ownership shape."
+    },
+    {
+      "commit": "7901466874b9a6a5305bdab91469e3032f79c022",
+      "kind": "active-session switching",
+      "purpose": "Made follow-up queues session-scoped and source-tested survival across session switches."
+    },
+    {
+      "commit": "1fb0d217240fdd0f2756ea87f11c2f44dae8db3f",
+      "kind": "composer submit preservation",
+      "purpose": "Established intent to preserve user input across submit timing/failure; relevant F01 counterevidence."
+    },
+    {
+      "commit": "c4f3c7508d259555039f74256165f16741092611",
+      "kind": "session history/context feature",
+      "purpose": "Added /context and paginated history; history gained stale-completion fencing while /context did not."
+    },
+    {
+      "commit": "5436714d30b09b0b2deb6b08f5258136de865868",
+      "kind": "Fedora Desktop shell introduction",
+      "purpose": "Baseline thin-shell/tray lifecycle intent for D01 architecture judgement."
+    }
+  ],
+  "findings": [
+    {
+      "id": "D01-F01",
+      "classification": "automatic follow-up dequeue can lose a queued prompt when the send fails",
+      "priority": "P2",
+      "confidence": "high static",
+      "source": [
+        "tui/src/prompt-queue.ts:25–27",
+        "tui/src/app.ts:1016–1044",
+        "tui/src/app.ts:1576–1582",
+        "tui/src/protocol.ts:1220–1239",
+        "tui/src/protocol.ts:1465–1470"
+      ],
+      "trigger": "A queued follow-up is automatically drained after the active turn ends; the socket becomes non-open (or write throws) before the message is accepted by the local transport.",
+      "impact": "sendNextFollowUp destructively removes the first queued item before sendPrompt proves the write succeeded. On failure, the TUI marks a generic retry status but neither restores that prompt to its per-session queue nor to the composer, so the queued user text is no longer actionable.",
+      "counterevidence": "Direct composer failure intentionally preserves the draft and is source-tested. Normal queued follow-up send, edit/restore and per-session queue retention are also source-tested; the uncovered case is specifically automatic dequeue followed by synchronous send failure.",
+      "smallest_alternative": "Peek the next follow-up and commit dequeue only after send succeeds, or reinsert/restore the exact prompt on send failure.",
+      "dependencies": [
+        "D6",
+        "D7",
+        "E02"
+      ]
+    },
+    {
+      "id": "D01-F02",
+      "classification": "context-panel completion can overwrite a newly switched session",
+      "priority": "P2",
+      "confidence": "high static race",
+      "source": [
+        "tui/src/app.ts:2727–2755",
+        "tui/src/app.ts:2757–2797",
+        "tui/src/app.ts:2816–2848"
+      ],
+      "trigger": "The user opens /context for session A, then switches to session B before A's fetchSessionContext request completes.",
+      "impact": "The late A response unconditionally updates contextTokens, lastUsage, title and the context panel after the await, so B can temporarily show A's context summary/token usage. This is same-client cross-session UI state contamination, not a server authorization bypass.",
+      "counterevidence": "Session metadata, context estimate, history pagination and branch/session loads elsewhere in the same app carry chat or generation fences; existing /context source tests cover only the same-session success path.",
+      "smallest_alternative": "Capture chat identity plus a request generation at openContext start and ignore completion/error UI commits when either no longer matches.",
+      "dependencies": [
+        "D5",
+        "D6",
+        "E02"
+      ]
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "D01-Q1",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "question": "Should queued follow-ups use explicit delivery/acknowledgement state so automatic dequeue is committed only after local transport admission succeeds?"
+    },
+    {
+      "id": "D01-Q2",
+      "decisions": [
+        "D5",
+        "D6"
+      ],
+      "question": "Should all TUI session-scoped HTTP/discovery reads share one chat/request-generation fence, including /context and connection-rotated runtime controls?"
+    },
+    {
+      "id": "D01-Q3",
+      "decisions": [
+        "D4",
+        "D5"
+      ],
+      "question": "Should the persistent Desktop gateway lifetime remain independent of TUI/adapter detach, with stop authority only in explicit Desktop lifecycle commands as implemented today?"
+    },
+    {
+      "id": "D01-Q4",
+      "decisions": [
+        "D6"
+      ],
+      "question": "What idempotency/replay contract should TUI WebUI mutations use across disconnects, especially recovery continue/dismiss where server application can be ambiguous?"
+    },
+    {
+      "id": "D01-Q5",
+      "decisions": [
+        "D2",
+        "D4"
+      ],
+      "question": "Which exact private-state and origin guarantees are mandatory for future Desktop platforms if the current Fedora private socket, loopback gateway and Tauri origin restrictions are generalized?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    {
+      "topic": "TUI queued delivery/recovery",
+      "streams": [
+        "D01",
+        "E02"
+      ],
+      "findings": [
+        "D01-F01"
+      ],
+      "decisions": [
+        "D6",
+        "D7"
+      ]
+    },
+    {
+      "topic": "Session-scoped async identity",
+      "streams": [
+        "D01",
+        "E02"
+      ],
+      "findings": [
+        "D01-F02"
+      ],
+      "decisions": [
+        "D5",
+        "D6"
+      ]
+    },
+    {
+      "topic": "Persistent Desktop gateway ownership",
+      "streams": [
+        "D01",
+        "E02"
+      ],
+      "findings": [],
+      "decisions": [
+        "D4",
+        "D5"
+      ]
+    },
+    {
+      "topic": "TUI recovery mutation ambiguity",
+      "streams": [
+        "D01",
+        "E02"
+      ],
+      "findings": [],
+      "decisions": [
+        "D6"
+      ]
+    },
+    {
+      "topic": "Clipboard/media and release packaging context",
+      "streams": [
+        "D01",
+        "M01",
+        "X01"
+      ],
+      "findings": [],
+      "decisions": [
+        "D2",
+        "D7"
+      ]
+    }
+  ],
+  "coordinator_check": null,
+  "integrated_review": null,
+  "git_checkpoint": null,
+  "limits": [
+    "Source review does not establish actual race frequency, deployed filesystem/OS behavior outside the inspected contracts, or server mutation idempotency beyond reviewed client/runtime evidence.",
+    "Pinned DSH/Codex mechanisms are engineering comparisons, not parity requirements.",
+    "D01 source completeness does not resolve E02/R01/M01/X01 cross-module ownership or D1–D7 final decisions."
+  ],
+  "entry_rules": {
+    "bounded_body_reads": "Each entry needs repository, commit, tree, path, Git blob, SHA256, exact inclusive line ranges or bounded symbols, purpose and evidence origin. Empty files need an explicit empty marker. Only supplied body evidence receives body credit; no all-branch certification.",
+    "caller_context_reads": "Record exact bodies/ranges actually read for caller tracing; keep context distinct from the assigned primary review disposition.",
+    "search_only": "Record actual search operands, roots and resulting paths; unconfirmed operands and mere symbol hits receive no body-read credit.",
+    "test_source_reads": "Record source ranges read as text and relevance; no test execution or automatic primary-body credit.",
+    "support_reads": "Record config, documentation, assets, dependency or history material with its own pin/path/ranges and purpose; no primary-body credit.",
+    "justified_exclusions": "Identify each path or bounded branch, reason, compatibility consequence and accepting authority; absence is not silently excluded.",
+    "material_unread_gaps": "Account for each assigned target without sufficient supplied body evidence and each material unread branch/caller; retain next action and impact on provisional judgement.",
+    "reference_mechanisms_or_nonapplicability": "Use pinned DSH/Codex implementation evidence or an explicit module-specific reason for nonapplicability; no parity assumption.",
+    "findings": "Retain ID, requirement, source/call chain, trigger, impact, confidence/uncertainty, smallest alternative, consequences and dependencies.",
+    "counts": "Report unique primary assignments separately from body paths/ranges, context/search/test/support counts, exclusions and gaps. Shared reads and P01 add no denominator.",
+    "acceptance": "Only supplied coordinator evidence may populate coordinator_check, integrated_review or git_checkpoint. Template nulls convey no acceptance."
+  },
+  "current_staging_delta": {
+    "from_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+    "to_commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "files": [
+      "nanobot/agent/runner.py",
+      "nanobot/providers/fallback_provider.py",
+      "tests/agent/test_pre_dispatch_recovery.py",
+      "tests/agent/test_runner_errors.py",
+      "tests/agent/test_runner_fallback.py"
+    ],
+    "d01_reconciliation": "No D01 primary target changed in the frozen staging delta; all 47 D01 primaries are byte-identical across it."
+  },
+  "history_limits": "Bounded file history/commit diffs only; history is intent/evolution evidence, not current execution evidence.",
+  "additional_observations": [
+    {
+      "id": "D01-O1",
+      "classification": "preserved desktop authority boundary",
+      "note": "Desktop adapter/Tauri use strict bounded protocol frames, loopback-only endpoints, per-launch auth secret, exact gateway ID/version/capability validation, private runtime/socket ownership and remote-origin command denial."
+    },
+    {
+      "id": "D01-O2",
+      "classification": "preserved uncertain-lifecycle handling",
+      "note": "Tauri keeps uncertain start/stop disposition explicit, binds lifecycle replies to captured handles and refuses quit while stop cannot be confirmed."
+    },
+    {
+      "id": "D01-O3",
+      "classification": "resolved prior lifetime question",
+      "note": "GatewayRuntime release_desktop_lease intentionally preserves a persistent gateway and stop_desktop verifies process birth/listener identity. TUI close-before-open also rechecks closedByClient. The earlier U01 shorthand orphan concern is retired as no finding."
+    },
+    {
+      "id": "D01-O4",
+      "classification": "retained connection-rotation UI question",
+      "note": "RuntimeControls can reuse an in-flight controlsPromise across apiUrl/apiToken rotation, and command/mention discovery has similar lower-impact stale completion exposure. Workspace access remains gateway-authoritative, so this is retained unpromoted."
+    },
+    {
+      "id": "D01-O5",
+      "classification": "retained mutation-recovery question",
+      "note": "TUI recovery mutations are rejected rather than replayed after socket close; app state keeps actions retryable, but ambiguous server-application/idempotency semantics belong with E02."
+    },
+    {
+      "id": "D01-O6",
+      "classification": "packaging/rendering strength",
+      "note": "Transcript/diff/LaTeX paths are bounded and turn-scoped; PTY scripts validate restoration semantics; release packaging checks runtime-license closure and ships source/relinking material."
+    }
+  ],
+  "finding_count_convention": "Two promoted D01 findings, both P2. D01-O1–O6 are observations/strengths and are excluded from finding totals.",
+  "coverage_counts": {
+    "primary_assignments": 47,
+    "final_full_primary_body_paths": 47,
+    "prior_full": 0,
+    "prior_partial": 0,
+    "prior_unread": 47,
+    "primary_physical_lines": 13808,
+    "primary_bytes": 463251,
+    "primary_exclusions": 0,
+    "primary_unread_paths": 0,
+    "caller_context_paths": 1,
+    "test_source_paths": 3,
+    "reference_paths": 3,
+    "findings": 2,
+    "additional_observations": 6,
+    "discussion_questions": 5
+  },
+  "raw_failures_and_limits": [
+    "A checkpoint row for tui/src/footer-hints.ts initially omitted the final SHA256 character; inventory reconciliation detected the 46/47 parse and the publication commit corrects the row before granting published credit.",
+    "Large source responses were read in bounded ranges where needed; no truncated primary range received full-body credit until reread.",
+    "No tests/builds/checkers/imports, PTY/ConPTY scripts, Desktop/TUI apps, services, provider calls, network probes or benchmarks were executed."
+  ]
+}
