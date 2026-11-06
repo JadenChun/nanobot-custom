@@ -392,20 +392,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/K01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "K01-A source inspection complete at F7/P0/R49. Two provisional findings retained: conditional P1 prompt/skill loading can bypass non-managed restrict_to_workspace, and conditional P2 save_knowledge does not enforce active-project knowledge_repos association. Next bounded action is K01-B only.",
+      "coordinator_observation": "K01-A+B source inspection complete at F14/P0/R42. Three provisional findings retained: F01 conditional P1 non-managed prompt/skill confinement bypass, F02 conditional P2 project-to-knowledge scope mismatch, F03 P2 runtime skill discovery does not enforce the creator/package validation contract before shadowing/activation. Next bounded action is K01-C only.",
       "active_source_review_coverage": {
-        "full": 7,
+        "full": 14,
         "partial": 0,
-        "unread": 49
+        "unread": 42
       },
-      "active_provisional_findings_count": 2,
+      "active_provisional_findings_count": 3,
       "active_substage_checkpoint": {
-        "stage": "K01-A",
-        "commit": "6aee06005c3249a3e107632da69d7bd4fcbee125",
+        "stage": "K01-B",
+        "commit": "783520f331ab1837276eea3809ea68ae591ac23d",
         "coverage": {
-          "full": 7,
+          "full": 14,
           "partial": 0,
-          "unread": 49
+          "unread": 42
         },
         "publication_credit_added": 0
       }
