@@ -212,7 +212,7 @@
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
       "note": "T01-A complete at F6/P0/R38; two provisional P2 findings retained; no published/coordinator-checked body credit added. Next bounded stage is T01-B delegation/foreground ownership (six primaries).",
-      "last_checkpoint_commit": "781d934cd52e22fd0ee8e0f83fa9d94ffeafa386",
+      "last_checkpoint_commit": "ed50e9e1b4044b87bf713f6cd2cce27ed88110da",
       "provisional_findings": [
         {
           "id": "T01-F01",
@@ -226,6 +226,19 @@
           "title": "Loader registration is publication-atomic, not construction-lifetime atomic",
           "state": "provisional-active-handoff",
           "qualification": "conditional on tool/plugin construction owning resources or side effects"
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "T01-A",
+          "commit": "ed50e9e1b4044b87bf713f6cd2cce27ed88110da",
+          "coverage": {
+            "full": 6,
+            "partial": 0,
+            "unread": 38
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }

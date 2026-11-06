@@ -300,7 +300,17 @@
         "partial": 0,
         "unread": 38
       },
-      "active_provisional_findings_count": 2
+      "active_provisional_findings_count": 2,
+      "active_substage_checkpoint": {
+        "stage": "T01-A",
+        "commit": "ed50e9e1b4044b87bf713f6cd2cce27ed88110da",
+        "coverage": {
+          "full": 6,
+          "partial": 0,
+          "unread": 38
+        },
+        "publication_credit_added": 0
+      }
     },
     {
       "id": "A01",
