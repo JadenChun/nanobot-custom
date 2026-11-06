@@ -353,20 +353,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/A01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "A01-A+B+C source inspection complete at F24/P0/R23. Four provisional findings remain unchanged; A01-C added no new live finding after canonical execution/delivery reconciliation. Next bounded action is A01-D durable delivery/recovery ownership only.",
+      "coordinator_observation": "A01-A+B+C+D source inspection complete at F32/P0/R15. Five provisional findings retained; A01-D added P2 A01-F05 for unbounded completed delivery dispatch-registry retention and reinforced A01-F03 with synchronous quota/outbox durability on async paths. Next bounded action is A01-E only.",
       "active_source_review_coverage": {
-        "full": 24,
+        "full": 32,
         "partial": 0,
-        "unread": 23
+        "unread": 15
       },
-      "active_provisional_findings_count": 4,
+      "active_provisional_findings_count": 5,
       "active_substage_checkpoint": {
-        "stage": "A01-C",
-        "commit": "4162b04900edf8f43b62d45c3ee5226f40a32c7d",
+        "stage": "A01-D",
+        "commit": "cc8de895dfdc3d5562ea3883ba13254279c9b7cc",
         "coverage": {
-          "full": 24,
+          "full": 32,
           "partial": 0,
-          "unread": 23
+          "unread": 15
         },
         "publication_credit_added": 0
       }
