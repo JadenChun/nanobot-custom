@@ -11,7 +11,7 @@ checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`. Integrated review an
 architecture decisions remain pending. C00 is now coordinator-checked from its saved 70/70 handoff and checkpointed at
 `85c59330c91e7982574d79f92602cc7e605acb4c`. H02 is now coordinator-checked from the
 superseding F74/P0/R0 handoff and checkpointed at `08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4`;
-H03 is now coordinator-checked at final F45/P0/R0 with seven promoted findings and seven retained questions. U01 is now coordinator-checked at final F203/P0/R0 with six qualified P2 findings and six retained questions, checkpointed at `b53644a2e20086a5d6a48e237e571d1720151270`. D01 is now coordinator-checked at final F47/P0/R0 with two qualified P2 findings and five retained questions, checkpointed at `9db80a30be08be3428ca33fda1532031dabd6a7f`. T01 is now coordinator-checked at final **F44/P0/R0** with twelve promoted findings and eight retained questions. A01 is now coordinator-checked at final **F47/P0/R0** with nine promoted findings and seven retained questions, checkpointed at `9bdcc59a5938084e843b61509e64bfb745b984a7`. K01 is now coordinator-checked **PASS** at **F56/P0/R0** with thirteen promoted findings and eight final questions; seven streams remain queued. No repair/design is
+H03 is now coordinator-checked at final F45/P0/R0 with seven promoted findings and seven retained questions. U01 is now coordinator-checked at final F203/P0/R0 with six qualified P2 findings and six retained questions, checkpointed at `b53644a2e20086a5d6a48e237e571d1720151270`. D01 is now coordinator-checked at final F47/P0/R0 with two qualified P2 findings and five retained questions, checkpointed at `9db80a30be08be3428ca33fda1532031dabd6a7f`. T01 is now coordinator-checked at final **F44/P0/R0** with twelve promoted findings and eight retained questions. A01 is now coordinator-checked at final **F47/P0/R0** with nine promoted findings and seven retained questions, checkpointed at `9bdcc59a5938084e843b61509e64bfb745b984a7`. K01 is coordinator-checked **PASS** at **F56/P0/R0** with thirteen promoted findings and eight final questions. E02-A has started the next stream at **F8/P0/R60** with one provisional conditional P2 finding; E02 remains unaccepted and six later streams remain queued. No repair/design is
 accepted; publication/acceptance, integrated review and Git preservation remain distinct.
 
 The foundation was independently verified **PASS** by the coordinator and committed/pushed
@@ -30,8 +30,7 @@ The [durable handoff index](handoffs/index.json) preserves [C00](handoffs/C00.md
 [C00 report](reports/C00.md), and H02 has now been published/checked as [H02 report](reports/H02.md).
 H03 has now been published/checked as [H03 report](reports/H03.md), U01 as [U01 report](reports/U01.md), and D01 as [D01 report](reports/D01.md). H02 supplements 5A/5B supersede its initial F33/P4/R37 attribution
 with current F74/P0/R0. Pipeline states below are preserved. Resumption verified `staging` identical to pinned `9562`; no affected source evidence needed
-refresh. H01, C00, H02, H03, U01, D01, T01 and K01 are now coordinator-checked. T01 is closed at F44/P0/R0 with twelve promoted findings and eight retained questions. A01 is closed at F47/P0/R0 with nine promoted findings and seven retained questions. F06/F08/F09 remain explicitly conditional. K01-A/B/C/D/E are published and coordinator-checked at F56/P0/R0 with thirteen promoted findings and eight final questions; next is E02 first bounded source-review substage before E01/
-E01/R01/M01/X01/Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
+refresh. H01, C00, H02, H03, U01, D01, T01 and K01 are now coordinator-checked. T01 is closed at F44/P0/R0 with twelve promoted findings and eight retained questions. A01 is closed at F47/P0/R0 with nine promoted findings and seven retained questions. F06/F08/F09 remain explicitly conditional. K01-A/B/C/D/E are published and coordinator-checked at F56/P0/R0 with thirteen promoted findings and eight final questions. E02-A is saved at F8/P0/R60 with one provisional conditional P2 finding and zero publication credit; next is E02-B WebSocket core only before E01/R01/M01/X01/Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
 owns final structural verification and Git preservation. Continuation now proceeds stage-by-stage: keep each session to one bounded stage or substage, save its evidence/gaps/exact next action, and checkpoint before expanding scope.
 
 ## Scope and current progress
@@ -55,7 +54,7 @@ explicit supplementary reads.
 | A01 | Cron, triggers, process completion and retained goals | 47 | coordinator-checked |
 | K01 | Context repositories, knowledge, skills, prompts and templates | 56 | coordinator-checked (F56/P0/R0) |
 | E01 | Channel framework and sixteen non-WebSocket adapters | 95 | queued |
-| E02 | API, SDK, WebSocket, backend WebUI and client contracts | 68 | queued |
+| E02 | API, SDK, WebSocket, backend WebUI and client contracts | 68 | in-progress (E02-A F8/P0/R60; unaccepted) |
 | U01 | React WebUI and browser sources | 203 | coordinator-checked |
 | M01 | Attachments, audio/images, ingress and adoption | 14 | queued |
 | R01 | Remote IPC/auth/pairing and Android/native clients | 70 | queued |
