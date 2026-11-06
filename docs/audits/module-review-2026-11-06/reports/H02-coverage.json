@@ -2019,11 +2019,16 @@
       "reason": "No clean local audit worktree in this web continuation; source/API reads and frozen metadata reconciliation only."
     },
     "integrated_review": "pending until all modules",
-    "module_git_checkpoint": "pending until coordinator commits",
+    "module_git_checkpoint": "08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4",
     "decisions": "D1–D7 remain deferred."
   },
   "integrated_review": null,
-  "git_checkpoint": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4",
+    "pushed": true,
+    "evidence": "H02 source-review publication and coordinator PASS commit on codex/staging-audit; audit documentation only."
+  },
   "raw_failures_and_limits": [
     "No repository tests/builds/checkers/imports/services/providers/sandboxes/probes/benchmarks executed."
   ],

@@ -75,7 +75,12 @@
       "supersession": "5A/5B supersede initial F33/P4/R37 with current F74/P0/R0; initial uncertainty retained historically.",
       "supplied_physical_splitlines": 47094,
       "supplied_bytes": 1921930,
-      "supplied_metadata_sha256": "8111ae57bbe78437969d604056c5ebcf46915deaa70b9a246761ee7a0c187098"
+      "supplied_metadata_sha256": "8111ae57bbe78437969d604056c5ebcf46915deaa70b9a246761ee7a0c187098",
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4",
+        "pushed": true
+      }
     },
     {
       "stream": "H03",

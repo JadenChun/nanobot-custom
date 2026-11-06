@@ -10,7 +10,8 @@ open H01-F8 registration contract and six retained questions; its acceptance pub
 checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`. Integrated review and product/
 architecture decisions remain pending. C00 is now coordinator-checked from its saved 70/70 handoff and checkpointed at
 `85c59330c91e7982574d79f92602cc7e605acb4c`. H02 is now coordinator-checked from the
-superseding F74/P0/R0 handoff; H03 remains incomplete (23 full/19 partial/3 unread). Twelve streams remain queued. No repair/design is
+superseding F74/P0/R0 handoff and checkpointed at `08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4`;
+H03 remains incomplete (23 full/19 partial/3 unread). Twelve streams remain queued. No repair/design is
 accepted; publication/acceptance, integrated review and Git preservation remain distinct.
 
 The foundation was independently verified **PASS** by the coordinator and committed/pushed

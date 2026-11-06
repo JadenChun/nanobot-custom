@@ -13,7 +13,8 @@ now coordinator-checked from its supplied 70/70 primary-body handoff with seven 
 findings and seven retained D1–D7 questions; its acceptance publication is checkpointed at
 `85c59330c91e7982574d79f92602cc7e605acb4c`. See
 [H02](reports/H02.md) is now coordinator-checked at final F74/P0/R0 with six promoted findings,
-one unpromoted title-edge observation, and seven retained questions. [status.json](status.json) for the eighteen streams and [scope.json](scope.json)
+one unpromoted title-edge observation, and seven retained questions; its acceptance publication
+is checkpointed at `08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4`. [status.json](status.json) for the eighteen streams and [scope.json](scope.json)
 for the 919 primary assignments. The earlier [33-row comparison](../architecture-review-2026-11-06/README.md)
 retains its targeted historical boundary; it is not the new deep-review synthesis.
 
