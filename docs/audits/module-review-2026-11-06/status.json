@@ -459,7 +459,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/U01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "U01 checkpoint: 7/203 primary bodies complete; architectural spine complete. No findings promoted. E02 must settle open-socket reauth lifetime; M01 must settle partial attachment-upload reclamation."
+      "coordinator_observation": "U01 checkpoint: 19/203 primary bodies complete. Architectural spine and workspace/permission authority slice complete; no finding promoted. Remote directory-browser bearer concern resolved as intentional mobile owner bridge behavior."
     },
     {
       "id": "M01",
@@ -742,7 +742,7 @@
     "reason": "User requested continuation from the saved ChatGPT-web handoff checkpoint.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "Continue U01 settings/permissions/workspace flows, then thread/message rendering, media/mobile/plugin surfaces and remaining primaries.",
+      "Continue U01 with ThreadShell.tsx, then thread/message rendering, attachment/media, mobile/service-worker, channel-plugin and remaining leaf primaries.",
       "D01",
       "T01",
       "A01",
