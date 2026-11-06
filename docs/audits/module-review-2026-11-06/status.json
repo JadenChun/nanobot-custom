@@ -459,7 +459,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/U01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "U01 checkpoint: 33/203 primary bodies complete. Provisional U01-F01 P2 source-established: attachment-only queued guidance is skipped by automatic FIFO flush and can be stranded or reordered behind later text guidance. No publication/acceptance yet."
+      "coordinator_observation": "U01 checkpoint: 46/203 primary bodies complete. Provisional U01-F01 P2 (attachment-only queued guidance skipped/reordered by auto-flush) and U01-F02 P2 (old generated-assets pagination may append after session switch). No publication/acceptance yet."
     },
     {
       "id": "M01",
@@ -742,7 +742,7 @@
     "reason": "User requested continuation from the saved ChatGPT-web handoff checkpoint.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "Continue U01 attachment/media helpers and voice, then mobile/service-worker, channel-plugin, settings and remaining leaf primaries.",
+      "Continue U01 FilePreviewPanel/media helpers, then mobile/service-worker, channel-plugin, settings and remaining leaf primaries.",
       "D01",
       "T01",
       "A01",
