@@ -2,7 +2,7 @@
   "schema_version": 1,
   "stream_id": "K01",
   "report": "reports/K01.md",
-  "publication_state": "report-written",
+  "publication_state": "coordinator-checked",
   "evidence_origin": {
     "analyst": "ChatGPT web continuation coordinator",
     "handoff": "handoffs/K01.md source-complete checkpoint",
@@ -815,7 +815,8 @@
       "prior_checkpoint_disposition": "full",
       "final_disposition": "full",
       "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
-      "evidence_origin": "ChatGPT web continuation coordinator"
+      "evidence_origin": "ChatGPT web continuation coordinator",
+      "empty_file": true
     },
     {
       "repository": "nanobot",
@@ -1114,7 +1115,8 @@
       "prior_checkpoint_disposition": "full",
       "final_disposition": "full",
       "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
-      "evidence_origin": "ChatGPT web continuation coordinator"
+      "evidence_origin": "ChatGPT web continuation coordinator",
+      "empty_file": true
     },
     {
       "repository": "nanobot",
@@ -1317,16 +1319,20 @@
     "P01 should decide restoration versus retirement of stale capability guidance and whether Dream skill mutation belongs in the product at all."
   ],
   "coordinator_check": {
-    "status": "pending",
-    "coordinator": null,
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
     "scope": "K01 source-review publication only",
-    "required_verification": {
+    "verified": {
       "primary_full": 56,
       "partial": 0,
       "unread": 0,
+      "inventory_all_roles": 62,
+      "supplementary_test_support": 6,
       "findings": 13,
       "questions": 8,
       "frozen_hashes": true,
+      "exact_primary_assignment": true,
+      "branch_source_drift": false,
       "conditional_findings": [
         "K01-F01",
         "K01-F02",
@@ -1339,10 +1345,16 @@
       "cross_stream_deduplication": [
         "K01-F11/T01-F10",
         "goal_runtime/A01-F02"
-      ]
+      ],
+      "empty_primary_markers": [
+        "nanobot/templates/__init__.py",
+        "nanobot/templates/memory/__init__.py"
+      ],
+      "retained_observations_unpromoted": true
     },
     "integrated_review": "pending",
-    "decisions": "pending"
+    "decisions": "pending",
+    "note": "Coordinator reconciled the 56 primary implementation/runtime-instruction assignments against the frozen inventory and source-complete handoff, confirmed six K01 test-support paths remain supplementary, verified all primary SHA-256 values and bounded ranges, found no non-audit source drift from the pinned Nanobot commit, retained all thirteen findings with their qualifications, and preserved cross-stream ownership."
   },
   "integrated_review": null,
   "git_checkpoint": null,
