@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01 are coordinator-checked; T01 is in progress at 0/44; nine streams remain queued.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01 are coordinator-checked; T01 source inspection is active at F6/P0/R38 and remains unaccepted; nine streams remain queued.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -18,7 +18,7 @@
     "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Coordinator-checked source-review publications: C00/H01/H02/H03/S01/S02/U01/D01. T01 was dispatched at 0/44 on 781d934cd52e22fd0ee8e0f83fa9d94ffeafa386; next bounded substage is T01-A (six core tool-construction primaries).",
+  "dispatch_evidence": "Coordinator-checked source-review publications: C00/H01/H02/H03/S01/S02/U01/D01. T01-A has an active handoff at F6/P0/R38 with zero publication credit; next bounded substage is T01-B delegation/foreground ownership.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -294,7 +294,13 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/T01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "T01 dispatched at 0/44 with no provisional findings. Stage-by-stage continuation begins with T01-A only: tools/__init__.py, base.py, schema.py, registry.py, loader.py and plugin_context.py."
+      "coordinator_observation": "T01-A source inspection completed at F6/P0/R38. Two provisional P2 findings are preserved in handoffs/T01.md; stream remains active/incomplete/unaccepted with zero published body credit. Next bounded action is T01-B only.",
+      "active_source_review_coverage": {
+        "full": 6,
+        "partial": 0,
+        "unread": 38
+      },
+      "active_provisional_findings_count": 2
     },
     {
       "id": "A01",
@@ -749,7 +755,7 @@
     "H03": "Continuation refilled all 19 partial + 3 unread primaries to final F45/P0/R0, reconciled the named staging delta, fresh-verified seven promoted findings plus bounded tests/history/DSH/Codex references. Source-review PASS only; integrated review and D1–D7 remain pending.",
     "U01": "U01 coordinator PASS at F203/P0/R0 with six qualified P2 findings and six retained questions. Integrated review and D1–D7 remain pending.",
     "D01": "D01 coordinator PASS at F47/P0/R0 with two qualified P2 findings and five retained questions. Integrated review and D1–D7 remain pending.",
-    "T01": "T01 is active-incomplete-unaccepted at 0/44. No source-review body credit has been added. Next bounded action is T01-A: six core tool-construction files only."
+    "T01": "T01-A source inspection is saved at F6/P0/R38 with two provisional P2 findings. No T01 report/coordinator acceptance or published body credit is awarded. Next: T01-B six-file delegation/foreground stage."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
@@ -757,8 +763,8 @@
     "reason": "User requested continuation from the saved ChatGPT-web handoff checkpoint.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "T01-A only: nanobot/agent/tools/__init__.py, base.py, schema.py, registry.py, loader.py and plugin_context.py; checkpoint before expanding scope.",
-      "Continue remaining T01 in bounded substages: delegation/foreground ownership, MCP/OAuth, execution/native authority, then remaining wrappers/adapters; close and coordinator-check T01.",
+      "T01-B only: nanobot/agent/delegation.py, foreground.py, subagent.py, tools/delegation.py, tools/fork_factories.py and tools/spawn.py; checkpoint before expanding scope.",
+      "Continue remaining T01 in later bounded substages: MCP/OAuth, execution/native authority, then remaining wrappers/adapters; close and coordinator-check T01.",
       "A01",
       "K01",
       "E02",

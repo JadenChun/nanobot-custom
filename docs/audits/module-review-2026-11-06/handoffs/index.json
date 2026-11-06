@@ -205,20 +205,34 @@
       "path": "handoffs/T01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 0,
+        "full": 6,
         "partial": 0,
-        "unread": 44
+        "unread": 38
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "T01 dispatched; 0/44 full; tests are supplementary only. Next bounded stage T01-A is limited to six core tool-construction files.",
+      "note": "T01-A complete at F6/P0/R38; two provisional P2 findings retained; no published/coordinator-checked body credit added. Next bounded stage is T01-B delegation/foreground ownership (six primaries).",
       "last_checkpoint_commit": "781d934cd52e22fd0ee8e0f83fa9d94ffeafa386",
-      "provisional_findings": []
+      "provisional_findings": [
+        {
+          "id": "T01-F01",
+          "priority": "P2",
+          "title": "Generic/external tool schemas can advertise constraints the local validator does not enforce",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "T01-F02",
+          "priority": "P2",
+          "title": "Loader registration is publication-atomic, not construction-lifetime atomic",
+          "state": "provisional-active-handoff",
+          "qualification": "conditional on tool/plugin construction owning resources or side effects"
+        }
+      ]
     }
   ],
   "resume_order": [
-    "T01-A only: tools/__init__.py, base.py, schema.py, registry.py, loader.py and plugin_context.py; save/checkpoint before the next substage.",
-    "Finish T01 through later bounded substages, then coordinator-check the complete 44-target stream.",
+    "T01-B only: nanobot/agent/delegation.py, foreground.py, subagent.py, tools/delegation.py, tools/fork_factories.py and tools/spawn.py; checkpoint before expanding scope.",
+    "Continue remaining T01 in later bounded substages: MCP/OAuth, execution/native authority, then remaining wrappers/adapters; close and coordinator-check T01.",
     "A01",
     "K01",
     "E02",
