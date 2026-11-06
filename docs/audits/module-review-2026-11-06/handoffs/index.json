@@ -113,10 +113,10 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "active-incomplete-unaccepted",
-      "published_body_credit_added": 0,
-      "note": "203/203 unique primary bodies full; source inspection complete. U01-F01 through U01-F06 enter report reconciliation; no F07 from the final 33. Report publication/coordinator check remain pending; retained prompt-jump/model-gesture, cached restart hydration, remote-pairing restore and minor RecoveryNotice lifecycle questions remain unpromoted; D01 HostWebSocket question deferred.",
-      "last_checkpoint_commit": "da42a1c2de17e8ceccd46d828c469e1b1ca19da3",
+      "state": "published-unchecked",
+      "published_body_credit_added": 203,
+      "note": "U01 report/coverage published F203/P0/R0 with six P2 findings; coordinator check pending.",
+      "last_checkpoint_commit": "2e7a51e0709a08e7030a9ba572f1aee173d71dc0",
       "provisional_findings": [
         {
           "id": "U01-F01",
@@ -154,7 +154,14 @@
           "title": "Empty turn completion can stamp metadata onto an older legacy assistant row",
           "state": "source-established-provisional"
         }
-      ]
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 203,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "Continuation coordinator completed all 203 U01 primary bodies and published six P2 findings; coordinator check pending."
     }
   ],
   "resume_order": [

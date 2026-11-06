@@ -429,19 +429,19 @@
       "kind": "primary",
       "primary_target_count": 203,
       "inventory_all_roles_count": 328,
-      "status": "in-progress",
+      "status": "report-written",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
-      "report": null,
-      "coverage": null,
+      "report": "reports/U01.md",
+      "coverage": "reports/U01-coverage.json",
       "planned_report": "reports/U01.md",
       "planned_coverage": "reports/U01-coverage.json",
-      "findings_count": null,
-      "discussion_questions_count": null,
-      "published_findings_count": 0,
-      "published_discussion_questions_count": 0,
-      "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 203,
-      "architecture_judgement": null,
+      "findings_count": 6,
+      "discussion_questions_count": 6,
+      "published_findings_count": 6,
+      "published_discussion_questions_count": 6,
+      "supplied_primary_body_paths": 203,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: retain authenticated/turn-correlated transport and explicit pane/session ownership; simplify repeated async completion identity, queue sendability, optimistic persistence and turn-local completion projection.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -456,10 +456,10 @@
         "evidence": null
       },
       "dispatch_owner": "web-continuation-coordinator",
-      "execution_state": "active",
+      "execution_state": "completed-source-review",
       "saved_handoff": "handoffs/U01.md",
-      "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "U01 source inspection complete: 203/203 unique primary bodies fully read, zero partial/unread. Six provisional P2 findings (U01-F01..F06) enter report reconciliation; no F07 from the final 33. Report publication and coordinator acceptance remain pending. Retained prompt-jump/model-gesture, cached restart hydration, remote-pairing restore and minor RecoveryNotice lifecycle questions remain unpromoted; HostWebSocket question remains deferred to D01."
+      "handoff_disposition": "published-unchecked",
+      "coordinator_observation": "U01 report/coverage published at F203/P0/R0 with six source-established P2 findings. Coordinator check is still pending; integrated review and D1–D7 remain deferred."
     },
     {
       "id": "M01",
