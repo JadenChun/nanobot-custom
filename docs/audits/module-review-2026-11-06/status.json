@@ -534,7 +534,7 @@
       "kind": "primary",
       "primary_target_count": 47,
       "inventory_all_roles_count": 101,
-      "status": "report-written",
+      "status": "coordinator-checked",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": "reports/D01.md",
       "coverage": "reports/D01-coverage.json",
@@ -548,23 +548,24 @@
       "material_primary_gaps_pending_evidence": 0,
       "architecture_judgement": "Provisional Keep+Simplify: preserve Desktop identity/private IPC/uncertain lifecycle and TUI per-session ownership; make queue dequeue transactional with send admission and unify async session identity fencing.",
       "coordinator_check": {
-        "status": "pending",
-        "evidence": null
+        "status": "PASS",
+        "evidence": "F47/P0/R0 ledger, semantic qualifications and source/reference verification are recorded at reports/D01-coverage.json:coordinator_check."
       },
       "integrated_review": {
         "status": "pending",
         "evidence": null
       },
       "git_checkpoint": {
-        "status": "pending",
-        "commit": null,
-        "evidence": null
+        "status": "recorded",
+        "commit": "9db80a30be08be3428ca33fda1532031dabd6a7f",
+        "pushed": true,
+        "evidence": "D01 F47/P0/R0 source-review publication/PASS audit-doc checkpoint."
       },
       "dispatch_owner": "web-continuation-coordinator",
       "execution_state": "completed-source-review",
       "saved_handoff": "handoffs/D01.md",
-      "handoff_disposition": "published-unchecked",
-      "coordinator_observation": "D01 report/coverage published at F47/P0/R0 with two source-established P2 findings. Coordinator check pending; integrated review and D1–D7 remain deferred."
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "D01 coordinator PASS at F47/P0/R0 with two qualified P2 findings and five retained questions. Integrated review, cross-stream reconciliation and D1–D7 remain pending."
     },
     {
       "id": "X01",

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "stream_id": "D01",
   "report": "reports/D01.md",
-  "publication_state": "report-written",
+  "publication_state": "coordinator-checked",
   "evidence_origin": {
     "analyst": "ChatGPT web continuation coordinator",
     "handoff": "handoffs/D01.md source-complete checkpoint",
@@ -1423,9 +1423,64 @@
       ]
     }
   ],
-  "coordinator_check": null,
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "D01 source-review publication only; no repair/product/design acceptance.",
+    "staging_check": {
+      "status": "PASS",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "named_delta_reconciled": true,
+      "note": "Frozen staging delta changes only H01/H03 primary targets plus H01 tests; D01 has no changed primary target."
+    },
+    "ledger_reconciliation": {
+      "status": "PASS",
+      "assigned_paths": 47,
+      "final_full_paths": 47,
+      "inventory_matches": 47,
+      "tree_blob_matches": 47,
+      "physical_lines": 13808,
+      "bytes": 463251,
+      "material_primary_gaps": 0
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "promoted_findings": [
+        "D01-F01",
+        "D01-F02"
+      ],
+      "additional_observations": [
+        "D01-O1",
+        "D01-O2",
+        "D01-O3",
+        "D01-O4",
+        "D01-O5",
+        "D01-O6"
+      ],
+      "note": "All 47 D01 primaries are pinned/full. Both findings were traced through transport/session ownership, source tests, bounded history and pinned DSH/Codex mechanisms.",
+      "qualifications": [
+        "D01-F01 is local queued-input loss after destructive auto-dequeue plus synchronous send failure; ordinary direct-composer retry preservation and server delivery loss are not claimed.",
+        "D01-F02 is same-client cross-session context/token display contamination; cross-account data access and server authorization bypass are not claimed.",
+        "Persistent Desktop gateway lifetime after adapter/TUI detach is intentional and verified by runtime/test source; the earlier orphan concern is retired.",
+        "Runtime-controls/command/mention completion after connection rotation remains unpromoted because gateway policy remains authoritative and current impact is stale local discovery."
+      ]
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "No clean local audit worktree in this web continuation; source/API reads and frozen metadata reconciliation only."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "9db80a30be08be3428ca33fda1532031dabd6a7f",
+    "decisions": "D1–D7 remain deferred."
+  },
   "integrated_review": null,
-  "git_checkpoint": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "9db80a30be08be3428ca33fda1532031dabd6a7f",
+    "pushed": true,
+    "evidence": "D01 F47/P0/R0 source-review publication/PASS audit-doc checkpoint."
+  },
   "limits": [
     "Source review does not establish actual race frequency, deployed filesystem/OS behavior outside the inspected contracts, or server mutation idempotency beyond reviewed client/runtime evidence.",
     "Pinned DSH/Codex mechanisms are engineering comparisons, not parity requirements.",
