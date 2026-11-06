@@ -1,14 +1,13 @@
 # Consolidated synthesis — paused, pending all modules
 
-The audit is **PAUSED at the user’s explicit quota-related request**. The whole-project
-architecture/code-quality judgement and simplification discussion remain **pending**. [S01](reports/S01.md) and [S02](reports/S02.md) are coordinator-checked, with supplied
-evidence for all 21 assigned primary bodies and six distinct conditional findings. Both
-source-review publications have coordinator **PASS**; integrated review and their module
-checkpoint are separate: the coordinator committed/pushed
-`0972617c0e056b0214a9b9037f0ca43b1e5d1e4e`, while integrated review remains pending.
-[H01](reports/H01.md) is report-written with all 29 primary bodies, eight entries including
-one open contract, and six questions. Its coordinator check/checkpoint remain pending.
-No repair/design is accepted. See
+The audit is **ACTIVE after user-requested resumption**. The whole-project architecture/
+code-quality judgement and simplification discussion remain **pending**. [S01](reports/S01.md)
+and [S02](reports/S02.md) retain coordinator **PASS** for their 21 assigned primary bodies.
+[H01](reports/H01.md) now also has coordinator **PASS** for its source-review publication:
+all 29 primary bodies remain credited to the supplied ledger, H01-F1–F7 retain their stated
+conditional/structural classifications, H01-F8 remains an open contract, and six questions
+remain deferred. Fresh continuation checks found `staging` unchanged at `9562e57...`.
+Integrated review remains pending and no repair/design is accepted. See
 [status.json](status.json) for the eighteen streams and [scope.json](scope.json)
 for the 919 primary assignments. The earlier [33-row comparison](../architecture-review-2026-11-06/README.md)
 retains its targeted historical boundary; it is not the new deep-review synthesis.
@@ -22,11 +21,10 @@ three reports rather than becoming a whole-project conclusion; H01-F8 is explici
 S01-F03 is cross-referenced by S02 and counted once. H02 supplements5A/5B supply current F74/P0/R0, superseding initial F33/P4/R37; saved
 handoffs grant no published-report body or acceptance credit.
 
-The user-authorized sequence is to inspect every module, preserve per-module Git status
+The user-authorized sequence remains to inspect every module, preserve per-module Git status
 checkpoints, reconcile shared contracts and then hold the consolidated discussion. Source
-inspection remains paused. On authorized resumption compare origin/staging to pinned9562
-and refresh affected evidence while preserving snapshots; finish H01 acceptance, publish/
-check C00/H02, resume H03, then U01/D01/T01/A01/K01/E02/E01/R01/M01/X01/Q01/P01.
+inspection has resumed. The staging check is complete with no delta; next publish/check C00,
+then H02, resume H03, then U01/D01/T01/A01/K01/E02/E01/R01/M01/X01/Q01/P01.
 Fresh integrated review remains pending. No open decision blocks later source inspection.
 
 | Prior decision area | Current review-sequencing disposition |

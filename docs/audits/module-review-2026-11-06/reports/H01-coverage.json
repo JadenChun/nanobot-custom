@@ -2,7 +2,7 @@
   "schema_version": 1,
   "stream_id": "H01",
   "report": "reports/H01.md",
-  "publication_state": "report-written",
+  "publication_state": "coordinator-checked",
   "evidence_origin": {
     "analyst": "/root/deep_agent_core",
     "handoff": "Three direct complete packets dated 2026-11-06",
@@ -75,7 +75,7 @@
           58
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -93,7 +93,7 @@
           121
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -111,7 +111,7 @@
           324
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -129,7 +129,7 @@
           41
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -147,7 +147,7 @@
           29
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -165,7 +165,7 @@
           331
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -183,7 +183,7 @@
           11
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -201,7 +201,7 @@
           132
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -219,7 +219,7 @@
           120
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -237,7 +237,7 @@
           5133
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -255,7 +255,7 @@
           171
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -273,7 +273,7 @@
           512
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -291,7 +291,7 @@
           447
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -309,7 +309,7 @@
           186
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -327,7 +327,7 @@
           173
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -345,7 +345,7 @@
           2599
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -363,7 +363,7 @@
           69
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -381,7 +381,7 @@
           866
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -399,7 +399,7 @@
           88
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -417,7 +417,7 @@
           440
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -435,7 +435,7 @@
           88
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -453,7 +453,7 @@
           6
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -471,7 +471,7 @@
           147
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -489,7 +489,7 @@
           41
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -507,7 +507,7 @@
           178
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -525,7 +525,7 @@
           152
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -543,7 +543,7 @@
           293
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -561,7 +561,7 @@
           75
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     },
     {
@@ -579,7 +579,7 @@
           245
         ]
       ],
-      "purpose": "Fresh primary body reads collectively 1\u2013EOF; no all-branch/runtime certification.",
+      "purpose": "Fresh primary body reads collectively 1–EOF; no all-branch/runtime certification.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher"
     }
   ],
@@ -1263,7 +1263,7 @@
       ],
       "purpose": "Bounded coordinator governance/support read at the supplied coordinator-document pin.",
       "evidence_origin": "/root/deep_agent_core complete three-packet handoff; metadata mechanically verified by publisher",
-      "additional_reported_extent": "Targeted P1\u2013P9 rows; only the explicit P1 reread 1\u201335 has exact retained ranges here."
+      "additional_reported_extent": "Targeted P1–P9 rows; only the explicit P1 reread 1–35 has exact retained ranges here."
     },
     {
       "repository": "nanobot",
@@ -1732,10 +1732,10 @@
       "priority": "P1",
       "confidence": "high static conditional",
       "source": [
-        "nanobot/agent/loop.py:2118\u20132151,2023\u20132025,4607\u20134642",
-        "nanobot/session/turn_writer.py:69\u201399,140\u2013169",
-        "nanobot/agent/runner.py:493\u2013528,1227\u20131235,1353\u20131370,1435\u20131475,1556\u20131567",
-        "nanobot/agent/context_governance.py:395\u2013398,821\u2013826,2247\u20132248"
+        "nanobot/agent/loop.py:2118–2151,2023–2025,4607–4642",
+        "nanobot/session/turn_writer.py:69–99,140–169",
+        "nanobot/agent/runner.py:493–528,1227–1235,1353–1370,1435–1475,1556–1567",
+        "nanobot/agent/context_governance.py:395–398,821–826,2247–2248"
       ],
       "trigger": "Healthy owner; transient before-write consumed-input/append_injection failure; no later compaction/artifact/source-write fence; later storage healthy.",
       "impact": "Required source failure is converted to no injection, permitting an old-source model request or final success; later nonempty source intent still fences local tool effects.",
@@ -1756,9 +1756,9 @@
       "priority": "P1/P2",
       "confidence": "high static hook-window mechanism",
       "source": [
-        "nanobot/agent/runner.py:773\u2013780,1356,1382\u20131407,1424\u20131432,1464\u20131466,1536",
-        "nanobot/agent/loop.py:3692\u20133703,3777\u20133779",
-        "nanobot/nanobot.py:327\u2013330"
+        "nanobot/agent/runner.py:773–780,1356,1382–1407,1424–1432,1464–1466,1536",
+        "nanobot/agent/loop.py:3692–3703,3777–3779",
+        "nanobot/nanobot.py:327–330"
       ],
       "trigger": "Input arrives after earlier drain but during awaited after_iteration following error/empty; continuation accepted and later provider ordinary stop.",
       "impact": "Recovered final text retains old error/stop reason and reports error/on_error/SDK failed.",
@@ -1771,8 +1771,8 @@
       "priority": "P2",
       "confidence": "high static constructor path",
       "source": [
-        "nanobot/agent/turn.py:241\u2013291,315\u2013331",
-        "nanobot/attachments/adoption.py:22\u2013106"
+        "nanobot/agent/turn.py:241–291,315–331",
+        "nanobot/attachments/adoption.py:22–106"
       ],
       "trigger": "message alias plus media; normalization changes nonempty prompt before original-message conflict check.",
       "impact": "Constructor can reject its own marker/path normalization; empty normalization can instead restore original text.",
@@ -1785,13 +1785,13 @@
       "priority": "P1",
       "confidence": "high conditional",
       "source": [
-        "nanobot/agent/loop.py:1272\u20131289,1976\u20132020,2247\u20132255,3530",
-        "nanobot/agent/policy.py:335\u2013339,392\u2013447"
+        "nanobot/agent/loop.py:1272–1289,1976–2020,2247–2255,3530",
+        "nanobot/agent/policy.py:335–339,392–447"
       ],
       "trigger": "Already-authorized selected project differs from policy agent-home root; relative risky write targets different/absent home file.",
       "impact": "Large selected-project overwrite/edit can miss intended approval; no path containment escape.",
       "smallest_alternative": "Assess exact prepared/admitted target; retain live grant, path and Once checks.",
-      "peer_corrob": "S01/S02 filesystem.py:266\u2013280 selected tool workspace, not extra H01 body credit."
+      "peer_corrob": "S01/S02 filesystem.py:266–280 selected tool workspace, not extra H01 body credit."
     },
     {
       "id": "H01-F5",
@@ -1799,7 +1799,7 @@
       "priority": null,
       "confidence": "source mechanism established; promised subset pending K01",
       "source": [
-        "nanobot/agent/policy.py:278\u2013287,313\u2013325"
+        "nanobot/agent/policy.py:278–287,313–325"
       ],
       "trigger": "Git word, no branch-delete pattern and autoPush repository cwd can exempt arbitrary compounds/reset/clean; actual effect depends mode/path/allow_exec.",
       "impact": "Approval exemption may exceed intended synchronization subset; not a sandbox bypass.",
@@ -1815,8 +1815,8 @@
       "priority": "P2",
       "confidence": "source-established structure; benefit unmeasured",
       "source": [
-        "nanobot/agent/loop.py:248,2316\u20132410",
-        "nanobot/agent/turn.py:241\u2013291,448"
+        "nanobot/agent/loop.py:248,2316–2410",
+        "nanobot/agent/turn.py:241–291,448"
       ],
       "impact": "Repeated TurnRequest/message/context/spec/result/stage/delivery normalization; aliases and F2/F3 expose concrete inconsistency costs.",
       "smallest_alternative": "Normalize compatibility at adapters, one internal admitted fact view and terminal authority; clarify private stage name.",
@@ -1828,9 +1828,9 @@
       "priority": "P2",
       "confidence": "high in duplication; built-in raw-timeout outage unestablished",
       "source": [
-        "nanobot/agent/runner.py:314\u2013363,941\u2013996,1659\u20132028,2261\u20132429",
-        "nanobot/agent/tools/registry.py:351\u2013354",
-        "nanobot/providers/base.py:1620\u20131621"
+        "nanobot/agent/runner.py:314–363,941–996,1659–2028,2261–2429",
+        "nanobot/agent/tools/registry.py:351–354",
+        "nanobot/providers/base.py:1620–1621"
       ],
       "impact": "Dispatch/ticket settlement/budget recovery and text predicates repeat across paths.",
       "smallest_alternative": "Share proven-identical dispatch/settlement; classify trusted execution outcomes near executor; preserve typed denial, bounded recovery, untrusted-envelope stripping and no original replay.",
@@ -1843,10 +1843,10 @@
       "asserted_defect": false,
       "confidence": "conditional possibility; variants remain to reconcile",
       "source": [
-        "nanobot/agent/runner.py:570\u2013621,1673",
-        "nanobot/agent/tools/registry.py:252,473\u2013481",
-        "nanobot/agent/tools/mcp.py:1711\u20131784,1854\u20131904",
-        "nanobot/webui/settings_routes.py:545\u2013555",
+        "nanobot/agent/runner.py:570–621,1673",
+        "nanobot/agent/tools/registry.py:252,473–481",
+        "nanobot/agent/tools/mcp.py:1711–1784,1854–1904",
+        "nanobot/webui/settings_routes.py:545–555",
         "nanobot/cli/gateway_runtime.py:408"
       ],
       "impact": "Captured definitions overlap live binding replacement/closed wrappers, but shared and filtered registries differ.",
@@ -1919,9 +1919,9 @@
       "id": "H01-O1",
       "kind": "source-based efficiency lead",
       "source": [
-        "nanobot/agent/progress_hook.py:54\u201360",
-        "nanobot/utils/helpers.py:271\u2013285",
-        "nanobot/agent/runner.py:1728\u20131731"
+        "nanobot/agent/progress_hook.py:54–60",
+        "nanobot/utils/helpers.py:271–285",
+        "nanobot/agent/runner.py:1728–1731"
       ],
       "claim": "Growing-prefix rescans/copies; expected cumulative cost only, no measured latency. Preserve split tags/resume/merge if parser changes."
     },
@@ -1929,9 +1929,9 @@
       "id": "H01-O2",
       "kind": "partial content-log contract",
       "source": [
-        "nanobot/agent/loop.py:3060\u20133063,4234,4757",
-        "nanobot/agent/progress_hook.py:129\u2013150",
-        "nanobot/agent/turn_hooks.py:45\u201350"
+        "nanobot/agent/loop.py:3060–3063,4234,4757",
+        "nanobot/agent/progress_hook.py:129–150",
+        "nanobot/agent/turn_hooks.py:45–50"
       ],
       "claim": "Transient content flag gates inbound/final logs but tool-argument prefix is still logged; privacy/retention promise requires C00/E02/H02, no broad privacy violation promoted."
     }
@@ -1955,9 +1955,70 @@
     "T01/H03/D5 registration/connection variants and revocation unresolved; no blanket global freeze.",
     "M01 wider media activation/retention, K01 autoPush intent and C00/D4 public retirement remain separate scopes.",
     "Canonical recovery refuses ordinary input with abandoned evidence; no blind legacy resume/effect replay.",
-    "D1\u2013D7 and consolidated judgement deferred; source inspection continues."
+    "D1–D7 and consolidated judgement deferred; source inspection continues."
   ],
-  "coordinator_check": null,
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "H01 source-review publication only; no repair or product/design acceptance.",
+    "evidence_origin": "Fresh GitHub connector source reads in this continuation against the pinned Nanobot, DSH and Codex revisions.",
+    "staging_check": {
+      "status": "PASS",
+      "branch": "staging",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "baseline_comparison": "identical; no changed files"
+    },
+    "primary_coverage_check": {
+      "status": "PASS",
+      "assigned_primary_paths": 29,
+      "supplied_full_body_paths": 29,
+      "physical_lines": 13076,
+      "material_primary_gaps": 0,
+      "note": "Coverage ledger retained; fresh acceptance corroboration targeted material findings/callers rather than regenerating analyst read credit."
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "accepted_findings": [
+        "H01-F1",
+        "H01-F2",
+        "H01-F3",
+        "H01-F4",
+        "H01-F5",
+        "H01-F6",
+        "H01-F7"
+      ],
+      "open_contracts": [
+        "H01-F8"
+      ],
+      "retained_questions": [
+        "H01-Q1",
+        "H01-Q2",
+        "H01-Q3",
+        "H01-Q4",
+        "H01-Q5",
+        "H01-Q6"
+      ],
+      "limits": [
+        "F1 remains conditional; no lost-input, original-replay or unauthorized-effect claim.",
+        "F4 is approval-target mismatch, not containment escape.",
+        "F5 remains conditional on K01 autoPush contract and is not a sandbox bypass.",
+        "F6/F7 remain structural-debt findings without measured runtime benefit claims.",
+        "F8 remains an open T01/H03/D5 registration/connection-lifetime contract, not an asserted defect."
+      ]
+    },
+    "reference_history_check": {
+      "status": "PASS",
+      "note": "Re-read cited DSH explicit turn/tool-set lifetime, Codex StepContext/steering/tool-router mechanisms, historical 79934a injection mismatch, and b6df37/5460b7 recovery diffs; no parity inference added."
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "This continuation has repository/API source access but no clean local audit worktree; preserving prior validation snapshots instead of rerunning a historical phase command against changed ledger metadata."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "pending until coordinator commits",
+    "decisions": "D1–D7 remain deferred; all source-only/provisional limits retained."
+  },
   "integrated_review": null,
   "git_checkpoint": null,
   "raw_failures_and_limits": [

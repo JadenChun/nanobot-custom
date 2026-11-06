@@ -1,16 +1,15 @@
 # Whole-project module source review — 2026-11-06
 
-**PAUSED at the user’s explicit request due quota; the deep review is incomplete.**
-This directory is the current publication and coverage ledger. [S01](reports/S01.md) and
-[S02](reports/S02.md) have coordinator **PASS** for source-review publication, with six
-conditional findings and six discussion questions. Integrated review and module Git
-checkpoints are separate: S01/S02 were committed/pushed at
-`0972617c0e056b0214a9b9037f0ca43b1e5d1e4e`; integrated review remains pending.
-[H01](reports/H01.md) is report-written with eight entries (including one open registration
-contract) and six questions; its coordinator check/checkpoint remain pending. C00/H02
-handoffs are saved unpublished; H03 is paused incomplete (23 full/19 partial/3 unread).
-Twelve streams remain queued. No repair/design is accepted. The coordinator owns acceptance, integration and
-Git checkpoints; publication alone does not complete a stream or accept implementation.
+**ACTIVE — resumed from the saved web-continuation checkpoint.**
+This directory is the current publication and coverage ledger. `staging` was freshly
+reverified unchanged at `9562e57f8333d7f14b6aaeae837660723a9b2650`, tree
+`bbe2f237efe0cd7b935946b533f66ed0097a3c93`. [S01](reports/S01.md) and
+[S02](reports/S02.md) retain coordinator **PASS**. [H01](reports/H01.md) now also has
+coordinator **PASS** for its source-review publication: seven classified findings plus the
+open H01-F8 registration contract and six retained questions. Integrated review and product/
+architecture decisions remain pending. C00/H02 handoffs are saved unpublished; H03 remains
+incomplete (23 full/19 partial/3 unread). Twelve streams remain queued. No repair/design is
+accepted; publication/acceptance, integrated review and Git preservation remain distinct.
 
 The foundation was independently verified **PASS** by the coordinator and committed/pushed
 at `5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. That supplied acceptance applies to the
@@ -27,10 +26,9 @@ The [durable handoff index](handoffs/index.json) hashes [C00](handoffs/C00.md),
 [H02](handoffs/H02.md) and [H03](handoffs/H03.md). H02 supplements5A/5B supersede its
 initial F33/P4/R37 attribution with current F74/P0/R0. These remain analyst evidence,
 not published reports or semantic acceptance. Pipeline states below are preserved; all
-execution is paused. On resumption first compare origin/staging against pinned9562 and
-refresh only affected evidence while preserving old snapshots; then finish H01 acceptance,
-publish/check C00/H02, resume H03, and proceed U01/D01/T01/A01/K01/E02/E01/R01/M01/X01/
-Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
+execution is paused. Resumption verified `staging` identical to pinned `9562`; no affected source evidence needed
+refresh. Next publish/check C00, then H02, resume H03, and proceed U01/D01/T01/A01/K01/E02/
+E01/R01/M01/X01/Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
 owns final structural verification and Git preservation.
 
 ## Scope and current progress
@@ -45,7 +43,7 @@ explicit supplementary reads.
 | Stream | Responsibility | Primary targets | Current state |
 | --- | --- | ---: | --- |
 | C00 | Entrypoints, CLI, commands, config, gateway composition, shared utilities | 70 | in-progress |
-| H01 | Loop, runner, bus, hooks, turn admission and delivery | 29 | report-written |
+| H01 | Loop, runner, bus, hooks, turn admission and delivery | 29 | coordinator-checked |
 | H02 | Sessions, ledgers, history, memory, compaction and recovery | 74 | in-progress |
 | H03 | Providers, models, budgets, keys, usage and accounting | 45 | in-progress |
 | S01 | Filesystem authority, folder grants, private-state policy and security | 15 | coordinator-checked |
