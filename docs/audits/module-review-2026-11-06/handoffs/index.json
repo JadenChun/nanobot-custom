@@ -699,13 +699,48 @@
         }
       ],
       "completion": "All 56 K01 primaries are full; thirteen findings promoted; eight final questions retained; coordinator PASS recorded."
+    },
+    {
+      "stream": "E02",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/E02.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 8,
+        "partial": 0,
+        "unread": 60
+      },
+      "state": "active-incomplete-unaccepted",
+      "published_body_credit_added": 0,
+      "note": "E02-A reviewed the eight API/SDK primaries at F8/P0/R60 with one provisional conditional P2 ingest-atomicity finding. Next bounded stage is E02-B WebSocket core only.",
+      "last_checkpoint_commit": "d8fca02482a3d18b50030bea1d24a11f1d969a66",
+      "provisional_findings": [
+        {
+          "id": "E02-F01",
+          "priority": "P2",
+          "title": "Failed SDK transcript ingestion can leave a partial live-session mutation",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on unmanaged persistent ingest (default save=True) plus metadata or a valid message prefix before a later validation failure; managed persistent ingest is rejected before mutation and save=False is detached."
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "E02-A",
+          "commit": "d8fca02482a3d18b50030bea1d24a11f1d969a66",
+          "coverage": {
+            "full": 8,
+            "partial": 0,
+            "unread": 60
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        }
+      ]
     }
   ],
   "resume_order": [
-    "A01-B only: cron/__init__.py, types.py, schedule.py, scheduler.py, scheduler_store.py, occurrence.py, occurrence_store.py, runtime.py.",
-    "Continue A01 in later bounded substages until F47/P0/R0, then publish/coordinator-check A01 separately.",
-    "K01",
-    "E02",
+    "E02-B only: nanobot/channels/websocket/__init__.py, manifest.py, runtime.py, validation.py.",
+    "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
     "M01",
