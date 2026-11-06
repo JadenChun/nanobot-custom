@@ -544,100 +544,100 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "active-incomplete-unaccepted",
-      "published_body_credit_added": 0,
-      "note": "K01-A+B+C+D+E source review complete at F56/P0/R0 with thirteen provisional findings and zero publication credit. K01-E added absent live tool guidance, conditional raw-compaction system-authority replay, and conditional Dream skill mutation outside Dream audit/restore; next bounded stage is K01 publication packet only.",
+      "state": "published-unaccepted",
+      "published_body_credit_added": 56,
+      "note": "K01 F56/P0/R0 report and coverage ledger published with thirteen promoted findings and eight final questions. Coordinator semantic check remains pending; integrated review and repairs remain deferred.",
       "last_checkpoint_commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
       "provisional_findings": [
         {
           "id": "K01-F01",
           "priority": "P1",
           "title": "Prompt/skill loading has confinement gaps outside centralized resource-policy validation",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Initially established for non-managed restricted bootstrap/skill reads; K01-E also found Dream/evaluator workspace prompt overrides read symlinked paths directly without ResourceAccessPolicy even in managed mode. Each trigger still requires a crafted/local prompt or skill path."
         },
         {
           "id": "K01-F02",
           "priority": "P2",
           "title": "save_knowledge does not enforce the active project's knowledge_repos association",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on project association being intended as an ownership boundary and multiple writable knowledge repos being visible."
         },
         {
           "id": "K01-F03",
           "priority": "P2",
           "title": "Runtime skill discovery does not enforce the shipped skill validation contract before shadowing/activation",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Shipped built-ins themselves demonstrate validator/runtime drift; reliability/configuration-integrity finding rather than arbitrary code execution."
         },
         {
           "id": "K01-F04",
           "priority": "P2",
           "title": "The cron skill misdocuments reminder execution and default timezone semantics",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Timezone statement happens to match only when timezone_mode=auto; reminder output still follows a fresh agent turn."
         },
         {
           "id": "K01-F05",
           "priority": "P2",
           "title": "The ClawHub skill installs and manages skills in the default workspace instead of the effective agent workspace",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Works when the configured workspace is the default ~/.nanobot/workspace; non-default workspaces are affected."
         },
         {
           "id": "K01-F06",
           "priority": "P1",
           "title": "The tmux skill recommends launching Codex with its approvals and sandbox disabled",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on using the coding-agent section without an already-proven external sandbox; pinned Codex defines --yolo as dangerously bypassing approvals and sandbox."
         },
         {
           "id": "K01-F07",
           "priority": "P2",
           "title": "Mobile testing skills require both platform toolchains even though each supports either platform",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Hosts with npx plus only one valid platform toolchain are affected; hosts with both Xcode/xcrun and adb installed are not."
         },
         {
           "id": "K01-F08",
           "priority": "P1",
           "title": "video-understanding silently bypasses Nanobot provider routing for semantic frame analysis",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on OPENAI_API_KEY and the OpenAI SDK being available with semantic mode enabled; no external semantic request occurs on the fallback/no-semantic path."
         },
         {
           "id": "K01-F09",
           "priority": "P2",
           "title": "webapp-testing recommends a caller-supplied CDP mode that the live browser wrapper always blocks",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Only the caller-supplied --cdp recommendation is proven broken; configured shared attachment and other browser paths remain separate."
         },
         {
           "id": "K01-F10",
           "priority": "P2",
           "title": "Non-positive video max-gap values can spin forever before frame capping",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on an explicit zero/negative --max-gap-seconds override; the shipped default 6.0 path is unaffected."
         },
         {
           "id": "K01-F11",
           "priority": "P2",
           "title": "Live prompt guidance advertises retired search/edit tools absent from the default registry",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Default production composition is affected; customized plugin deployments may supply compatible names. apply_patch overlaps T01-F10 and must be deduplicated in integrated review."
         },
         {
           "id": "K01-F12",
           "priority": "P1",
           "title": "Degraded compaction can elevate raw transcript/tool text into the future system prompt",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on a raw-fallback compaction condition plus instruction-like user/tool content in the archived chunk; tool policy still constrains side effects."
         },
         {
           "id": "K01-F13",
           "priority": "P1",
           "title": "Dream can persist skill instructions outside its own audit and restore boundary",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on a manual Dream run or enabled periodic Dream producing a skill edit; external VCS may independently record files but Dream log/restore does not."
         }
       ],
@@ -697,7 +697,8 @@
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
         }
-      ]
+      ],
+      "completion": "All 56 K01 primaries are full; thirteen findings promoted into reports/K01.md; eight final questions retained; coordinator check pending."
     }
   ],
   "resume_order": [
