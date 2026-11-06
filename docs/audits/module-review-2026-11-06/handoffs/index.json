@@ -169,14 +169,14 @@
       "path": "handoffs/D01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 33,
+        "full": 47,
         "partial": 0,
-        "unread": 14
+        "unread": 0
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "33/47 full. Full TUI protocol/app plus small support/build helpers complete. Provisional D01-F01 queued follow-up loss on failed automatic send and D01-F02 stale context-panel completion across session switch; no authority bypass promoted. 14 primaries remain.",
-      "last_checkpoint_commit": "a3fe0802cdf5cb94b0c2c5f2e99331c798324bab",
+      "note": "47/47 full; D01 source inspection complete. Provisional D01-F01/F02 only; no F03 from final surface. Runtime-controls/commands/mentions connection-rotation stale discovery retained unpromoted. Supplementary docs/reference/history reconciliation and report publication remain pending.",
+      "last_checkpoint_commit": "071dd2f736d53e5def7e85031bf819ae2c94f9ab",
       "provisional_findings": [
         {
           "id": "D01-F01",
