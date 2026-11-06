@@ -205,13 +205,13 @@
       "path": "handoffs/T01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 20,
+        "full": 29,
         "partial": 0,
-        "unread": 24
+        "unread": 15
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "T01-A+B+C+D complete at F20/P0/R24; nine provisional findings retained (three P1 conditional, six P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-E artifact/file/workspace authority (nine primaries).",
+      "note": "T01-A+B+C+D+E complete at F29/P0/R15; ten provisional findings retained (three conditional P1, seven P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-F search/web/crawler/network wrappers (seven primaries).",
       "last_checkpoint_commit": "63d09ac2bcfed40b5de9e77ca4b4060847bde3d0",
       "provisional_findings": [
         {
@@ -271,6 +271,12 @@
           "priority": "P2",
           "title": "Generic owned-process cleanup does not prove descendant quiescence",
           "state": "provisional-active-handoff"
+        },
+        {
+          "id": "T01-F10",
+          "priority": "P2",
+          "title": "Explicit foreground migration dropped the advertised apply_patch capability",
+          "state": "provisional-active-handoff"
         }
       ],
       "substage_checkpoints": [
@@ -322,8 +328,8 @@
     }
   ],
   "resume_order": [
-    "T01-E only: apply_patch.py, artifact.py, artifact_handoff.py, context.py, file_state.py, producer_adapters.py, read_provenance.py, workspace.py and nanobot/agent/write_guard.py; checkpoint before expanding scope.",
-    "Continue remaining T01 in later bounded wrapper/adaptor substages; close and coordinator-check T01.",
+    "T01-F only: crawler.py, explore.py, search.py, social_crawl.py, trend_vpn.py, trend_vpngate.py and web.py; checkpoint before expanding scope.",
+    "T01-G only after T01-F: cli_apps.py, image.py, image_configuration.py, message.py, runtime_control.py, self.py, session_messages.py and sessions.py; then close/coordinator-check T01.",
     "A01",
     "K01",
     "E02",
