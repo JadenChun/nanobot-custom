@@ -365,7 +365,8 @@ async def test_runner_recovers_from_ordinary_tool_error_when_fail_fast_is_enable
     assert result.final_content == "used another path"
     assert result.stop_reason == "completed"
     assert any(
-        message.get("role") == "system"
+        message.get("role") == "user"
+        and "[Internal recovery note]" in message.get("content", "")
         and "Fix the arguments or choose a different approach" in message.get("content", "")
         for message in result.messages
     )
@@ -541,7 +542,11 @@ async def test_context_repo_exec_denial_allows_one_safe_tool_recovery(
         assert "skills" in next(
             msg["content"] for msg in result.messages if msg.get("tool_call_id") == "safe-list"
         )
-    guidance = [msg["content"] for msg in result.messages if msg.get("role") == "system"]
+    guidance = [
+        msg["content"] for msg in result.messages
+        if msg.get("role") == "user"
+        and "[Internal recovery note]" in str(msg.get("content"))
+    ]
     assert any("read_file" in content and "list_dir" in content and "Do not retry" in content
                for content in guidance)
 

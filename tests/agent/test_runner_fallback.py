@@ -22,6 +22,7 @@ from nanobot.providers.base import (
 from nanobot.providers.conversation_state import ProviderConversationStateController
 from nanobot.providers.fallback_provider import FallbackProvider
 from nanobot.providers.openai_responses import resolve_compact_threshold
+from nanobot.providers.request_budget import ProviderRequestLimits
 
 
 def _make_response(
@@ -862,6 +863,41 @@ class TestFallbackOnPrimaryError:
         assert fallback.context_calls == [
             ProviderCallContext(context_window_tokens=120_000)
         ]
+
+    @pytest.mark.asyncio
+    async def test_fallback_request_budget_uses_its_own_context_window(self) -> None:
+        primary = _FakeProvider("primary", _error_response())
+        fallback = _FakeProvider("fallback", _make_response("fallback ok"))
+        fb = FallbackProvider(
+            primary=primary,
+            fallback_presets=[
+                _fallback(
+                    "deepseek",
+                    context_window_tokens=1_000_000,
+                    max_tokens=65_536,
+                ),
+            ],
+            provider_factory=MagicMock(return_value=fallback),
+            primary_context_window_tokens=204_800,
+        )
+
+        result = await fb.chat_with_context(
+            messages=[{"role": "user", "content": "hi"}],
+            model="primary-model",
+            max_tokens=8_192,
+            provider_context=ProviderCallContext(
+                request_limits=ProviderRequestLimits(
+                    total_tokens=204_800,
+                    completion_reserve_tokens=8_192,
+                ),
+            ),
+        )
+
+        assert result.content == "fallback ok"
+        limits = fallback.context_calls[0].request_limits
+        assert limits is not None
+        assert limits.total_tokens == 1_000_000
+        assert limits.completion_reserve_tokens == 65_536
 
     @pytest.mark.asyncio
     async def test_native_fallback_gets_context_when_primary_does_not_use_it(self) -> None:
