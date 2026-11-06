@@ -459,7 +459,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/U01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "U01 checkpoint: 78/203 primary bodies complete. Provisional U01-F01/F02 retained. Settings/controller slice adds no new promoted finding; cached initial-settings restart-state hydration remains an unpromoted functional question. HostWebSocket pre-open close orphan question remains deferred to D01."
+      "coordinator_observation": "U01 checkpoint: 90/203 primary bodies complete. Provisional U01-F01/F02 retained and U01-F03 added for cross-channel stale validation/notice state. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted functional/lifecycle questions. HostWebSocket pre-open close orphan question remains deferred to D01."
     },
     {
       "id": "M01",
