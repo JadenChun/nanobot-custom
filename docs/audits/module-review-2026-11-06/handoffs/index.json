@@ -109,14 +109,14 @@
       "path": "handoffs/U01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 97,
+        "full": 107,
         "partial": 0,
-        "unread": 106
+        "unread": 96
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "97/203 full. Settings subtree complete. U01-F01/F02/F03/F04 provisional; F03 is cross-channel stale validation/notice state and F04 is cross-skill stale mutation completion. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted; D01-shared HostWebSocket pre-open close lifetime question remains deferred.",
-      "last_checkpoint_commit": "129b0b1bf9a07832fe316ca31b414b8494775266",
+      "note": "107/203 full. Settings subtree and remaining general hooks complete. U01-F01/F02/F03/F04/F05 provisional; F05 is failed sidebar persistence remaining optimistic/unsaved. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted; D01-shared HostWebSocket pre-open close lifetime question remains deferred.",
+      "last_checkpoint_commit": "c3118b6b8c3f3a35381f2e51b3b0aae13ff962ae",
       "provisional_findings": [
         {
           "id": "U01-F01",
@@ -140,6 +140,12 @@
           "id": "U01-F04",
           "priority": "P2",
           "title": "Skill-detail mutation completions can corrupt or close a newly selected skill",
+          "state": "source-established-provisional"
+        },
+        {
+          "id": "U01-F05",
+          "priority": "P2",
+          "title": "Failed sidebar persistence can remain indefinitely optimistic and unsaved",
           "state": "source-established-provisional"
         }
       ]
