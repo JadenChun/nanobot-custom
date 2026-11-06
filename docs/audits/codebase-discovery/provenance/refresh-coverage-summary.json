@@ -1,0 +1,720 @@
+{
+  "source_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+  "source_tree": "d49aca97c9a34a2d17eae53d672fa591652457f1",
+  "previous_source_commit": "4e2bf4d8d0b34f133c01591b67826ca956fed384",
+  "previous_source_tree": "d5cc262acda5fb8051ffac9996ee9ab189c361cd",
+  "total_tracked_paths": 2455,
+  "role_counts": {
+    "asset-or-lockfile": 54,
+    "configuration-or-support-artifact": 290,
+    "documentation-or-agent-instructions": 195,
+    "implementation-or-tooling-source": 878,
+    "runtime-instruction-source": 41,
+    "test-support-source": 997
+  },
+  "totals": {
+    "mapped_paths": 2455,
+    "source_targets": 919,
+    "all_path_depth_counts": {
+      "mapped-only": 1554,
+      "prior-relevant-sections-carried-forward": 808,
+      "current-relevant-sections-inspected": 93
+    },
+    "source_depth_counts": {
+      "prior-relevant-sections-carried-forward": 695,
+      "mapped-only": 139,
+      "current-relevant-sections-inspected": 85
+    },
+    "changed_source_paths": 47,
+    "changed_source_inspected": 47
+  },
+  "groups": {
+    "01-entrypoints-turns": {
+      "mapped_paths": 332,
+      "source_targets": 99,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 36,
+        "mapped-only": 288,
+        "current-relevant-sections-inspected": 8
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 34,
+        "mapped-only": 57,
+        "current-relevant-sections-inspected": 8
+      },
+      "changed_source_paths": 5,
+      "changed_source_inspected": 5
+    },
+    "02-state-context": {
+      "mapped_paths": 290,
+      "source_targets": 130,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 55,
+        "mapped-only": 235
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 50,
+        "mapped-only": 80
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "03-sandbox-authority": {
+      "mapped_paths": 46,
+      "source_targets": 21,
+      "all_path_depth_counts": {
+        "current-relevant-sections-inspected": 4,
+        "prior-relevant-sections-carried-forward": 22,
+        "mapped-only": 20
+      },
+      "source_depth_counts": {
+        "current-relevant-sections-inspected": 4,
+        "prior-relevant-sections-carried-forward": 17
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "04-providers-media": {
+      "mapped_paths": 160,
+      "source_targets": 59,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 59,
+        "mapped-only": 101
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 59
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "05-tools-automation": {
+      "mapped_paths": 212,
+      "source_targets": 91,
+      "all_path_depth_counts": {
+        "current-relevant-sections-inspected": 22,
+        "prior-relevant-sections-carried-forward": 69,
+        "mapped-only": 121
+      },
+      "source_depth_counts": {
+        "current-relevant-sections-inspected": 22,
+        "prior-relevant-sections-carried-forward": 69
+      },
+      "changed_source_paths": 8,
+      "changed_source_inspected": 8
+    },
+    "06-channels-extensions": {
+      "mapped_paths": 336,
+      "source_targets": 106,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 104,
+        "mapped-only": 230,
+        "current-relevant-sections-inspected": 2
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 104,
+        "current-relevant-sections-inspected": 2
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "07-backend-remote": {
+      "mapped_paths": 333,
+      "source_targets": 138,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 148,
+        "current-relevant-sections-inspected": 24,
+        "mapped-only": 161
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 116,
+        "current-relevant-sections-inspected": 21,
+        "mapped-only": 1
+      },
+      "changed_source_paths": 13,
+      "changed_source_inspected": 13
+    },
+    "08-clients": {
+      "mapped_paths": 429,
+      "source_targets": 250,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 252,
+        "mapped-only": 149,
+        "current-relevant-sections-inspected": 28
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 221,
+        "mapped-only": 1,
+        "current-relevant-sections-inspected": 28
+      },
+      "changed_source_paths": 21,
+      "changed_source_inspected": 21
+    },
+    "09-tooling-efficiency": {
+      "mapped_paths": 317,
+      "source_targets": 25,
+      "all_path_depth_counts": {
+        "mapped-only": 249,
+        "prior-relevant-sections-carried-forward": 63,
+        "current-relevant-sections-inspected": 5
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 25
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    }
+  },
+  "workstreams": {
+    "A01": {
+      "mapped_paths": 103,
+      "source_targets": 47,
+      "all_path_depth_counts": {
+        "current-relevant-sections-inspected": 16,
+        "prior-relevant-sections-carried-forward": 31,
+        "mapped-only": 56
+      },
+      "source_depth_counts": {
+        "current-relevant-sections-inspected": 16,
+        "prior-relevant-sections-carried-forward": 31
+      },
+      "changed_source_paths": 7,
+      "changed_source_inspected": 7
+    },
+    "C00": {
+      "mapped_paths": 165,
+      "source_targets": 70,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 22,
+        "mapped-only": 137,
+        "current-relevant-sections-inspected": 6
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 21,
+        "mapped-only": 43,
+        "current-relevant-sections-inspected": 6
+      },
+      "changed_source_paths": 4,
+      "changed_source_inspected": 4
+    },
+    "D01": {
+      "mapped_paths": 101,
+      "source_targets": 47,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 70,
+        "mapped-only": 31
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 46,
+        "mapped-only": 1
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "E01": {
+      "mapped_paths": 321,
+      "source_targets": 95,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 94,
+        "mapped-only": 226,
+        "current-relevant-sections-inspected": 1
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 94,
+        "current-relevant-sections-inspected": 1
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "E02": {
+      "mapped_paths": 144,
+      "source_targets": 68,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 57,
+        "current-relevant-sections-inspected": 13,
+        "mapped-only": 74
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 55,
+        "current-relevant-sections-inspected": 13
+      },
+      "changed_source_paths": 8,
+      "changed_source_inspected": 8
+    },
+    "H01": {
+      "mapped_paths": 167,
+      "source_targets": 29,
+      "all_path_depth_counts": {
+        "mapped-only": 151,
+        "prior-relevant-sections-carried-forward": 14,
+        "current-relevant-sections-inspected": 2
+      },
+      "source_depth_counts": {
+        "mapped-only": 14,
+        "prior-relevant-sections-carried-forward": 13,
+        "current-relevant-sections-inspected": 2
+      },
+      "changed_source_paths": 1,
+      "changed_source_inspected": 1
+    },
+    "H02": {
+      "mapped_paths": 228,
+      "source_targets": 74,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 43,
+        "mapped-only": 185
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 39,
+        "mapped-only": 35
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "H03": {
+      "mapped_paths": 141,
+      "source_targets": 45,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 45,
+        "mapped-only": 96
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 45
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "K01": {
+      "mapped_paths": 62,
+      "source_targets": 56,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 12,
+        "mapped-only": 50
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 11,
+        "mapped-only": 45
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "M01": {
+      "mapped_paths": 19,
+      "source_targets": 14,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 14,
+        "mapped-only": 5
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 14
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "Q01": {
+      "mapped_paths": 317,
+      "source_targets": 25,
+      "all_path_depth_counts": {
+        "mapped-only": 249,
+        "prior-relevant-sections-carried-forward": 63,
+        "current-relevant-sections-inspected": 5
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 25
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "R01": {
+      "mapped_paths": 189,
+      "source_targets": 70,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 91,
+        "current-relevant-sections-inspected": 11,
+        "mapped-only": 87
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 61,
+        "current-relevant-sections-inspected": 8,
+        "mapped-only": 1
+      },
+      "changed_source_paths": 5,
+      "changed_source_inspected": 5
+    },
+    "S01": {
+      "mapped_paths": 31,
+      "source_targets": 15,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 14,
+        "current-relevant-sections-inspected": 2,
+        "mapped-only": 15
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 13,
+        "current-relevant-sections-inspected": 2
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "S02": {
+      "mapped_paths": 15,
+      "source_targets": 6,
+      "all_path_depth_counts": {
+        "current-relevant-sections-inspected": 2,
+        "prior-relevant-sections-carried-forward": 8,
+        "mapped-only": 5
+      },
+      "source_depth_counts": {
+        "current-relevant-sections-inspected": 2,
+        "prior-relevant-sections-carried-forward": 4
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    },
+    "T01": {
+      "mapped_paths": 109,
+      "source_targets": 44,
+      "all_path_depth_counts": {
+        "current-relevant-sections-inspected": 6,
+        "prior-relevant-sections-carried-forward": 38,
+        "mapped-only": 65
+      },
+      "source_depth_counts": {
+        "current-relevant-sections-inspected": 6,
+        "prior-relevant-sections-carried-forward": 38
+      },
+      "changed_source_paths": 1,
+      "changed_source_inspected": 1
+    },
+    "U01": {
+      "mapped_paths": 328,
+      "source_targets": 203,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 182,
+        "mapped-only": 118,
+        "current-relevant-sections-inspected": 28
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 175,
+        "current-relevant-sections-inspected": 28
+      },
+      "changed_source_paths": 21,
+      "changed_source_inspected": 21
+    },
+    "X01": {
+      "mapped_paths": 15,
+      "source_targets": 11,
+      "all_path_depth_counts": {
+        "prior-relevant-sections-carried-forward": 10,
+        "current-relevant-sections-inspected": 1,
+        "mapped-only": 4
+      },
+      "source_depth_counts": {
+        "prior-relevant-sections-carried-forward": 10,
+        "current-relevant-sections-inspected": 1
+      },
+      "changed_source_paths": 0,
+      "changed_source_inspected": 0
+    }
+  },
+  "cross_cutting_workstream": "P01 efficiency spans every primary workstream; no double-assignment",
+  "changed_current_paths": 95,
+  "deleted_paths": [
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/README.md",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 10611,
+      "sha256": "3138f751d7971e7312e6483ef545f8265f4b36669068439601169b09c8ce6b54",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/backend.probe.py",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 3108,
+      "sha256": "f47b953ff5ed53c0f8eef961a48fc71c4157e25b1e568cc1212374b9850d46ac",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/frontend.probe.tsx",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 5891,
+      "sha256": "282794480d9c18854f3f569e34867bf2f479ea763ac0c14e35d7cc49557ebaa7",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/macos-repair-plan.md",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 5171,
+      "sha256": "3b86f43476d17b0644f7f536d94c3665c4ed3363558205d62f793bc3d2c0e8c9",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/macos-repair-results.md",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 12366,
+      "sha256": "85a7c704269a4e6032cac94d018f5575be37d427110c1eb356d4f941749d3b95",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/macos-repair-snapshot.json",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 22965,
+      "sha256": "92cc2642e2a67e56a70ae760c36193ae28d7e46957a195a3ec82d7bb308571d7",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/repair-plan.md",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 4583,
+      "sha256": "730918e648cf4fe22b3471fa8c9b6e81c24c9a39f6dd6def4d1bb0f711877f82",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/repair-results.md",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 13011,
+      "sha256": "0bafdde30150ff44c63d1e5fe39df3d89aeaa3b0d27d371468791c3b9f04e364",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/repair-snapshot.json",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 9459,
+      "sha256": "09c6bd3f49c9da7fa07c9e0f1f54cbe3b653accd76dd24fd798b1b5c96482d0b",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/run_probes.py",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 2121,
+      "sha256": "0814cacd637a86344af55fab6f7772bff275a36403cd2d417de4a9fd71d4d03e",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/audits/feature-implementation-2026-11-05/snapshot.json",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "historical-audit-support",
+      "bytes": 732,
+      "sha256": "a5be6b689fe16d4642087d1cba18ca2b3a57ed23879ec39b16ac28978830f66f",
+      "review_state": "mapped"
+    },
+    {
+      "path": "docs/feature-implementation-audit-2026-11-05.md",
+      "workstream": "Q01",
+      "group": "09-tooling-efficiency",
+      "role": "documentation-or-agent-instructions",
+      "bytes": 28260,
+      "sha256": "9443ef0af6761b8ccd030f54a5888caf926e4708ae99479887764354c4e7f3f8",
+      "review_state": "mapped"
+    },
+    {
+      "path": "tests/cli/test_gateway_local_triggers.py",
+      "workstream": "C00",
+      "group": "01-entrypoints-turns",
+      "role": "test-support-source",
+      "bytes": 6407,
+      "sha256": "21c503ed7f8e50cc9e12a85879f043b87c5bb67b432b19370f6a7257fa8637dc",
+      "review_state": "mapped"
+    },
+    {
+      "path": "tests/remote/test_peer_credentials.py",
+      "workstream": "R01",
+      "group": "07-backend-remote",
+      "role": "test-support-source",
+      "bytes": 5233,
+      "sha256": "1d1cb2a539639f7f4b3b6343bdd00363274e8717473eb1d3e42e05a6eb3c2942",
+      "review_state": "mapped"
+    },
+    {
+      "path": "webui/src/hooks/usePagedGeneratedAssets.ts",
+      "workstream": "U01",
+      "group": "08-clients",
+      "role": "implementation-or-tooling-source",
+      "bytes": 4515,
+      "sha256": "8b8f444d6a69b549eda8f019c9692d02eea9a50d07db0c70688d81c5bf19b6ec",
+      "review_state": "mapped"
+    },
+    {
+      "path": "webui/src/tests/generated-asset-pagination.test.tsx",
+      "workstream": "U01",
+      "group": "08-clients",
+      "role": "test-support-source",
+      "bytes": 7517,
+      "sha256": "214d5823e0f0a7d85013c32ce044bff8ce5290de1e2cea43dda360a65adf37c2",
+      "review_state": "mapped"
+    }
+  ],
+  "remaining_source_detail_paths": [
+    "desktop/ui/src/style.css",
+    "mobile/android/gradlew",
+    "nanobot/_integration_diagnostics.py",
+    "nanobot/_migration_preflight.py",
+    "nanobot/agent/__init__.py",
+    "nanobot/agent/context_budget.py",
+    "nanobot/agent/direct_execution.py",
+    "nanobot/agent/hook.py",
+    "nanobot/agent/hooks/__init__.py",
+    "nanobot/agent/hooks/file_edit_activity.py",
+    "nanobot/agent/legacy_history_codec.py",
+    "nanobot/agent/memory_recovery_admission_reader.py",
+    "nanobot/agent/memory_recovery_conversion.py",
+    "nanobot/agent/memory_recovery_conversion_apply.py",
+    "nanobot/agent/memory_recovery_conversion_finalize.py",
+    "nanobot/agent/memory_recovery_conversion_runtime.py",
+    "nanobot/agent/memory_recovery_historical_seal.py",
+    "nanobot/agent/memory_recovery_legacy_archive.py",
+    "nanobot/agent/memory_recovery_manifest.py",
+    "nanobot/agent/memory_recovery_marker.py",
+    "nanobot/agent/memory_recovery_marker_stage.py",
+    "nanobot/agent/memory_recovery_quarantine_storage.py",
+    "nanobot/agent/memory_recovery_receipt_finalizer.py",
+    "nanobot/agent/memory_recovery_storage.py",
+    "nanobot/agent/memory_recovery_target_mutation.py",
+    "nanobot/agent/memory_recovery_target_verify.py",
+    "nanobot/agent/memory_recovery_transaction.py",
+    "nanobot/agent/memory_recovery_transaction_history.py",
+    "nanobot/agent/memory_recovery_transaction_memory.py",
+    "nanobot/agent/memory_recovery_transaction_offset.py",
+    "nanobot/agent/memory_recovery_transaction_prepare.py",
+    "nanobot/agent/memory_recovery_transaction_terminal.py",
+    "nanobot/agent/message_content.py",
+    "nanobot/agent/plugins.py",
+    "nanobot/agent/policy.py",
+    "nanobot/agent/trace.py",
+    "nanobot/bus/__init__.py",
+    "nanobot/bus/notification_delivery.py",
+    "nanobot/cli/__init__.py",
+    "nanobot/cli/cron_delivery.py",
+    "nanobot/cli/cron_runtime.py",
+    "nanobot/cli/desktop_target.py",
+    "nanobot/cli/log_control.py",
+    "nanobot/cli/migration_preflight.py",
+    "nanobot/cli/models.py",
+    "nanobot/cli/onboard.py",
+    "nanobot/cli/process_identity.py",
+    "nanobot/cli/provider.py",
+    "nanobot/cli/stream.py",
+    "nanobot/cli/terminal.py",
+    "nanobot/cli/windows_browser.py",
+    "nanobot/command/__init__.py",
+    "nanobot/config/__init__.py",
+    "nanobot/config/errors.py",
+    "nanobot/config/legacy_h1.py",
+    "nanobot/config/timezone.py",
+    "nanobot/context_repo/__init__.py",
+    "nanobot/context_repo/discovery.py",
+    "nanobot/gateway/__init__.py",
+    "nanobot/gateway/service.py",
+    "nanobot/process_runtime.py",
+    "nanobot/runtime_context.py",
+    "nanobot/runtime_errors.py",
+    "nanobot/session/__init__.py",
+    "nanobot/session/artifact.py",
+    "nanobot/session/artifact_projection.py",
+    "nanobot/session/artifact_rematerialization.py",
+    "nanobot/session/artifact_verification.py",
+    "nanobot/session/history_visibility.py",
+    "nanobot/session/legacy_h1.py",
+    "nanobot/session/legacy_receipt_source.py",
+    "nanobot/session/mode_storage.py",
+    "nanobot/session/model_selection.py",
+    "nanobot/session/pending_followups.py",
+    "nanobot/session/session_handles.py",
+    "nanobot/session/session_messages.py",
+    "nanobot/session/summary.py",
+    "nanobot/skills/README.md",
+    "nanobot/skills/clawhub/SKILL.md",
+    "nanobot/skills/cron/SKILL.md",
+    "nanobot/skills/desktop-use/SKILL.md",
+    "nanobot/skills/github/SKILL.md",
+    "nanobot/skills/image-generation/SKILL.md",
+    "nanobot/skills/mobile-app-testing/SKILL.md",
+    "nanobot/skills/mobile-dogfood/SKILL.md",
+    "nanobot/skills/my/SKILL.md",
+    "nanobot/skills/my/references/examples.md",
+    "nanobot/skills/skill-creator/SKILL.md",
+    "nanobot/skills/skill-creator/scripts/init_skill.py",
+    "nanobot/skills/skill-creator/scripts/package_skill.py",
+    "nanobot/skills/skill-creator/scripts/quick_validate.py",
+    "nanobot/skills/summarize/SKILL.md",
+    "nanobot/skills/tmux/SKILL.md",
+    "nanobot/skills/tmux/scripts/find-sessions.sh",
+    "nanobot/skills/tmux/scripts/wait-for-text.sh",
+    "nanobot/skills/update-setup/SKILL.md",
+    "nanobot/skills/video-understanding/SKILL.md",
+    "nanobot/skills/video-understanding/references/frame-selection.md",
+    "nanobot/skills/video-understanding/scripts/extract_keyframes.py",
+    "nanobot/skills/weather/SKILL.md",
+    "nanobot/skills/webapp-testing/SKILL.md",
+    "nanobot/templates/HEARTBEAT.md",
+    "nanobot/templates/IDENTITY.md",
+    "nanobot/templates/SOUL.md",
+    "nanobot/templates/TOOLS.md",
+    "nanobot/templates/USER.md",
+    "nanobot/templates/__init__.py",
+    "nanobot/templates/agent/consolidator_archive.md",
+    "nanobot/templates/agent/cron_reminder.md",
+    "nanobot/templates/agent/dream.md",
+    "nanobot/templates/agent/evaluator.md",
+    "nanobot/templates/agent/goal_runtime.md",
+    "nanobot/templates/agent/max_iterations_message.md",
+    "nanobot/templates/agent/platform_policy.md",
+    "nanobot/templates/agent/subagent_announce.md",
+    "nanobot/templates/agent/subagent_system.md",
+    "nanobot/templates/legacy/SOUL.md",
+    "nanobot/templates/memory/MEMORY.md",
+    "nanobot/templates/memory/__init__.py",
+    "nanobot/templates/prompts/README.md",
+    "nanobot/utils/__init__.py",
+    "nanobot/utils/cancellation.py",
+    "nanobot/utils/dict_keys.py",
+    "nanobot/utils/evaluator.py",
+    "nanobot/utils/file_edit_events.py",
+    "nanobot/utils/git_sync.py",
+    "nanobot/utils/gitstore.py",
+    "nanobot/utils/logging_bridge.py",
+    "nanobot/utils/media_decode.py",
+    "nanobot/utils/media_tokens.py",
+    "nanobot/utils/path.py",
+    "nanobot/utils/progress_events.py",
+    "nanobot/utils/restart.py",
+    "nanobot/utils/run_records.py",
+    "nanobot/utils/runtime.py",
+    "nanobot/utils/searchusage.py",
+    "nanobot/utils/secret_scan.py",
+    "nanobot/utils/subagent_channel_display.py",
+    "nanobot/utils/tool_hints.py"
+  ],
+  "reports": [
+    "../reports/refresh-2026-11-06/01-core-automation-coverage.json",
+    "../reports/refresh-2026-11-06/02-backend-mobile-coverage.json",
+    "../reports/refresh-2026-11-06/03-webui-coverage.json"
+  ],
+  "unassigned_paths": [],
+  "duplicate_paths": [],
+  "runtime_tests_builds_executed": false,
+  "full_discovery_complete": false,
+  "refresh_changed_source_complete": true,
+  "inspection_rule": "Current source inspection derives from exact new report lists; prior inspection is inherited only for identical SHA256. Relevant sections inspected is not full semantic audit or runtime qualification.",
+  "checkpoint": "At refresh checkpoint; superseded for final depth counts by ../coverage-summary.json"
+}

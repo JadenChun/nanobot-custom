@@ -1,0 +1,29 @@
+{
+  "source_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+  "origin_agent": "/root/refresh_webui",
+  "inspected_paths": [
+    "AGENTS.md", ".agent/design.md", ".agent/security.md", ".agent/gotchas.md", "CONTRIBUTING.md",
+    "webui/src/App.tsx", "webui/src/components/settings/SettingsPage.tsx", "webui/src/components/settings/SettingsView.tsx",
+    "webui/src/components/settings/SkillsCatalogSettings.tsx", "webui/src/components/settings/SkillsMarketplace.tsx",
+    "webui/src/components/settings/system/AutomationsSettings.tsx", "webui/src/components/settings/system/RuntimeSettings.tsx",
+    "webui/src/components/thread/GeneratedAssetsSheet.tsx", "webui/src/components/thread/ThreadComposer.tsx",
+    "webui/src/components/thread/ThreadShell.tsx", "webui/src/hooks/useClipboardAndDrop.ts",
+    "webui/src/hooks/useGeneratedAssetLibrary.ts", "webui/src/hooks/useNanobotStream.ts", "webui/src/hooks/useSessionGeneratedAssets.ts",
+    "webui/src/hooks/useSkills.ts", "webui/src/hooks/useTaskNotifications.ts", "webui/src/lib/mobile-run-keep-alive.ts",
+    "webui/src/lib/nanobot-client.ts", "webui/src/lib/skill-events.ts", "webui/src/lib/task-notifications.ts", "webui/src/lib/types.ts",
+    "webui/src/lib/api.ts", "webui/src/hooks/useSessions.ts", "webui/src/providers/ClientProvider.tsx",
+    "webui/src/components/settings/overview/OverviewSettings.tsx", "webui/src/lib/local-preferences.ts",
+    "webui/src/components/settings/system/createSystemSettingsActions.ts", "webui/src/components/settings/system/useSystemSettingsEffects.ts"
+  ],
+  "deleted_paths_accounted": ["webui/src/hooks/usePagedGeneratedAssets.ts", "webui/src/tests/generated-asset-pagination.test.tsx"],
+  "mapped_only": [
+    "tests/desktop/test_adapter.py", "webui/src/tests/app-layout.test.tsx", "webui/src/tests/generated-assets-sheet.test.tsx",
+    "webui/src/tests/nanobot-client.test.ts", "webui/src/tests/settings-system.test.tsx", "webui/src/tests/skills-marketplace.test.tsx",
+    "webui/src/tests/task-notifications.test.ts", "webui/src/tests/thread-composer-attach.test.tsx", "webui/src/tests/thread-composer.test.tsx",
+    "webui/src/tests/useNanobotStream.test.tsx", "webui/src/tests/generated-asset-pagination.test.tsx",
+    "nanobot/webui/transcript.py", "tests/utils/test_webui_transcript.py"
+  ],
+  "commands_run": ["git status --porcelain before/after", "git rev-parse HEAD", "git diff --stat/--name-status/--unified between pinned commits", "git show stale-tail commit and deleted loader", "cat/rg and stdlib pathlib line reads"],
+  "runtime_tests_builds_run": false,
+  "report_retention": "Coordinator-faithful condensed final report; exact inspected list retained from analyst JSON."
+}
