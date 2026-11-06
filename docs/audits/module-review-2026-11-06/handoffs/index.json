@@ -212,7 +212,7 @@
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
       "note": "T01-A+B+C complete at F14/P0/R30; six provisional findings retained (one P1 conditional, five P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-D execution/native authority (six primaries).",
-      "last_checkpoint_commit": "eeb736a236b44654f7c3c22ce5474d5b4d9f28e2",
+      "last_checkpoint_commit": "60806f5e05f65300cd614ec129344f9b94ec782f",
       "provisional_findings": [
         {
           "id": "T01-F01",
@@ -272,6 +272,17 @@
             "full": 12,
             "partial": 0,
             "unread": 32
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-C",
+          "commit": "60806f5e05f65300cd614ec129344f9b94ec782f",
+          "coverage": {
+            "full": 14,
+            "partial": 0,
+            "unread": 30
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
