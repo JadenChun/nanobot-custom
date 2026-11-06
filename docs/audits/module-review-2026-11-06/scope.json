@@ -1,0 +1,261 @@
+{
+  "schema_version": 1,
+  "review": "whole-project-module-source-review-2026-11-06",
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "inventory": {
+    "path": "docs/audits/codebase-discovery/path-inventory.tsv",
+    "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
+    "format": "TSV parsed by Python standard-library csv.DictReader with tab delimiter",
+    "columns": [
+      "path",
+      "workstream",
+      "group",
+      "role",
+      "bytes",
+      "sha256",
+      "previous_sha256",
+      "change",
+      "inherited_inspected_by",
+      "inspected_by",
+      "discovery_depth"
+    ],
+    "rows": 2455,
+    "immutable": true,
+    "primary_assignment_column": "workstream",
+    "role_column": "role",
+    "discovery_sha256_column": "sha256"
+  },
+  "selection": {
+    "primary_roles": [
+      "implementation-or-tooling-source",
+      "runtime-instruction-source"
+    ],
+    "primary_target_count": 919,
+    "primary_stream_count": 17,
+    "crosscutting_stream": "P01",
+    "crosscutting_denominator_addition": 0,
+    "rule": "Select exactly the two named roles; keep original workstream assignments. Supplementary roles do not enter the primary denominator."
+  },
+  "primary_counts_by_stream": {
+    "A01": 47,
+    "C00": 70,
+    "D01": 47,
+    "E01": 95,
+    "E02": 68,
+    "H01": 29,
+    "H02": 74,
+    "H03": 45,
+    "K01": 56,
+    "M01": 14,
+    "Q01": 25,
+    "R01": 70,
+    "S01": 15,
+    "S02": 6,
+    "T01": 44,
+    "U01": 203,
+    "X01": 11
+  },
+  "primary_counts_by_role": {
+    "implementation-or-tooling-source": 878,
+    "runtime-instruction-source": 41
+  },
+  "supplementary_inventory": {
+    "path_count": 1536,
+    "counts_by_role": {
+      "configuration-or-support-artifact": 290,
+      "documentation-or-agent-instructions": 195,
+      "test-support-source": 997,
+      "asset-or-lockfile": 54
+    },
+    "policy": "Record actual config/support/test/history read ranges and pins in per-module coverage; no automatic primary-body coverage."
+  },
+  "original_baseline_provenance": {
+    "baseline_path": "docs/audits/codebase-discovery/baseline.json",
+    "baseline_sha256": "5df49a133421a689dc4055f2b7b3fffa36f5f1fc3cbe64429a74c0d925083f1e",
+    "source_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+    "source_tree": "d49aca97c9a34a2d17eae53d672fa591652457f1",
+    "previous_baseline_path": "docs/audits/codebase-discovery/provenance/prior-baseline.json",
+    "previous_baseline_sha256": "582e22b7d655ce2c83ecdc7e9857a27f2a51511f47210f3d26af7706a7fc184a",
+    "previous_source_commit": "4e2bf4d8d0b34f133c01591b67826ca956fed384",
+    "previous_source_tree": "d5cc262acda5fb8051ffac9996ee9ab189c361cd",
+    "historical_merge_base": "b94b12527b014785c1454a04ef3b8138ee6070a5",
+    "inventory_previous_sha256_meaning": "Retained inventory previous_sha256 values refer to its earlier discovery baseline, not the new staging delta. The immutable ledger remains authoritative.",
+    "architecture_checkpoint_commit": "7d5ba29d153f4764c19d3d6a68cc968c3a90efc6",
+    "branch_rename_plan_commit": "def035a991debc623de399d420a997bb0fa7ef8d"
+  },
+  "staging_delta": {
+    "from_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+    "from_tree": "d49aca97c9a34a2d17eae53d672fa591652457f1",
+    "to_commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "to_tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+    "changed_paths": [
+      {
+        "path": "nanobot/agent/runner.py",
+        "change": "M",
+        "role": "implementation-or-tooling-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": true,
+        "previous": {
+          "git_blob": "418b1966478ca0e292931f5a7655441ec597cbd8",
+          "sha256": "ad1abbdc1208dbb125ae154fd252721119bb540a763c4e4d9b2e1424b4e657a1",
+          "bytes": 117599
+        },
+        "current": {
+          "git_blob": "0000b3e96776518bb3383b243db74079dd432254",
+          "sha256": "2df2fc850cafc102426caea73ff2d10e8bf7fd7d9197c560a0cf977981d30f04",
+          "bytes": 117967
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "nanobot/providers/fallback_provider.py",
+        "change": "M",
+        "role": "implementation-or-tooling-source",
+        "primary_stream": "H03",
+        "in_primary_denominator": true,
+        "previous": {
+          "git_blob": "84a3f344c4347b124d3ef0c97aa98f647f9572c5",
+          "sha256": "3e327423dccd5ade0809e1aaf05e20cabe44540e96cc5b57bb1e5b0903d06847",
+          "bytes": 35414
+        },
+        "current": {
+          "git_blob": "4a1596fa87875beb1253fa535f0f452495357439",
+          "sha256": "b51eab69025eb6daa84bd1b1f387bfa87b3a6a925aa20fa5353905b6dda751cf",
+          "bytes": 35695
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "tests/agent/test_pre_dispatch_recovery.py",
+        "change": "M",
+        "role": "test-support-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": false,
+        "previous": {
+          "git_blob": "54f50ee1bac2e3d3a59674adb53039d6eaf3d595",
+          "sha256": "999b8b8e0257a8efbb148290b53fc1ccb53a4c1fee0207482f15b46971701c36",
+          "bytes": 9900
+        },
+        "current": {
+          "git_blob": "b8133cedc648b4b41c966cdbc8f6edf9709fdd47",
+          "sha256": "2f3440c961420f921bada7522e5731a9fc998e128220d3801b5cbcbc46950b95",
+          "bytes": 10289
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "tests/agent/test_runner_errors.py",
+        "change": "M",
+        "role": "test-support-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": false,
+        "previous": {
+          "git_blob": "eda120ad52a3c9bc91f0e2c6213a5a2469110360",
+          "sha256": "093da9eabf77080004a73767598563fd08bee0d8685ca914eb40329f38ba3202",
+          "bytes": 26090
+        },
+        "current": {
+          "git_blob": "0d94efce22edc9d4fbb410c9cdb27653250a3153",
+          "sha256": "055f6268dd1c1a8afe80eed8ffc49b4c84bab22ecb205d84a9490955e1cef34e",
+          "bytes": 26243
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "tests/agent/test_runner_fallback.py",
+        "change": "M",
+        "role": "test-support-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": false,
+        "previous": {
+          "git_blob": "99af23f05eed888e50c048b20ae17c8905e1c82f",
+          "sha256": "9925ea29ebf176a45ce3a5278a714da60cffec6ff7199544a8046ef0145be618",
+          "bytes": 73923
+        },
+        "current": {
+          "git_blob": "c1186cbe60c4557c598638915c297168841913cb",
+          "sha256": "fafe0cb2e5f191e9a45e090ae41e5e51f0af564a1fd49b455fdf354aa489981a",
+          "bytes": 75298
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      }
+    ],
+    "changed_primary_targets": 2,
+    "byte_identical_primary_targets": 917,
+    "semantic_reuse": "No automatic deep-review credit. H01/H03 must reconcile changed source bodies and affected callers; changed tests are supplementary context."
+  },
+  "production_hash_overrides": [
+    {
+      "path": "nanobot/agent/runner.py",
+      "change": "M",
+      "role": "implementation-or-tooling-source",
+      "primary_stream": "H01",
+      "in_primary_denominator": true,
+      "previous": {
+        "git_blob": "418b1966478ca0e292931f5a7655441ec597cbd8",
+        "sha256": "ad1abbdc1208dbb125ae154fd252721119bb540a763c4e4d9b2e1424b4e657a1",
+        "bytes": 117599
+      },
+      "current": {
+        "git_blob": "0000b3e96776518bb3383b243db74079dd432254",
+        "sha256": "2df2fc850cafc102426caea73ff2d10e8bf7fd7d9197c560a0cf977981d30f04",
+        "bytes": 117967
+      },
+      "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+    },
+    {
+      "path": "nanobot/providers/fallback_provider.py",
+      "change": "M",
+      "role": "implementation-or-tooling-source",
+      "primary_stream": "H03",
+      "in_primary_denominator": true,
+      "previous": {
+        "git_blob": "84a3f344c4347b124d3ef0c97aa98f647f9572c5",
+        "sha256": "3e327423dccd5ade0809e1aaf05e20cabe44540e96cc5b57bb1e5b0903d06847",
+        "bytes": 35414
+      },
+      "current": {
+        "git_blob": "4a1596fa87875beb1253fa535f0f452495357439",
+        "sha256": "b51eab69025eb6daa84bd1b1f387bfa87b3a6a925aa20fa5353905b6dda751cf",
+        "bytes": 35695
+      },
+      "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+    }
+  ],
+  "current_source_manifest_sha256": "ada12555a296e1c14db9840eafff8aedefdbab6a81739772225a7973f74430a6",
+  "current_assignment_manifest_sha256": "c441073cd8285b85233690273041f06a84506f765f79934c034b8663631c6a22",
+  "aggregate_definition": {
+    "source": "SHA256 of UTF-8 compact sorted-key JSON mapping path to current blob-content SHA256.",
+    "assignment": "SHA256 of UTF-8 compact sorted-key JSON list, sorted by path, with path, primary_stream, role, git_blob, sha256 and bytes.",
+    "mechanical_only": true
+  },
+  "initial_deep_review_body_credit": 0,
+  "derivation_command": "python3 - <<'PY_DERIVE'\nfrom pathlib import Path\nfrom collections import Counter\nimport csv, hashlib, json, subprocess\nbase = Path('docs/audits/module-review-2026-11-06')\nscope = json.loads((base / 'scope.json').read_text())\nledger = scope['inventory']['path']\nassert hashlib.sha256(Path(ledger).read_bytes()).hexdigest() == scope['inventory']['sha256']\nwith open(ledger, newline='') as f:\n    reader = csv.DictReader(f, delimiter='\\t')\n    assert reader.fieldnames == scope['inventory']['columns']\n    rows = [r for r in reader if r['role'] in scope['selection']['primary_roles']]\nassert len(rows) == 919 and len({r['path'] for r in rows}) == 919\npin = scope['source_pins']['nanobot']['commit']\npaths = [r['path'] for r in rows]\nraw = subprocess.check_output(['git', 'cat-file', '--batch'], input=''.join(pin + ':' + p + '\\n' for p in paths).encode())\ncurrent = {}; offset = 0\nfor path in paths:\n    end = raw.index(b'\\n', offset)\n    header = raw[offset:end].decode().split()\n    assert len(header) == 3 and header[1] == 'blob', path\n    size = int(header[2]); body = raw[end + 1:end + 1 + size]\n    assert raw[end + 1 + size:end + 2 + size] == b'\\n', path\n    current[path] = {'git_blob': header[0], 'sha256': hashlib.sha256(body).hexdigest(), 'bytes': size}\n    offset = end + 2 + size\nassert offset == len(raw)\noverrides = {x['path']: x for x in scope['production_hash_overrides']}\nassert len(overrides) == 2\nfor row in rows:\n    path = row['path']; expected = overrides[path]['current']['sha256'] if path in overrides else row['sha256']\n    assert current[path]['sha256'] == expected, path\n    if path in overrides:\n        assert row['sha256'] == overrides[path]['previous']['sha256'], path\n        assert current[path] == overrides[path]['current'], path\nassignments = [{'path': r['path'], 'primary_stream': r['workstream'], 'role': r['role'], **current[r['path']]} for r in sorted(rows, key=lambda x: x['path'])]\ncanon = lambda x: json.dumps(x, sort_keys=True, separators=(',', ':')).encode()\nsource_digest = hashlib.sha256(canon({p: current[p]['sha256'] for p in sorted(paths)})).hexdigest()\nassignment_digest = hashlib.sha256(canon(assignments)).hexdigest()\nassert source_digest == scope['current_source_manifest_sha256']\nassert assignment_digest == scope['current_assignment_manifest_sha256']\nassert dict(Counter(r['workstream'] for r in rows)) == scope['primary_counts_by_stream']\nassert dict(Counter(r['role'] for r in rows)) == scope['primary_counts_by_role']\nprint(json.dumps({'status': 'PASS', 'derived_assignments': len(assignments), 'source_manifest_sha256': source_digest, 'assignment_manifest_sha256': assignment_digest, 'production_overrides': len(overrides), 'semantic_body_credit': 0}))\n# The local assignments value contains every current path/stream/role/blob/hash/size;\n# print(json.dumps(assignments, indent=2)) only if a full derived listing is needed.\nPY_DERIVE",
+  "reference_policy": {
+    "dsh_codex": "Pinned engineering references; actual mechanism or module-specific nonapplicability required; no parity requirement.",
+    "hermes": "Secondary product-direction context only; no new source study."
+  },
+  "limits": [
+    "Existence and hashes are not semantic reads.",
+    "Frozen discovery evidence remains at its original pin.",
+    "Per-module later coverage records actual bounded reads, exclusions and material gaps.",
+    "No exhaustive all-branch semantics or runtime reliability follows from path counts."
+  ]
+}

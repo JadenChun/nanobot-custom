@@ -1,17 +1,28 @@
 # Project audit plan and coverage ledger
 
-Updated: 2026-11-06. **Method: source inspection of implementation, architecture and
-code quality. Current sequence: discovery → source comparison and architecture discussion
-→ bounded audit/optimisation.** Whole-project scope and the reliable personal-agent goal
-remain accepted. Nine historical subsystem maps, three current-origin differential maps
-and three completion reports are published with exact read lists. All 2,455 baseline paths
-are assigned; all 919 source targets have evidence: **224 current reads + 695 identical-hash
-carried reads, zero mapped-only source**. All 47 changed implementation paths have current
-evidence. **Module-level/relevant-body source discovery is complete (PLAN-009)**. The
-[architecture-review checkpoint](architecture-review-2026-11-06/README.md) now records
-targeted REF1–REF6 comparisons, preserved strengths and a deduplicated roadmap. Consequential
-architecture choices and detailed semantic audits remain pending. Sandbox keeps priority
-within the later audit; coordinator acceptance of the concrete review is separate.
+Updated: 2026-11-06. **Current work: the [whole-project module source review](module-review-2026-11-06/README.md),
+then consolidated discussion after all modules.** The user authorized deep architecture,
+code-quality and simplification assessment, including earlier architectural changes,
+with per-module Git checkpoints and no fixes. [Current status](module-review-2026-11-06/status.json)
+records eighteen streams: S01/S02/H01 are dispatched; the others are queued. The
+[scope ledger](module-review-2026-11-06/scope.json) assigns 919 primary source targets
+across seventeen streams; P01 is cross-cutting. No new deep-review body evidence or
+coordinator acceptance is inferred from this publication foundation.
+
+The current module pin is `9562e57f8333d7f14b6aaeae837660723a9b2650`, tree
+`bbe2f237efe0cd7b935946b533f66ed0097a3c93`. Its named delta from `27adced0` changes
+runner, fallback provider and three tests; previous discovery and comparison evidence
+remain frozen at their original pin. D1–D7 are explicitly deferred to the final
+consolidated discussion as review sequencing, not implementation acceptance. No open
+decision blocks source inspection. The [pending synthesis](module-review-2026-11-06/synthesis.md)
+will account for module evidence and shared-contract reconciliation before that discussion.
+
+**Prior checkpoints remain distinct:** module/relevant-body discovery (PLAN-009) recorded
+2,455 paths and 919 targets at `27adced0` (224 current + 695 identical-hash carried).
+The accepted [first architecture comparison](architecture-review-2026-11-06/README.md)
+contains 33 targeted REF1–REF6 rows. Neither completes the new deep review. The later
+sections retain their earlier sequence and proposed packages as planning history; the
+current module-review ledger governs present source-inspection status and sequencing.
 
 The current [discovery entry point](codebase-discovery/README.md),
 [differential record](codebase-discovery/refresh-2026-11-06.md),
@@ -20,7 +31,7 @@ The current [discovery entry point](codebase-discovery/README.md),
 and byte-identical carried evidence. The [continuation contract](codebase-discovery/continuation-plan.md)
 retains the original comparison contract; the review's
 [decision record](architecture-review-2026-11-06/decisions.md) and
-[backlog](architecture-review-2026-11-06/audit-backlog.md) define the current next packages.
+[backlog](architecture-review-2026-11-06/audit-backlog.md) retain the earlier proposed packages.
 Completion retains the bounded refresh checkpoint and the user's accepted source-only method.
 
 This is the living continuation plan for the [code-quality audit charter](../code-quality-audit-2026-11-04.md).
@@ -46,7 +57,8 @@ helpers or obsolete imports may be relevant to source quality and caller tracing
 | --- | --- |
 | Historical planning/first-pass snapshot | `b94b12527b014785c1454a04ef3b8138ee6070a5` |
 | Historical source tree | `9e15246bb0710590abb3351321aec29688c16285` |
-| Current discovery baseline | Fetched `origin/staging`, `27adced0aacd55d61791bb88a7240d7ad7bd5b75`; tree `d49aca97c9a34a2d17eae53d672fa591652457f1` |
+| Current module-review source | Fetched `origin/staging`, `9562e57f8333d7f14b6aaeae837660723a9b2650`; tree `bbe2f237efe0cd7b935946b533f66ed0097a3c93`; explicit five-path delta retained in the new scope ledger |
+| Frozen discovery / first comparison baseline | `27adced0aacd55d61791bb88a7240d7ad7bd5b75`; tree `d49aca97c9a34a2d17eae53d672fa591652457f1` |
 | Previous discovery baseline | `4e2bf4d8d0b34f133c01591b67826ca956fed384`; tree `d5cc262acda5fb8051ffac9996ee9ab189c361cd`; retained historical nine-family map |
 | Current audit branch | `codex/staging-audit` (renamed from `codex/staging-discovery-20261106`); historical `codex/staging-harness-audit` retains the prior discovery pin |
 | Audit checkout | `/Users/jaden/.codex/worktrees/staging-harness-audit/nanobot` |

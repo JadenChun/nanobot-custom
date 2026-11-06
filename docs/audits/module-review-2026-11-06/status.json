@@ -1,0 +1,639 @@
+{
+  "schema_version": 1,
+  "review": "whole-project-module-source-review-2026-11-06",
+  "date": "2026-11-06",
+  "publication_stage": "foundation-written; coordinator check pending",
+  "source_pin": {
+    "repository": "https://github.com/JadenChun/nanobot-custom",
+    "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+  },
+  "scope": "scope.json",
+  "synthesis": "synthesis.md",
+  "status_definitions": {
+    "queued": "Assigned scope; not dispatched in this graph.",
+    "in-progress": "Coordinator dispatch supplied; report/acceptance remain pending.",
+    "report-written": "Supplied report and coverage published with exact evidence and limitations.",
+    "coordinator-checked": "Explicit coordinator check evidence recorded by coordinator authority.",
+    "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
+  },
+  "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
+  "dispatch_evidence": "Parent orchestrator initial package: S01/S02/H01 are being dispatched; other streams queued.",
+  "counts": {
+    "streams": 18,
+    "primary_streams": 17,
+    "primary_targets": 919,
+    "crosscutting_target_addition": 0,
+    "queued": 15,
+    "in_progress": 3,
+    "report_written": 0,
+    "coordinator_checked": 0,
+    "integrated_review_complete": 0,
+    "published_findings": 0,
+    "published_discussion_questions": 0,
+    "supplied_primary_body_paths": 0,
+    "primary_targets_without_new_body_evidence": 919
+  },
+  "count_meaning": "Zero published findings/questions and body paths means no analyst evidence published; actual analyst finding/question totals remain unknown. Assignment counts do not measure semantic completeness.",
+  "discussion": {
+    "sequence": "All modules and shared contracts first, consolidated discussion afterward.",
+    "D1_D7": "Explicitly deferred for review sequencing; no implementation accepted.",
+    "open_decision_blocks_source_inspection": false
+  },
+  "streams": [
+    {
+      "id": "C00",
+      "scope": "Entrypoints, CLI, commands, config, gateway composition and shared utilities",
+      "kind": "primary",
+      "primary_target_count": 70,
+      "inventory_all_roles_count": 165,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/C00.md",
+      "planned_coverage": "reports/C00-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 70,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "H01",
+      "scope": "Agent loop, runner, bus, hooks, turn admission and delivery",
+      "kind": "primary",
+      "primary_target_count": 29,
+      "inventory_all_roles_count": 167,
+      "status": "in-progress",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/H01.md",
+      "planned_coverage": "reports/H01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 29,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "H02",
+      "scope": "Sessions, source events, ledgers, history, memory, compaction and recovery",
+      "kind": "primary",
+      "primary_target_count": 74,
+      "inventory_all_roles_count": 228,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/H02.md",
+      "planned_coverage": "reports/H02-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 74,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "H03",
+      "scope": "Providers, models, budgets, key pools, usage and accounting",
+      "kind": "primary",
+      "primary_target_count": 45,
+      "inventory_all_roles_count": 141,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/H03.md",
+      "planned_coverage": "reports/H03-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 45,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "S01",
+      "scope": "Filesystem tools, folder grants, workspace/private-state policy and security",
+      "kind": "primary",
+      "primary_target_count": 15,
+      "inventory_all_roles_count": 31,
+      "status": "in-progress",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/S01.md",
+      "planned_coverage": "reports/S01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 15,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "S02",
+      "scope": "Shell, sandbox backends, native admission, exec sessions and supervision",
+      "kind": "primary",
+      "primary_target_count": 6,
+      "inventory_all_roles_count": 15,
+      "status": "in-progress",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/S02.md",
+      "planned_coverage": "reports/S02-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 6,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "T01",
+      "scope": "Tool construction, plugins, MCP, roles, delegation and compatibility adapters",
+      "kind": "primary",
+      "primary_target_count": 44,
+      "inventory_all_roles_count": 109,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/T01.md",
+      "planned_coverage": "reports/T01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 44,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "A01",
+      "scope": "Cron, local triggers, process completions and retained goals",
+      "kind": "primary",
+      "primary_target_count": 47,
+      "inventory_all_roles_count": 103,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/A01.md",
+      "planned_coverage": "reports/A01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 47,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "K01",
+      "scope": "Context repositories, knowledge, runtime skills, prompts and templates",
+      "kind": "primary",
+      "primary_target_count": 56,
+      "inventory_all_roles_count": 62,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/K01.md",
+      "planned_coverage": "reports/K01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 56,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "E01",
+      "scope": "Channel framework and sixteen platform adapters, excluding WebSocket",
+      "kind": "primary",
+      "primary_target_count": 95,
+      "inventory_all_roles_count": 321,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/E01.md",
+      "planned_coverage": "reports/E01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 95,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "E02",
+      "scope": "HTTP API, SDK, WebSocket, backend WebUI and shared client contracts",
+      "kind": "primary",
+      "primary_target_count": 68,
+      "inventory_all_roles_count": 144,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/E02.md",
+      "planned_coverage": "reports/E02-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 68,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "U01",
+      "scope": "React WebUI and browser assets",
+      "kind": "primary",
+      "primary_target_count": 203,
+      "inventory_all_roles_count": 328,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/U01.md",
+      "planned_coverage": "reports/U01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 203,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "M01",
+      "scope": "Attachments, audio/images and media ingress/adoption",
+      "kind": "primary",
+      "primary_target_count": 14,
+      "inventory_all_roles_count": 19,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/M01.md",
+      "planned_coverage": "reports/M01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 14,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "R01",
+      "scope": "Remote IPC/auth/pairing and Android/native clients",
+      "kind": "primary",
+      "primary_target_count": 70,
+      "inventory_all_roles_count": 189,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/R01.md",
+      "planned_coverage": "reports/R01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 70,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "D01",
+      "scope": "Python desktop adapter, Tauri shell and terminal UI",
+      "kind": "primary",
+      "primary_target_count": 47,
+      "inventory_all_roles_count": 101,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/D01.md",
+      "planned_coverage": "reports/D01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 47,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "X01",
+      "scope": "Optional apps, crawler and extensions",
+      "kind": "primary",
+      "primary_target_count": 11,
+      "inventory_all_roles_count": 15,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/X01.md",
+      "planned_coverage": "reports/X01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 11,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "Q01",
+      "scope": "Builds/dependencies/CI/deployment, migration tools, stubs, support and docs",
+      "kind": "primary",
+      "primary_target_count": 25,
+      "inventory_all_roles_count": 317,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/Q01.md",
+      "planned_coverage": "reports/Q01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 25,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    },
+    {
+      "id": "P01",
+      "scope": "Efficiency and simplification across all primary streams",
+      "kind": "crosscutting",
+      "primary_target_count": 0,
+      "inventory_all_roles_count": null,
+      "status": "queued",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": null,
+      "coverage": null,
+      "planned_report": "reports/P01.md",
+      "planned_coverage": "reports/P01-coverage.json",
+      "findings_count": null,
+      "discussion_questions_count": null,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": null,
+      "coordinator_check": {
+        "status": "pending",
+        "evidence": null
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      }
+    }
+  ]
+}
