@@ -1738,11 +1738,16 @@
       "reason": "No clean local audit worktree in this web continuation; source/API reads and frozen metadata reconciliation only."
     },
     "integrated_review": "pending until all modules",
-    "module_git_checkpoint": "pending until coordinator commits",
+    "module_git_checkpoint": "b3614b6d6cdd8abd032c750aa4f2535643466537",
     "decisions": "D1–D7 remain deferred."
   },
   "integrated_review": null,
-  "git_checkpoint": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "b3614b6d6cdd8abd032c750aa4f2535643466537",
+    "pushed": true,
+    "evidence": "H03 F45/P0/R0 source-review publication/PASS audit-doc checkpoint."
+  },
   "raw_failures_and_limits": [
     "One image-provider multi-range response was truncated and received no body credit; every affected range was refilled separately before F45/P0/R0.",
     "A reference-metadata helper attempted TextEncoder in Code Mode where it was unavailable; it was rerun without byte counting and did not affect source evidence.",
