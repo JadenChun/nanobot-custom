@@ -459,7 +459,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/U01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "U01 checkpoint: 107/203 primary bodies complete. Settings subtree and remaining general hooks are fully read. Provisional U01-F01/F02/F03/F04 retained and U01-F05 added for sidebar persistence that can remain optimistic/unsaved after an in-connection mutation failure. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted functional/lifecycle questions. HostWebSocket pre-open close orphan question remains deferred to D01."
+      "coordinator_observation": "U01 checkpoint: 127/203 primary bodies complete. Settings, all remaining general hooks, and 20 small general-component leaves are fully read. Provisional U01-F01 through U01-F05 remain unchanged in this batch. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted functional/lifecycle questions. HostWebSocket pre-open close orphan question remains deferred to D01."
     },
     {
       "id": "M01",
