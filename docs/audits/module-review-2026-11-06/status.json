@@ -264,7 +264,7 @@
       "kind": "primary",
       "primary_target_count": 44,
       "inventory_all_roles_count": 109,
-      "status": "queued",
+      "status": "in-progress",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": null,
       "coverage": null,
@@ -289,7 +289,12 @@
         "status": "pending",
         "commit": null,
         "evidence": null
-      }
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "active",
+      "saved_handoff": "handoffs/T01.md",
+      "handoff_disposition": "active-incomplete-unaccepted",
+      "coordinator_observation": "T01 dispatched with exact denominator 44 implementation/tooling primaries; starting at tool construction/registry/schema/plugin-context/delegation spine."
     },
     {
       "id": "A01",
