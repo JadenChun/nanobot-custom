@@ -1,0 +1,2035 @@
+{
+  "schema_version": 1,
+  "stream_id": "H02",
+  "report": "reports/H02.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "/root/deep_session_state",
+    "handoff": "handoffs/H02.md packets 1–4 and superseding supplements 5A/5B",
+    "published_by": "ChatGPT web continuation coordinator",
+    "supersession": "5A/5B supersede initial F33/P4/R37 with final F74/P0/R0; original uncertainty remains historical provenance."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0"
+    }
+  },
+  "supplied_metadata_sha256": "8111ae57bbe78437969d604056c5ebcf46915deaa70b9a246761ee7a0c187098",
+  "assigned_primary_paths": [
+    "nanobot/agent/autocompact.py",
+    "nanobot/agent/idle_compaction.py",
+    "nanobot/agent/idle_lifecycle.py",
+    "nanobot/agent/idle_runtime.py",
+    "nanobot/agent/idle_scanner.py",
+    "nanobot/agent/idle_summary.py",
+    "nanobot/agent/memory.py",
+    "nanobot/agent/memory_recovery.py",
+    "nanobot/agent/memory_recovery_admission_reader.py",
+    "nanobot/agent/memory_recovery_conversion.py",
+    "nanobot/agent/memory_recovery_conversion_apply.py",
+    "nanobot/agent/memory_recovery_conversion_finalize.py",
+    "nanobot/agent/memory_recovery_conversion_runtime.py",
+    "nanobot/agent/memory_recovery_coordinator.py",
+    "nanobot/agent/memory_recovery_historical_seal.py",
+    "nanobot/agent/memory_recovery_legacy_archive.py",
+    "nanobot/agent/memory_recovery_manifest.py",
+    "nanobot/agent/memory_recovery_marker.py",
+    "nanobot/agent/memory_recovery_marker_stage.py",
+    "nanobot/agent/memory_recovery_quarantine_storage.py",
+    "nanobot/agent/memory_recovery_receipt_finalizer.py",
+    "nanobot/agent/memory_recovery_startup_admission.py",
+    "nanobot/agent/memory_recovery_storage.py",
+    "nanobot/agent/memory_recovery_target_mutation.py",
+    "nanobot/agent/memory_recovery_target_verify.py",
+    "nanobot/agent/memory_recovery_transaction.py",
+    "nanobot/agent/memory_recovery_transaction_history.py",
+    "nanobot/agent/memory_recovery_transaction_memory.py",
+    "nanobot/agent/memory_recovery_transaction_offset.py",
+    "nanobot/agent/memory_recovery_transaction_prepare.py",
+    "nanobot/agent/memory_recovery_transaction_terminal.py",
+    "nanobot/session/__init__.py",
+    "nanobot/session/artifact.py",
+    "nanobot/session/artifact_factory.py",
+    "nanobot/session/artifact_grants.py",
+    "nanobot/session/artifact_operator.py",
+    "nanobot/session/artifact_projection.py",
+    "nanobot/session/artifact_reader.py",
+    "nanobot/session/artifact_rematerialization.py",
+    "nanobot/session/artifact_store.py",
+    "nanobot/session/artifact_verification.py",
+    "nanobot/session/checked_source.py",
+    "nanobot/session/checkpoint_admission.py",
+    "nanobot/session/checkpoint_dependencies.py",
+    "nanobot/session/context_checkpoint.py",
+    "nanobot/session/execution_owner.py",
+    "nanobot/session/history_visibility.py",
+    "nanobot/session/idle_checkpoint.py",
+    "nanobot/session/idle_compaction.py",
+    "nanobot/session/keys.py",
+    "nanobot/session/legacy_h1.py",
+    "nanobot/session/legacy_receipt_source.py",
+    "nanobot/session/manager.py",
+    "nanobot/session/mode_storage.py",
+    "nanobot/session/model_selection.py",
+    "nanobot/session/pending_followups.py",
+    "nanobot/session/persistence_metadata.py",
+    "nanobot/session/recovery.py",
+    "nanobot/session/recovery_locator.py",
+    "nanobot/session/runtime_authority.py",
+    "nanobot/session/session_export.py",
+    "nanobot/session/session_handles.py",
+    "nanobot/session/session_messages.py",
+    "nanobot/session/session_mode.py",
+    "nanobot/session/source.py",
+    "nanobot/session/source_compaction.py",
+    "nanobot/session/source_discovery.py",
+    "nanobot/session/source_projection.py",
+    "nanobot/session/source_request.py",
+    "nanobot/session/source_root.py",
+    "nanobot/session/source_store.py",
+    "nanobot/session/summary.py",
+    "nanobot/session/turn_writer.py",
+    "nanobot/session/webui_turns.py"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/autocompact.py",
+      "git_blob": "15d2fce97d8c5765c1eca28b69f721b8230ea31a",
+      "sha256": "b0246fda9042d0e5960503bc1806a58da78b2cbfb661e73351009c2219f52f45",
+      "bytes": 5625,
+      "ranges": [
+        [
+          1,
+          136
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/idle_compaction.py",
+      "git_blob": "87f79f4f82613ad7982a4435a63a614cb2e18611",
+      "sha256": "0a2cce7e9ba220a0fb0e2a34c78f112a06796c71eea494f5264efecb576af298",
+      "bytes": 40667,
+      "ranges": [
+        [
+          1,
+          906
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/idle_lifecycle.py",
+      "git_blob": "1ae99a39e3afd54173450e697ad8e1e1ed8c15a3",
+      "sha256": "e30a294ac481ed4e909f1de73f968d2bc6fc6648cc2a3269e9f5dd35f5cd4915",
+      "bytes": 7423,
+      "ranges": [
+        [
+          1,
+          200
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/idle_runtime.py",
+      "git_blob": "ee3a33725a3223ba6932d00a6bba69a6977698c8",
+      "sha256": "98d4104b712ce6cf741c7a534159b4eef97e8ff8c12bd595d38da6c9dbdc1f37",
+      "bytes": 72119,
+      "ranges": [
+        [
+          1,
+          1838
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/idle_scanner.py",
+      "git_blob": "6604188f9a4bff8d60ca8c6262ecec2fbd3462bc",
+      "sha256": "23261cf56c64cad23845bdd3749f7be475e4d072af63201190e511f779cc179d",
+      "bytes": 44172,
+      "ranges": [
+        [
+          1,
+          1053
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/idle_summary.py",
+      "git_blob": "478b8b4a5c3d3cd467460bf16934a08e8be22f3c",
+      "sha256": "d502654590290719b0c78f42d6b0699c7a534ffaf02551c82a2934e70b078f23",
+      "bytes": 101891,
+      "ranges": [
+        [
+          1,
+          2397
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory.py",
+      "git_blob": "6a0b13d26ae9732669e4795a7131f652e0c4a660",
+      "sha256": "8cd2f81a964a79028654082264fd5c0faecb85b4f96fe428b7a510f332f07b0b",
+      "bytes": 69759,
+      "ranges": [
+        [
+          1,
+          1687
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery.py",
+      "git_blob": "55562538fc2e34d622f1c7b15c21978f073af9e6",
+      "sha256": "0939bf7da520fff07a195aa3864cf50a7dd2520541a49e9a980fab5fb71e9f8f",
+      "bytes": 19000,
+      "ranges": [
+        [
+          1,
+          562
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_admission_reader.py",
+      "git_blob": "dca99be1b42cf0f2c681a4e0bac540daaa730e66",
+      "sha256": "0d524864b807a08e3412e889f82b9443025658bef57c1d54fe4af4497d24e8de",
+      "bytes": 9903,
+      "ranges": [
+        [
+          1,
+          223
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_conversion.py",
+      "git_blob": "6e7254c41ef5675e6f5e7d5a921b96b3b04e1ac7",
+      "sha256": "7346e1960aad75689f1e8ad8deef9b508b0948449b656f3763a33807550fc9cb",
+      "bytes": 68818,
+      "ranges": [
+        [
+          1,
+          1873
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_conversion_apply.py",
+      "git_blob": "1dd52b596a9c9cd0be0ceb578f66dc28e85e5bb4",
+      "sha256": "c283af7dac87f0164daeca430abe4c60be6b43ab3ec27c830d887acf0cf0fa85",
+      "bytes": 17839,
+      "ranges": [
+        [
+          1,
+          424
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_conversion_finalize.py",
+      "git_blob": "e70780a4fd383ae74f2e62e587a01d3ad6a00b2c",
+      "sha256": "802828891bdc8646ebd1c39ea25b42ae1cf0b1c8eb1f5cf62e05fa917ca227f7",
+      "bytes": 15517,
+      "ranges": [
+        [
+          1,
+          322
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_conversion_runtime.py",
+      "git_blob": "5f7b220bdcb04b24c55dd8fd7fc8af3e7b29f546",
+      "sha256": "2e17918763cdbd99fc642c31bf4a4f008715722e8dc3bbde775dc56c05b76c38",
+      "bytes": 16721,
+      "ranges": [
+        [
+          1,
+          432
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_coordinator.py",
+      "git_blob": "83e58175285037beceddc760acadf3425e69aee1",
+      "sha256": "080052c9e5d2664a764074efa0e6f027e9ba57979db46113e452b4a81bbfd6ff",
+      "bytes": 8043,
+      "ranges": [
+        [
+          1,
+          166
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_historical_seal.py",
+      "git_blob": "0fce2f581dd289d178f000003730505e24dbfa86",
+      "sha256": "6b2a199a8df55a54863de0089e28307750bbce011e1b434e3a6de72cdf73eea5",
+      "bytes": 18405,
+      "ranges": [
+        [
+          1,
+          362
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_legacy_archive.py",
+      "git_blob": "34449ffa929068bd97108aa84a87f3105751a378",
+      "sha256": "0a238bac7486802f70b89b97ec341e9988881af496b9538d5e96bcf698b8241c",
+      "bytes": 18619,
+      "ranges": [
+        [
+          1,
+          477
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_manifest.py",
+      "git_blob": "b70259fc4cef82e0c44034141cb99c16595b0c4b",
+      "sha256": "3dc272314f513159ffeefd52cbb6f645b2a392b1acca6e63ac7a8aa73040e72e",
+      "bytes": 18870,
+      "ranges": [
+        [
+          1,
+          563
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_marker.py",
+      "git_blob": "c4afa22067fc1d58ebac3761ebdfd8d4367ec721",
+      "sha256": "2443e212a204789e754b22d87cb0810f175e58ef61dde05176944111d16c4fc3",
+      "bytes": 3863,
+      "ranges": [
+        [
+          1,
+          97
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_marker_stage.py",
+      "git_blob": "e950e5ac540ce7e261b2972fd5d6ffe373dae9dc",
+      "sha256": "8986763729220ffc61e2616b3b0010524ee462e9ae90120370b9f207c37f0b40",
+      "bytes": 4638,
+      "ranges": [
+        [
+          1,
+          122
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_quarantine_storage.py",
+      "git_blob": "36553d845a7ce632453c9e5d85f49cfad13defb1",
+      "sha256": "6924cc71d6bf72114dc2af036e6c490276e3c85a72b96fa83c2636aeaec14606",
+      "bytes": 60992,
+      "ranges": [
+        [
+          1,
+          1463
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_receipt_finalizer.py",
+      "git_blob": "7e545743cd12c1b5512669a374b063ecb39ab56c",
+      "sha256": "7b7b8cf88a038717b0b6e9aa3c701fd781bb5a49e7caa5489e8319570e221d87",
+      "bytes": 9360,
+      "ranges": [
+        [
+          1,
+          192
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_startup_admission.py",
+      "git_blob": "191835b485c9c7af3c0e060b33a4d6b01727b9d9",
+      "sha256": "48d6909bbbebb910ac321270b9b92c5176e32f6190e8bd439899bbbf9a734e9e",
+      "bytes": 4757,
+      "ranges": [
+        [
+          1,
+          143
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_storage.py",
+      "git_blob": "fbec0e97928a13c3600705ee754a4fdc922d97ad",
+      "sha256": "ac3b54c2f21f53352ef3c6a0980ed513977668d2903079654f090c526b5b74ce",
+      "bytes": 121169,
+      "ranges": [
+        [
+          1,
+          3232
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_target_mutation.py",
+      "git_blob": "62adfa84dcaff8937520097d262f357ac51f0163",
+      "sha256": "4cfef3dce4122e45767ffb41583f05d202953326508bdbe5739938d1d59e08cf",
+      "bytes": 12353,
+      "ranges": [
+        [
+          1,
+          375
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_target_verify.py",
+      "git_blob": "1e2aeda92273e4cc7c15256f052e644cbcef8191",
+      "sha256": "7058b20ceee41a9dcb478024032853f50d7e6c2d496f0d9b81453bc2c036abcb",
+      "bytes": 5946,
+      "ranges": [
+        [
+          1,
+          180
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_transaction.py",
+      "git_blob": "e8d40596189079f5a3c08b76cfdc096a22b2f125",
+      "sha256": "cbb0207456d8119a5f7a5c4dde6152bf0b8d431370c719ff8f717d45bf99e739",
+      "bytes": 60074,
+      "ranges": [
+        [
+          1,
+          1679
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_transaction_history.py",
+      "git_blob": "beed07a412884726f450111c09483f18ced81636",
+      "sha256": "c85e95a877e535a76eaab5ea3a70cfe0b70bb12ec81269c1c7d7ec11bb8af5e5",
+      "bytes": 13111,
+      "ranges": [
+        [
+          1,
+          367
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_transaction_memory.py",
+      "git_blob": "b808318c14841a7326cacce2b5b6d73e0910db2b",
+      "sha256": "af2bc879ac9de87a2c885efe5989d9302b18b5045b041f3151824c87e4bea814",
+      "bytes": 25563,
+      "ranges": [
+        [
+          1,
+          690
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_transaction_offset.py",
+      "git_blob": "9e2810707cfe131a155454e9660c0c042bcd95ec",
+      "sha256": "1b9f58cb4aa774fb163291205a213c76b1cc52c8fc31c1542394c40823fb0121",
+      "bytes": 13133,
+      "ranges": [
+        [
+          1,
+          255
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_transaction_prepare.py",
+      "git_blob": "366fb00a5c23624b5603a217317c945ac3ccc38a",
+      "sha256": "0e4e595d98b3310c177c9ec726abea6b41e66cd638d804dedc7b58b9360a764e",
+      "bytes": 24535,
+      "ranges": [
+        [
+          1,
+          690
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/memory_recovery_transaction_terminal.py",
+      "git_blob": "9a67c3d3b24a50ab3cc70f4555df166bfa1e7d1f",
+      "sha256": "689f15629cd1dc71d643f6169b2ea3125fda7a0194dbcbca23fec2037d86c37c",
+      "bytes": 27920,
+      "ranges": [
+        [
+          1,
+          680
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/__init__.py",
+      "git_blob": "69f18e5f6c61ddf8f7c3b74811e7a31d495e67b2",
+      "sha256": "4cc88da08593a444a957cfcca5ebbfb93d96d33cdd04603cca79c0b9a1b0ca67",
+      "bytes": 833,
+      "ranges": [
+        [
+          1,
+          28
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact.py",
+      "git_blob": "33b3845f2e6eea4d8730b51614967fb1bbba6c0e",
+      "sha256": "360f1782f7aa6e904e8f05772bc78793e79fc3c89280e8e10949132667a08107",
+      "bytes": 14403,
+      "ranges": [
+        [
+          1,
+          311
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_factory.py",
+      "git_blob": "e0acb1729d4cb476a5c546a4ef3eeabd0f537f15",
+      "sha256": "db022f47ba4a53dec3f696b02d1a2470bac08e9fe89c62a26892be25611a0485",
+      "bytes": 10384,
+      "ranges": [
+        [
+          1,
+          276
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_grants.py",
+      "git_blob": "5fefd8ceb7f85aafa6a1e4c591e82655a108d89d",
+      "sha256": "13bceaf8ead6801faa57736587320fe98bc0f6b71dbdef1eca7de7086c5b2c45",
+      "bytes": 21702,
+      "ranges": [
+        [
+          1,
+          474
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_operator.py",
+      "git_blob": "fb43e2a9bb0ae598e040db8ace9f98133630ee91",
+      "sha256": "4b8c48722daeb70c932486f6d3fabd6a18b63d3a763380c068901e129dee8402",
+      "bytes": 13339,
+      "ranges": [
+        [
+          1,
+          356
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_projection.py",
+      "git_blob": "f94725f1f2038b82b26291f21a5754b094ed975b",
+      "sha256": "e15d048ccbbb58256ed4795092c90b97cd95f42ddbfd24493267f4a388b5b9b1",
+      "bytes": 10212,
+      "ranges": [
+        [
+          1,
+          189
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_reader.py",
+      "git_blob": "21c87619d9aa1bc09e4c0dfc5d56be0418097499",
+      "sha256": "66985bea88e7d906b479c714fdd3e700fb6a915cd1035122899c71d2b74d33ee",
+      "bytes": 10028,
+      "ranges": [
+        [
+          1,
+          211
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_rematerialization.py",
+      "git_blob": "3fc2dfde4e6906a76ac3edc5c4a19d3c7a5eddde",
+      "sha256": "eb0c8a4a8b59eea21fdadfde2ae728dbf8214041ea2a7e99bc632e2f1484416b",
+      "bytes": 6524,
+      "ranges": [
+        [
+          1,
+          164
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_store.py",
+      "git_blob": "499822f7927dc0bdfb4258e734b9b692784796ef",
+      "sha256": "44237db0d5a02218a207dd7f45542b1428816be4cd4b6731f81d0ea63614ca59",
+      "bytes": 32603,
+      "ranges": [
+        [
+          1,
+          698
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/artifact_verification.py",
+      "git_blob": "05b17ebd6394e1548c8c5ff31c48baaeee53158c",
+      "sha256": "4599179d702bdc91525adb3276bcc8199b784656d8094b432d5af4c11c5c460d",
+      "bytes": 3750,
+      "ranges": [
+        [
+          1,
+          91
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/checked_source.py",
+      "git_blob": "8e99175ca2706859f7d18997a671a432c7430fb5",
+      "sha256": "5ca889dabb528734cc517edbf094020da2ed1f61637ee5c90c767550c2d9d975",
+      "bytes": 73134,
+      "ranges": [
+        [
+          1,
+          1889
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/checkpoint_admission.py",
+      "git_blob": "54f32b3929c4315712de4527f170e5360b36d503",
+      "sha256": "41d2f15cb84c1cdffdc0fd6e2a0e142ceaf4b32e9dce4863edf4ee64c782031e",
+      "bytes": 5130,
+      "ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/checkpoint_dependencies.py",
+      "git_blob": "2b444b164d72d07c45f46e87b25fa6b319054436",
+      "sha256": "a35baaea88d0a92600ee05925562228b18056064500fbfa4e37c0688e9055dc4",
+      "bytes": 18590,
+      "ranges": [
+        [
+          1,
+          365
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/context_checkpoint.py",
+      "git_blob": "777ed0c9a4df52009c554faafc840a07dbbe88e9",
+      "sha256": "4201ef8bcded1dbc817e99036efccea4a8d480254306a405c0a6cda12be90655",
+      "bytes": 5208,
+      "ranges": [
+        [
+          1,
+          114
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/execution_owner.py",
+      "git_blob": "e7433ddef10b39a231645be982e6499296f2d960",
+      "sha256": "7c7ea44433d909010c9095d06bb5085a14c2773dd08bb2dc3b5959801992f64b",
+      "bytes": 15139,
+      "ranges": [
+        [
+          1,
+          356
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/history_visibility.py",
+      "git_blob": "eedb85438c03a28a125413385e97734ffd94a6a5",
+      "sha256": "479d2b15a8a8718733d148a9442539983ff267bbcdee5123320549c4613814af",
+      "bytes": 742,
+      "ranges": [
+        [
+          1,
+          22
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/idle_checkpoint.py",
+      "git_blob": "aa9328355110765c419f909d028cfdd8d91e8d94",
+      "sha256": "6253f65cfc17ae539885b7523b4ef5ada18537a565131441ce7d77986fd4b3e1",
+      "bytes": 42448,
+      "ranges": [
+        [
+          1,
+          1023
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/idle_compaction.py",
+      "git_blob": "511e2813d014a5632254ae050aeb6fde4e680499",
+      "sha256": "ca91e23e50875666d1a31ffa32004de66a71502b13cedf52500d69aee09595c3",
+      "bytes": 9629,
+      "ranges": [
+        [
+          1,
+          239
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/keys.py",
+      "git_blob": "45f6d1cf7be5da55cd8b83d0ec66e537ac08dadb",
+      "sha256": "58a4807948cdabb57b0cd659a7b6bdf62327192fbc4bc457c39f306998e0cee3",
+      "bytes": 1294,
+      "ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/legacy_h1.py",
+      "git_blob": "8a5429c4d3c087e2a1472fb68aaea274d63dea68",
+      "sha256": "c2ccdd6715a84971d276521f66291c09f618c39d25dc1c91f4a3ac0581784a02",
+      "bytes": 6473,
+      "ranges": [
+        [
+          1,
+          187
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/legacy_receipt_source.py",
+      "git_blob": "09ecf8daac83b1b57d6a452893744893c019fbc7",
+      "sha256": "7614ba09e066ae2bf8c54787ef27b1c55436eaef8a75c0210329b854100c7d4a",
+      "bytes": 12758,
+      "ranges": [
+        [
+          1,
+          366
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/manager.py",
+      "git_blob": "7c333e14bd9986a9ce5aa3ce46583811489edbed",
+      "sha256": "ded60269dbcf7ad42023c1e7c996dd13216b5de5c76ca0c94977ad135abe9ccc",
+      "bytes": 153375,
+      "ranges": [
+        [
+          1,
+          3525
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/mode_storage.py",
+      "git_blob": "de7ccb785a1cbf7a6d6ba105d5213b36538d1ac7",
+      "sha256": "7e6d8e782dc11f7dac18e81d233c82e684962dea2b0947efeed4c103522364b8",
+      "bytes": 41507,
+      "ranges": [
+        [
+          1,
+          1140
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/model_selection.py",
+      "git_blob": "225376c6ce3a365cc44f57068ec0a3fc496dd3bf",
+      "sha256": "8018531f0fb7df8c6c34e2c5c3d01ba2f8fcfecac32263a17eaad8de43c6f88a",
+      "bytes": 855,
+      "ranges": [
+        [
+          1,
+          22
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/pending_followups.py",
+      "git_blob": "d360367443655b2ba482fe376d25d9f1f84ef2a9",
+      "sha256": "3baefd35ff8138de400b8822ccd4b167f6d78a20c39dcf9f6d0cfa58d070a924",
+      "bytes": 6966,
+      "ranges": [
+        [
+          1,
+          184
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/persistence_metadata.py",
+      "git_blob": "d21f3071dd836849ac5c459941c24719f2991cdb",
+      "sha256": "9690582b4497530934fc915c7bad46925ec59dba41e2c5917fad9f7ef84b290d",
+      "bytes": 1366,
+      "ranges": [
+        [
+          1,
+          33
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/recovery.py",
+      "git_blob": "56e18bb39d4b43e4ed91e06ff088f111f81aacdd",
+      "sha256": "0e890723b5b73790a7b706f4b358910ac89e7af5d25fcb8919eaa89205222424",
+      "bytes": 39902,
+      "ranges": [
+        [
+          1,
+          967
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/recovery_locator.py",
+      "git_blob": "82ec42f580e2027355b48cd1e46522d5c4beb37f",
+      "sha256": "430579a551a73b0a143053bf35a0263cefb9ef4d0e5b1c2ee10cfad350e3a44a",
+      "bytes": 17686,
+      "ranges": [
+        [
+          1,
+          499
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/runtime_authority.py",
+      "git_blob": "e9aec5ed9ab27cf0a6e50a1ee67ca3ae178a9228",
+      "sha256": "16ae9c20d48d585dd5617521c5e136e1e7d256115713fed569f8fd4f604c477e",
+      "bytes": 6383,
+      "ranges": [
+        [
+          1,
+          187
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/session_export.py",
+      "git_blob": "7762c84d1f3214e02b8ed82dcc6aa2f43669cfee",
+      "sha256": "0d22e0f4117525f37b78ba29ca8cab28380de2a460979ee6d3814a191034552b",
+      "bytes": 16363,
+      "ranges": [
+        [
+          1,
+          424
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/session_handles.py",
+      "git_blob": "ec563b4bb41cb00188c0c759c685d2c23ab3877e",
+      "sha256": "84e0d194b9874a745198544cf8f71a00ccf0c7f0e4c4d7755cee6945b901235f",
+      "bytes": 7495,
+      "ranges": [
+        [
+          1,
+          227
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/session_messages.py",
+      "git_blob": "818392fb6bd40484960c9e2b15b1386537e50929",
+      "sha256": "be448d16b7db1860ce7872857bffdaad02dfcb0ccb7550ea500408b671f6125c",
+      "bytes": 2479,
+      "ranges": [
+        [
+          1,
+          78
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/session_mode.py",
+      "git_blob": "2a1b7b24251b3e96a0592253c8c5330109fd4a75",
+      "sha256": "fb8f44b4e68a09fb21407311e33983da1a80f430b073ed2aa6e80402f265e735",
+      "bytes": 164373,
+      "ranges": [
+        [
+          1,
+          3576
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/source.py",
+      "git_blob": "d5467a8df95b4996fa2ce4d4d2a50fc035e0c509",
+      "sha256": "afa07622e3e1eb9a551012c5d681864250088566705d3d6345bc917ca45ba273",
+      "bytes": 7894,
+      "ranges": [
+        [
+          1,
+          172
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/source_compaction.py",
+      "git_blob": "b1ef2ca6cd8f77f4380820d99abc2bd5c97a96ac",
+      "sha256": "54f2b6b83d990e961ba29f22fcdfcb26505fc24e5a3edc4ee537ca4e1670923c",
+      "bytes": 15772,
+      "ranges": [
+        [
+          1,
+          305
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/source_discovery.py",
+      "git_blob": "337817c40c12592002ac5bc669ab9dae91be6478",
+      "sha256": "dc338cf2fd34cc3eb879e309936fd1e0e16ec28ab2b7fe9f282820dc4f475a9b",
+      "bytes": 16285,
+      "ranges": [
+        [
+          1,
+          451
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/source_projection.py",
+      "git_blob": "277b70966a41bf463826ce534f635bb9d7b72203",
+      "sha256": "386a1606ac3a43cb65f1186012092359ae124d6a3effe1c88c2c9be79ecc38fb",
+      "bytes": 6872,
+      "ranges": [
+        [
+          1,
+          169
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/source_request.py",
+      "git_blob": "ee543fe24400886855aeb9dfd2ee997e20b4b511",
+      "sha256": "c8d97eb7e23daae859fce65cbed4584b6d9eaba0282ad1344e15f9c92652b239",
+      "bytes": 8801,
+      "ranges": [
+        [
+          1,
+          188
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/source_root.py",
+      "git_blob": "68d3218a8949d0a72cfdecdb234221abf72d50b5",
+      "sha256": "5dc9c0585178b043fb26f917c412e485c7eaeb563d1ed1762fd699d6d45bd22b",
+      "bytes": 16660,
+      "ranges": [
+        [
+          1,
+          427
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/source_store.py",
+      "git_blob": "c5d59d6d0c85ac2f1e10ce7d6ec80b2b1a1b33d0",
+      "sha256": "cb2878bc87ea17465a1f57e1f7dfb66d22d3f843c03f4d8e75f2d00ded5d47ea",
+      "bytes": 82438,
+      "ranges": [
+        [
+          1,
+          1836
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/summary.py",
+      "git_blob": "be63dee157c6dbed8cdcaba5128447455f917395",
+      "sha256": "362821c9ac00e057463f8f76aba1242297e42ce50f316883d8a02a0fa28cf5e9",
+      "bytes": 1779,
+      "ranges": [
+        [
+          1,
+          58
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/turn_writer.py",
+      "git_blob": "60c88c73138480fc6a51ca80ac2f21edde68d435",
+      "sha256": "e84fb66849ac8bd34a976f904333ddf2cf281415255700c4928e6b494bb304fe",
+      "bytes": 15006,
+      "ranges": [
+        [
+          1,
+          314
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/webui_turns.py",
+      "git_blob": "d6f2837784a12eb4b1d3b095349eab2ecec8285f",
+      "sha256": "06b09e21f869c3ffcbfaa2e6bb79d826def775437fbcec9653e303f2e5b16e8c",
+      "bytes": 36545,
+      "ranges": [
+        [
+          1,
+          1017
+        ]
+      ],
+      "purpose": "Superseding 5A/5B complete H02 primary body read; published body credit from handoff.",
+      "evidence_origin": "/root/deep_session_state final 5A/5B ledger; frozen TSV/tree mechanically reconciled by continuation coordinator"
+    }
+  ],
+  "caller_context_reads": [],
+  "search_only": [
+    {
+      "query": "64MiB / 67,108,864 source limits and ordinary append/cap transition",
+      "roots": [
+        "nanobot/session",
+        "tests/session",
+        "tests/agent"
+      ],
+      "purpose": "Capacity/counterevidence search; not global absence proof."
+    },
+    {
+      "query": "4096 / MODE_ENUM_LIMIT journal retention/pruning",
+      "roots": [
+        "nanobot/session",
+        "tests/session"
+      ],
+      "purpose": "Journal capacity/pruning search; not global absence proof."
+    },
+    {
+      "query": "IdleRuntimeBindingRegistry / idle summary transport / scanner constructors",
+      "roots": [
+        "nanobot",
+        "tests"
+      ],
+      "purpose": "Dormant activation/consumer search."
+    },
+    {
+      "query": "title_user_edited writers",
+      "roots": [
+        "nanobot",
+        "tests"
+      ],
+      "purpose": "Title-edge writer search; U01 remains unresolved."
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "evidence_origin": "/root/deep_session_state handoff",
+      "path": "tests/session/test_source_store.py",
+      "ranges": [
+        [
+          83,
+          149
+        ],
+        [
+          215,
+          227
+        ],
+        [
+          507,
+          552
+        ],
+        [
+          661,
+          699
+        ]
+      ],
+      "purpose": "Source-store state/retry/fsync/reset evidence; source only, not executed."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "evidence_origin": "/root/deep_session_state handoff",
+      "path": "tests/session/test_session_mode_registry.py",
+      "ranges": [
+        [
+          91,
+          140
+        ],
+        [
+          291,
+          311
+        ],
+        [
+          440,
+          467
+        ]
+      ],
+      "purpose": "Registry/journal/tombstone evidence; not executed."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "evidence_origin": "/root/deep_session_state handoff",
+      "path": "tests/session/test_session_mode_operations.py",
+      "ranges": [
+        [
+          430,
+          507
+        ],
+        [
+          520,
+          602
+        ]
+      ],
+      "purpose": "Contention/recreate/fork source evidence; not executed."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "evidence_origin": "/root/deep_session_state handoff",
+      "path": "tests/agent/test_memory_recovery_startup_admission.py",
+      "ranges": [
+        [
+          45,
+          76
+        ],
+        [
+          155,
+          181
+        ],
+        [
+          238,
+          293
+        ]
+      ],
+      "purpose": "Startup/historical seal source evidence; not executed."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "evidence_origin": "/root/deep_session_state handoff",
+      "path": "tests/agent/test_memory_recovery_receipt_finalizer.py",
+      "ranges": [
+        [
+          45,
+          188
+        ]
+      ],
+      "purpose": "Receipt copy/seal/fault-retention source evidence; not executed."
+    }
+  ],
+  "support_reads": [
+    {
+      "path": "docs/audits/architecture-review-2026-11-06/decisions.md",
+      "ranges": [
+        [
+          1,
+          111
+        ]
+      ],
+      "purpose": "Deferred D1–D7 context only."
+    },
+    {
+      "path": "persistence/lifecycle support document",
+      "ranges": [
+        [
+          1,
+          113
+        ]
+      ],
+      "purpose": "Supplied architecture support; exact repository locator retained only in analyst provenance."
+    },
+    {
+      "path": "docs/session-recovery-architecture",
+      "ranges": [
+        [
+          1,
+          298
+        ]
+      ],
+      "purpose": "Recovery architecture support; analyst refilled earlier truncated 94–193 segment."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/session/session-persistence-jsonl/src/storage.ts",
+      "ranges": [
+        [
+          170,
+          330
+        ],
+        [
+          540,
+          566
+        ]
+      ],
+      "git_blob": "197dcbc270cd153c8cb8b897359378d46963daa8",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; mechanism comparison only, no parity/runtime certification.",
+      "evidence_origin": "/root/deep_session_state packets 1–4/5A/5B; representative ranges freshly re-read by continuation coordinator"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/session/session-persistence-jsonl/src/index.ts",
+      "ranges": [
+        [
+          1390,
+          1450
+        ]
+      ],
+      "git_blob": "f8351fa9ee75db9790859de9672d1602c0c05664",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; mechanism comparison only, no parity/runtime certification.",
+      "evidence_origin": "/root/deep_session_state packets 1–4/5A/5B; representative ranges freshly re-read by continuation coordinator"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/compaction/compaction-basic/src/region.ts",
+      "ranges": [
+        [
+          206,
+          276
+        ],
+        [
+          417,
+          509
+        ]
+      ],
+      "git_blob": "7b3d77d299881fa47b8dfdab7fae0a92cd7d462c",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; mechanism comparison only, no parity/runtime certification.",
+      "evidence_origin": "/root/deep_session_state packets 1–4/5A/5B; representative ranges freshly re-read by continuation coordinator"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/thread-store/src/local/live_writer.rs",
+      "ranges": [
+        [
+          420,
+          482
+        ]
+      ],
+      "git_blob": "0fba3f55f8a40cf58b49c91edf33f9e70a25367a",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; mechanism comparison only, no parity/runtime certification.",
+      "evidence_origin": "/root/deep_session_state packets 1–4/5A/5B; representative ranges freshly re-read by continuation coordinator"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/rollout/src/recorder.rs",
+      "ranges": [
+        [
+          1070,
+          1118
+        ],
+        [
+          1990,
+          2040
+        ],
+        [
+          2130,
+          2170
+        ]
+      ],
+      "git_blob": "7298c4188879bfcda4650880f1678d3a8c703da8",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; mechanism comparison only, no parity/runtime certification.",
+      "evidence_origin": "/root/deep_session_state packets 1–4/5A/5B; representative ranges freshly re-read by continuation coordinator"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/core/src/session/turn.rs",
+      "ranges": [
+        [
+          190,
+          245
+        ],
+        [
+          688,
+          740
+        ]
+      ],
+      "git_blob": "e4a092ed65e5ddfe3e2adf990039fd36fc41b9e6",
+      "sha256": null,
+      "purpose": "Supplied pinned engineering-reference body; mechanism comparison only, no parity/runtime certification.",
+      "evidence_origin": "/root/deep_session_state packets 1–4/5A/5B; representative ranges freshly re-read by continuation coordinator"
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "commit": "f49d4487f8c2505cd7cc1ca757855bd45f4b373f",
+      "kind": "historical artifact_store body/diff",
+      "purpose": "Immutable artifact byte-store introduction; historical checks are not current validation."
+    },
+    {
+      "commit": "54c369ef3264e3aa822f31531d5a5524aa6744e7",
+      "kind": "full source_compaction diff",
+      "purpose": "Dependency-aware canonical summary evidence/provenance history."
+    },
+    {
+      "commit": "6d2ee0e37d2a1cc2b70813a5651508e18fbc01b4",
+      "kind": "historical idle scanner body/diff",
+      "purpose": "Dormant idle publication/scanner history."
+    },
+    {
+      "commit": "85601bf058c72ce423149960678cc18cb892ced2",
+      "kind": "message/offline recovery coordinator diff",
+      "purpose": "Offline recovery explicitly not activated at startup."
+    },
+    {
+      "commit": "364259daed2c11700d4064e7ca58743fd037b0b0",
+      "kind": "message/stat plus manager/execution_owner diffs",
+      "purpose": "Interrupted fresh-session recovery history; no full session_mode historical-diff credit."
+    }
+  ],
+  "current_staging_delta": {
+    "baseline": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "staging": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "status": "identical",
+    "changed_files": []
+  },
+  "history_limits": "Bounded relevant history only; historical messages/tests are not current runtime evidence.",
+  "findings": [
+    {
+      "id": "H02-CAP-SOURCE64",
+      "classification": "serialized canonical-source capacity contract gap",
+      "priority": null,
+      "confidence": "high static",
+      "source": [
+        "nanobot/session/source_store.py:175–179,1191–1225,1299–1311",
+        "nanobot/session/manager.py:1144–1195",
+        "nanobot/session/session_mode.py:1036–1040,1588–1694"
+      ],
+      "trigger": "A valid append makes the serialized canonical source exceed 67,108,864 bytes.",
+      "impact": "The write path can accept the whole source while later managed resolution refuses that same source under its read cap; inventory-wide resolution can therefore be affected. No outage/data-loss/timing claim.",
+      "smallest_alternative": "Define coherent serialized pre-acceptance capacity with typed refusal before acknowledgement/effects plus an existing-oversize operator path, or use bounded/indexed/streaming authority. Do not truncate or merely raise the constant.",
+      "dependencies": [
+        "D7",
+        "session-mode capacity/retention contract"
+      ]
+    },
+    {
+      "id": "H02-CAP-JOURNAL4096",
+      "classification": "session-mode journal enumeration capacity contract gap",
+      "priority": null,
+      "confidence": "high static",
+      "source": [
+        "nanobot/session/mode_storage.py:27,1054–1075,1085–1108",
+        "nanobot/session/session_mode.py:1396–1497,2181–2196"
+      ],
+      "trigger": "The retained `.session-mode/journals` directory grows beyond 4096 names.",
+      "impact": "Directory enumeration fails before suffix filtering, while ordinary resolution scans retained journals; accumulated proof can deny resolution. No deployed incidence or outage claim.",
+      "smallest_alternative": "Use a crash-safe pending/current index with rebuild semantics or an explicit proof-retention/capacity contract. Never silently delete proof to fit the cap.",
+      "dependencies": [
+        "D4",
+        "D7"
+      ]
+    },
+    {
+      "id": "H02-IO",
+      "classification": "structural repeated full-resolution / verification cost",
+      "priority": null,
+      "confidence": "high structure; performance unmeasured",
+      "source": [
+        "nanobot/session/manager.py:2845–2880",
+        "nanobot/session/session_handles.py:152–227",
+        "nanobot/session/artifact_store.py:650–698",
+        "nanobot/session/artifact_reader.py:187–198"
+      ],
+      "impact": "Cache hits re-resolve mode bindings, handle lookup scans/repairs all session metadata, canonical append rewrites the whole source, and artifact range reads hash/validate the full blob.",
+      "smallest_alternative": "Consider exact-target bindings and pending-transition/handle indexes under the same leases/CAS/recreate semantics; preserve full integrity checks where required. No generic persistence framework or measured-speed claim.",
+      "dependencies": [
+        "P01",
+        "D7"
+      ]
+    },
+    {
+      "id": "H02-ART-SOURCE",
+      "classification": "conditional artifact storage simplification",
+      "priority": null,
+      "confidence": "source-established duplicate representation; retirement contract unresolved",
+      "source": [
+        "nanobot/session/artifact.py:172–311",
+        "nanobot/session/artifact_projection.py:100–189",
+        "nanobot/session/artifact_rematerialization.py:1–164",
+        "nanobot/session/artifact_grants.py:132–267,393–466",
+        "nanobot/session/artifact_reader.py:108–211",
+        "nanobot/session/artifact_store.py:379–698"
+      ],
+      "impact": "Published canonical text is duplicated into an immutable private blob and later rematerializable from canonical source, creating separate quota/install/recovery machinery.",
+      "smallest_alternative": "Evaluate a source-backed opaque text/range reader only if it preserves opaque IDs≠access, current policy, exact provenance/source receipts, direct-child grants/handoff, checkpoint proof, UTF-8 byte-range semantics and export/backup/migration compatibility.",
+      "dependencies": [
+        "D4",
+        "D7",
+        "T01",
+        "E02"
+      ]
+    },
+    {
+      "id": "H02-LEGACY-ISOLATE",
+      "classification": "conditional legacy recovery isolation / retirement candidate",
+      "priority": null,
+      "confidence": "high current fail-closed semantics; retirement obligations unresolved",
+      "source": [
+        "nanobot/agent/memory_recovery_coordinator.py:49–163",
+        "nanobot/agent/memory_recovery_receipt_finalizer.py:74–188",
+        "nanobot/agent/memory_recovery_startup_admission.py:66–139",
+        "nanobot/agent/memory_recovery_transaction_offset.py:1–255",
+        "nanobot/session/legacy_h1.py:153–179",
+        "nanobot/session/legacy_receipt_source.py:257–366",
+        "nanobot/agent/memory_recovery_marker_stage.py:67–119",
+        "nanobot/agent/memory_recovery_target_verify.py:121–177",
+        "nanobot/session/session_export.py:325–421"
+      ],
+      "impact": "The offline recovery path deliberately reopens/revalidates stages, retains uncertain residues and historical seals, and separates receipt finalization; complexity is real but currently protects compatibility and non-replay guarantees.",
+      "smallest_alternative": "Keep the recovery path isolated/lazy and retire only after D4 proves external/old-state obligations. Do not replace fail-closed residues with startup repair or lossy compatibility success.",
+      "dependencies": [
+        "D4",
+        "D7",
+        "C00",
+        "E02"
+      ]
+    },
+    {
+      "id": "H02-IDLE-DORMANT",
+      "classification": "conditional dormant-feature retirement/integration choice",
+      "priority": null,
+      "confidence": "high dormancy; not a production performance defect",
+      "source": [
+        "nanobot/agent/idle_runtime.py:1745–1750",
+        "nanobot/agent/idle_summary.py:413–420,1479–1501",
+        "nanobot/agent/autocompact.py:57–64",
+        "nanobot/agent/idle_compaction.py:116–176,475–535,575–800",
+        "nanobot/agent/idle_lifecycle.py:135–186",
+        "nanobot/session/source_discovery.py:285–365"
+      ],
+      "impact": "A substantial bounded idle compaction/scanner/lifecycle stack exists while activation is explicitly refused and transport/retry/finite-cleanup qualification is deferred.",
+      "smallest_alternative": "After consumer proof, either retire dormant scheduling/registry/transport machinery while retaining reusable checkpoint/CAS/fold logic, or integrate it through one scheduler with real transport and budget qualification.",
+      "dependencies": [
+        "D3",
+        "D6",
+        "D7",
+        "P01"
+      ]
+    }
+  ],
+  "additional_observations": [
+    {
+      "id": "H02-TITLE-EDGE",
+      "classification": "unpromoted edge observation",
+      "source": [
+        "nanobot/session/webui_turns.py:207–327",
+        "nanobot/session/manager.py:3416–3488",
+        "nanobot/session/source_store.py:1778–1806"
+      ],
+      "mechanism": "Title generation snapshots `title_user_edited`, awaits provider generation, then upserts without a title-specific incarnation/user-edit compare-and-set.",
+      "limit": "No in-tree title_user_edited writer was established by H02; U01 owns actual UI writers, so no normal UI race/bug is promoted."
+    }
+  ],
+  "finding_count_convention": "Six promoted H02 findings. H02-TITLE-EDGE is retained as an unpromoted observation pending U01 writer evidence and is not included in finding totals.",
+  "final_discussion_questions": [
+    {
+      "id": "H02-Q1",
+      "decision": "D7",
+      "question": "What serialized canonical-source capacity is part of the supported session contract, and what operator path is required for already-oversize sources?"
+    },
+    {
+      "id": "H02-Q2",
+      "decision": "D4/D7",
+      "question": "What retention/capacity contract governs durable session-mode journals, and may completed proof ever be compacted or indexed without losing recovery evidence?"
+    },
+    {
+      "id": "H02-Q3",
+      "decision": "D7/P01",
+      "question": "Which full-resolution/full-verification paths can be indexed or bound more narrowly without weakening revocation, reset/recreate, CAS and integrity semantics?"
+    },
+    {
+      "id": "H02-Q4",
+      "decision": "D4/D7",
+      "question": "Should canonical text artifacts remain copied immutable blobs, or can a source-backed opaque range reader replace part of that machinery while preserving grants/provenance/export compatibility?"
+    },
+    {
+      "id": "H02-Q5",
+      "decision": "D4/D7",
+      "question": "What legacy receipt/memory-recovery states and external consumers must remain supported before any offline recovery machinery can be retired?"
+    },
+    {
+      "id": "H02-Q6",
+      "decision": "D3/D6/D7",
+      "question": "Should dormant idle compaction be retired or integrated, and if integrated what scheduler, transport, finite cleanup and usage-budget contract qualifies it?"
+    },
+    {
+      "id": "H02-Q7",
+      "decision": "D7",
+      "question": "Does U01 provide a user-edit/incarnation writer contract that makes late WebUI title upsert safe, or is a title-specific compare-and-set required?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    {
+      "topic": "Canonical source and journal capacity",
+      "streams": [
+        "H02",
+        "C00",
+        "E02"
+      ],
+      "findings": [
+        "H02-CAP-SOURCE64",
+        "H02-CAP-JOURNAL4096"
+      ],
+      "decisions": [
+        "D4",
+        "D7"
+      ]
+    },
+    {
+      "topic": "Persistence/indexing simplification",
+      "streams": [
+        "H02",
+        "P01"
+      ],
+      "findings": [
+        "H02-IO"
+      ],
+      "decisions": [
+        "D7"
+      ]
+    },
+    {
+      "topic": "Artifact representation/grants/export",
+      "streams": [
+        "H02",
+        "T01",
+        "E02"
+      ],
+      "findings": [
+        "H02-ART-SOURCE"
+      ],
+      "decisions": [
+        "D4",
+        "D7"
+      ]
+    },
+    {
+      "topic": "Legacy recovery compatibility",
+      "streams": [
+        "H02",
+        "C00",
+        "E02"
+      ],
+      "findings": [
+        "H02-LEGACY-ISOLATE"
+      ],
+      "decisions": [
+        "D4",
+        "D7"
+      ]
+    },
+    {
+      "topic": "Dormant idle scheduling",
+      "streams": [
+        "H02",
+        "A01",
+        "H03",
+        "P01"
+      ],
+      "findings": [
+        "H02-IDLE-DORMANT"
+      ],
+      "decisions": [
+        "D3",
+        "D6",
+        "D7"
+      ]
+    },
+    {
+      "topic": "WebUI title edit lifetime",
+      "streams": [
+        "H02",
+        "U01"
+      ],
+      "findings": [],
+      "observations": [
+        "H02-TITLE-EDGE"
+      ],
+      "decisions": [
+        "D7"
+      ]
+    }
+  ],
+  "coverage_counts": {
+    "primary_assignments": 74,
+    "supplied_full_primary_body_paths": 74,
+    "primary_physical_lines": 47094,
+    "primary_bytes": 1921930,
+    "primary_exclusions": 0,
+    "primary_unread_paths": 0,
+    "test_source_paths": 5,
+    "reference_paths": 6,
+    "findings": 6,
+    "unpromoted_observations": 1,
+    "discussion_questions": 7
+  },
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "H02 source-review publication only; no repair/product/design acceptance.",
+    "staging_check": {
+      "status": "PASS",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "baseline_comparison": "identical; no changed files"
+    },
+    "ledger_reconciliation": {
+      "status": "PASS",
+      "assigned_paths": 74,
+      "handoff_full_paths": 74,
+      "inventory_matches": 74,
+      "tree_blob_matches": 74,
+      "physical_lines": 47094,
+      "bytes": 1921930,
+      "material_primary_gaps": 0,
+      "supersession": "Final F74/P0/R0 accepted; initial F33/P4/R37 remains historical only."
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "promoted_findings": [
+        "H02-CAP-SOURCE64",
+        "H02-CAP-JOURNAL4096",
+        "H02-IO",
+        "H02-ART-SOURCE",
+        "H02-LEGACY-ISOLATE",
+        "H02-IDLE-DORMANT"
+      ],
+      "unpromoted_observations": [
+        "H02-TITLE-EDGE"
+      ],
+      "note": "Freshly re-read material capacity, persistence/artifact, legacy recovery, idle dormancy and title-edge source chains plus representative DSH/Codex/history mechanisms.",
+      "qualifications": [
+        "Capacity findings are source-established contract mismatches; no outage, erased-data or timing claim.",
+        "H02-IO is structural debt with no measured performance claim.",
+        "H02-ART-SOURCE is a conditional simplification, not an authorized blob-store removal.",
+        "H02-LEGACY-ISOLATE preserves fail-closed compatibility until D4 evidence permits retirement.",
+        "H02-IDLE-DORMANT is not a production performance defect because activation is explicitly refused.",
+        "H02-TITLE-EDGE remains unpromoted pending U01 writer evidence."
+      ]
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "No clean local audit worktree in this web continuation; source/API reads and frozen metadata reconciliation only."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "pending until coordinator commits",
+    "decisions": "D1–D7 remain deferred."
+  },
+  "integrated_review": null,
+  "git_checkpoint": null,
+  "raw_failures_and_limits": [
+    "No repository tests/builds/checkers/imports/services/providers/sandboxes/probes/benchmarks executed."
+  ],
+  "limits": [
+    "The 74-body complete-read credit is inherited from the saved analyst handoff; the coordinator reconciled exact frozen metadata and freshly reread material semantics rather than re-reading every body.",
+    "No deployed configuration, external consumer prevalence, runtime capacity reproduction, performance timing or real idle transport qualification is claimed.",
+    "Reference mechanisms are comparisons, not parity requirements."
+  ]
+}

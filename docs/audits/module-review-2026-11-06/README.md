@@ -9,8 +9,8 @@ coordinator **PASS** for its source-review publication: seven classified finding
 open H01-F8 registration contract and six retained questions; its acceptance publication is
 checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`. Integrated review and product/
 architecture decisions remain pending. C00 is now coordinator-checked from its saved 70/70 handoff and checkpointed at
-`85c59330c91e7982574d79f92602cc7e605acb4c`; the H02 handoff remains
-saved unpublished, and H03 remains incomplete (23 full/19 partial/3 unread). Twelve streams remain queued. No repair/design is
+`85c59330c91e7982574d79f92602cc7e605acb4c`. H02 is now coordinator-checked from the
+superseding F74/P0/R0 handoff; H03 remains incomplete (23 full/19 partial/3 unread). Twelve streams remain queued. No repair/design is
 accepted; publication/acceptance, integrated review and Git preservation remain distinct.
 
 The foundation was independently verified **PASS** by the coordinator and committed/pushed
@@ -26,10 +26,11 @@ S01/S02 exact evidence is in [S01 coverage](reports/S01-coverage.json) and
 
 The [durable handoff index](handoffs/index.json) preserves [C00](handoffs/C00.md),
 [H02](handoffs/H02.md) and [H03](handoffs/H03.md). C00 has now been published/checked as
-[C00 report](reports/C00.md); H02/H03 remain handoff evidence. H02 supplements 5A/5B supersede
-its initial F33/P4/R37 attribution with current F74/P0/R0. Pipeline states below are preserved; all
+[C00 report](reports/C00.md), and H02 has now been published/checked as [H02 report](reports/H02.md).
+H03 remains handoff evidence. H02 supplements 5A/5B supersede its initial F33/P4/R37 attribution
+with current F74/P0/R0. Pipeline states below are preserved; all
 execution is paused. Resumption verified `staging` identical to pinned `9562`; no affected source evidence needed
-refresh. H01 and C00 are now coordinator-checked. Next publish/check H02, resume H03, and proceed U01/D01/T01/A01/K01/E02/
+refresh. H01, C00 and H02 are now coordinator-checked. Next resume H03 and proceed U01/D01/T01/A01/K01/E02/
 E01/R01/M01/X01/Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
 owns final structural verification and Git preservation.
 
@@ -46,7 +47,7 @@ explicit supplementary reads.
 | --- | --- | ---: | --- |
 | C00 | Entrypoints, CLI, commands, config, gateway composition, shared utilities | 70 | coordinator-checked |
 | H01 | Loop, runner, bus, hooks, turn admission and delivery | 29 | coordinator-checked |
-| H02 | Sessions, ledgers, history, memory, compaction and recovery | 74 | in-progress |
+| H02 | Sessions, ledgers, history, memory, compaction and recovery | 74 | coordinator-checked |
 | H03 | Providers, models, budgets, keys, usage and accounting | 45 | in-progress |
 | S01 | Filesystem authority, folder grants, private-state policy and security | 15 | coordinator-checked |
 | S02 | Shell, sandbox, native admission, exec sessions and supervision | 6 | coordinator-checked |
@@ -63,10 +64,10 @@ explicit supplementary reads.
 | Q01 | Build/install/dependency/CI/deployment/migration tooling and documentation | 25 | queued |
 | P01 | Efficiency and simplification across every stream | 0 (shared) | queued |
 
-These are assignment counts. Published S01/S02/H01/C00 evidence covers **120 primary bodies**
-with supplied complete body ledgers (15 S01, six S02, 29 H01, 70 C00), including one newline-only
-marker. Those reports have zero primary-file gaps/exclusions; 799 targets lack published
-new body evidence. Saved H02/H03 handoffs add no current publication credit. Mechanical
+These are assignment counts. Published S01/S02/H01/C00/H02 evidence covers **194 primary bodies**
+with supplied complete body ledgers (15 S01, six S02, 29 H01, 70 C00, 74 H02), including one newline-only
+marker. Those reports have zero primary-file gaps/exclusions; 725 targets lack published
+new body evidence. Saved H03 handoff adds no current publication credit. Mechanical
 existence, hash agreement, prior discovery and the earlier comparison supply no new read credit.
 Each adapter, provider and native client needs its own accounted disposition; reading a
 shared base does not review its implementations. No path count certifies all-branch semantics.

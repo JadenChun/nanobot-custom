@@ -25,7 +25,7 @@
     "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
     "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
   },
-  "published_primary_body_credit_added": 70,
+  "published_primary_body_credit_added": 144,
   "handoffs": [
     {
       "stream": "C00",
@@ -62,8 +62,8 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "saved-unpublished-unaccepted",
-      "published_body_credit_added": 0,
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 74,
       "packets": [
         "1",
         "2",
@@ -94,8 +94,7 @@
     }
   ],
   "resume_order": [
-    "Publish/check saved H02 handoff, preserving supplements 5A/5B F74/P0/R0 supersession.",
-    "Resume incomplete H03.",
+    "Resume incomplete H03 (23 full / 19 partial / 3 unread).",
     "U01",
     "D01",
     "T01",
@@ -110,5 +109,5 @@
     "P01",
     "Fresh integrated review and final consolidated D1–D7 discussion."
   ],
-  "limits": "C00 handoff is now published/checked with fresh coordinator verification; H02/H03 remain handoff evidence. Hashes attest saved documents/provenance, not runtime results."
+  "limits": "C00 and H02 handoffs are published/checked with fresh coordinator verification; H03 remains incomplete handoff evidence. No runtime results are implied."
 }
