@@ -22,15 +22,15 @@ retains its targeted historical boundary; it is not the new deep-review synthesi
 
 The coordinator accepted the publication foundation and committed/pushed checkpoint
 `5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. [C00/H02/H03/U01/D01/T01 handoffs](handoffs/index.json)
-remain preserved as provenance; C00, H02, H03, U01 and D01 are now published/checked; T01-A/B source inspection is saved at F12/P0/R32, T01 remains unaccepted, and nine streams remain queued. Published evidence
-now covers 489 primary bodies. The active T01 handoff additionally records twelve fully read T01-A/B bodies without publication/acceptance credit. Forty-two promoted finding entries and forty-four questions
+remain preserved as provenance; C00, H02, H03, U01 and D01 are now published/checked; T01-A/B/C source inspection is saved at F14/P0/R30, T01 remains unaccepted, and nine streams remain queued. Published evidence
+now covers 489 primary bodies. The active T01 handoff additionally records fourteen fully read T01-A/B/C bodies without publication/acceptance credit. Forty-two promoted finding entries and forty-four questions
 remain in the eight reports rather than becoming
 a whole-project conclusion; H01-F8 is explicitly open.
 S01-F03 is cross-referenced by S02 and counted once. H02 supplements5A/5B supply current F74/P0/R0, superseding initial F33/P4/R37; the saved handoffs remain provenance snapshots rather than additional body credit.
 
 The user-authorized sequence remains to inspect every module, preserve per-module Git status
 checkpoints, reconcile shared contracts and then hold the consolidated discussion. Source
-inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03 checks are complete; next continue T01 with T01-C's two MCP/OAuth primaries, then later bounded execution/native and wrapper substages before T01 closure; afterward proceed A01/K01/E02/E01/R01/M01/X01/Q01/P01.
+inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03 checks are complete; next continue T01 with T01-D's six execution/native-authority primaries, then later bounded artifact/file/workspace and wrapper substages before T01 closure; afterward proceed A01/K01/E02/E01/R01/M01/X01/Q01/P01.
 Fresh integrated review remains pending. No open decision blocks later source inspection. Continuation is stage-by-stage: each session should finish one bounded stage/substage, preserve exact evidence and gaps, and checkpoint before the next stage.
 
 | Prior decision area | Current review-sequencing disposition |

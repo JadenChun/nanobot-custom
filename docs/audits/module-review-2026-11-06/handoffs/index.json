@@ -205,13 +205,13 @@
       "path": "handoffs/T01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 12,
+        "full": 14,
         "partial": 0,
-        "unread": 32
+        "unread": 30
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "T01-A+B complete at F12/P0/R32; three provisional P2 findings retained; no published/coordinator-checked body credit added. Next bounded stage is T01-C MCP transport/OAuth (two primaries).",
+      "note": "T01-A+B+C complete at F14/P0/R30; six provisional findings retained (one P1 conditional, five P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-D execution/native authority (six primaries).",
       "last_checkpoint_commit": "eeb736a236b44654f7c3c22ce5474d5b4d9f28e2",
       "provisional_findings": [
         {
@@ -231,6 +231,25 @@
           "id": "T01-F03",
           "priority": "P2",
           "title": "Concurrent first-use foreground MCP initialization can silently omit configured tools",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "T01-F04",
+          "priority": "P1",
+          "title": "Remote MCP annotations can breach the delegated read-only authority boundary",
+          "state": "provisional-active-handoff",
+          "qualification": "requires a configured remote server with false/inaccurate readOnlyHint; final D2/D4 trust model still governs repair"
+        },
+        {
+          "id": "T01-F05",
+          "priority": "P2",
+          "title": "A failed MCP server setup can leave partially registered dead capabilities",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "T01-F06",
+          "priority": "P2",
+          "title": "Stdio MCP readiness has no deadline and serial startup can block the application indefinitely",
           "state": "provisional-active-handoff"
         }
       ],
@@ -261,8 +280,8 @@
     }
   ],
   "resume_order": [
-    "T01-C only: nanobot/agent/tools/mcp.py and nanobot/agent/tools/mcp_oauth.py; checkpoint before expanding scope.",
-    "Continue remaining T01 in later bounded substages: execution/native authority, then remaining wrappers/adapters; close and coordinator-check T01.",
+    "T01-D only: nanobot/agent/tools/_windows_job.py, agent_browser.py, agent_device.py, desktop_use.py, execution.py and process.py; checkpoint before expanding scope.",
+    "Continue remaining T01 in later bounded substages: artifact/file/workspace authority and remaining wrappers/adapters; close and coordinator-check T01.",
     "A01",
     "K01",
     "E02",
