@@ -22,15 +22,15 @@ retains its targeted historical boundary; it is not the new deep-review synthesi
 
 The coordinator accepted the publication foundation and committed/pushed checkpoint
 `5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. [C00/H02/H03/U01/D01/T01 handoffs](handoffs/index.json)
-remain preserved as provenance; C00, H02, H03, U01 and D01 are now published/checked; T01-A/B/C/D/E source inspection is saved at F29/P0/R15, T01 remains unaccepted, and nine streams remain queued. Published evidence
-now covers 489 primary bodies. The active T01 handoff additionally records twenty-nine fully read T01-A/B/C/D/E bodies without publication/acceptance credit. Forty-two promoted finding entries and forty-four questions
+remain preserved as provenance; C00, H02, H03, U01 and D01 are now published/checked; T01-A/B/C/D/E/F source inspection is saved at F36/P0/R8, T01 remains unaccepted, and nine streams remain queued. Published evidence
+now covers 489 primary bodies. The active T01 handoff additionally records thirty-six fully read T01-A/B/C/D/E/F bodies without publication/acceptance credit. Forty-two promoted finding entries and forty-four questions
 remain in the eight reports rather than becoming
 a whole-project conclusion; H01-F8 is explicitly open.
 S01-F03 is cross-referenced by S02 and counted once. H02 supplements5A/5B supply current F74/P0/R0, superseding initial F33/P4/R37; the saved handoffs remain provenance snapshots rather than additional body credit.
 
 The user-authorized sequence remains to inspect every module, preserve per-module Git status
 checkpoints, reconcile shared contracts and then hold the consolidated discussion. Source
-inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03 checks are complete; next continue T01 with T01-F's seven search/web/crawler/network primaries, then T01-G's final eight wrapper primaries before T01 closure; afterward proceed A01/K01/E02/E01/R01/M01/X01/Q01/P01.
+inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03 checks are complete; next continue T01 with T01-G's final eight compatibility/runtime wrapper primaries, then publish/coordinator-check T01 in a separate stage before advancing; afterward proceed A01/K01/E02/E01/R01/M01/X01/Q01/P01.
 Fresh integrated review remains pending. No open decision blocks later source inspection. Continuation is stage-by-stage: each session should finish one bounded stage/substage, preserve exact evidence and gaps, and checkpoint before the next stage.
 
 | Prior decision area | Current review-sequencing disposition |

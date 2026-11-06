@@ -205,13 +205,13 @@
       "path": "handoffs/T01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 29,
+        "full": 36,
         "partial": 0,
-        "unread": 15
+        "unread": 8
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "T01-A+B+C+D+E complete at F29/P0/R15; ten provisional findings retained (three conditional P1, seven P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-F search/web/crawler/network wrappers (seven primaries).",
+      "note": "T01-A+B+C+D+E+F complete at F36/P0/R8; twelve provisional findings retained (three conditional P1, nine P2 including two conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-G final compatibility/runtime wrappers (eight primaries).",
       "last_checkpoint_commit": "3b74ccf0935ea76107bd6a307945444ddce279b4",
       "provisional_findings": [
         {
@@ -277,6 +277,19 @@
           "priority": "P2",
           "title": "Explicit foreground migration dropped the advertised apply_patch capability",
           "state": "provisional-active-handoff"
+        },
+        {
+          "id": "T01-F11",
+          "priority": "P2",
+          "title": "web_fetch output limits do not bound downloaded response bytes",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "T01-F12",
+          "priority": "P2",
+          "title": "VPN session creation can outlive caller cancellation",
+          "state": "provisional-active-handoff",
+          "qualification": "conditional on the external broker completing a side-effecting request after the client task is cancelled"
         }
       ],
       "substage_checkpoints": [
@@ -339,8 +352,8 @@
     }
   ],
   "resume_order": [
-    "T01-F only: crawler.py, explore.py, search.py, social_crawl.py, trend_vpn.py, trend_vpngate.py and web.py; checkpoint before expanding scope.",
-    "T01-G only after T01-F: cli_apps.py, image.py, image_configuration.py, message.py, runtime_control.py, self.py, session_messages.py and sessions.py; then close/coordinator-check T01.",
+    "T01-G only: cli_apps.py, image.py, image_configuration.py, message.py, runtime_control.py, self.py, session_messages.py and sessions.py; save F44/P0/R0 before closure.",
+    "After T01-G, perform a separate T01 report/coverage publication and coordinator-check checkpoint; do not combine that with A01 source review.",
     "A01",
     "K01",
     "E02",
