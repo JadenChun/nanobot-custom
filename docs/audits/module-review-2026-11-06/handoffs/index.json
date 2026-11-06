@@ -212,7 +212,7 @@
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
       "note": "T01-A+B complete at F12/P0/R32; three provisional P2 findings retained; no published/coordinator-checked body credit added. Next bounded stage is T01-C MCP transport/OAuth (two primaries).",
-      "last_checkpoint_commit": "ed50e9e1b4044b87bf713f6cd2cce27ed88110da",
+      "last_checkpoint_commit": "eeb736a236b44654f7c3c22ce5474d5b4d9f28e2",
       "provisional_findings": [
         {
           "id": "T01-F01",
@@ -242,6 +242,17 @@
             "full": 6,
             "partial": 0,
             "unread": 38
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-B",
+          "commit": "eeb736a236b44654f7c3c22ce5474d5b4d9f28e2",
+          "coverage": {
+            "full": 12,
+            "partial": 0,
+            "unread": 32
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
