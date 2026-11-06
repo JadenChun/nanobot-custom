@@ -540,14 +540,14 @@
       "path": "handoffs/K01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 26,
+        "full": 32,
         "partial": 0,
-        "unread": 30
+        "unread": 24
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "K01-A+B+C complete at F26/P0/R30 with six provisional findings; K01-C added cron instruction drift, ClawHub effective-workspace mismatch, and conditional tmux/Codex yolo delegation authority. Next bounded stage is K01-D testing/media skills only.",
-      "last_checkpoint_commit": "7ec1fd85bc2d5c935c45ee74fe465462cd53672c",
+      "note": "K01-A+B+C+D complete at F32/P0/R24 with ten provisional findings; K01-D added the mobile platform requirement overconstraint, conditional direct OpenAI video semantic path, blocked --cdp guidance, and non-positive max-gap nontermination. Next bounded stage is K01-E prompt/template sources only.",
+      "last_checkpoint_commit": "5c38c5c4036ec23f26d4c485c7536ae2ae795c14",
       "provisional_findings": [
         {
           "id": "K01-F01",
@@ -590,6 +590,34 @@
           "title": "The tmux skill recommends launching Codex with its approvals and sandbox disabled",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on using the coding-agent section without an already-proven external sandbox; pinned Codex defines --yolo as dangerously bypassing approvals and sandbox."
+        },
+        {
+          "id": "K01-F07",
+          "priority": "P2",
+          "title": "Mobile testing skills require both platform toolchains even though each supports either platform",
+          "state": "provisional-active-handoff",
+          "qualification": "Hosts with npx plus only one valid platform toolchain are affected; hosts with both Xcode/xcrun and adb installed are not."
+        },
+        {
+          "id": "K01-F08",
+          "priority": "P1",
+          "title": "video-understanding silently bypasses Nanobot provider routing for semantic frame analysis",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on OPENAI_API_KEY and the OpenAI SDK being available with semantic mode enabled; no external semantic request occurs on the fallback/no-semantic path."
+        },
+        {
+          "id": "K01-F09",
+          "priority": "P2",
+          "title": "webapp-testing recommends a caller-supplied CDP mode that the live browser wrapper always blocks",
+          "state": "provisional-active-handoff",
+          "qualification": "Only the caller-supplied --cdp recommendation is proven broken; configured shared attachment and other browser paths remain separate."
+        },
+        {
+          "id": "K01-F10",
+          "priority": "P2",
+          "title": "Non-positive video max-gap values can spin forever before frame capping",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on an explicit zero/negative --max-gap-seconds override; the shipped default 6.0 path is unaffected."
         }
       ],
       "substage_checkpoints": [
@@ -622,6 +650,17 @@
             "full": 26,
             "partial": 0,
             "unread": 30
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "K01-D",
+          "commit": "5c38c5c4036ec23f26d4c485c7536ae2ae795c14",
+          "coverage": {
+            "full": 32,
+            "partial": 0,
+            "unread": 24
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
