@@ -353,20 +353,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/A01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "A01-A+B+C+D source inspection complete at F32/P0/R15. Five provisional findings retained; A01-D added P2 A01-F05 for unbounded completed delivery dispatch-registry retention and reinforced A01-F03 with synchronous quota/outbox durability on async paths. Next bounded action is A01-E only.",
+      "coordinator_observation": "A01-A+B+C+D+E source inspection complete at F40/P0/R7. Six provisional findings retained; A01-E added conditional P1 A01-F06 for instance-global model-facing cron list/remove across chats and confirmed A01-F04 has no later cron rollover/archive owner. Next bounded action is A01-F only.",
       "active_source_review_coverage": {
-        "full": 32,
+        "full": 40,
         "partial": 0,
-        "unread": 15
+        "unread": 7
       },
-      "active_provisional_findings_count": 5,
+      "active_provisional_findings_count": 6,
       "active_substage_checkpoint": {
-        "stage": "A01-D",
-        "commit": "cc8de895dfdc3d5562ea3883ba13254279c9b7cc",
+        "stage": "A01-E",
+        "commit": "4d242b829d54d33d8607e3c7ce54ee3438e9899c",
         "coverage": {
-          "full": 32,
+          "full": 40,
           "partial": 0,
-          "unread": 15
+          "unread": 7
         },
         "publication_credit_added": 0
       }
