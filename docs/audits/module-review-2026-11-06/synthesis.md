@@ -10,7 +10,8 @@ remain deferred. Fresh continuation checks found `staging` unchanged at `9562e57
 H01 acceptance publication is checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`.
 Integrated review remains pending and no repair/design is accepted. [C00](reports/C00.md) is
 now coordinator-checked from its supplied 70/70 primary-body handoff with seven qualified P2
-findings and seven retained D1–D7 questions. See
+findings and seven retained D1–D7 questions; its acceptance publication is checkpointed at
+`85c59330c91e7982574d79f92602cc7e605acb4c`. See
 [status.json](status.json) for the eighteen streams and [scope.json](scope.json)
 for the 919 primary assignments. The earlier [33-row comparison](../architecture-review-2026-11-06/README.md)
 retains its targeted historical boundary; it is not the new deep-review synthesis.

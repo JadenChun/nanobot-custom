@@ -2205,11 +2205,16 @@
       "reason": "No clean local audit worktree in this web continuation; preserved historical validation snapshots and used source/API metadata only."
     },
     "integrated_review": "pending until all modules",
-    "module_git_checkpoint": "pending until coordinator commits",
+    "module_git_checkpoint": "85c59330c91e7982574d79f92602cc7e605acb4c",
     "decisions": "D1–D7 remain deferred."
   },
   "integrated_review": null,
-  "git_checkpoint": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "85c59330c91e7982574d79f92602cc7e605acb4c",
+    "pushed": true,
+    "evidence": "C00 source-review publication and coordinator PASS commit on codex/staging-audit; audit documentation only."
+  },
   "raw_failures_and_limits": [
     "An initial oversized connector orchestration request exceeded the per-call tool-call limit; the same bounded source ranges were split into smaller read batches.",
     "No repository code/tests/builds/linters/type checkers/dependency installers/apps/services/providers/sandbox probes/benchmarks were run."

@@ -8,7 +8,8 @@ reverified unchanged at `9562e57f8333d7f14b6aaeae837660723a9b2650`, tree
 coordinator **PASS** for its source-review publication: seven classified findings plus the
 open H01-F8 registration contract and six retained questions; its acceptance publication is
 checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`. Integrated review and product/
-architecture decisions remain pending. C00 is now coordinator-checked from its saved 70/70 handoff; the H02 handoff remains
+architecture decisions remain pending. C00 is now coordinator-checked from its saved 70/70 handoff and checkpointed at
+`85c59330c91e7982574d79f92602cc7e605acb4c`; the H02 handoff remains
 saved unpublished, and H03 remains incomplete (23 full/19 partial/3 unread). Twelve streams remain queued. No repair/design is
 accepted; publication/acceptance, integrated review and Git preservation remain distinct.
 

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. H01 and C00 source-review coordinator PASS; C00 checkpoint pending this commit. S01/S02 retain PASS; H02 saved unpublished; H03 saved incomplete.",
+  "publication_stage": "ACTIVE. H01 and C00 source-review coordinator PASS and checkpointed; S01/S02 retain PASS; H02 saved unpublished; H03 saved incomplete.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -70,9 +70,10 @@
         "evidence": null
       },
       "git_checkpoint": {
-        "status": "pending",
-        "commit": null,
-        "evidence": null
+        "status": "recorded",
+        "commit": "85c59330c91e7982574d79f92602cc7e605acb4c",
+        "pushed": true,
+        "evidence": "C00 source-review publication/PASS audit-doc checkpoint."
       },
       "dispatch_owner": "review_startup_c00",
       "execution_state": "completed-source-review",
