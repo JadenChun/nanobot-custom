@@ -25,7 +25,7 @@
     "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
     "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
   },
-  "published_primary_body_credit_added": 439,
+  "published_primary_body_credit_added": 483,
   "handoffs": [
     {
       "stream": "C00",
@@ -205,90 +205,90 @@
       "path": "handoffs/T01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 36,
+        "full": 44,
         "partial": 0,
-        "unread": 8
+        "unread": 0
       },
-      "state": "active-incomplete-unaccepted",
-      "published_body_credit_added": 0,
-      "note": "T01-A+B+C+D+E+F complete at F36/P0/R8; twelve provisional findings retained (three conditional P1, nine P2 including two conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-G final compatibility/runtime wrappers (eight primaries).",
-      "last_checkpoint_commit": "9ab2afd19e9ecf5337cbf9e6776174d89dfe9303",
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 44,
+      "note": "T01 F44/P0/R0 report/coverage published and coordinator-checked PASS with twelve promoted findings and eight retained questions; integrated review remains pending.",
+      "last_checkpoint_commit": "cc07d72f845df201ab07838c2bdda976f54619df",
       "provisional_findings": [
         {
           "id": "T01-F01",
           "priority": "P2",
           "title": "Generic/external tool schemas can advertise constraints the local validator does not enforce",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "T01-F02",
           "priority": "P2",
           "title": "Loader registration is publication-atomic, not construction-lifetime atomic",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "conditional on generic/external tool construction owning resources or side effects; core foreground ownership is explicit"
         },
         {
           "id": "T01-F03",
           "priority": "P2",
           "title": "Concurrent first-use foreground MCP initialization can silently omit configured tools",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "T01-F04",
           "priority": "P1",
           "title": "Remote MCP annotations can breach the delegated read-only authority boundary",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "requires a configured remote server with false/inaccurate readOnlyHint; final D2/D4 trust model still governs repair"
         },
         {
           "id": "T01-F05",
           "priority": "P2",
           "title": "A failed MCP server setup can leave partially registered dead capabilities",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "T01-F06",
           "priority": "P2",
           "title": "Stdio MCP readiness has no deadline and serial startup can block the application indefinitely",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "T01-F07",
           "priority": "P1",
           "title": "Main browser/device file and working-directory authority bypasses workspace confinement",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "non-managed/full-host contexts with browser/device enabled and workspace confinement expected; delegated roles and managed WebUI are narrowed/blocked"
         },
         {
           "id": "T01-F08",
           "priority": "P1",
           "title": "desktop_use global input bypasses the main risky-action approval boundary",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "requires tools.desktop_use.enabled=true; disabled by default and managed WebUI withholds the unconfined tool"
         },
         {
           "id": "T01-F09",
           "priority": "P2",
           "title": "Generic owned-process cleanup does not prove descendant quiescence",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "T01-F10",
           "priority": "P2",
           "title": "Explicit foreground migration dropped the advertised apply_patch capability",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "T01-F11",
           "priority": "P2",
           "title": "web_fetch output limits do not bound downloaded response bytes",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "T01-F12",
           "priority": "P2",
           "title": "VPN session creation can outlive caller cancellation",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "conditional on the external broker completing a side-effecting request after the client task is cancelled"
         }
       ],
@@ -358,13 +358,29 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-G",
+          "commit": "95863da60d6f71b2950081c5b2f4d3231d7bae4a",
+          "coverage": {
+            "full": 44,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "source-complete-pre-publication",
+          "publication_credit_added": 0
         }
-      ]
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 44,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "All 44 T01 primary bodies are full; twelve findings promoted; two T01-G compatibility observations retained unpromoted; coordinator PASS recorded."
     }
   ],
   "resume_order": [
-    "T01-G only: cli_apps.py, image.py, image_configuration.py, message.py, runtime_control.py, self.py, session_messages.py and sessions.py; save F44/P0/R0 before closure.",
-    "After T01-G, perform a separate T01 report/coverage publication and coordinator-check checkpoint; do not combine that with A01 source review.",
     "A01",
     "K01",
     "E02",
@@ -376,5 +392,5 @@
     "P01",
     "Fresh integrated review and final consolidated D1–D7 discussion."
   ],
-  "limits": "C00/H02/H03/U01/D01 handoffs are published/checked with continuation verification; T01 is active at 0/44. Historical provenance is preserved. D1–D7 and integrated review remain pending."
+  "limits": "C00/H02/H03/U01/D01/T01 handoffs are published/checked with continuation verification. Historical provenance is preserved. D1–D7 and integrated review remain pending."
 }
