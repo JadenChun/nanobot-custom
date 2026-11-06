@@ -48,7 +48,7 @@ helpers or obsolete imports may be relevant to source quality and caller tracing
 | Historical source tree | `9e15246bb0710590abb3351321aec29688c16285` |
 | Current discovery baseline | Fetched `origin/staging`, `27adced0aacd55d61791bb88a7240d7ad7bd5b75`; tree `d49aca97c9a34a2d17eae53d672fa591652457f1` |
 | Previous discovery baseline | `4e2bf4d8d0b34f133c01591b67826ca956fed384`; tree `d5cc262acda5fb8051ffac9996ee9ab189c361cd`; retained historical nine-family map |
-| Current discovery branch | `codex/staging-discovery-20261106`; historical `codex/staging-harness-audit` retains the prior discovery pin |
+| Current audit branch | `codex/staging-audit` (renamed from `codex/staging-discovery-20261106`); historical `codex/staging-harness-audit` retains the prior discovery pin |
 | Audit checkout | `/Users/jaden/.codex/worktrees/staging-harness-audit/nanobot` |
 | Historical separate repair checkout | `/Users/jaden/Documents/github/nanobot`, `codex/feature-audit-repairs`; its repair merge is not assumed present in current origin |
 | DSH source comparison | `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` |
