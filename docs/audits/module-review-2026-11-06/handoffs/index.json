@@ -533,6 +533,50 @@
         "commit": "9bdcc59a5938084e843b61509e64bfb745b984a7",
         "pushed": true
       }
+    },
+    {
+      "stream": "K01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/K01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 7,
+        "partial": 0,
+        "unread": 49
+      },
+      "state": "active-incomplete-unaccepted",
+      "published_body_credit_added": 0,
+      "note": "K01-A complete at F7/P0/R49 with two provisional findings; next bounded stage is K01-B skill contract/authoring only.",
+      "last_checkpoint_commit": "6aee06005c3249a3e107632da69d7bd4fcbee125",
+      "provisional_findings": [
+        {
+          "id": "K01-F01",
+          "priority": "P1",
+          "title": "Non-managed prompt/skill loading can bypass restrict_to_workspace",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on non-managed restricted mode plus a crafted workspace/context-repo symlink or manifest entrypoint; managed WebUI validates these paths."
+        },
+        {
+          "id": "K01-F02",
+          "priority": "P2",
+          "title": "save_knowledge does not enforce the active project's knowledge_repos association",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on project association being intended as an ownership boundary and multiple writable knowledge repos being visible."
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "K01-A",
+          "commit": "6aee06005c3249a3e107632da69d7bd4fcbee125",
+          "coverage": {
+            "full": 7,
+            "partial": 0,
+            "unread": 49
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        }
+      ]
     }
   ],
   "resume_order": [
