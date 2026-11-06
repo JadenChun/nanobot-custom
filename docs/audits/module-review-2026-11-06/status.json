@@ -392,20 +392,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/K01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "K01-A+B+C+D source inspection complete at F32/P0/R24. Ten provisional findings retained. K01-D added P2 mobile cross-platform requirement overconstraint, conditional P1 direct OpenAI semantic-frame routing outside Nanobot provider policy, P2 webapp --cdp instruction drift, and conditional P2 non-positive video max-gap nontermination; F03 was further reinforced by shipped homepage metadata rejected by the creator validator. Next bounded action is K01-E only.",
+      "coordinator_observation": "K01-A+B+C+D+E source inspection complete at F56/P0/R0. Thirteen provisional findings retained. K01-E added P2 live prompt guidance for absent grep/find_files/apply_patch capabilities, conditional P1 raw compaction fallback replay at system-prompt authority, and conditional P1 Dream skill mutation outside Dream log/restore; F01 was widened to auxiliary managed prompt overrides and F04/T01-F10 were reinforced. Next bounded action is K01 publication packet only.",
       "active_source_review_coverage": {
-        "full": 32,
+        "full": 56,
         "partial": 0,
-        "unread": 24
+        "unread": 0
       },
-      "active_provisional_findings_count": 10,
+      "active_provisional_findings_count": 13,
       "active_substage_checkpoint": {
-        "stage": "K01-D",
-        "commit": "5c38c5c4036ec23f26d4c485c7536ae2ae795c14",
+        "stage": "K01-E",
+        "commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
         "coverage": {
-          "full": 32,
+          "full": 56,
           "partial": 0,
-          "unread": 24
+          "unread": 0
         },
         "publication_credit_added": 0
       }
