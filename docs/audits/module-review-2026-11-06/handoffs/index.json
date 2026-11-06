@@ -212,7 +212,7 @@
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
       "note": "T01-A+B+C+D+E+F complete at F36/P0/R8; twelve provisional findings retained (three conditional P1, nine P2 including two conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-G final compatibility/runtime wrappers (eight primaries).",
-      "last_checkpoint_commit": "3b74ccf0935ea76107bd6a307945444ddce279b4",
+      "last_checkpoint_commit": "9ab2afd19e9ecf5337cbf9e6776174d89dfe9303",
       "provisional_findings": [
         {
           "id": "T01-F01",
@@ -344,6 +344,17 @@
             "full": 29,
             "partial": 0,
             "unread": 15
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-F",
+          "commit": "9ab2afd19e9ecf5337cbf9e6776174d89dfe9303",
+          "coverage": {
+            "full": 36,
+            "partial": 0,
+            "unread": 8
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0

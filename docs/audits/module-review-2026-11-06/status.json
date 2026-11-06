@@ -302,12 +302,12 @@
       },
       "active_provisional_findings_count": 12,
       "active_substage_checkpoint": {
-        "stage": "T01-E",
-        "commit": "3b74ccf0935ea76107bd6a307945444ddce279b4",
+        "stage": "T01-F",
+        "commit": "9ab2afd19e9ecf5337cbf9e6776174d89dfe9303",
         "coverage": {
-          "full": 29,
+          "full": 36,
           "partial": 0,
-          "unread": 15
+          "unread": 8
         },
         "publication_credit_added": 0
       }
