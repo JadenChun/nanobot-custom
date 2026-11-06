@@ -2,7 +2,7 @@
   "schema_version": 1,
   "stream_id": "U01",
   "report": "reports/U01.md",
-  "publication_state": "report-written",
+  "publication_state": "coordinator-checked",
   "evidence_origin": {
     "analyst": "ChatGPT web continuation coordinator",
     "handoff": "handoffs/U01.md source-complete checkpoint",
@@ -4166,7 +4166,7 @@
       "ranges": [
         [
           1,
-          818
+          820
         ]
       ],
       "purpose": "Saved U01 source-review checkpoints and finding provenance; no primary-body credit."
@@ -4176,7 +4176,7 @@
       "ranges": [
         [
           1,
-          9999
+          262
         ]
       ],
       "purpose": "Frozen source/reference pins, U01 denominator and staging-delta metadata; bounded file read via connector."
@@ -4508,9 +4508,69 @@
       ]
     }
   ],
-  "coordinator_check": null,
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "U01 source-review publication only; no repair/product/design acceptance.",
+    "staging_check": {
+      "status": "PASS",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "named_delta_reconciled": true,
+      "note": "Frozen staging delta changes only H01/H03 primary targets plus H01 tests; U01 has no changed primary target."
+    },
+    "ledger_reconciliation": {
+      "status": "PASS",
+      "assigned_paths": 203,
+      "final_full_paths": 203,
+      "inventory_matches": 203,
+      "tree_blob_matches": 203,
+      "physical_lines": 68024,
+      "bytes": 2362128,
+      "material_primary_gaps": 0
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "promoted_findings": [
+        "U01-F01",
+        "U01-F02",
+        "U01-F03",
+        "U01-F04",
+        "U01-F05",
+        "U01-F06"
+      ],
+      "additional_observations": [
+        "U01-O1",
+        "U01-O2",
+        "U01-O3",
+        "U01-O4",
+        "U01-S1",
+        "U01-S2"
+      ],
+      "note": "All 203 assigned U01 primary bodies are pinned and full. The six findings were traced through caller/state boundaries, bounded history/test source where available, and pinned DSH/Codex comparison mechanisms.",
+      "qualifications": [
+        "U01-F01 is FIFO ordering/stranding; attachment loss is not claimed.",
+        "U01-F02 is same-user cross-session gallery contamination; cross-account authorization bypass is not claimed.",
+        "U01-F03 and U01-F04 preserve the originally captured backend mutation target; the defects are stale browser completion/state ownership.",
+        "U01-F05 is optimistic persistence/durability reconciliation; server state corruption is not claimed.",
+        "U01-F06 requires a turn that ends without an assistant row and an older legacy assistant row without turnId; the consequence is completion/usage metadata misattribution."
+      ]
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "No clean local audit worktree in this web continuation; source/API reads and frozen metadata reconciliation only."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "b53644a2e20086a5d6a48e237e571d1720151270",
+    "decisions": "D1–D7 remain deferred."
+  },
   "integrated_review": null,
-  "git_checkpoint": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "b53644a2e20086a5d6a48e237e571d1720151270",
+    "pushed": true,
+    "evidence": "U01 F203/P0/R0 source-review publication/PASS audit-doc checkpoint."
+  },
   "limits": [
     "Source review does not establish deployed browser storage/private-state policy, real user timing frequency, server-side authorization beyond inspected client contracts or measured UX/performance impact.",
     "Pinned DSH/Codex mechanisms are engineering references, not parity requirements.",

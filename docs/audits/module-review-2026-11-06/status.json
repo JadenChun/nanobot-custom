@@ -429,7 +429,7 @@
       "kind": "primary",
       "primary_target_count": 203,
       "inventory_all_roles_count": 328,
-      "status": "report-written",
+      "status": "coordinator-checked",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": "reports/U01.md",
       "coverage": "reports/U01-coverage.json",
@@ -443,23 +443,24 @@
       "material_primary_gaps_pending_evidence": 0,
       "architecture_judgement": "Provisional Keep+Simplify: retain authenticated/turn-correlated transport and explicit pane/session ownership; simplify repeated async completion identity, queue sendability, optimistic persistence and turn-local completion projection.",
       "coordinator_check": {
-        "status": "pending",
-        "evidence": null
+        "status": "PASS",
+        "evidence": "F203/P0/R0 ledger, semantic qualifications and source/reference verification are recorded at reports/U01-coverage.json:coordinator_check."
       },
       "integrated_review": {
         "status": "pending",
         "evidence": null
       },
       "git_checkpoint": {
-        "status": "pending",
-        "commit": null,
-        "evidence": null
+        "status": "recorded",
+        "commit": "b53644a2e20086a5d6a48e237e571d1720151270",
+        "pushed": true,
+        "evidence": "U01 F203/P0/R0 source-review publication/PASS audit-doc checkpoint."
       },
       "dispatch_owner": "web-continuation-coordinator",
       "execution_state": "completed-source-review",
       "saved_handoff": "handoffs/U01.md",
-      "handoff_disposition": "published-unchecked",
-      "coordinator_observation": "U01 report/coverage published at F203/P0/R0 with six source-established P2 findings. Coordinator check is still pending; integrated review and D1–D7 remain deferred."
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "U01 coordinator PASS at F203/P0/R0 with six qualified P2 findings and six retained questions. Integrated review, cross-stream reconciliation and D1–D7 remain pending."
     },
     {
       "id": "M01",
