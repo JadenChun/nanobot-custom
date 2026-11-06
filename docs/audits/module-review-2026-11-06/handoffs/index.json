@@ -544,9 +544,9 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "published-unaccepted",
+      "state": "published-coordinator-checked",
       "published_body_credit_added": 56,
-      "note": "K01 F56/P0/R0 report and coverage ledger published with thirteen promoted findings and eight final questions. Coordinator semantic check remains pending; integrated review and repairs remain deferred.",
+      "note": "K01 coordinator PASS at F56/P0/R0 with thirteen promoted findings and eight final questions. Seven conditional findings and T01/A01 cross-stream deduplication are preserved; integrated review, repairs and Git checkpoint remain pending.",
       "last_checkpoint_commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
       "provisional_findings": [
         {
@@ -698,7 +698,7 @@
           "publication_credit_added": 0
         }
       ],
-      "completion": "All 56 K01 primaries are full; thirteen findings promoted into reports/K01.md; eight final questions retained; coordinator check pending."
+      "completion": "All 56 K01 primaries are full; thirteen findings promoted; eight final questions retained; coordinator PASS recorded."
     }
   ],
   "resume_order": [
