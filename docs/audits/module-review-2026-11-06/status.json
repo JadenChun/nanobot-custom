@@ -24,8 +24,8 @@
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 8,
-    "in_progress": 0,
+    "queued": 7,
+    "in_progress": 1,
     "report_written": 0,
     "coordinator_checked": 10,
     "integrated_review_complete": 0,
@@ -362,7 +362,7 @@
       "kind": "primary",
       "primary_target_count": 56,
       "inventory_all_roles_count": 62,
-      "status": "queued",
+      "status": "in-progress",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": null,
       "coverage": null,
@@ -387,6 +387,27 @@
         "status": "pending",
         "commit": null,
         "evidence": null
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "active",
+      "saved_handoff": "handoffs/K01.md",
+      "handoff_disposition": "active-incomplete-unaccepted",
+      "coordinator_observation": "K01-A source inspection complete at F7/P0/R49. Two provisional findings retained: conditional P1 prompt/skill loading can bypass non-managed restrict_to_workspace, and conditional P2 save_knowledge does not enforce active-project knowledge_repos association. Next bounded action is K01-B only.",
+      "active_source_review_coverage": {
+        "full": 7,
+        "partial": 0,
+        "unread": 49
+      },
+      "active_provisional_findings_count": 2,
+      "active_substage_checkpoint": {
+        "stage": "K01-A",
+        "commit": "6aee06005c3249a3e107632da69d7bd4fcbee125",
+        "coverage": {
+          "full": 7,
+          "partial": 0,
+          "unread": 49
+        },
+        "publication_credit_added": 0
       }
     },
     {
