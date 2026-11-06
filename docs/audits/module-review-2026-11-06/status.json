@@ -392,20 +392,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/K01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "K01-A+B+C source inspection complete at F26/P0/R30. Six provisional findings retained. K01-C added P2 cron skill execution/timezone contract drift, P2 ClawHub hardcoded default-workspace behavior, and conditional P1 tmux guidance that launches Codex with approvals/sandbox disabled; F03 was reinforced by shipped built-ins violating the creator validator. Next bounded action is K01-D only.",
+      "coordinator_observation": "K01-A+B+C+D source inspection complete at F32/P0/R24. Ten provisional findings retained. K01-D added P2 mobile cross-platform requirement overconstraint, conditional P1 direct OpenAI semantic-frame routing outside Nanobot provider policy, P2 webapp --cdp instruction drift, and conditional P2 non-positive video max-gap nontermination; F03 was further reinforced by shipped homepage metadata rejected by the creator validator. Next bounded action is K01-E only.",
       "active_source_review_coverage": {
-        "full": 26,
+        "full": 32,
         "partial": 0,
-        "unread": 30
+        "unread": 24
       },
-      "active_provisional_findings_count": 6,
+      "active_provisional_findings_count": 10,
       "active_substage_checkpoint": {
-        "stage": "K01-C",
-        "commit": "7ec1fd85bc2d5c935c45ee74fe465462cd53672c",
+        "stage": "K01-D",
+        "commit": "5c38c5c4036ec23f26d4c485c7536ae2ae795c14",
         "coverage": {
-          "full": 26,
+          "full": 32,
           "partial": 0,
-          "unread": 30
+          "unread": 24
         },
         "publication_credit_added": 0
       }
