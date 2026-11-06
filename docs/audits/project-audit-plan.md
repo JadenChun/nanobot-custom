@@ -7,17 +7,21 @@ remain accepted. Nine historical subsystem maps, three current-origin differenti
 and three completion reports are published with exact read lists. All 2,455 baseline paths
 are assigned; all 919 source targets have evidence: **224 current reads + 695 identical-hash
 carried reads, zero mapped-only source**. All 47 changed implementation paths have current
-evidence. **Module-level/relevant-body source discovery is complete (PLAN-009)**; source
-comparison, architecture decisions and detailed audit remain pending. Sandbox keeps priority
-within the later audit.
+evidence. **Module-level/relevant-body source discovery is complete (PLAN-009)**. The
+[architecture-review checkpoint](architecture-review-2026-11-06/README.md) now records
+targeted REF1–REF6 comparisons, preserved strengths and a deduplicated roadmap. Consequential
+architecture choices and detailed semantic audits remain pending. Sandbox keeps priority
+within the later audit; coordinator acceptance of the concrete review is separate.
 
 The current [discovery entry point](codebase-discovery/README.md),
 [differential record](codebase-discovery/refresh-2026-11-06.md),
 [completion record](codebase-discovery/completion-2026-11-06.md) and
 [coverage summary](codebase-discovery/coverage-summary.json) distinguish current inspection
 and byte-identical carried evidence. The [continuation contract](codebase-discovery/continuation-plan.md)
-defines the next packages. Completion retains the bounded refresh checkpoint and the user's
-accepted source-only method.
+retains the original comparison contract; the review's
+[decision record](architecture-review-2026-11-06/decisions.md) and
+[backlog](architecture-review-2026-11-06/audit-backlog.md) define the current next packages.
+Completion retains the bounded refresh checkpoint and the user's accepted source-only method.
 
 This is the living continuation plan for the [code-quality audit charter](../code-quality-audit-2026-11-04.md).
 The [first harness architecture pass](harness-architecture-2026-11-05.md) retains its
@@ -71,6 +75,11 @@ module/relevant-body source discovery at the unchanged baseline and the next com
 established the source-only method and remains historical. No new product or architecture
 choice is accepted here. Each later package uses the same working direction and unchanged
 pinned DSH/Codex implementation references below.
+
+The [2026-11-06 comparison](architecture-review-2026-11-06/README.md) is a later targeted
+mechanism checkpoint under that policy, not a new accepted product architecture. DSH/Codex
+are engineering references, not identical products or parity targets; Hermes is secondary
+product-direction awareness only and receives no code audit here.
 
 ### Goal and established direction
 
@@ -297,8 +306,9 @@ the source audit.
 The accepted sequence is discovery, then implementation comparison and architecture
 discussion, then bounded audit/optimisation. Current path assignment, changed-source refresh
 and all 139 remaining source-detail reads are complete at module/relevant-body depth.
-[PLAN-009](codebase-discovery/completion-2026-11-06.md) records that boundary; comparison,
-architecture choices and detailed audit remain pending.
+[PLAN-009](codebase-discovery/completion-2026-11-06.md) records that boundary. The
+[targeted comparison](architecture-review-2026-11-06/README.md) now records REF1–REF6;
+consequential choices and detailed semantic audits remain pending.
 Sandbox retains priority in the audit stage. P01 and documentation consistency accompany
 every package. Prioritise concrete security, data-loss and ownership defects over cosmetic
 cleanup within the agreed stage and scope.
@@ -306,7 +316,7 @@ cleanup within the agreed stage and scope.
 | Stage | Work | Completion boundary |
 | --- | --- | --- |
 | 0 — Codebase discovery — complete | Current inventory/activation/owner map and fifteen published reports across all nine families | 2,455 paths assigned once; 919 source targets with 224 current/695 carried/0 mapped-only; 139 closures and unknowns retained; no full semantic-audit assertion |
-| 1 — Source comparison and architecture discussion | Pinned DSH/Codex implementation mechanisms against current nanobot owners/callers and AR/REF properties | Differences, governing requirements, justified scope choices and consequential decisions recorded; no automatic architecture adoption |
+| 1 — Source comparison and architecture discussion | Targeted REF1–REF6 mechanisms recorded in the [review](architecture-review-2026-11-06/README.md), with current owners/callers and AR/REF properties | 33 rows and prioritized candidates; consequential decisions explicitly pending, coordinator acceptance separate; no automatic architecture adoption or full semantic-audit claim |
 | 2 — Sandbox and authority audit | S01/S02 with E02/U01/R01 callers; source slices below | Backend, authority/lifetime/error paths reviewed; defects, platform limits and choices recorded |
 | 3 — Harness and durable state audit | H01/H02/H03 and C00 composition | Session/source owners, requests, writers, provider boundaries and failure branches reviewed |
 | 4 — Background and capability audit | A01/T01/K01/M01 | Activation/admission, resources, compatibility and deprecated paths reviewed |
@@ -321,7 +331,7 @@ They do not assign product code or turn a discovery map into audit acceptance.
 | Package | Ownership / inputs | Dependency and required output | Deterministic validation |
 | --- | --- | --- | --- |
 | DISC-DETAIL — complete | Three source readers; one publication owner; exact C00/H01/H02/K01/R01/D01 assignments | PLAN-009 closes all 139 paths at the unchanged pin; each has responsibility/caller/activation/state-resource evidence; no product changes | Exact disjoint assigned/inspected union, 139 rows, 137 primary anchors plus two empty markers, hashes and final depth counts; source-only |
-| REF-COMPARE | Bounded comparison owners use current nanobot map and unchanged DSH/Codex pins; coordinator owns shared conclusions | Discovery boundary established; trace REF1–REF6 mechanisms, supported activation, writers, authority and lifetime; record justified differences and open contracts | Pinned source symbols/callers and requirement-to-mechanism mapping; no runtime/stability inference |
+| REF-COMPARE — targeted checkpoint recorded | Four read-only evidence packages, one report publisher; current nanobot map and unchanged DSH/Codex pins | [Review](architecture-review-2026-11-06/README.md) traces REF1–REF6 activation, writers, authority/lifetime and open contracts; all-eighteen-stream detailed audits queued | Pinned symbols/callers, exact body/search lists, structural validation; coordinator acceptance separate; no runtime/stability inference |
 | ARCH-DISCUSS | Coordinator owns accepted decisions and canonical ledger; source owners provide bounded evidence | Comparison inputs ready; discuss platform/session/compatibility/resource choices that affect observable behavior, schemas or authority before a repair contract | Decision record separates accepted choices, recommendations and unresolved gates |
 | AUDIT-BOUNDED | One owner per invariant; first priority S02-01 with S01/E02/U01/R01 callers | Discovery/comparison/discussion prerequisites met; review concrete source contracts, then propose smallest correction with exact write ownership | Source evidence and caller/state/resource map satisfy AR/REF criteria; later code repairs use separate repository validation obligations |
 
@@ -402,7 +412,9 @@ selection; a matching policy flag does not establish an equivalent implementatio
 The [portable implementation index](codebase-discovery/provenance/source-reference-map.json)
 retains pinned path/hash/URL metadata and existing bounded excerpts, without local-copy or
 temporary-clone dependencies. The active REF matrix uses implementation sources only;
-REF6 remains mapped rather than fully reviewed. Read actual caller bodies during comparison.
+its original REF6-mapped status remains historical. The
+[REF6 report](architecture-review-2026-11-06/delegation-context.md) now supplies targeted
+body/caller comparison; neither the index nor that report is a full semantic audit.
 Historical maps/copies may be retained locally, but essential discovery does not require them.
 
 ## Parallel audits, repairs and integration
@@ -491,7 +503,8 @@ or treating an absent local repair as current origin behavior.
 | PLAN-008 | Authorised origin sync and three-map differential refresh at `27adced0`; AR-2026-11-06.1 | 2,455 paths assigned; 47/47 changed implementation paths currently inspected; At refresh checkpoint: 85 current + 695 carried source inspections; 139 mapped-only source gaps preserved |
 | PLAN-009 | Source-discovery completion at unchanged `27adced0`; AR-2026-11-06.2 metadata | 139/139 disjoint completion reads and rows; 919 source targets = 224 current + 695 carried, zero source gaps; portable reports/previous hashes; no comparison, architecture choice or runtime qualification |
 | DISC-DETAIL | C00/H01/H02/K01/R01/D01 source detail | Complete at module/relevant-body depth; exact 139 closed paths in current coverage JSON and three completion reports |
-| REF-COMPARE / ARCH-DISCUSS | Pinned implementation comparison and architecture decisions | Later stage after discovery boundary; discovery publication performs neither comparison nor new design selection |
+| REF-COMPARE-2026-11-06 | Four targeted reports / 33 rows across REF1–REF6, source-only | [Checkpoint](architecture-review-2026-11-06/README.md) records comparison/roadmap and exact read/search provenance; coordinator acceptance separate, no full semantic-audit assertion |
+| ARCH-DISCUSS | Consequential platform/Full/task-session/compatibility/resource and shared-contract choices | [Decision record](architecture-review-2026-11-06/decisions.md) keeps choices pending; only reference/method policy is newly clarified as accepted, retain-core direction remains recommendation |
 | S02-01 | Sandbox selection/admission/errors | First later audit priority after discovery/comparison/discussion |
 | H01-01 | Admission/ownership/ordering/cancellation | Later bounded audit; reconcile historical findings and new runner recovery |
 | H03-01 | Logical request/retry/fallback/stream contracts | Later bounded audit; preserve captured runtime/request-ledger dependencies |
@@ -520,11 +533,14 @@ plan. It does not certify production reliability, measured performance or sandbo
 operational parity. Source-inspection limits are conclusions to record, not additional
 test or runtime gates.
 
-On continuation, read the discovery entry point, PLAN-009 and the
-[continuation contract](codebase-discovery/continuation-plan.md), verify the recorded source
-revision and choose a bounded REF-COMPARE package. Retain discovery-depth boundaries and
-exact next steps so later sessions can continue without restarting the map. Source comparison,
-architecture decisions and detailed audit remain pending despite complete source discovery.
+On continuation, read the discovery entry point, PLAN-009, the retained
+[comparison contract](codebase-discovery/continuation-plan.md) and current
+[review/decisions/backlog](architecture-review-2026-11-06/README.md). Verify the recorded
+source revision, obtain coordinator acceptance of the concrete review, and accept or
+explicitly defer relevant decisions before AUDIT-S02-01. Retain discovery-depth and targeted
+comparison boundaries so later sessions continue without restarting the map. Consequential
+architecture choices and detailed semantic audit remain pending despite complete discovery
+and recorded targeted comparison.
 If staging changes, reassess affected owners and callers and preserve byte-identical evidence with its original revision.
 
 [Portable discovery evidence](codebase-discovery/methodology.md) retains current/prior pins,

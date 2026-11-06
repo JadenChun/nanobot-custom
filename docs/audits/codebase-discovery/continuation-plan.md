@@ -4,6 +4,14 @@ This is the executable next-stage plan after [PLAN-009 source-discovery completi
 It changes audit documentation within the established architecture. It assigns no product
 implementation, schema change, migration, runtime exercise or release action.
 
+**Continuation checkpoint:** the [2026-11-06 architecture review](../architecture-review-2026-11-06/README.md)
+now records the four comparison packages below as 33 targeted REF1–REF6 mechanism/caller
+rows. This original contract and its input-state descriptions remain retained. The new
+[decision record](../architecture-review-2026-11-06/decisions.md) keeps consequential choices
+pending; the [backlog](../architecture-review-2026-11-06/audit-backlog.md) supplies the current
+all-eighteen-stream continuation and first later AUDIT-S02-01 contract. This is not whole-project
+detailed semantic-audit completion or independent coordinator acceptance.
+
 ## Objective and non-goals
 
 Explain how nanobot's pinned ownership, admission, state, authority and resource mechanisms
@@ -37,7 +45,8 @@ References stay pinned: DSH `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`; public C
 0.166.0 / `rust-v0.166.0`, commit `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856`, tree
 `03f3b46689faf274f126dc78508ed238564da8ba`. Use the [portable implementation index](provenance/source-reference-map.json)
 and the [REF matrix](../project-audit-plan.md#dsh-and-codex-implementation-comparison).
-The index's old excerpts are bounded evidence; REF6 remains mapped rather than fully reviewed.
+The index's old excerpts and REF6-mapped status are historical bounded input evidence;
+the linked checkpoint now provides targeted REF6 body/caller comparison, not a full semantic audit.
 Temporary clones, local-only prior commits and historical runtime evidence are optional.
 
 ## Proposed documentation behavior and interfaces

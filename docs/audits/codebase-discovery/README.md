@@ -12,12 +12,15 @@ Read this map, the [completion record](completion-2026-11-06.md), and the
 [report index](reports/README.md). The [refresh record](refresh-2026-11-06.md) preserves the
 bounded 85/695/139 checkpoint and all changed responsibilities. The
 [canonical audit plan](../project-audit-plan.md) and [continuation contract](continuation-plan.md)
-own the next sequence: **source comparison and architecture discussion → bounded audit/optimisation**.
-Sandbox remains the first later audit priority.
+retain the sequence: **source comparison and architecture discussion → bounded audit/optimisation**.
+The [2026-11-06 architecture-review checkpoint](../architecture-review-2026-11-06/README.md)
+now records targeted REF1–REF6 comparisons and a roadmap. Consequential choices remain
+pending; Sandbox remains the first later detailed audit priority.
 
 Complete discovery means relevant bodies/modules and connected callers were mapped. It
-does not establish exhaustive semantic review, completed DSH/Codex comparison, accepted
-new architecture, repair acceptance or stability qualification. Source/document reads and
+does not itself establish exhaustive semantic review, accepted new architecture, repair
+acceptance or stability qualification. The linked comparison has its own bounded scope.
+Source/document reads and
 standard-library processing were used; no tests, builds, checkers, dependency operations,
 repository imports, applications or live services ran.
 
@@ -183,10 +186,14 @@ See the [completion agenda](completion-2026-11-06.md#remaining-comparison-and-di
 for current documentation/source discrepancies and material questions. These are future
 comparison/audit inputs, not newly graded defects or accepted product choices.
 
-## DSH/Codex comparison agenda
+## DSH/Codex comparison agenda and checkpoint
 
-Source comparison and architecture discussion are the next stage; neither is completed by this map.
-Use the unchanged pins above and the [implementation REF matrix](../project-audit-plan.md#dsh-and-codex-implementation-comparison):
+The agenda below was the next-stage input to the
+[targeted comparison checkpoint](../architecture-review-2026-11-06/README.md), which now
+records REF1–REF6 mechanism/caller rows, pending decisions and all-eighteen-stream backlog.
+This map itself performs no comparison. The unchanged pins above and
+[implementation REF matrix](../project-audit-plan.md#dsh-and-codex-implementation-comparison)
+remain the source identities:
 
 - REF1/REF2: compare source admission, steering, invocation request ledgers and tool-error
   recovery against inbox/turn ownership; distinguish canonical completion from synthesized
@@ -202,7 +209,8 @@ Use the unchanged pins above and the [implementation REF matrix](../project-audi
   cron definitions/manual admission/receipts, optional tools, credentials and resource cost
   in their supported scope. Source differences alone do not establish defects or stability.
 
-The canonical sequence is **completed source discovery → source comparison and architecture discussion →
-bounded audit/optimisation**. Sandbox retains priority within the later audit. Consequential
+The canonical sequence is **completed source discovery → targeted source comparison and architecture discussion →
+bounded audit/optimisation**. Continue from the linked review's decision record and backlog
+after coordinator acceptance; detailed semantic audit remains queued. Sandbox retains priority. Consequential
 choices about platforms, managed task sessions, compatibility retirement and resource
 policy remain discussion topics; this refresh selects no repair or new architecture.
