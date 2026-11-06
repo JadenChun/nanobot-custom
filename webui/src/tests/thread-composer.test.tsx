@@ -3417,11 +3417,11 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
   });
 
-  it("sends a queued prompt with its submitted workspace snapshot", async () => {
+  it("sends a queued prompt without capturing a workspace snapshot", async () => {
     const onSend = vi.fn();
-    const submittedScope = {
-      project_path: "/tmp/submitted-project",
-      project_name: "submitted-project",
+    const earlierScope = {
+      project_path: "/tmp/earlier-project",
+      project_name: "earlier-project",
       access_mode: "restricted" as const,
       restrict_to_workspace: true,
     };
@@ -3436,12 +3436,12 @@ describe("ThreadComposer", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming
-        workspaceScope={submittedScope}
+        workspaceScope={earlierScope}
         placeholder="Type your message..."
       />,
     );
     const input = screen.getByLabelText("Message input");
-    fireEvent.change(input, { target: { value: "use the submitted project" } });
+    fireEvent.change(input, { target: { value: "use the current project" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
 
@@ -3456,11 +3456,7 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    expect(onSend).toHaveBeenCalledWith(
-      "use the submitted project",
-      undefined,
-      expect.objectContaining({ workspaceScope: submittedScope }),
-    );
+    expect(onSend).toHaveBeenCalledWith("use the current project");
   });
 
   it("lets users edit queued guidance before it is sent", async () => {
@@ -4152,11 +4148,7 @@ describe("queued prompt retention after busy admission rejection", () => {
       />,
     );
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith(
-        "queued follow-up",
-        undefined,
-        { workspaceScope: scope },
-      );
+      expect(onSend).toHaveBeenCalledWith("queued follow-up");
     });
     expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
 
@@ -4209,7 +4201,7 @@ describe("queued prompt retention after busy admission rejection", () => {
     expect(onSend).toHaveBeenLastCalledWith(
       "queued follow-up",
       undefined,
-      { workspaceScope: scope },
+      undefined,
     );
     expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
   });

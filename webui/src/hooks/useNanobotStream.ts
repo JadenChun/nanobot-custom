@@ -39,7 +39,6 @@ import type {
   RetryStatus,
   UIMediaAttachment,
   UIMessage,
-  WorkspaceScopePayload,
 } from "@/lib/types";
 
 interface StreamBuffer {
@@ -210,8 +209,6 @@ export interface SendOptions {
   mcpPresets?: OutboundMcpPresetMention[];
   sessionMentions?: SessionMention[];
   quotedContext?: string;
-  workspaceScope?: WorkspaceScopePayload | null;
-  sourceToken?: string;
   sideChannel?: boolean;
   finalizeActiveTurn?: boolean;
   /** Append guidance to the running turn without detaching its active answer segment. */

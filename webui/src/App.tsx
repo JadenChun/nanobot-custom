@@ -1311,8 +1311,6 @@ function Shell({
     workspaceOverrides,
     workspaces?.default_scope,
   ]);
-  const activeChatRunning = activeChatId ? runningChatIds.has(activeChatId) : false;
-
   const refreshWorkspaces = useCallback((): Promise<void> => {
     if (workspacesRequestRef.current) return workspacesRequestRef.current;
     const request = (async () => {
@@ -1522,18 +1520,16 @@ function Shell({
             };
           });
         } else {
-          // Reflect an unsubmitted selection immediately, even while a turn is
-          // running; the next message carries this exact snapshot.
+          // The server owns the session scope. Reflect the selection and apply
+          // it as an explicit control mutation before the next message.
           setWorkspaceOverrides((current) => ({ ...current, [activeChatId]: next }));
-          if (!activeChatRunning) {
-            client.setWorkspaceScope(activeChatId, next);
-          }
+          client.setWorkspaceScope(activeChatId, next);
         }
         return;
       }
       setDraftWorkspaceScope(next);
     },
-    [activeChatId, activeChatRunning, activeKey, client, temporaryChatActive],
+    [activeChatId, activeKey, client, temporaryChatActive],
   );
 
   const acknowledgeWorkspaceScope = useCallback((chatId: string, scope: WorkspaceScopePayload) => {

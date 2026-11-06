@@ -1789,7 +1789,7 @@ describe("NanobotClient", () => {
     await expect(promise).resolves.toBe("fresh-id");
   });
 
-  it("serializes workspace scope for new chats and messages", async () => {
+  it("serializes workspace scope only for new chats", async () => {
     const client = new NanobotClient({
       url: "ws://test",
       reconnect: false,
@@ -1811,16 +1811,15 @@ describe("NanobotClient", () => {
     lastSocket().fakeMessage({ event: "attached", chat_id: "fresh-id" });
     await expect(promise).resolves.toBe("fresh-id");
 
-    client.sendMessage("fresh-id", "hello", undefined, { workspaceScope });
+    client.sendMessage("fresh-id", "hello");
     expect(lastSocket().sent).toContain(
       JSON.stringify({
         type: "message",
         chat_id: "fresh-id",
         content: "hello",
-        workspace_scope: workspaceScope,
         request_settings_version: 1,
-      request_intent: "new",
-      webui: true,
+        request_intent: "new",
+        webui: true,
       }),
     );
   });
@@ -2334,7 +2333,7 @@ describe("NanobotClient", () => {
 });
 
 describe("versioned request settings", () => {
-  it("sends source, new intent and no steer target for a normal message", () => {
+  it("sends new intent and no steer target for a normal message", () => {
     const client = new NanobotClient({
       url: "ws://test",
       reconnect: false,
@@ -2344,14 +2343,12 @@ describe("versioned request settings", () => {
     lastSocket().fakeOpen();
     client.sendMessage("chat-x", "hello", undefined, {
       turnId: "turn-new",
-      sourceToken: "tok-live",
     });
     expect(JSON.parse(lastSocket().sent.at(-1) as string)).toEqual({
       type: "message",
       chat_id: "chat-x",
       content: "hello",
       turn_id: "turn-new",
-      source_token: "tok-live",
       request_settings_version: 1,
       request_intent: "new",
       webui: true,
@@ -2368,7 +2365,6 @@ describe("versioned request settings", () => {
     lastSocket().fakeOpen();
     client.sendMessage("chat-x", "guide", undefined, {
       turnId: "turn-steer",
-      sourceToken: "tok-live",
       requestIntent: "steer",
       targetTurnId: "turn-active",
     });
@@ -2376,7 +2372,6 @@ describe("versioned request settings", () => {
       request_settings_version: 1,
       request_intent: "steer",
       target_turn_id: "turn-active",
-      source_token: "tok-live",
     });
   });
 });
