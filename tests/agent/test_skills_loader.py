@@ -314,7 +314,7 @@ def test_build_skills_summary_uses_relative_roots_in_agent_workspace(tmp_path: P
     assert str(builtin_path) not in summary
     assert summary.count("(`skills`)") == 2
     assert "`alpha/SKILL.md`" in summary
-    assert "`beta/SKILL.md`" in summary
+    assert "`skills/beta/SKILL.md`" in summary
 
 
 def test_build_skills_summary_keeps_absolute_roots_for_selected_project(tmp_path: Path) -> None:
@@ -332,10 +332,11 @@ def test_build_skills_summary_keeps_absolute_roots_for_selected_project(tmp_path
     )
 
     assert summary.count(str(workspace_skills.resolve())) == 1
-    assert summary.count(str(builtin.resolve())) == 1
+    assert str(builtin.resolve()) not in summary
     assert str(project.resolve()) not in summary
     assert "Use `skills/<name>/SKILL.md` for these bundled skills." in summary
     assert "**beta**" in summary
+    assert "`skills/beta/SKILL.md`" in summary
 
 
 @pytest.mark.parametrize("selected_project", [False, True])

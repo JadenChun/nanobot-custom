@@ -279,12 +279,14 @@ class SkillsLoader:
                 continue
 
             resolved_root = root.expanduser().resolve()
-            if use_relative_roots and source != "library":
+            if source == "builtin":
+                display_root = Path("skills")
+            elif use_relative_roots and source != "library":
                 display_root = Path("plugins" if source == "plugin" else "skills")
             else:
                 display_root = resolved_root
             lines = [f"### {label} (`{display_root}`)"]
-            if source == "builtin" and not use_relative_roots:
+            if source == "builtin":
                 lines.append(
                     "Use `skills/<name>/SKILL.md` for these bundled skills. "
                     "The built-in `read_file` tool resolves that agents-relative path."
@@ -299,6 +301,8 @@ class SkillsLoader:
                     missing = self._get_missing_requirements(meta)
                     suffix = f" (unavailable: {missing})" if missing else " (unavailable)"
                 relative_path = Path(entry["path"]).relative_to(root).as_posix()
+                if source == "builtin":
+                    relative_path = f"skills/{relative_path}"
                 lines.append(f"- **{skill_name}** — {desc}{suffix}  `{relative_path}`")
             sections.append("\n".join(lines))
         return "\n\n".join(sections)
