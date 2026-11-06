@@ -362,7 +362,7 @@
       "kind": "primary",
       "primary_target_count": 56,
       "inventory_all_roles_count": 62,
-      "status": "report-written",
+      "status": "coordinator-checked",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": "reports/K01.md",
       "coverage": "reports/K01-coverage.json",
@@ -376,8 +376,8 @@
       "material_primary_gaps_pending_evidence": 0,
       "architecture_judgement": "Provisional Keep + Simplify",
       "coordinator_check": {
-        "status": "pending",
-        "evidence": null
+        "status": "PASS",
+        "evidence": "F56/P0/R0 frozen inventory/body ledger, 13 finding qualifications, 8 final questions and cross-stream deduplication are recorded in reports/K01-coverage.json:coordinator_check."
       },
       "integrated_review": {
         "status": "pending",
@@ -389,16 +389,16 @@
         "evidence": null
       },
       "dispatch_owner": "web-continuation-coordinator",
-      "execution_state": "active",
+      "execution_state": "complete",
       "saved_handoff": "handoffs/K01.md",
-      "handoff_disposition": "published-unaccepted",
-      "coordinator_observation": "K01 source review is published at F56/P0/R0 with thirteen promoted findings and eight final questions. Report and exact coverage ledger are written; coordinator semantic check remains pending. Cross-stream deduplication with T01-F10 and A01-F02 is explicit. Next bounded action is K01 coordinator check only.",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "K01 coordinator PASS at F56/P0/R0 with thirteen promoted findings and eight retained questions. K01-F01/F02/F06/F08/F10/F12/F13 remain conditional as recorded; K01-F11/T01-F10 and goal_runtime/A01-F02 ownership is deduplicated. Integrated review, D1–D7 decisions, repairs and Git checkpoint remain pending.",
       "active_source_review_coverage": {
         "full": 56,
         "partial": 0,
         "unread": 0
       },
-      "active_provisional_findings_count": 13,
+      "active_provisional_findings_count": 0,
       "active_substage_checkpoint": {
         "stage": "K01-E",
         "commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
