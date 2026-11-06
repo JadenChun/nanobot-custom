@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. H03 F45/P0/R0 source-review coordinator PASS and checkpointed; H01/H02/C00/S01/S02 retain PASS; twelve streams remain queued.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01 are coordinator-checked; T01 is in progress at 0/44; nine streams remain queued.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -18,24 +18,24 @@
     "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Root dispatches at pin9562: C00 review_startup_c00, H02 deep_session_state and H03 review_providers_h03; H01 report now written; S01/S02 coordinator PASS checkpoint recorded.",
+  "dispatch_evidence": "Coordinator-checked source-review publications: C00/H01/H02/H03/S01/S02/U01/D01. T01 was dispatched at 0/44 on 781d934cd52e22fd0ee8e0f83fa9d94ffeafa386; next bounded substage is T01-A (six core tool-construction primaries).",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 11,
+    "queued": 9,
     "in_progress": 1,
     "report_written": 0,
-    "coordinator_checked": 6,
+    "coordinator_checked": 8,
     "integrated_review_complete": 0,
-    "published_findings": 34,
-    "published_discussion_questions": 33,
-    "supplied_primary_body_paths": 239,
-    "primary_targets_without_new_body_evidence": 680,
-    "reports_published": 6
+    "published_findings": 42,
+    "published_discussion_questions": 44,
+    "supplied_primary_body_paths": 489,
+    "primary_targets_without_new_body_evidence": 430,
+    "reports_published": 8
   },
-  "count_meaning": "Published S01/S02/H01 evidence covers 50 primary bodies; 869 lack published new body evidence. H01 eight entries include F8 open registration contract. Saved C00/H02/H03 handoffs add zero published coverage or acceptance credit; H02 current supplied ledger is F74/P0/R0 after5A/5B. Full bodies do not certify all branches.",
+  "count_meaning": "Published coordinator-checked evidence covers 489 primary bodies across C00/H01/H02/H03/S01/S02/U01/D01. T01 is dispatched but remains 0/44 and adds zero body credit; 430 primary targets lack published new body evidence. Full-body coverage does not certify every branch or complete integrated review.",
   "discussion": {
     "sequence": "All modules and shared contracts first, consolidated discussion afterward.",
     "D1_D7": "Explicitly deferred for review sequencing; no implementation accepted.",
@@ -294,7 +294,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/T01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "T01 dispatched with exact denominator 44 implementation/tooling primaries; starting at tool construction/registry/schema/plugin-context/delegation spine."
+      "coordinator_observation": "T01 dispatched at 0/44 with no provisional findings. Stage-by-stage continuation begins with T01-A only: tools/__init__.py, base.py, schema.py, registry.py, loader.py and plugin_context.py."
     },
     {
       "id": "A01",
@@ -746,7 +746,10 @@
     "H01": "Continuation coordinator fresh-verified F1–F7 at their stated classifications, retained F8 as open contract, rechecked cited DSH/Codex/history mechanisms, and confirmed staging is unchanged at 9562e57/bbe2f237. Source-review PASS only; integrated review and decisions remain pending.",
     "C00": "Continuation coordinator reconciled all 70 supplied full primary bodies with frozen inventory/tree and fresh-verified C00-F01–F07 plus bounded DSH/Codex/history mechanisms. Source-review PASS only; D1–D7 and integrated review remain pending.",
     "H02": "Continuation coordinator accepted final 5A/5B F74/P0/R0 ledger, fresh-verified six promoted findings and retained H02-TITLE-EDGE as unpromoted pending U01. Source-review PASS only; integrated review and D1–D7 remain pending.",
-    "H03": "Continuation refilled all 19 partial + 3 unread primaries to final F45/P0/R0, reconciled the named staging delta, fresh-verified seven promoted findings plus bounded tests/history/DSH/Codex references. Source-review PASS only; integrated review and D1–D7 remain pending."
+    "H03": "Continuation refilled all 19 partial + 3 unread primaries to final F45/P0/R0, reconciled the named staging delta, fresh-verified seven promoted findings plus bounded tests/history/DSH/Codex references. Source-review PASS only; integrated review and D1–D7 remain pending.",
+    "U01": "U01 coordinator PASS at F203/P0/R0 with six qualified P2 findings and six retained questions. Integrated review and D1–D7 remain pending.",
+    "D01": "D01 coordinator PASS at F47/P0/R0 with two qualified P2 findings and five retained questions. Integrated review and D1–D7 remain pending.",
+    "T01": "T01 is active-incomplete-unaccepted at 0/44. No source-review body credit has been added. Next bounded action is T01-A: six core tool-construction files only."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
@@ -754,9 +757,8 @@
     "reason": "User requested continuation from the saved ChatGPT-web handoff checkpoint.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "Continue U01 settings/controllers and remaining general components/hooks, then close remaining browser primaries.",
-      "D01",
-      "T01",
+      "T01-A only: nanobot/agent/tools/__init__.py, base.py, schema.py, registry.py, loader.py and plugin_context.py; checkpoint before expanding scope.",
+      "Continue remaining T01 in bounded substages: delegation/foreground ownership, MCP/OAuth, execution/native authority, then remaining wrappers/adapters; close and coordinator-check T01.",
       "A01",
       "K01",
       "E02",

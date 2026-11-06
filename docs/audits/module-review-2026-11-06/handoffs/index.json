@@ -25,7 +25,7 @@
     "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
     "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
   },
-  "published_primary_body_credit_added": 189,
+  "published_primary_body_credit_added": 439,
   "handoffs": [
     {
       "stream": "C00",
@@ -211,15 +211,14 @@
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "T01 dispatched; 0/44 full; tests are supplementary only.",
-      "last_checkpoint_commit": "b905330fe464712db1298b6827443046bafe801f",
+      "note": "T01 dispatched; 0/44 full; tests are supplementary only. Next bounded stage T01-A is limited to six core tool-construction files.",
+      "last_checkpoint_commit": "781d934cd52e22fd0ee8e0f83fa9d94ffeafa386",
       "provisional_findings": []
     }
   ],
   "resume_order": [
-    "Continue U01 architectural spine: api.ts, useNanobotStream.ts, useSessions.ts, App.tsx; then settings/workspace/thread/media/mobile/plugin/leaf surfaces.",
-    "D01",
-    "T01",
+    "T01-A only: tools/__init__.py, base.py, schema.py, registry.py, loader.py and plugin_context.py; save/checkpoint before the next substage.",
+    "Finish T01 through later bounded substages, then coordinator-check the complete 44-target stream.",
     "A01",
     "K01",
     "E02",
@@ -231,5 +230,5 @@
     "P01",
     "Fresh integrated review and final consolidated D1–D7 discussion."
   ],
-  "limits": "C00/H02/H03 handoffs are published/checked with continuation verification; hashes remain provenance, not runtime results. D1–D7 and integrated review remain pending."
+  "limits": "C00/H02/H03/U01/D01 handoffs are published/checked with continuation verification; T01 is active at 0/44. Historical provenance is preserved. D1–D7 and integrated review remain pending."
 }

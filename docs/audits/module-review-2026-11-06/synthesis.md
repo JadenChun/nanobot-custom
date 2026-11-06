@@ -21,8 +21,8 @@ for the 919 primary assignments. The earlier [33-row comparison](../architecture
 retains its targeted historical boundary; it is not the new deep-review synthesis.
 
 The coordinator accepted the publication foundation and committed/pushed checkpoint
-`5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. [C00/H02/H03/U01/D01 handoffs](handoffs/index.json)
-remain preserved as provenance; C00, H02, H03, U01 and D01 are now published/checked; ten streams remain queued. Published evidence
+`5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. [C00/H02/H03/U01/D01/T01 handoffs](handoffs/index.json)
+remain preserved as provenance; C00, H02, H03, U01 and D01 are now published/checked; T01 is active at 0/44 and nine streams remain queued. Published evidence
 now covers 489 primary bodies. Forty-two promoted finding entries and forty-four questions
 remain in the eight reports rather than becoming
 a whole-project conclusion; H01-F8 is explicitly open.
@@ -30,8 +30,8 @@ S01-F03 is cross-referenced by S02 and counted once. H02 supplements5A/5B supply
 
 The user-authorized sequence remains to inspect every module, preserve per-module Git status
 checkpoints, reconcile shared contracts and then hold the consolidated discussion. Source
-inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03 checks are complete; next proceed U01/D01/T01/A01/K01/E02/E01/R01/M01/X01/Q01/P01.
-Fresh integrated review remains pending. No open decision blocks later source inspection.
+inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03 checks are complete; next complete T01 in bounded substages beginning with T01-A's six core tool-construction files, then proceed A01/K01/E02/E01/R01/M01/X01/Q01/P01.
+Fresh integrated review remains pending. No open decision blocks later source inspection. Continuation is stage-by-stage: each session should finish one bounded stage/substage, preserve exact evidence and gaps, and checkpoint before the next stage.
 
 | Prior decision area | Current review-sequencing disposition |
 | --- | --- |
