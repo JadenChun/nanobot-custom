@@ -540,21 +540,21 @@
       "path": "handoffs/K01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 32,
+        "full": 56,
         "partial": 0,
-        "unread": 24
+        "unread": 0
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "K01-A+B+C+D complete at F32/P0/R24 with ten provisional findings; K01-D added the mobile platform requirement overconstraint, conditional direct OpenAI video semantic path, blocked --cdp guidance, and non-positive max-gap nontermination. Next bounded stage is K01-E prompt/template sources only.",
-      "last_checkpoint_commit": "5c38c5c4036ec23f26d4c485c7536ae2ae795c14",
+      "note": "K01-A+B+C+D+E source review complete at F56/P0/R0 with thirteen provisional findings and zero publication credit. K01-E added absent live tool guidance, conditional raw-compaction system-authority replay, and conditional Dream skill mutation outside Dream audit/restore; next bounded stage is K01 publication packet only.",
+      "last_checkpoint_commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
       "provisional_findings": [
         {
           "id": "K01-F01",
           "priority": "P1",
-          "title": "Non-managed prompt/skill loading can bypass restrict_to_workspace",
+          "title": "Prompt/skill loading has confinement gaps outside centralized resource-policy validation",
           "state": "provisional-active-handoff",
-          "qualification": "Conditional on non-managed restricted mode plus a crafted workspace/context-repo symlink or manifest entrypoint; managed WebUI validates these paths."
+          "qualification": "Initially established for non-managed restricted bootstrap/skill reads; K01-E also found Dream/evaluator workspace prompt overrides read symlinked paths directly without ResourceAccessPolicy even in managed mode. Each trigger still requires a crafted/local prompt or skill path."
         },
         {
           "id": "K01-F02",
@@ -618,6 +618,27 @@
           "title": "Non-positive video max-gap values can spin forever before frame capping",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on an explicit zero/negative --max-gap-seconds override; the shipped default 6.0 path is unaffected."
+        },
+        {
+          "id": "K01-F11",
+          "priority": "P2",
+          "title": "Live prompt guidance advertises retired search/edit tools absent from the default registry",
+          "state": "provisional-active-handoff",
+          "qualification": "Default production composition is affected; customized plugin deployments may supply compatible names. apply_patch overlaps T01-F10 and must be deduplicated in integrated review."
+        },
+        {
+          "id": "K01-F12",
+          "priority": "P1",
+          "title": "Degraded compaction can elevate raw transcript/tool text into the future system prompt",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a raw-fallback compaction condition plus instruction-like user/tool content in the archived chunk; tool policy still constrains side effects."
+        },
+        {
+          "id": "K01-F13",
+          "priority": "P1",
+          "title": "Dream can persist skill instructions outside its own audit and restore boundary",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a manual Dream run or enabled periodic Dream producing a skill edit; external VCS may independently record files but Dream log/restore does not."
         }
       ],
       "substage_checkpoints": [
@@ -661,6 +682,17 @@
             "full": 32,
             "partial": 0,
             "unread": 24
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "K01-E",
+          "commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
+          "coverage": {
+            "full": 56,
+            "partial": 0,
+            "unread": 0
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
