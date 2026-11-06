@@ -564,7 +564,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/D01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "D01 dispatched with exact denominator 47 implementation/tooling primaries; source review starting at desktop IPC/process ownership spine."
+      "coordinator_observation": "D01 checkpoint: 20/47 primary bodies complete. Desktop/Tauri authority and uncertain-lifecycle handling are fail-closed in reviewed slice; no finding promoted. GatewayRuntime context confirms adapter lease release preserves persistent lifetime. TUI pre-open close question resolved no-finding; full TUI protocol/app review remains."
     },
     {
       "id": "X01",

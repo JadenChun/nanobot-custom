@@ -169,14 +169,14 @@
       "path": "handoffs/D01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 0,
+        "full": 20,
         "partial": 0,
-        "unread": 47
+        "unread": 27
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "D01 dispatched; 0/47 full; supplementary docs excluded from primary denominator.",
-      "last_checkpoint_commit": "902b1cd5bc65e25701ac8e7eb666fd017133ca75",
+      "note": "20/47 full. Python desktop, Tauri IPC/native/setup UI, and initial TUI host/desktop/index/queue slice complete; no promoted finding. GatewayRuntime persistent-lifetime context resolves adapter-close orphan concern; TUI pre-open close shorthand resolved no-finding. tui/src/protocol.ts remains partial/uncredited.",
+      "last_checkpoint_commit": "8e89b9327227fb1540e128d55394f06b0b275626",
       "provisional_findings": []
     }
   ],
