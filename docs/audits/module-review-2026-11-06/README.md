@@ -6,7 +6,8 @@ reverified unchanged at `9562e57f8333d7f14b6aaeae837660723a9b2650`, tree
 `bbe2f237efe0cd7b935946b533f66ed0097a3c93`. [S01](reports/S01.md) and
 [S02](reports/S02.md) retain coordinator **PASS**. [H01](reports/H01.md) now also has
 coordinator **PASS** for its source-review publication: seven classified findings plus the
-open H01-F8 registration contract and six retained questions. Integrated review and product/
+open H01-F8 registration contract and six retained questions; its acceptance publication is
+checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`. Integrated review and product/
 architecture decisions remain pending. C00/H02 handoffs are saved unpublished; H03 remains
 incomplete (23 full/19 partial/3 unread). Twelve streams remain queued. No repair/design is
 accepted; publication/acceptance, integrated review and Git preservation remain distinct.

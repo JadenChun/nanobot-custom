@@ -2016,11 +2016,16 @@
       "reason": "This continuation has repository/API source access but no clean local audit worktree; preserving prior validation snapshots instead of rerunning a historical phase command against changed ledger metadata."
     },
     "integrated_review": "pending until all modules",
-    "module_git_checkpoint": "pending until coordinator commits",
+    "module_git_checkpoint": "f6a41b840c7e50c8f757e8889a880bc3ce77d47d",
     "decisions": "D1–D7 remain deferred; all source-only/provisional limits retained."
   },
   "integrated_review": null,
-  "git_checkpoint": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "f6a41b840c7e50c8f757e8889a880bc3ce77d47d",
+    "pushed": true,
+    "evidence": "Continuation coordinator source-review PASS commit on codex/staging-audit; documentation-only acceptance publication."
+  },
   "raw_failures_and_limits": [
     {
       "origin": "analyst",

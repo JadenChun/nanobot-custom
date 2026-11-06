@@ -6,7 +6,8 @@ and [S02](reports/S02.md) retain coordinator **PASS** for their 21 assigned prim
 [H01](reports/H01.md) now also has coordinator **PASS** for its source-review publication:
 all 29 primary bodies remain credited to the supplied ledger, H01-F1–F7 retain their stated
 conditional/structural classifications, H01-F8 remains an open contract, and six questions
-remain deferred. Fresh continuation checks found `staging` unchanged at `9562e57...`.
+remain deferred. Fresh continuation checks found `staging` unchanged at `9562e57...`; the
+H01 acceptance publication is checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`.
 Integrated review remains pending and no repair/design is accepted. See
 [status.json](status.json) for the eighteen streams and [scope.json](scope.json)
 for the 919 primary assignments. The earlier [33-row comparison](../architecture-review-2026-11-06/README.md)
