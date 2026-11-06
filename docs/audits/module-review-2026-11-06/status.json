@@ -353,20 +353,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/A01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "A01-A+B source inspection complete at F16/P0/R31. Four provisional findings retained: synchronous process-completion SQLite on async paths; default /goal registration mismatch; synchronous full-history cron durable scans on the gateway event loop; and finite append-only scheduler evidence lifetime. Next bounded action is A01-C only.",
+      "coordinator_observation": "A01-A+B+C source inspection complete at F24/P0/R23. Four provisional findings remain unchanged; A01-C added no new live finding after canonical execution/delivery reconciliation. Next bounded action is A01-D durable delivery/recovery ownership only.",
       "active_source_review_coverage": {
-        "full": 16,
+        "full": 24,
         "partial": 0,
-        "unread": 31
+        "unread": 23
       },
       "active_provisional_findings_count": 4,
       "active_substage_checkpoint": {
-        "stage": "A01-B",
-        "commit": "9e7a3eb5c27c9a4aee5ccee1bc44f0209da33f82",
+        "stage": "A01-C",
+        "commit": "4162b04900edf8f43b62d45c3ee5226f40a32c7d",
         "coverage": {
-          "full": 16,
+          "full": 24,
           "partial": 0,
-          "unread": 31
+          "unread": 23
         },
         "publication_credit_added": 0
       }
