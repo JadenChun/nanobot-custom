@@ -459,7 +459,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/U01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "U01 checkpoint: 4/203 primary bodies complete (main.tsx, ClientProvider.tsx, nanobot-client.ts, api.ts); no findings promoted. Client transport and workspace receipt validation preserve server authority."
+      "coordinator_observation": "U01 checkpoint: 7/203 primary bodies complete; architectural spine complete. No findings promoted. E02 must settle open-socket reauth lifetime; M01 must settle partial attachment-upload reclamation."
     },
     {
       "id": "M01",
@@ -742,7 +742,7 @@
     "reason": "User requested continuation from the saved ChatGPT-web handoff checkpoint.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "Continue U01 architectural spine: useNanobotStream.ts, useSessions.ts, App.tsx; then remaining U01 primaries.",
+      "Continue U01 settings/permissions/workspace flows, then thread/message rendering, media/mobile/plugin surfaces and remaining primaries.",
       "D01",
       "T01",
       "A01",

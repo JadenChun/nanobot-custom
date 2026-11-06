@@ -109,13 +109,13 @@
       "path": "handoffs/U01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 4,
+        "full": 7,
         "partial": 0,
-        "unread": 199
+        "unread": 196
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "Architectural-spine checkpoint: main.tsx, ClientProvider.tsx, nanobot-client.ts and api.ts complete; no findings promoted.",
+      "note": "Architectural spine complete: main.tsx, ClientProvider.tsx, nanobot-client.ts, api.ts, useNanobotStream.ts, useSessions.ts, App.tsx. No findings promoted.",
       "last_checkpoint_commit": "600bfb0df3710738ef5e3b4331dfe3207a6e1df7"
     }
   ],
