@@ -385,14 +385,14 @@
       "path": "handoffs/A01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 24,
+        "full": 32,
         "partial": 0,
-        "unread": 23
+        "unread": 15
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "A01-A+B+C complete at F24/P0/R23 with four provisional findings unchanged; A01-C promoted no new live defect. Next bounded stage is A01-D durable delivery/recovery ownership only.",
-      "last_checkpoint_commit": "4162b04900edf8f43b62d45c3ee5226f40a32c7d",
+      "note": "A01-A+B+C+D complete at F32/P0/R15 with five provisional findings; A01-D adds P2 dispatch-registry lifetime retention. Next bounded stage is A01-E cron definition/management/gateway surface only.",
+      "last_checkpoint_commit": "cc8de895dfdc3d5562ea3883ba13254279c9b7cc",
       "provisional_findings": [
         {
           "id": "A01-F01",
@@ -418,6 +418,12 @@
           "title": "Append-only scheduler evidence has a finite hard lifetime in the live timer path",
           "state": "provisional-active-handoff",
           "qualification": "provisional until later A01 maintenance/migration files are checked for explicit rollover/archive ownership"
+        },
+        {
+          "id": "A01-F05",
+          "priority": "P2",
+          "title": "Completed delivery dispatch entries are retained for the lifetime of the outbox store",
+          "state": "provisional-active-handoff"
         }
       ],
       "substage_checkpoints": [
@@ -450,6 +456,17 @@
             "full": 24,
             "partial": 0,
             "unread": 23
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "A01-D",
+          "commit": "cc8de895dfdc3d5562ea3883ba13254279c9b7cc",
+          "coverage": {
+            "full": 32,
+            "partial": 0,
+            "unread": 15
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
