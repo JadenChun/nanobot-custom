@@ -109,14 +109,22 @@
       "path": "handoffs/U01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 31,
+        "full": 33,
         "partial": 0,
-        "unread": 172
+        "unread": 170
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "Architectural spine, workspace authority, ThreadShell and core thread/display rendering complete: 31/203 full; no findings promoted.",
-      "last_checkpoint_commit": "600bfb0df3710738ef5e3b4331dfe3207a6e1df7"
+      "note": "33/203 full. U01-F01 provisional P2: attachment-only queued guidance is excluded from automatic FIFO flush; browser-storage custody question retained unpromoted.",
+      "last_checkpoint_commit": "600bfb0df3710738ef5e3b4331dfe3207a6e1df7",
+      "provisional_findings": [
+        {
+          "id": "U01-F01",
+          "priority": "P2",
+          "title": "Attachment-only queued guidance is skipped by automatic FIFO flush",
+          "state": "source-established-provisional"
+        }
+      ]
     }
   ],
   "resume_order": [
