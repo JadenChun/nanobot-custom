@@ -1,0 +1,1756 @@
+{
+  "schema_version": 1,
+  "stream_id": "H03",
+  "report": "reports/H03.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "/root/review_providers_h03",
+    "handoff": "handoffs/H03.md saved F23/P19/R3 checkpoint",
+    "completed_by": "ChatGPT web continuation coordinator",
+    "note": "Continuation preserved the original full-body credit, refilled every missing partial/unread range, then performed semantic/test/history/reference checks. Final disposition is F45/P0/R0."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/agent/model_presets.py",
+    "nanobot/agent/model_runtime.py",
+    "nanobot/llm_usage/__init__.py",
+    "nanobot/llm_usage/context.py",
+    "nanobot/llm_usage/models.py",
+    "nanobot/llm_usage/store.py",
+    "nanobot/providers/__init__.py",
+    "nanobot/providers/capabilities.py",
+    "nanobot/providers/codex_cli_image.py",
+    "nanobot/providers/factory.py",
+    "nanobot/providers/fallback_provider.py",
+    "nanobot/providers/image_history.py",
+    "nanobot/providers/key_pool.py",
+    "nanobot/providers/oauth_guidance.py",
+    "nanobot/providers/oauth_model_catalog.py",
+    "nanobot/providers/openai_codex_oauth.py",
+    "nanobot/providers/openai_responses/__init__.py",
+    "nanobot/providers/openai_responses/converters.py",
+    "nanobot/providers/openai_responses/state.py",
+    "nanobot/providers/pooled_provider.py",
+    "nanobot/providers/provider_policy.py",
+    "nanobot/providers/unconfigured_provider.py",
+    "nanobot/utils/llm_runtime.py",
+    "nanobot/agent/context_governance.py",
+    "nanobot/providers/anthropic_provider.py",
+    "nanobot/providers/azure_openai_provider.py",
+    "nanobot/providers/base.py",
+    "nanobot/providers/bedrock_provider.py",
+    "nanobot/providers/codex_auth.py",
+    "nanobot/providers/conversation_state.py",
+    "nanobot/providers/copilot_auth.py",
+    "nanobot/providers/github_copilot_provider.py",
+    "nanobot/providers/image_generation.py",
+    "nanobot/providers/legacy_fallback_provider.py",
+    "nanobot/providers/oauth_credentials.py",
+    "nanobot/providers/openai_codex_provider.py",
+    "nanobot/providers/openai_compat_provider.py",
+    "nanobot/providers/openai_responses/parsing.py",
+    "nanobot/providers/request_budget.py",
+    "nanobot/providers/xai_grok_provider.py",
+    "nanobot/providers/xai_oauth.py",
+    "nanobot/utils/prompt_budget.py",
+    "nanobot/providers/image_pricing.py",
+    "nanobot/providers/registry.py",
+    "nanobot/providers/transcription.py"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/model_presets.py",
+      "git_blob": "80185c676c30176f370ec6fbffc6ea86ffbc5bdd",
+      "sha256": "74ea0d0a578da052e62826dd3dc28c40b6c13c4ef60dc8e428de595b35ae9634",
+      "bytes": 3183,
+      "ranges": [
+        [
+          1,
+          93
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/model_runtime.py",
+      "git_blob": "0c998486dda2f64551673dc81beb5baee5a380d2",
+      "sha256": "78724dc3fff576e16b063ec08e7e03c1ea01583475cda3481257511b8dbec523",
+      "bytes": 11835,
+      "ranges": [
+        [
+          1,
+          289
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/llm_usage/__init__.py",
+      "git_blob": "95d51a9c5b0660c24c50b2596bee1189d906eb95",
+      "sha256": "fbd347b240b187ec2eb74247da63c532ab8ad9e5f96a8d3bd59ab49fbdabfee3",
+      "bytes": 2234,
+      "ranges": [
+        [
+          1,
+          86
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/llm_usage/context.py",
+      "git_blob": "c6055e2b6f61899ed132ef5efa2eccabf4848336",
+      "sha256": "87f8845f03d08e8fc412ae2d8c14c4170fb4bd972f4997cd6065cb7a0fe5f060",
+      "bytes": 1996,
+      "ranges": [
+        [
+          1,
+          70
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/llm_usage/models.py",
+      "git_blob": "7ceb6f5c0f9eff76bb56e07d2d0ffe99b22afe57",
+      "sha256": "170e4c95fe468e9c7dc0c55503dcc9645a39d2d6d3d1d6812f061203f2648370",
+      "bytes": 1341,
+      "ranges": [
+        [
+          1,
+          38
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/llm_usage/store.py",
+      "git_blob": "224cabb61a91d84912e394591efa5ff732fc607e",
+      "sha256": "aab8af438df40a249016a66ac575f0ea259e11466f5753712d08bc5e96a5c79c",
+      "bytes": 20474,
+      "ranges": [
+        [
+          1,
+          560
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/__init__.py",
+      "git_blob": "0d12ace8eab6f988d7aef8ba4695dfb8c5a2651b",
+      "sha256": "c7f750ffdf1805fa844c552c0ccc5833df5d9f8c2bcc714b565a3093bc3dfb60",
+      "bytes": 1730,
+      "ranges": [
+        [
+          1,
+          49
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/capabilities.py",
+      "git_blob": "129e95084a8cfbe70cb7da5a7e1f6913b537617a",
+      "sha256": "26f07ba9db453dede09ea40b6281e926bbcf62a289022676f8d3af387b5b9707",
+      "bytes": 4219,
+      "ranges": [
+        [
+          1,
+          127
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/codex_cli_image.py",
+      "git_blob": "c4b406cee41ebc86b8e94536b8c09b50f943be6d",
+      "sha256": "7f7a7184afb2c775250b407a6affc211149aa6718ba9277a1c8a396b707b1763",
+      "bytes": 6078,
+      "ranges": [
+        [
+          1,
+          123
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/factory.py",
+      "git_blob": "e00c079b99f8738e64453b1c919c7b17cd64152b",
+      "sha256": "35f2a5fe106c9be6a3545870325f6d61f73c4e1019caf55a02c995c0a4f06a18",
+      "bytes": 18945,
+      "ranges": [
+        [
+          1,
+          511
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/fallback_provider.py",
+      "git_blob": "4a1596fa87875beb1253fa535f0f452495357439",
+      "sha256": "3e327423dccd5ade0809e1aaf05e20cabe44540e96cc5b57bb1e5b0903d06847",
+      "bytes": 35414,
+      "ranges": [
+        [
+          1,
+          928
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/image_history.py",
+      "git_blob": "f933eb694bc779934dc0cc9723e1e4aedfa3b0e1",
+      "sha256": "81c7fc88386af0b7bccde75b17c52ee9227ef30ef51328132a96eef2d8bb226d",
+      "bytes": 2493,
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/key_pool.py",
+      "git_blob": "c92afa5bf52dbcb7875ee363def1190afbb750b5",
+      "sha256": "63bddc1f7feae5abd8f9189f4279c355f36bf816dd14c46e356c58e4b633c1c2",
+      "bytes": 2741,
+      "ranges": [
+        [
+          1,
+          64
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/oauth_guidance.py",
+      "git_blob": "1f3315402c1570032143d394ffd2d531b7acd064",
+      "sha256": "476468d32ff4a6065ea0deefb2dd93d515e53a36683e919298c08a0756debe36",
+      "bytes": 253,
+      "ranges": [
+        [
+          1,
+          6
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/oauth_model_catalog.py",
+      "git_blob": "3a90c5439708b34202b8512c7209e96529adaa42",
+      "sha256": "b2c8bea98edc5291fd08e89b720fc37dd875ab71f59b449aafe3dcd352b0cd6c",
+      "bytes": 9287,
+      "ranges": [
+        [
+          1,
+          244
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/openai_codex_oauth.py",
+      "git_blob": "96a53fb948a5d16ab548e2b454efd884f81b8079",
+      "sha256": "e4143a29bfc4653ee1db8b57187af40283130fa27fbe6153d7740b1a7fab11c0",
+      "bytes": 10404,
+      "ranges": [
+        [
+          1,
+          300
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/openai_responses/__init__.py",
+      "git_blob": "9b95c418f5b61c7cc3a02ca0e437f8b1a347f9fa",
+      "sha256": "dd42b3b2008b4b25615bffcb074c0766c71f8c5b3fd8bff8faff0e51f19b86e4",
+      "bytes": 1461,
+      "ranges": [
+        [
+          1,
+          53
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/openai_responses/converters.py",
+      "git_blob": "e6c1dc35df3af6779d6ab40fe3fcf5ce0730e095",
+      "sha256": "46b17d73be15633b6a7a77b554b9f91bae3c0e5584d630db9ea985f7df7e4009",
+      "bytes": 11348,
+      "ranges": [
+        [
+          1,
+          277
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/openai_responses/state.py",
+      "git_blob": "9d9cdf415414a9ac6654029f7a4ffbbb7091849e",
+      "sha256": "157e689b1a55d732a1e446c70962d5c14bc59439d07c3304632b76484802d2e1",
+      "bytes": 7541,
+      "ranges": [
+        [
+          1,
+          229
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/pooled_provider.py",
+      "git_blob": "3c743d3c985442f73fa773945e919fa1a51b2839",
+      "sha256": "6d7c160f832e1bb14e95c916330fc1d11a52c40004bccf33a3cfb909624c6a4f",
+      "bytes": 16154,
+      "ranges": [
+        [
+          1,
+          362
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/provider_policy.py",
+      "git_blob": "54d91cf5bb70c6e9a99b04716a76b02c0a9e2449",
+      "sha256": "085ed9f1eabd30a38e387943ff7f94ba11bb91b8752a66dc7d17a52b90cdabe5",
+      "bytes": 4643,
+      "ranges": [
+        [
+          1,
+          133
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/unconfigured_provider.py",
+      "git_blob": "9a3f6420b25b281271fd810b6e1fb4d34c3f3e79",
+      "sha256": "146fd26c1de86cce43161fb00c91d28d61309f7d2ecd9542874d2d6f0fe8a27d",
+      "bytes": 1254,
+      "ranges": [
+        [
+          1,
+          38
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/llm_runtime.py",
+      "git_blob": "b802ff5bff2f474b0fc175c5ff63586d1a1e51a0",
+      "sha256": "db6533cfef789aef41aa761bbfe94a614e9181d10384412c0ce633a688403fce",
+      "bytes": 6371,
+      "ranges": [
+        [
+          1,
+          181
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Supplied complete H03 primary body read preserved from handoff.",
+      "evidence_origin": "/root/review_providers_h03 handoff"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/context_governance.py",
+      "git_blob": "502e2651f53d7ac7efe1c5a3a07e65126c0f4a56",
+      "sha256": "cef7505b563ed2b1420e78ca5f815ca6783b8036e10abdb68dc83450ed82557e",
+      "bytes": 124719,
+      "ranges": [
+        [
+          1,
+          2743
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/anthropic_provider.py",
+      "git_blob": "41273f00c96128a0c92e43aed1139e256ef6202b",
+      "sha256": "ef388e22cd01ee58d8ba607cdc6c8fefde1a1f8a743d450f1cbc013c6b7c819e",
+      "bytes": 36731,
+      "ranges": [
+        [
+          1,
+          892
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/azure_openai_provider.py",
+      "git_blob": "ec8bad7cad687517106d2e888dc2b6ca33a6d50e",
+      "sha256": "70c0deb448cc4ec690a8b4dfbc93e9586e40739ad3eea235cf3e79503feb07de",
+      "bytes": 19452,
+      "ranges": [
+        [
+          1,
+          510
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/base.py",
+      "git_blob": "2f53257e57c90d0ed2415a8d086ca3680bc94011",
+      "sha256": "ea4094edeab850dd13e6e87b495c327af8f3a1c27289b0841e7cf7a0c400ca6a",
+      "bytes": 92900,
+      "ranges": [
+        [
+          1,
+          2276
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/bedrock_provider.py",
+      "git_blob": "f290ce42d3bf236a1c1aed381b4afe5e7c7bd721",
+      "sha256": "9df354fa804c54cf9840daa8ea3c15d37c93680aefb4bee7240258283a31f352",
+      "bytes": 33420,
+      "ranges": [
+        [
+          1,
+          844
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/codex_auth.py",
+      "git_blob": "3d21b069961fe6f6b15a1e31b246adc1e4efefff",
+      "sha256": "8cf452785cfdb9ca2e88a2e79e8710e5dd22dca7812b8a88bf83a8a4ba1203e2",
+      "bytes": 15204,
+      "ranges": [
+        [
+          1,
+          427
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/conversation_state.py",
+      "git_blob": "26eb3f8d0255b28664a1825879b9933698640e34",
+      "sha256": "687253eaf518060bab4ee080e1682cc37615935d3b8b1fdd7f55fe156a9f49f8",
+      "bytes": 33019,
+      "ranges": [
+        [
+          1,
+          830
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/copilot_auth.py",
+      "git_blob": "128568594ba88aead3e6f0fb24cc8c2b0f98bd3c",
+      "sha256": "6f1f9e8218f4697f3a1ee86bc1480f33aefc3ba115416faa94521b45cf6701ba",
+      "bytes": 13758,
+      "ranges": [
+        [
+          1,
+          349
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/github_copilot_provider.py",
+      "git_blob": "0e3b07bf2a76dce83e7f4c0b524ec50f74b16143",
+      "sha256": "b301a6f835c5d2432fee653da8f057b7af5fbb55e1d7e82db40e55b126524877",
+      "bytes": 16232,
+      "ranges": [
+        [
+          1,
+          451
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/image_generation.py",
+      "git_blob": "6c6998f0cd20706d5e65b55e237b8b09bdece28e",
+      "sha256": "c4f05d0c2f4120b92149c505dc5b3e48706dc3f5ed2565e4a2e8640f425b881b",
+      "bytes": 73954,
+      "ranges": [
+        [
+          1,
+          2136
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/legacy_fallback_provider.py",
+      "git_blob": "549f53960770ec739e4fd94ae51b205b8941f912",
+      "sha256": "b01da33e5eb8aaaf30584ad8f62412af9c9e7ee24f490f58d735055e4af2885f",
+      "bytes": 16572,
+      "ranges": [
+        [
+          1,
+          397
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/oauth_credentials.py",
+      "git_blob": "3e79d5f5f559de1994b4ff83d7db1caae1be5620",
+      "sha256": "7b04e44c5cf10e9b1dac4b85585cf7eada4f01a0afa89a4c1ad19de6a499089a",
+      "bytes": 59977,
+      "ranges": [
+        [
+          1,
+          1532
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/openai_codex_provider.py",
+      "git_blob": "e2513a808f813bcf89955719ef574eaefd2ec96e",
+      "sha256": "4ff0c15f6e54cbd67f64296112ea55dc2eb31b207e03ee11dea0a7ed8371d2e7",
+      "bytes": 30223,
+      "ranges": [
+        [
+          1,
+          790
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/openai_compat_provider.py",
+      "git_blob": "85e7bd2ccf3528cdb95f37a66284499497087119",
+      "sha256": "824bc961abe8570c133c3b0cb12340c131cdc4eab68568939db9a3689d2aefb5",
+      "bytes": 147099,
+      "ranges": [
+        [
+          1,
+          3569
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/openai_responses/parsing.py",
+      "git_blob": "d3d181006808e3fedccd08353e9f204254c915ce",
+      "sha256": "8b7b34e29d2a5eccdc965e31c1f2b88a12d82fa2a1c61f922576b623d76060e9",
+      "bytes": 36580,
+      "ranges": [
+        [
+          1,
+          876
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/request_budget.py",
+      "git_blob": "778b565eeb84ecb0ff51deba5b67f585a3e39fdc",
+      "sha256": "1a9d032d9897448c5078fc63aa42f9a680369715b9ee95738fd43ab5a1de1707",
+      "bytes": 46230,
+      "ranges": [
+        [
+          1,
+          1209
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/xai_grok_provider.py",
+      "git_blob": "8cdba99be0c28865e7b6b5ad906501998cf6b3c9",
+      "sha256": "0a552ef4356bf477c6bfb90985a8173bde99a763fed0ea6ef688fab6ed1899de",
+      "bytes": 34659,
+      "ranges": [
+        [
+          1,
+          901
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/xai_oauth.py",
+      "git_blob": "e77d676fb5993472793f66746bb36c427009f826",
+      "sha256": "f9e1e68dc68659aeb4017cc492e8d9ae68fa479d53a4ce8d1f5fce87af426fab",
+      "bytes": 26161,
+      "ranges": [
+        [
+          1,
+          751
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/prompt_budget.py",
+      "git_blob": "1a54c82ce227806fc3a0e5b228c2b62e244c9b71",
+      "sha256": "775c25d530295b4ae0c352cc48928916956589d16f72356cedf1e6d101ca62d6",
+      "bytes": 23017,
+      "ranges": [
+        [
+          1,
+          627
+        ]
+      ],
+      "prior_checkpoint_disposition": "partial",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/image_pricing.py",
+      "git_blob": "e80207b766e83b7ec900b337f1cc99897ec0fd46",
+      "sha256": "d22f17c5a6de89059f21ae58f4662e8aafec1a2bcad2e7f303887c78e7b1b6ae",
+      "bytes": 10351,
+      "ranges": [
+        [
+          1,
+          282
+        ]
+      ],
+      "prior_checkpoint_disposition": "unread",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/registry.py",
+      "git_blob": "41db005dc6d7a45645cde6148bf477cca007523b",
+      "sha256": "d195bc4a4ee57d340f1be91d39a05b3f2dcdf7a0afef3cb5e3804cc843de7d1b",
+      "bytes": 32823,
+      "ranges": [
+        [
+          1,
+          865
+        ]
+      ],
+      "prior_checkpoint_disposition": "unread",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/providers/transcription.py",
+      "git_blob": "555f433bf6ce63886f644cb74b321ab7e6cdc4d3",
+      "sha256": "32838fe6fea56730bbb6ad36c7e3229a5232c95ff6c374e27529753a23adddbd",
+      "bytes": 29197,
+      "ranges": [
+        [
+          1,
+          828
+        ]
+      ],
+      "prior_checkpoint_disposition": "unread",
+      "final_disposition": "full",
+      "purpose": "Supplied partial/unread checkpoint plus continuation refill now collectively covers 1–EOF.",
+      "evidence_origin": "handoff checkpoint plus fresh ChatGPT web continuation reads"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/runner.py",
+      "ranges": [
+        [
+          1860,
+          1935
+        ],
+        [
+          2325,
+          2395
+        ]
+      ],
+      "purpose": "ProviderRouteChanged reprepare and request dispatch.",
+      "evidence_origin": "Fresh continuation coordinator cross-module caller read; no H03 primary denominator credit."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/loop.py",
+      "ranges": [
+        [
+          820,
+          1170
+        ]
+      ],
+      "purpose": "Runtime resolver setters/admission and tool composition.",
+      "evidence_origin": "Fresh continuation coordinator cross-module caller read; no H03 primary denominator credit."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/tools/runtime_control.py",
+      "ranges": [
+        [
+          1,
+          260
+        ]
+      ],
+      "purpose": "Public runtime-control adapter for direct default setters.",
+      "evidence_origin": "Fresh continuation coordinator cross-module caller read; no H03 primary denominator credit."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/tools/self.py",
+      "ranges": [
+        [
+          1,
+          760
+        ]
+      ],
+      "purpose": "MyTool reachability and active-session setter guard.",
+      "evidence_origin": "Fresh continuation coordinator cross-module caller read; no H03 primary denominator credit."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_services.py",
+      "ranges": [
+        [
+          1,
+          120
+        ]
+      ],
+      "purpose": "OAuth flow registry cancellation and same-provider multi-flow storage.",
+      "evidence_origin": "Fresh continuation coordinator cross-module caller read; no H03 primary denominator credit."
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_models.py",
+      "ranges": [
+        [
+          1598,
+          1775
+        ]
+      ],
+      "purpose": "Codex/xAI WebUI start/complete/logout flow ownership.",
+      "evidence_origin": "Fresh continuation coordinator cross-module caller read; no H03 primary denominator credit."
+    }
+  ],
+  "search_only": [
+    {
+      "query": "Responses terminal/EOF completion and response.completed",
+      "roots": [
+        "nanobot/providers",
+        "tests/providers"
+      ],
+      "purpose": "Terminal-contract/counterevidence search; no global absence claim."
+    },
+    {
+      "query": "OAuth login intent generation/cancel/logout competing flows",
+      "roots": [
+        "nanobot/providers",
+        "nanobot/webui",
+        "tests/providers"
+      ],
+      "purpose": "Credential custody/caller search."
+    },
+    {
+      "query": "LLMCallRecord/set_llm_call_observer/on_transport_attempt",
+      "roots": [
+        "nanobot",
+        "tests"
+      ],
+      "purpose": "Physical/logical call accounting search."
+    },
+    {
+      "query": "selected_route/ProviderRouteChanged/fallback_index",
+      "roots": [
+        "nanobot/providers",
+        "nanobot/agent",
+        "tests"
+      ],
+      "purpose": "Prepared route/reprepare interaction search."
+    },
+    {
+      "query": "select_model/select_context_window/resolved_capabilities",
+      "roots": [
+        "nanobot"
+      ],
+      "purpose": "Runtime capability snapshot caller search."
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_openai_codex_oauth.py",
+      "ranges": [
+        [
+          1,
+          420
+        ]
+      ],
+      "purpose": "Codex OAuth normal/input/expiry source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_openai_responses.py",
+      "ranges": [
+        [
+          1,
+          360
+        ]
+      ],
+      "purpose": "Responses parser/provider source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_responses_api.py",
+      "ranges": [
+        [
+          1,
+          420
+        ]
+      ],
+      "purpose": "Responses API source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_openai_compat_timeout.py",
+      "ranges": [
+        [
+          1,
+          360
+        ]
+      ],
+      "purpose": "Timeout/stream cleanup source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_llm_usage_observer.py",
+      "ranges": [
+        [
+          1,
+          420
+        ]
+      ],
+      "purpose": "Outer attempt/fallback observer contract; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_usage_contract.py",
+      "ranges": [
+        [
+          1,
+          520
+        ]
+      ],
+      "purpose": "Usage contract source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_bedrock_provider.py",
+      "ranges": [
+        [
+          1,
+          220
+        ]
+      ],
+      "purpose": "Bedrock source evidence; injected-client tests bypass real _make_client in reviewed range.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_xai_oauth.py",
+      "ranges": [
+        [
+          1,
+          330
+        ]
+      ],
+      "purpose": "xAI login/refresh/logout source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/agent/test_runner_fallback.py",
+      "ranges": [
+        [
+          820,
+          940
+        ]
+      ],
+      "purpose": "Fallback window/request-budget source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "tests/providers/test_route_preview_contract.py",
+      "ranges": [
+        [
+          330,
+          520
+        ]
+      ],
+      "purpose": "Route preview and stale-route rejection source evidence; not executed.",
+      "evidence_origin": "Fresh continuation coordinator source read"
+    }
+  ],
+  "support_reads": [
+    {
+      "path": "docs/audits/module-review-2026-11-06/handoffs/H03.md",
+      "ranges": [
+        [
+          1,
+          208
+        ]
+      ],
+      "purpose": "Saved analyst checkpoint and candidate ledger; provenance only."
+    },
+    {
+      "path": "docs/audits/architecture-review-2026-11-06/decisions.md",
+      "ranges": [
+        [
+          1,
+          111
+        ]
+      ],
+      "purpose": "Deferred D1–D7 context only."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/llm/llm-pi-ai/src/stream.ts",
+      "git_blob": "17b71581355cb255ce8d7aaef69035ca1e36a000",
+      "ranges": [
+        [
+          1,
+          245
+        ]
+      ],
+      "purpose": "Explicit done/error terminal mapping; EOF throws STREAM_CLOSED. Supports H03-F1 outcome without parity inference.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation coordinator pinned source read"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/llm/llm-pi-ai/src/login.ts",
+      "git_blob": "f7f055dab6cc0961e0175f619e40e23ca94dbac7",
+      "ranges": [
+        [
+          1,
+          173
+        ]
+      ],
+      "purpose": "Login passes session cancellation signal into provider login and writes through one credential seam; bounded H03-F2/F7 comparison.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation coordinator pinned source read"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/llm/llm-pi-ai/src/provider.ts",
+      "git_blob": "9a851f6ef8250a008b1256521f3355e2cb1022d0",
+      "ranges": [
+        [
+          1,
+          193
+        ]
+      ],
+      "purpose": "Route/provider construction and per-request credential ownership comparison; no requirement to copy pi-ai.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation coordinator pinned source read"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/codex-api/src/sse/responses.rs",
+      "git_blob": "67f627e60173a29a9ba85ae45ab23b125edcd48b",
+      "ranges": [
+        [
+          1,
+          760
+        ]
+      ],
+      "purpose": "Pinned SSE implementation treats EOF before response.completed as ApiError::Stream and handles failed/incomplete terminals distinctly; supports H03-F1.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation coordinator pinned source read"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/core/src/client.rs",
+      "git_blob": "2ac9b931ffbcf47809d54c35569458003ccd7181",
+      "ranges": [
+        [
+          1,
+          260
+        ]
+      ],
+      "purpose": "Session/turn-scoped provider client and per-request setup context; bounded architecture comparison only.",
+      "sha256": null,
+      "evidence_origin": "Fresh continuation coordinator pinned source read"
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "commit": "b89abf1bad48591391b23612056ece05c173ff9d",
+      "kind": "message + relevant fallback/request-budget diff",
+      "purpose": "Introduced prepared route facts intended to describe the leaf dispatch will use."
+    },
+    {
+      "commit": "13d1469cfd6cbdba3847a1794b00deb856cb6ea4",
+      "kind": "message + relevant runner/fallback diff",
+      "purpose": "Added ProviderRouteChanged and one reprepare after stale route; explains H03-F3 interaction."
+    },
+    {
+      "commit": "cb71b864dfff57e87ef1dad2b2fe1af73308b0d4",
+      "kind": "message + relevant capability diff",
+      "purpose": "Made ModelCapabilities immutable and route-owned; informs H03-F6."
+    },
+    {
+      "commit": "79934a5630ca419e02e124693efa938d9d3407f0",
+      "kind": "bounded migration/OAuth/runtime history",
+      "purpose": "Migration implementation and credential/runtime compatibility history; historical validation is not current execution evidence."
+    },
+    {
+      "commit": "4e922ed2b99908ec4014f4bc319ce7468e88b665",
+      "kind": "path history locator",
+      "purpose": "Prior Responses/context accounting change; no inherited test result."
+    }
+  ],
+  "current_staging_delta": {
+    "from_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+    "to_commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "files": [
+      "nanobot/agent/runner.py",
+      "nanobot/providers/fallback_provider.py",
+      "tests/agent/test_pre_dispatch_recovery.py",
+      "tests/agent/test_runner_errors.py",
+      "tests/agent/test_runner_fallback.py"
+    ],
+    "h03_reconciliation": "Fallback request-limit repricing at 9562 replaces primary total/model window with fallback context window; it does not resolve H03-F3 route-transition replay."
+  },
+  "history_limits": "Bounded relevant history only; commit messages/diffs are intent/evolution evidence, not current passing tests.",
+  "findings": [
+    {
+      "id": "H03-F1",
+      "classification": "missing terminal-event validation on Responses streams",
+      "priority": "P1",
+      "confidence": "high static",
+      "source": [
+        "nanobot/providers/openai_responses/parsing.py:374–579,691–876",
+        "nanobot/providers/openai_compat_provider.py:3090–3285",
+        "nanobot/providers/base.py:1536–1628,1689–1806"
+      ],
+      "trigger": "Responses SSE/SDK iterator ends normally after delivering partial text or completed output/tool items but before response.completed/response.incomplete/response.failed.",
+      "impact": "Ordinary calls can return a default successful stop/tool-bearing result without a provider terminal event; replay state is withheld, but downstream can still treat the model result as usable. Existing retry guards prevent generic replay after externally streamed output.",
+      "counterevidence": "Auxiliary source-summary mode explicitly converts an incomplete capture to error; transcription StepFun SSE already rejects EOF without its final event.",
+      "smallest_alternative": "Require an explicit terminal event for ordinary Responses completion and classify clean EOF as a typed transport/stream failure, preserving no-replay-after-delivery semantics.",
+      "dependencies": [
+        "D6",
+        "D7",
+        "H01"
+      ]
+    },
+    {
+      "id": "H03-F2",
+      "classification": "cancelled/expired Codex OAuth flow can publish a late credential",
+      "priority": "P1",
+      "confidence": "high conditional race",
+      "source": [
+        "nanobot/providers/openai_codex_oauth.py:55–220",
+        "nanobot/providers/oauth_credentials.py:1429–1532",
+        "nanobot/webui/settings_services.py:42–108",
+        "nanobot/webui/settings_models.py:1598–1643,1700–1775"
+      ],
+      "trigger": "Token exchange has started; WebUI flow is cancelled/expired/evicted; no later login/logout supersedes the durable intent generation; worker returns after cancellation.",
+      "impact": "The flow Future/UI can be failed while the worker still commits the credential under the still-current login generation.",
+      "counterevidence": "A later login/logout changes the generation and rejects the stale commit; tests cover normal/invalid/timeout paths but the reviewed ranges do not exercise this in-flight exchange race.",
+      "smallest_alternative": "Revoke/supersede the durable login intent when cancellation becomes authoritative, then require commit_login to match that generation; retain joined cleanup and late-result discard.",
+      "dependencies": [
+        "D2",
+        "D4",
+        "D6",
+        "E02"
+      ]
+    },
+    {
+      "id": "H03-F3",
+      "classification": "fallback route transition can replay the failed primary before reaching fallback",
+      "priority": "P2",
+      "confidence": "high conditional",
+      "source": [
+        "nanobot/providers/fallback_provider.py:280–370,570–820",
+        "nanobot/agent/runner.py:1860–1935,2325–2395",
+        "tests/providers/test_route_preview_contract.py:330–520"
+      ],
+      "trigger": "Prepared route certifies available primary; primary returns a fallbackable error before deltas; fallback remains eligible; circuit threshold has not opened primary.",
+      "impact": "Fallback verification raises ProviderRouteChanged before the fallback request; Runner clears the route and reprepares, allowing the still-available primary to be requested again before fallback. Cost/latency/request count can duplicate; no tool-side-effect replay is claimed.",
+      "counterevidence": "The stale-route test intentionally proves rejection of a preconstructed mismatched quote; it does not cover the consumed-primary transition.",
+      "smallest_alternative": "Carry consumed-candidate/attempt identity through reprepare so the next certified route begins at the fallback, while retaining leaf budget verification and stale-route rejection.",
+      "dependencies": [
+        "D5",
+        "D6",
+        "D7",
+        "H01"
+      ]
+    },
+    {
+      "id": "H03-F4",
+      "classification": "process-global Bedrock bearer credential mutation",
+      "priority": "P2",
+      "confidence": "high mechanism; ambient-client impact conditional",
+      "source": [
+        "nanobot/providers/bedrock_provider.py:56–115",
+        "tests/providers/test_bedrock_provider.py:1–220"
+      ],
+      "trigger": "BedrockProvider is constructed with api_key and creates its real boto client rather than an injected test client.",
+      "impact": "Construction assigns AWS_BEARER_TOKEN_BEDROCK in os.environ and never restores/clears it, so later same-process ambient AWS/Bedrock construction can inherit the credential. No deployed cross-account incident is claimed.",
+      "counterevidence": "Reviewed Bedrock tests mostly inject a fake client and bypass _make_client.",
+      "smallest_alternative": "Prefer an explicit SDK credential boundary; if the SDK only supports ambient bearer discovery, document/enforce one-account-per-process or use a non-overlapping construction boundary rather than leaving mutable process-global credential state.",
+      "dependencies": [
+        "D2",
+        "D4"
+      ]
+    },
+    {
+      "id": "H03-F5",
+      "classification": "physical provider-call observability is collapsed inside provider methods",
+      "priority": "P2",
+      "confidence": "high contract/mechanism",
+      "source": [
+        "nanobot/llm_usage/models.py:1–38",
+        "nanobot/providers/base.py:850–1050,1536–1628,1689–1806",
+        "nanobot/providers/openai_compat_provider.py:2416–2453,2957–3110",
+        "nanobot/providers/openai_codex_provider.py:115–241",
+        "nanobot/providers/xai_grok_provider.py:101–243",
+        "tests/providers/test_llm_usage_observer.py:180–280"
+      ],
+      "trigger": "One outer safe chat performs multiple upstream transports internally: Responses compaction compatibility retry, Codex native compaction plus main request, Responses→chat fallback, xAI auth/hosted-tool retry, etc.",
+      "impact": "LLMCallRecord is documented as one physical provider-call attempt, but one outer record can cover multiple transports; request counts/error/latency attribution can undercount. This is not a claim that all retry/fallback records are lost or that token billing totals are universally wrong.",
+      "counterevidence": "Outer retry attempts and FallbackProvider leaves do propagate the observer and are separately recorded.",
+      "smallest_alternative": "Either emit a physical-attempt record at the common transport boundary or redefine the existing record as logical-call semantics and add a separate physical transport ledger; avoid double-counting outer retries.",
+      "dependencies": [
+        "D7",
+        "E02",
+        "P01"
+      ]
+    },
+    {
+      "id": "H03-F6",
+      "classification": "direct runtime model/window setters retain stale route-owned capabilities",
+      "priority": "P2",
+      "confidence": "high mechanism; ordinary active-session reachability narrowed",
+      "source": [
+        "nanobot/agent/model_runtime.py:150–225",
+        "nanobot/utils/llm_runtime.py:1–110",
+        "nanobot/agent/tools/runtime_control.py:115–195",
+        "nanobot/agent/tools/self.py:420–560",
+        "nanobot/agent/context_governance.py:690–740"
+      ],
+      "trigger": "Direct default model or context-window setter changes runtime identity without selecting a preset; generation settings remain unchanged; later admit() refresh sees unchanged generation.",
+      "impact": "The stored ModelCapabilities snapshot from the old route/window can survive into later admissions; capability-governed preparation such as source-summary max-output allowance can be stale.",
+      "counterevidence": "MyTool blocks direct model/window writes during an active session and recommends model_preset; preset resolution builds a fresh snapshot. Public/default-control and embedding paths remain the conditional reachability.",
+      "smallest_alternative": "Re-resolve/clear route-owned capabilities whenever model or context-window identity changes, or retire unsupported direct setters after D4 caller review.",
+      "dependencies": [
+        "D4",
+        "D7",
+        "P01"
+      ]
+    },
+    {
+      "id": "H03-F7",
+      "classification": "xAI competing login flows have last-writer credential ordering instead of login-generation ordering",
+      "priority": "P2",
+      "confidence": "high same-gateway conditional race",
+      "source": [
+        "nanobot/webui/settings_services.py:42–108",
+        "nanobot/webui/settings_models.py:1640–1705,1700–1775",
+        "nanobot/providers/xai_oauth.py:180–390",
+        "tests/providers/test_xai_oauth.py:1–220"
+      ],
+      "trigger": "Two same-provider WebUI xAI login flows are registered; newer flow completes/persists first; older flow completes later.",
+      "impact": "Each flow has its own lock and shared token writes serialize only at file level, so the older credential can overwrite the newer credential. This can select the wrong account after competing legitimate sign-ins.",
+      "counterevidence": "Logout clears/cancels registered flows before unlinking and refresh is serialized; this finding does not claim same-process logout resurrection.",
+      "smallest_alternative": "Give xAI login publication the same monotonic intent/generation ownership used by generation-aware credential coordinators, or enforce one active same-provider login flow and revoke the prior publication authority.",
+      "dependencies": [
+        "D2",
+        "D4",
+        "D6",
+        "E02"
+      ]
+    }
+  ],
+  "additional_observations": [
+    {
+      "id": "H03-O1",
+      "classification": "structural repeated fallback construction",
+      "note": "Preview can construct a fallback provider and actual traversal constructs it again. This is a P01 simplification candidate; eager-client leakage was not established."
+    },
+    {
+      "id": "H03-O2",
+      "classification": "dormant helper cleanup candidate",
+      "note": "PortableFileLock acquires its process-local lock before mkdir/os.open; those pre-try failures could strand the local lock, but production caller reachability was not established in H03. Retain for D4/P01 rather than promote."
+    },
+    {
+      "id": "H03-O3",
+      "classification": "system-message compatibility edge",
+      "note": "Responses conversion keeps the last system message. Current runner recovery guidance was moved to user-role notes; a broader SDK multi-system defect was not established."
+    },
+    {
+      "id": "H03-O4",
+      "classification": "conditional adapter retirement",
+      "note": "Codex CLI image adapter has real process/snapshot/hash behavior, but activation/external compatibility obligations remain unresolved."
+    },
+    {
+      "id": "H03-S1",
+      "classification": "preserved strength",
+      "note": "Bound provider conversation replay requires a complete binding, exact transport receipt and replayable settlement; do not weaken it while simplifying providers."
+    }
+  ],
+  "finding_count_convention": "Seven promoted H03 findings. Structural/retirement candidates H03-O1–O4 and preserved strength H03-S1 are not included in finding totals.",
+  "final_discussion_questions": [
+    {
+      "id": "H03-Q1",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "question": "Should every provider stream require an explicit typed terminal event before model output/tool calls become successful, and how should already-delivered deltas affect retry versus final error?"
+    },
+    {
+      "id": "H03-Q2",
+      "decisions": [
+        "D2",
+        "D4",
+        "D6"
+      ],
+      "question": "What single credential-intent/cancellation contract should Codex, xAI and future OAuth providers share across UI eviction, expiry, competing logins, logout and process boundaries?"
+    },
+    {
+      "id": "H03-Q3",
+      "decisions": [
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "question": "When a prepared primary route is consumed and fails, should reprepare resume at the next candidate rather than replaying the primary, and what identity proves that transition?"
+    },
+    {
+      "id": "H03-Q4",
+      "decisions": [
+        "D7"
+      ],
+      "question": "Is LLMCallRecord a logical model call or a physical upstream transport attempt? Which request/error/latency metrics are promised externally?"
+    },
+    {
+      "id": "H03-Q5",
+      "decisions": [
+        "D2",
+        "D4"
+      ],
+      "question": "Are process-global provider credentials/configuration allowed by a one-account-per-process contract, or must provider instances own explicit credential state?"
+    },
+    {
+      "id": "H03-Q6",
+      "decisions": [
+        "D4",
+        "D7"
+      ],
+      "question": "Are direct default model/context-window setters supported public compatibility, and if so which route-owned capability/policy snapshots must be recaptured atomically?"
+    },
+    {
+      "id": "H03-Q7",
+      "decisions": [
+        "D4",
+        "P01"
+      ],
+      "question": "Which provider/fallback construction and dormant compatibility helpers can be cached, combined or retired after caller/lifetime evidence, without freezing live auth/revocation state?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    {
+      "topic": "Stream terminal outcome and retry",
+      "streams": [
+        "H03",
+        "H01"
+      ],
+      "findings": [
+        "H03-F1"
+      ],
+      "decisions": [
+        "D6",
+        "D7"
+      ]
+    },
+    {
+      "topic": "Credential custody and competing OAuth flows",
+      "streams": [
+        "H03",
+        "E02",
+        "C00"
+      ],
+      "findings": [
+        "H03-F2",
+        "H03-F4",
+        "H03-F7"
+      ],
+      "decisions": [
+        "D2",
+        "D4",
+        "D6"
+      ]
+    },
+    {
+      "topic": "Prepared route/fallback lifetime",
+      "streams": [
+        "H03",
+        "H01"
+      ],
+      "findings": [
+        "H03-F3"
+      ],
+      "decisions": [
+        "D5",
+        "D6",
+        "D7"
+      ]
+    },
+    {
+      "topic": "Usage/request accounting",
+      "streams": [
+        "H03",
+        "E02",
+        "P01"
+      ],
+      "findings": [
+        "H03-F5"
+      ],
+      "decisions": [
+        "D7"
+      ]
+    },
+    {
+      "topic": "Runtime route capabilities",
+      "streams": [
+        "H03",
+        "T01",
+        "P01"
+      ],
+      "findings": [
+        "H03-F6"
+      ],
+      "decisions": [
+        "D4",
+        "D7"
+      ]
+    }
+  ],
+  "coverage_counts": {
+    "primary_assignments": 45,
+    "final_full_primary_body_paths": 45,
+    "prior_full": 23,
+    "prior_partial": 19,
+    "prior_unread": 3,
+    "primary_physical_lines": 28911,
+    "primary_bytes": 1133677,
+    "primary_exclusions": 0,
+    "primary_unread_paths": 0,
+    "caller_context_paths": 6,
+    "test_source_paths": 10,
+    "reference_paths": 5,
+    "findings": 7,
+    "additional_observations": 5,
+    "discussion_questions": 7
+  },
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "H03 source-review publication only; no repair/product/design acceptance.",
+    "staging_check": {
+      "status": "PASS",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "named_delta_reconciled": true
+    },
+    "ledger_reconciliation": {
+      "status": "PASS",
+      "assigned_paths": 45,
+      "final_full_paths": 45,
+      "inventory_matches": 45,
+      "tree_blob_matches": 45,
+      "physical_lines": 28911,
+      "bytes": 1133677,
+      "material_primary_gaps": 0
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "promoted_findings": [
+        "H03-F1",
+        "H03-F2",
+        "H03-F3",
+        "H03-F4",
+        "H03-F5",
+        "H03-F6",
+        "H03-F7"
+      ],
+      "additional_observations": [
+        "H03-O1",
+        "H03-O2",
+        "H03-O3",
+        "H03-O4",
+        "H03-S1"
+      ],
+      "note": "All previously missing primary ranges were freshly refilled. Material findings were then traced through callers, source tests, bounded history and pinned DSH/Codex mechanisms.",
+      "qualifications": [
+        "H03-F1 is terminal-classification failure, not generic retry-after-stream replay.",
+        "H03-F2 requires exchange already in flight and no later generation supersession.",
+        "H03-F3 claims redundant primary request/cost/latency, not duplicate tool side effects.",
+        "H03-F4 is process-global credential contamination risk; deployed cross-account incidence is unproven.",
+        "H03-F5 is request-count/observability integrity, not universal token-billing corruption.",
+        "H03-F6 ordinary active-session MyTool writes are blocked; direct/default control paths remain conditional reachability.",
+        "H03-F7 is competing-login publication order; same-process logout resurrection is not claimed."
+      ]
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "No clean local audit worktree in this web continuation; source/API reads and frozen metadata reconciliation only."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "pending until coordinator commits",
+    "decisions": "D1–D7 remain deferred."
+  },
+  "integrated_review": null,
+  "git_checkpoint": null,
+  "raw_failures_and_limits": [
+    "One image-provider multi-range response was truncated and received no body credit; every affected range was refilled separately before F45/P0/R0.",
+    "A reference-metadata helper attempted TextEncoder in Code Mode where it was unavailable; it was rerun without byte counting and did not affect source evidence.",
+    "No repository tests/builds/checkers/imports/services/providers/apps/sandboxes/network probes/benchmarks were executed."
+  ],
+  "limits": [
+    "Source review does not establish deployed provider configuration, real-account OAuth incidence, network behavior, SDK environment-read timing or measured latency/cost.",
+    "Pinned DSH/Codex mechanisms are engineering references, not parity requirements.",
+    "Later default-branch search hits were not used as staging source evidence."
+  ]
+}

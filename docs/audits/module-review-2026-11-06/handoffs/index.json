@@ -25,7 +25,7 @@
     "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
     "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
   },
-  "published_primary_body_credit_added": 144,
+  "published_primary_body_credit_added": 189,
   "handoffs": [
     {
       "stream": "C00",
@@ -93,13 +93,18 @@
         "partial": 19,
         "unread": 3
       },
-      "state": "saved-paused-incomplete-unaccepted",
-      "published_body_credit_added": 0,
-      "reference_body_credit": 0
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 45,
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 45,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "Continuation coordinator refilled all saved partial/unread ranges before publication."
     }
   ],
   "resume_order": [
-    "Resume incomplete H03 (23 full / 19 partial / 3 unread).",
     "U01",
     "D01",
     "T01",
@@ -114,5 +119,5 @@
     "P01",
     "Fresh integrated review and final consolidated D1–D7 discussion."
   ],
-  "limits": "C00 and H02 handoffs are published/checked with fresh coordinator verification; H03 remains incomplete handoff evidence. No runtime results are implied."
+  "limits": "C00/H02/H03 handoffs are published/checked with continuation verification; hashes remain provenance, not runtime results. D1–D7 and integrated review remain pending."
 }
