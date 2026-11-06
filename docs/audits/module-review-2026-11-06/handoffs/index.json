@@ -212,7 +212,7 @@
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
       "note": "T01-A+B+C+D+E complete at F29/P0/R15; ten provisional findings retained (three conditional P1, seven P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-F search/web/crawler/network wrappers (seven primaries).",
-      "last_checkpoint_commit": "63d09ac2bcfed40b5de9e77ca4b4060847bde3d0",
+      "last_checkpoint_commit": "3b74ccf0935ea76107bd6a307945444ddce279b4",
       "provisional_findings": [
         {
           "id": "T01-F01",
@@ -320,6 +320,17 @@
             "full": 20,
             "partial": 0,
             "unread": 24
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-E",
+          "commit": "3b74ccf0935ea76107bd6a307945444ddce279b4",
+          "coverage": {
+            "full": 29,
+            "partial": 0,
+            "unread": 15
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
