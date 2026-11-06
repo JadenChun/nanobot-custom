@@ -109,14 +109,14 @@
       "path": "handoffs/U01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 127,
+        "full": 149,
         "partial": 0,
-        "unread": 76
+        "unread": 54
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "127/203 full. Settings, general hooks, and 20 small general-component leaves complete. U01-F01/F02/F03/F04/F05 provisional and unchanged in this leaf batch. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted; D01-shared HostWebSocket pre-open close lifetime question remains deferred.",
-      "last_checkpoint_commit": "662d2e15eb330fb9f748165e3244042032eec452",
+      "note": "149/203 full. Workbench, sidebar, thread viewport/messages/activity, model/usage/prompt/session-info, and activity-rendering batch complete. U01-F01/F02/F03/F04/F05 provisional unchanged. Prompt-jump handoff residue and mid-gesture model-preset list change remain unpromoted; cached restart hydration and remote-pairing restore generation remain unpromoted; D01 HostWebSocket question remains deferred.",
+      "last_checkpoint_commit": "2bc9d48239e2a101400f6dacf89e05b6712528ba",
       "provisional_findings": [
         {
           "id": "U01-F01",
