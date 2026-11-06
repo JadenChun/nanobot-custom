@@ -24,8 +24,8 @@
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 12,
-    "in_progress": 0,
+    "queued": 11,
+    "in_progress": 1,
     "report_written": 0,
     "coordinator_checked": 6,
     "integrated_review_complete": 0,
@@ -429,7 +429,7 @@
       "kind": "primary",
       "primary_target_count": 203,
       "inventory_all_roles_count": 328,
-      "status": "queued",
+      "status": "in-progress",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": null,
       "coverage": null,
@@ -454,7 +454,12 @@
         "status": "pending",
         "commit": null,
         "evidence": null
-      }
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "active",
+      "saved_handoff": "handoffs/U01.md",
+      "handoff_disposition": "active-incomplete-unaccepted",
+      "coordinator_observation": "First U01 checkpoint: 3/203 primary bodies complete (main.tsx, ClientProvider.tsx, nanobot-client.ts); no findings promoted."
     },
     {
       "id": "M01",
@@ -737,7 +742,7 @@
     "reason": "User requested continuation from the saved ChatGPT-web handoff checkpoint.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "U01",
+      "Continue U01 architectural spine: api.ts, useNanobotStream.ts, useSessions.ts, App.tsx; then remaining U01 primaries.",
       "D01",
       "T01",
       "A01",

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "state": "ACTIVE after user-requested resumption",
+  "state": "ACTIVE",
   "date": "2026-11-06",
   "source_pins": {
     "nanobot": {
@@ -102,10 +102,24 @@
         "unread": 0
       },
       "completion": "Continuation coordinator refilled all saved partial/unread ranges before publication."
+    },
+    {
+      "stream": "U01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/U01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 3,
+        "partial": 0,
+        "unread": 200
+      },
+      "state": "active-incomplete-unaccepted",
+      "published_body_credit_added": 0,
+      "note": "Architectural-spine first checkpoint; no findings promoted."
     }
   ],
   "resume_order": [
-    "U01",
+    "Continue U01 architectural spine: api.ts, useNanobotStream.ts, useSessions.ts, App.tsx; then settings/workspace/thread/media/mobile/plugin/leaf surfaces.",
     "D01",
     "T01",
     "A01",
