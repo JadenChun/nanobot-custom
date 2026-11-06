@@ -564,7 +564,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/D01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "D01 checkpoint: 20/47 primary bodies complete. Desktop/Tauri authority and uncertain-lifecycle handling are fail-closed in reviewed slice; no finding promoted. GatewayRuntime context confirms adapter lease release preserves persistent lifetime. TUI pre-open close question resolved no-finding; full TUI protocol/app review remains."
+      "coordinator_observation": "D01 checkpoint: 33/47 primary bodies complete. Provisional D01-F01 (queued follow-up lost after destructive dequeue + failed send) and D01-F02 (stale context snapshot can land after session switch) added as P2. Desktop authority/lifecycle slice remains fail-closed; 14 primaries remain."
     },
     {
       "id": "X01",

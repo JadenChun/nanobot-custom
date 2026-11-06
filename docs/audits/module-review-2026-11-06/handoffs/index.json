@@ -169,15 +169,28 @@
       "path": "handoffs/D01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 20,
+        "full": 33,
         "partial": 0,
-        "unread": 27
+        "unread": 14
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "20/47 full. Python desktop, Tauri IPC/native/setup UI, and initial TUI host/desktop/index/queue slice complete; no promoted finding. GatewayRuntime persistent-lifetime context resolves adapter-close orphan concern; TUI pre-open close shorthand resolved no-finding. tui/src/protocol.ts remains partial/uncredited.",
-      "last_checkpoint_commit": "8e89b9327227fb1540e128d55394f06b0b275626",
-      "provisional_findings": []
+      "note": "33/47 full. Full TUI protocol/app plus small support/build helpers complete. Provisional D01-F01 queued follow-up loss on failed automatic send and D01-F02 stale context-panel completion across session switch; no authority bypass promoted. 14 primaries remain.",
+      "last_checkpoint_commit": "a3fe0802cdf5cb94b0c2c5f2e99331c798324bab",
+      "provisional_findings": [
+        {
+          "id": "D01-F01",
+          "priority": "P2",
+          "title": "Automatic follow-up dequeue can lose a queued prompt when the send fails",
+          "state": "source-established-provisional"
+        },
+        {
+          "id": "D01-F02",
+          "priority": "P2",
+          "title": "Context-panel completion can overwrite a newly switched session",
+          "state": "source-established-provisional"
+        }
+      ]
     }
   ],
   "resume_order": [
