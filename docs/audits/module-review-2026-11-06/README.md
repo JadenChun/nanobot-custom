@@ -1,15 +1,24 @@
 # Whole-project module source review — 2026-11-06
 
 **The deep review is in progress; consolidated architecture discussion follows all modules.**
-This directory is the current publication and coverage ledger. It contains no accepted
-technical findings yet. S01, S02 and H01 are dispatched; the other streams are queued.
-The coordinator owns acceptance, integration and Git checkpoints. Publication alone
-does not complete a stream or accept an implementation change.
+This directory is the current publication and coverage ledger. [S01](reports/S01.md) and
+[S02](reports/S02.md) have coordinator **PASS** for source-review publication, with six
+conditional findings and six discussion questions. Integrated review and module Git
+checkpoints remain pending; no repair or design is accepted.
+C00 and H02 are dispatched; the complete H01 handoff is queued for its own publication.
+The other thirteen streams are queued. The coordinator owns acceptance, integration and
+Git checkpoints; publication alone does not complete a stream or accept implementation.
+
+The foundation was independently verified **PASS** by the coordinator and committed/pushed
+at `5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. That supplied acceptance applies to the
+publication foundation, not S01/S02 or the overall architecture assessment.
 
 Start with [status.json](status.json), the exact [scope](scope.json), the
 [report template](report-template.md), [coverage template](coverage-template.json),
 [pending synthesis](synthesis.md) and [structural validation](validation.json).
 Future report paths are reserved in status.json and become links only after publication.
+S01/S02 exact evidence is in [S01 coverage](reports/S01-coverage.json) and
+[S02 coverage](reports/S02-coverage.json).
 
 ## Scope and current progress
 
@@ -20,14 +29,14 @@ across those streams and adds no denominator. The other 1,536 inventory paths ar
 test, configuration, asset or generic documentation context; they remain available for
 explicit supplementary reads.
 
-| Stream | Responsibility | Primary targets | Initial state |
+| Stream | Responsibility | Primary targets | Current state |
 | --- | --- | ---: | --- |
-| C00 | Entrypoints, CLI, commands, config, gateway composition, shared utilities | 70 | queued |
+| C00 | Entrypoints, CLI, commands, config, gateway composition, shared utilities | 70 | in-progress |
 | H01 | Loop, runner, bus, hooks, turn admission and delivery | 29 | in-progress |
-| H02 | Sessions, ledgers, history, memory, compaction and recovery | 74 | queued |
+| H02 | Sessions, ledgers, history, memory, compaction and recovery | 74 | in-progress |
 | H03 | Providers, models, budgets, keys, usage and accounting | 45 | queued |
-| S01 | Filesystem authority, folder grants, private-state policy and security | 15 | in-progress |
-| S02 | Shell, sandbox, native admission, exec sessions and supervision | 6 | in-progress |
+| S01 | Filesystem authority, folder grants, private-state policy and security | 15 | coordinator-checked |
+| S02 | Shell, sandbox, native admission, exec sessions and supervision | 6 | coordinator-checked |
 | T01 | Tools, plugins, MCP, roles, delegation and compatibility | 44 | queued |
 | A01 | Cron, triggers, process completion and retained goals | 47 | queued |
 | K01 | Context repositories, knowledge, skills, prompts and templates | 56 | queued |
@@ -41,9 +50,11 @@ explicit supplementary reads.
 | Q01 | Build/install/dependency/CI/deployment/migration tooling and documentation | 25 | queued |
 | P01 | Efficiency and simplification across every stream | 0 (shared) | queued |
 
-These are assignment counts. **No bounded body-read evidence has been supplied to this
-new ledger, so its initial deep-review body coverage is zero.** Mechanical existence,
-hash agreement, prior discovery and the earlier comparison do not supply new read credit.
+These are assignment counts. Supplied S01/S02 evidence covers **21 primary bodies freshly
+read collectively 1–EOF** (15 S01, six S02), including one newline-only marker. Both packets
+have zero primary-file gaps/exclusions; 898 targets lack published new body evidence.
+H01's received packet adds no coverage until its separate report is published. Mechanical
+existence, hash agreement, prior discovery and the earlier comparison supply no new read credit.
 Each adapter, provider and native client needs its own accounted disposition; reading a
 shared base does not review its implementations. No path count certifies all-branch semantics.
 
@@ -59,8 +70,9 @@ shared base does not review its implementations. No path count certifies all-bra
 
 The publication owner may record supplied dispatch and report evidence, but cannot award
 coordinator or integrated acceptance. A Git checkpoint preserves a module's state; it does
-not by itself establish semantic acceptance. Finding/question counts stay unknown until
-analyst evidence arrives; zero published findings currently means no findings published.
+not by itself establish semantic acceptance. Finding/question counts stay unknown for
+streams without published analyst evidence. S01-F03 is shared with S02 and counted once;
+preliminary coordinator corroboration of specified mechanics is separate from report acceptance.
 
 Coverage separates bounded implementation/instruction body reads from caller context,
 search-only results, test-source excerpts, support reads, justified exclusions and material
