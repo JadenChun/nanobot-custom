@@ -25,15 +25,15 @@
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
     "queued": 8,
-    "in_progress": 1,
+    "in_progress": 0,
     "report_written": 0,
-    "coordinator_checked": 9,
+    "coordinator_checked": 10,
     "integrated_review_complete": 0,
-    "published_findings": 54,
-    "published_discussion_questions": 52,
-    "supplied_primary_body_paths": 533,
-    "primary_targets_without_new_body_evidence": 386,
-    "reports_published": 9
+    "published_findings": 63,
+    "published_discussion_questions": 59,
+    "supplied_primary_body_paths": 580,
+    "primary_targets_without_new_body_evidence": 339,
+    "reports_published": 10
   },
   "count_meaning": "Published coordinator-checked evidence covers 489 primary bodies across C00/H01/H02/H03/S01/S02/U01/D01. T01 is dispatched but remains 0/44 and adds zero body credit; 430 primary targets lack published new body evidence. Full-body coverage does not certify every branch or complete integrated review.",
   "discussion": {
@@ -323,53 +323,38 @@
       "kind": "primary",
       "primary_target_count": 47,
       "inventory_all_roles_count": 103,
-      "status": "in-progress",
+      "status": "coordinator-checked",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
-      "report": null,
-      "coverage": null,
+      "report": "reports/A01.md",
+      "coverage": "reports/A01-coverage.json",
       "planned_report": "reports/A01.md",
       "planned_coverage": "reports/A01-coverage.json",
-      "findings_count": null,
-      "discussion_questions_count": null,
-      "published_findings_count": 0,
-      "published_discussion_questions_count": 0,
-      "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 47,
-      "architecture_judgement": null,
+      "findings_count": 9,
+      "discussion_questions_count": 7,
+      "published_findings_count": 9,
+      "published_discussion_questions_count": 7,
+      "supplied_primary_body_paths": 47,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: preserve conservative cron/process/goal durability and explicit reconciliation; move blocking persistence off shared async owners, add evidence rollover, scope cron management, align shipped feature activation, and require durable/idempotent trigger settlement plus trusted approval provenance.",
       "coordinator_check": {
-        "status": "pending",
-        "evidence": null
+        "status": "PASS",
+        "evidence": "F47/P0/R0 ledger and semantic reconciliation recorded in reports/A01-coverage.json:coordinator_check."
       },
       "integrated_review": {
         "status": "pending",
         "evidence": null
       },
       "git_checkpoint": {
-        "status": "pending",
-        "commit": null,
-        "evidence": null
+        "status": "recorded",
+        "commit": "9bdcc59a5938084e843b61509e64bfb745b984a7",
+        "pushed": true,
+        "evidence": "A01 F47/P0/R0 report/coverage publication and coordinator PASS checkpoint."
       },
       "dispatch_owner": "web-continuation-coordinator",
-      "execution_state": "active",
+      "execution_state": "completed-source-review",
       "saved_handoff": "handoffs/A01.md",
-      "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "A01 source inspection complete at F47/P0/R0 after A01-A through A01-F. Nine provisional findings retained; A01-F added P2 A01-F07 for shipped local-trigger queue with no default gateway consumer, conditional P1 A01-F08 for crash replay of committed trigger effects, and conditional P1 A01-F09 for source-blind risky-action approval by local-trigger automation. Next bounded action is A01 publication/acceptance only.",
-      "active_source_review_coverage": {
-        "full": 47,
-        "partial": 0,
-        "unread": 0
-      },
-      "active_provisional_findings_count": 9,
-      "active_substage_checkpoint": {
-        "stage": "A01-F",
-        "commit": "4b7c32e7b25542bdf386c46c89ad4020acfeb934",
-        "coverage": {
-          "full": 47,
-          "partial": 0,
-          "unread": 0
-        },
-        "publication_credit_added": 0
-      }
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "A01 coordinator PASS at F47/P0/R0 with nine promoted findings and seven retained questions. F06/F08/F09 remain explicitly conditional. Integrated review, cross-stream reconciliation and D1–D7 remain pending."
     },
     {
       "id": "K01",
