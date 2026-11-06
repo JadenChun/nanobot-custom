@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-A source review is checkpointed at F8/P0/R60 with one provisional conditional P2 finding (failed unmanaged SDK transcript ingestion can partially mutate live session state). Publication/coordinator credit remains zero. Next bounded stage is E02-B WebSocket core only.",
+      "coordinator_observation": "E02-B WebSocket core is checkpointed at cumulative F12/P0/R56. Two provisional conditional findings are retained: E02-F01 failed unmanaged SDK ingest is not validation-atomic; E02-F02 network-reachable WebSocket configurations can admit unauthenticated agent clients when effective authentication is disabled or publicly self-serviceable. Publication/coordinator credit remains zero. Next bounded stage is E02-C backend WebUI transport foundations only.",
       "active_source_review_coverage": {
-        "full": 8,
+        "full": 12,
         "partial": 0,
-        "unread": 60
+        "unread": 56
       },
-      "active_provisional_findings_count": 1,
+      "active_provisional_findings_count": 2,
       "active_substage_checkpoint": {
-        "stage": "E02-A",
-        "commit": "d8fca02482a3d18b50030bea1d24a11f1d969a66",
+        "stage": "E02-B",
+        "commit": "b9d8cdcd8e611de4563588f67ef224342e02afad",
         "coverage": {
-          "full": 8,
+          "full": 12,
           "partial": 0,
-          "unread": 60
+          "unread": 56
         },
         "publication_credit_added": 0
       }
