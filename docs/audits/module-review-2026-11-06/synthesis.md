@@ -22,7 +22,7 @@ retains its targeted historical boundary; it is not the new deep-review synthesi
 
 The coordinator accepted the publication foundation and committed/pushed checkpoint
 `5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. [C00/H02/H03/U01/D01/T01 handoffs](handoffs/index.json)
-remain preserved as provenance; C00, H02, H03, U01, D01 and T01 are now published/checked. A01 source review is complete at F47/P0/R0 after A01-A/B/C/D/E/F with nine provisional findings and zero publication credit; A01-F added P2 default-gateway local-trigger inactivity plus conditional P1 crash-replay and risky-approval authority blockers, and eight streams remain queued. Published evidence
+remain preserved as provenance; C00, H02, H03, U01, D01 and T01 are now published/checked. [A01](reports/A01.md) is now coordinator-checked at final F47/P0/R0 with nine promoted findings and seven retained questions; F06/F08/F09 remain explicitly conditional. Its acceptance publication is checkpointed at `9bdcc59a5938084e843b61509e64bfb745b984a7`, and eight streams remain queued. Published evidence
 now covers 533 primary bodies. T01 is closed at F44/P0/R0 with twelve promoted findings and eight retained questions. Fifty-four promoted finding entries and fifty-two questions
 remain in the eight reports rather than becoming
 a whole-project conclusion; H01-F8 is explicitly open.
@@ -30,7 +30,7 @@ S01-F03 is cross-referenced by S02 and counted once. H02 supplements5A/5B supply
 
 The user-authorized sequence remains to inspect every module, preserve per-module Git status
 checkpoints, reconcile shared contracts and then hold the consolidated discussion. Source
-inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03/T01 checks are complete. A01-A/B/C/D/E/F source review is saved at F47/P0/R0; next proceed with A01 report/coverage publication and coordinator semantic acceptance only, then K01/E02/E01/R01/M01/X01/Q01/P01.
+inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03/T01 checks are complete. A01 is published and coordinator-checked; next proceed with K01 only, then E02/E01/R01/M01/X01/Q01/P01. Integrated review and D1–D7 remain deferred.
 Fresh integrated review remains pending. No open decision blocks later source inspection. Continuation is stage-by-stage: each session should finish one bounded stage/substage, preserve exact evidence and gaps, and checkpoint before the next stage.
 
 | Prior decision area | Current review-sequencing disposition |
