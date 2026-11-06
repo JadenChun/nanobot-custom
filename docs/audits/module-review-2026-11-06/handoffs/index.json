@@ -109,14 +109,14 @@
       "path": "handoffs/U01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 90,
+        "full": 97,
         "partial": 0,
-        "unread": 113
+        "unread": 106
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "90/203 full. U01-F01/F02/F03 provisional; F03 is cross-channel stale validation/notice state. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted; D01-shared HostWebSocket pre-open close lifetime question remains deferred.",
-      "last_checkpoint_commit": "5d250fc134e1e9e28fe151cf1ac780fdd7cd1614",
+      "note": "97/203 full. Settings subtree complete. U01-F01/F02/F03/F04 provisional; F03 is cross-channel stale validation/notice state and F04 is cross-skill stale mutation completion. Cached initial-settings restart hydration and remote-pairing restore generation remain unpromoted; D01-shared HostWebSocket pre-open close lifetime question remains deferred.",
+      "last_checkpoint_commit": "129b0b1bf9a07832fe316ca31b414b8494775266",
       "provisional_findings": [
         {
           "id": "U01-F01",
@@ -134,6 +134,12 @@
           "id": "U01-F03",
           "priority": "P2",
           "title": "Channel setup async results can bleed into a newly selected channel",
+          "state": "source-established-provisional"
+        },
+        {
+          "id": "U01-F04",
+          "priority": "P2",
+          "title": "Skill-detail mutation completions can corrupt or close a newly selected skill",
           "state": "source-established-provisional"
         }
       ]
