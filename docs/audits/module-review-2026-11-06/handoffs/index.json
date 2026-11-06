@@ -385,14 +385,14 @@
       "path": "handoffs/A01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 16,
+        "full": 24,
         "partial": 0,
-        "unread": 31
+        "unread": 23
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "A01-A+B complete at F16/P0/R31 with four provisional findings; next bounded stage is A01-C execution/result/delivery composition only.",
-      "last_checkpoint_commit": "9e7a3eb5c27c9a4aee5ccee1bc44f0209da33f82",
+      "note": "A01-A+B+C complete at F24/P0/R23 with four provisional findings unchanged; A01-C promoted no new live defect. Next bounded stage is A01-D durable delivery/recovery ownership only.",
+      "last_checkpoint_commit": "4162b04900edf8f43b62d45c3ee5226f40a32c7d",
       "provisional_findings": [
         {
           "id": "A01-F01",
@@ -439,6 +439,17 @@
             "full": 16,
             "partial": 0,
             "unread": 31
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "A01-C",
+          "commit": "4162b04900edf8f43b62d45c3ee5226f40a32c7d",
+          "coverage": {
+            "full": 24,
+            "partial": 0,
+            "unread": 23
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
