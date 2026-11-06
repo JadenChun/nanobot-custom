@@ -109,14 +109,14 @@
       "path": "handoffs/U01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 170,
+        "full": 203,
         "partial": 0,
-        "unread": 33
+        "unread": 0
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "170/203 unique primary bodies full. Browser utility/projection batch complete. U01-F01/F02/F03/F04/F05 retained; U01-F06 added for empty-turn completion metadata crossing a user boundary onto a legacy assistant. Prompt-jump/model-gesture, cached restart hydration, and remote-pairing restore questions remain unpromoted; D01 HostWebSocket question deferred.",
-      "last_checkpoint_commit": "e8435e3b321b42d6f1d64e26e11a61f628ad200c",
+      "note": "203/203 unique primary bodies full; source inspection complete. U01-F01 through U01-F06 enter report reconciliation; no F07 from the final 33. Report publication/coordinator check remain pending; retained prompt-jump/model-gesture, cached restart hydration, remote-pairing restore and minor RecoveryNotice lifecycle questions remain unpromoted; D01 HostWebSocket question deferred.",
+      "last_checkpoint_commit": "da42a1c2de17e8ceccd46d828c469e1b1ca19da3",
       "provisional_findings": [
         {
           "id": "U01-F01",

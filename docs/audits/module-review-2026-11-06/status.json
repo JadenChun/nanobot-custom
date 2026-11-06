@@ -459,7 +459,7 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/U01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "U01 checkpoint: 170/203 unique primary bodies complete. Browser utility/projection batch is fully read. Provisional U01-F01 through U01-F05 retained; U01-F06 added for empty-turn completion metadata crossing the current user boundary onto a legacy assistant row without turnId. Prompt-jump/model-gesture, cached restart hydration and remote-pairing restore remain unpromoted; HostWebSocket question remains deferred to D01."
+      "coordinator_observation": "U01 source inspection complete: 203/203 unique primary bodies fully read, zero partial/unread. Six provisional P2 findings (U01-F01..F06) enter report reconciliation; no F07 from the final 33. Report publication and coordinator acceptance remain pending. Retained prompt-jump/model-gesture, cached restart hydration, remote-pairing restore and minor RecoveryNotice lifecycle questions remain unpromoted; HostWebSocket question remains deferred to D01."
     },
     {
       "id": "M01",
