@@ -540,14 +540,14 @@
       "path": "handoffs/K01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 14,
+        "full": 26,
         "partial": 0,
-        "unread": 42
+        "unread": 30
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "K01-A+B complete at F14/P0/R42 with three provisional findings; K01-B added P2 runtime skill-validation/shadowing mismatch and reinforced F01. Next bounded stage is K01-C operational skills only.",
-      "last_checkpoint_commit": "783520f331ab1837276eea3809ea68ae591ac23d",
+      "note": "K01-A+B+C complete at F26/P0/R30 with six provisional findings; K01-C added cron instruction drift, ClawHub effective-workspace mismatch, and conditional tmux/Codex yolo delegation authority. Next bounded stage is K01-D testing/media skills only.",
+      "last_checkpoint_commit": "7ec1fd85bc2d5c935c45ee74fe465462cd53672c",
       "provisional_findings": [
         {
           "id": "K01-F01",
@@ -568,7 +568,28 @@
           "priority": "P2",
           "title": "Runtime skill discovery does not enforce the shipped skill validation contract before shadowing/activation",
           "state": "provisional-active-handoff",
-          "qualification": "Reliability/configuration-integrity finding; workspace/library precedence is intentional and compatibility skills may deliberately violate the newer package contract."
+          "qualification": "Shipped built-ins themselves demonstrate validator/runtime drift; reliability/configuration-integrity finding rather than arbitrary code execution."
+        },
+        {
+          "id": "K01-F04",
+          "priority": "P2",
+          "title": "The cron skill misdocuments reminder execution and default timezone semantics",
+          "state": "provisional-active-handoff",
+          "qualification": "Timezone statement happens to match only when timezone_mode=auto; reminder output still follows a fresh agent turn."
+        },
+        {
+          "id": "K01-F05",
+          "priority": "P2",
+          "title": "The ClawHub skill installs and manages skills in the default workspace instead of the effective agent workspace",
+          "state": "provisional-active-handoff",
+          "qualification": "Works when the configured workspace is the default ~/.nanobot/workspace; non-default workspaces are affected."
+        },
+        {
+          "id": "K01-F06",
+          "priority": "P1",
+          "title": "The tmux skill recommends launching Codex with its approvals and sandbox disabled",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on using the coding-agent section without an already-proven external sandbox; pinned Codex defines --yolo as dangerously bypassing approvals and sandbox."
         }
       ],
       "substage_checkpoints": [
@@ -590,6 +611,17 @@
             "full": 14,
             "partial": 0,
             "unread": 42
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "K01-C",
+          "commit": "7ec1fd85bc2d5c935c45ee74fe465462cd53672c",
+          "coverage": {
+            "full": 26,
+            "partial": 0,
+            "unread": 30
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
