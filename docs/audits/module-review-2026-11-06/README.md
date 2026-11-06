@@ -1,12 +1,15 @@
 # Whole-project module source review — 2026-11-06
 
-**The deep review is in progress; consolidated architecture discussion follows all modules.**
+**PAUSED at the user’s explicit request due quota; the deep review is incomplete.**
 This directory is the current publication and coverage ledger. [S01](reports/S01.md) and
 [S02](reports/S02.md) have coordinator **PASS** for source-review publication, with six
 conditional findings and six discussion questions. Integrated review and module Git
-checkpoints remain pending; no repair or design is accepted.
-C00 and H02 are dispatched; the complete H01 handoff is queued for its own publication.
-The other thirteen streams are queued. The coordinator owns acceptance, integration and
+checkpoints are separate: S01/S02 were committed/pushed at
+`0972617c0e056b0214a9b9037f0ca43b1e5d1e4e`; integrated review remains pending.
+[H01](reports/H01.md) is report-written with eight entries (including one open registration
+contract) and six questions; its coordinator check/checkpoint remain pending. C00/H02
+handoffs are saved unpublished; H03 is paused incomplete (23 full/19 partial/3 unread).
+Twelve streams remain queued. No repair/design is accepted. The coordinator owns acceptance, integration and
 Git checkpoints; publication alone does not complete a stream or accept implementation.
 
 The foundation was independently verified **PASS** by the coordinator and committed/pushed
@@ -18,7 +21,17 @@ Start with [status.json](status.json), the exact [scope](scope.json), the
 [pending synthesis](synthesis.md) and [structural validation](validation.json).
 Future report paths are reserved in status.json and become links only after publication.
 S01/S02 exact evidence is in [S01 coverage](reports/S01-coverage.json) and
-[S02 coverage](reports/S02-coverage.json).
+[S02 coverage](reports/S02-coverage.json); H01 evidence is in [H01 coverage](reports/H01-coverage.json).
+
+The [durable handoff index](handoffs/index.json) hashes [C00](handoffs/C00.md),
+[H02](handoffs/H02.md) and [H03](handoffs/H03.md). H02 supplements5A/5B supersede its
+initial F33/P4/R37 attribution with current F74/P0/R0. These remain analyst evidence,
+not published reports or semantic acceptance. Pipeline states below are preserved; all
+execution is paused. On resumption first compare origin/staging against pinned9562 and
+refresh only affected evidence while preserving old snapshots; then finish H01 acceptance,
+publish/check C00/H02, resume H03, and proceed U01/D01/T01/A01/K01/E02/E01/R01/M01/X01/
+Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
+owns final structural verification and Git preservation.
 
 ## Scope and current progress
 
@@ -32,9 +45,9 @@ explicit supplementary reads.
 | Stream | Responsibility | Primary targets | Current state |
 | --- | --- | ---: | --- |
 | C00 | Entrypoints, CLI, commands, config, gateway composition, shared utilities | 70 | in-progress |
-| H01 | Loop, runner, bus, hooks, turn admission and delivery | 29 | in-progress |
+| H01 | Loop, runner, bus, hooks, turn admission and delivery | 29 | report-written |
 | H02 | Sessions, ledgers, history, memory, compaction and recovery | 74 | in-progress |
-| H03 | Providers, models, budgets, keys, usage and accounting | 45 | queued |
+| H03 | Providers, models, budgets, keys, usage and accounting | 45 | in-progress |
 | S01 | Filesystem authority, folder grants, private-state policy and security | 15 | coordinator-checked |
 | S02 | Shell, sandbox, native admission, exec sessions and supervision | 6 | coordinator-checked |
 | T01 | Tools, plugins, MCP, roles, delegation and compatibility | 44 | queued |
@@ -50,10 +63,10 @@ explicit supplementary reads.
 | Q01 | Build/install/dependency/CI/deployment/migration tooling and documentation | 25 | queued |
 | P01 | Efficiency and simplification across every stream | 0 (shared) | queued |
 
-These are assignment counts. Supplied S01/S02 evidence covers **21 primary bodies freshly
-read collectively 1–EOF** (15 S01, six S02), including one newline-only marker. Both packets
-have zero primary-file gaps/exclusions; 898 targets lack published new body evidence.
-H01's received packet adds no coverage until its separate report is published. Mechanical
+These are assignment counts. Published S01/S02/H01 evidence covers **50 primary bodies
+freshly read collectively 1–EOF** (15 S01, six S02, 29 H01), including one newline-only
+marker. Those reports have zero primary-file gaps/exclusions; 869 targets lack published
+new body evidence. Saved C00/H02/H03 handoffs add no current publication credit. Mechanical
 existence, hash agreement, prior discovery and the earlier comparison supply no new read credit.
 Each adapter, provider and native client needs its own accounted disposition; reading a
 shared base does not review its implementations. No path count certifies all-branch semantics.

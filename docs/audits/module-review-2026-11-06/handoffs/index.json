@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "state": "PAUSED at explicit user request due quota",
+  "date": "2026-11-06",
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "frozen_inventory": {
+    "path": "docs/audits/codebase-discovery/path-inventory.tsv",
+    "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
+    "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
+  },
+  "published_primary_body_credit_added": 0,
+  "handoffs": [
+    {
+      "stream": "C00",
+      "producer": "/root/review_startup_c00",
+      "path": "handoffs/C00.md",
+      "sha256": "e1d6894e41353fcf3ede912aa6a057137b9f800bdafcb22d20cfe65948d94934",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 70,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "saved-unpublished-unaccepted",
+      "published_body_credit_added": 0,
+      "packets": [
+        "1",
+        "2",
+        "3"
+      ]
+    },
+    {
+      "stream": "H02",
+      "producer": "/root/deep_session_state",
+      "path": "handoffs/H02.md",
+      "sha256": "2c455b7ee88d714e9d4cbd00e1cd20a2834ad4a4046c0126dd20bb738fc6e7a1",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 74,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "saved-unpublished-unaccepted",
+      "published_body_credit_added": 0,
+      "packets": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5A",
+        "5B"
+      ],
+      "supersession": "5A/5B supersede initial F33/P4/R37 with current F74/P0/R0; initial uncertainty retained historically.",
+      "supplied_physical_splitlines": 47094,
+      "supplied_bytes": 1921930,
+      "supplied_metadata_sha256": "8111ae57bbe78437969d604056c5ebcf46915deaa70b9a246761ee7a0c187098"
+    },
+    {
+      "stream": "H03",
+      "producer": "/root/review_providers_h03",
+      "path": "handoffs/H03.md",
+      "sha256": "afc4c6436ac1d47f5f444873e5aaa63502299b0c04f6d989951b8d3df838bdb4",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 23,
+        "partial": 19,
+        "unread": 3
+      },
+      "state": "saved-paused-incomplete-unaccepted",
+      "published_body_credit_added": 0,
+      "reference_body_credit": 0
+    }
+  ],
+  "resume_order": [
+    "Compare origin/staging with pinned 9562e57f8333d7f14b6aaeae837660723a9b2650; refresh only affected evidence and preserve previous snapshots.",
+    "Finish H01 coordinator acceptance and checkpoint.",
+    "Publish/check saved C00 and H02 handoffs separately.",
+    "Resume incomplete H03.",
+    "U01",
+    "D01",
+    "T01",
+    "A01",
+    "K01",
+    "E02",
+    "E01",
+    "R01",
+    "M01",
+    "X01",
+    "Q01",
+    "P01",
+    "Fresh integrated review and final consolidated D1–D7 discussion."
+  ],
+  "limits": "Received analyst evidence only; hashes attest saved documents, not semantic acceptance, fresh source reads or runtime results."
+}

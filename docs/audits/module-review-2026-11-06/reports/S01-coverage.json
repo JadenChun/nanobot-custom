@@ -1115,7 +1115,12 @@
     "decisions": "D1\u2013D7 remain deferred; all source-only/provisional limits retained."
   },
   "integrated_review": null,
-  "git_checkpoint": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "0972617c0e056b0214a9b9037f0ca43b1e5d1e4e",
+    "pushed": true,
+    "evidence": "Direct root followup: S01/S02 PASS committed and pushed; exact AP1 rerun PASS before checkpoint."
+  },
   "raw_read_search_failures_and_corrections": [
     {
       "operation": "Earlier incorrect Codex paths/workdir",
