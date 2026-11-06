@@ -205,13 +205,13 @@
       "path": "handoffs/T01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 14,
+        "full": 20,
         "partial": 0,
-        "unread": 30
+        "unread": 24
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "T01-A+B+C complete at F14/P0/R30; six provisional findings retained (one P1 conditional, five P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-D execution/native authority (six primaries).",
+      "note": "T01-A+B+C+D complete at F20/P0/R24; nine provisional findings retained (three P1 conditional, six P2 including one conditional); no published/coordinator-checked body credit added. Next bounded stage is T01-E artifact/file/workspace authority (nine primaries).",
       "last_checkpoint_commit": "60806f5e05f65300cd614ec129344f9b94ec782f",
       "provisional_findings": [
         {
@@ -250,6 +250,26 @@
           "id": "T01-F06",
           "priority": "P2",
           "title": "Stdio MCP readiness has no deadline and serial startup can block the application indefinitely",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "T01-F07",
+          "priority": "P1",
+          "title": "Main browser/device file and working-directory authority bypasses workspace confinement",
+          "state": "provisional-active-handoff",
+          "qualification": "non-managed/full-host contexts with browser/device enabled and workspace confinement expected; delegated roles and managed WebUI are narrowed/blocked"
+        },
+        {
+          "id": "T01-F08",
+          "priority": "P1",
+          "title": "desktop_use global input bypasses the main risky-action approval boundary",
+          "state": "provisional-active-handoff",
+          "qualification": "requires tools.desktop_use.enabled=true; disabled by default and managed WebUI withholds the unconfined tool"
+        },
+        {
+          "id": "T01-F09",
+          "priority": "P2",
+          "title": "Generic owned-process cleanup does not prove descendant quiescence",
           "state": "provisional-active-handoff"
         }
       ],
@@ -291,8 +311,8 @@
     }
   ],
   "resume_order": [
-    "T01-D only: nanobot/agent/tools/_windows_job.py, agent_browser.py, agent_device.py, desktop_use.py, execution.py and process.py; checkpoint before expanding scope.",
-    "Continue remaining T01 in later bounded substages: artifact/file/workspace authority and remaining wrappers/adapters; close and coordinator-check T01.",
+    "T01-E only: apply_patch.py, artifact.py, artifact_handoff.py, context.py, file_state.py, producer_adapters.py, read_provenance.py, workspace.py and nanobot/agent/write_guard.py; checkpoint before expanding scope.",
+    "Continue remaining T01 in later bounded wrapper/adaptor substages; close and coordinator-check T01.",
     "A01",
     "K01",
     "E02",
