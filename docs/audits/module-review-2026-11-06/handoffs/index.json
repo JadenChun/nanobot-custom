@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 8,
+        "full": 12,
         "partial": 0,
-        "unread": 60
+        "unread": 56
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A reviewed the eight API/SDK primaries at F8/P0/R60 with one provisional conditional P2 ingest-atomicity finding. Next bounded stage is E02-B WebSocket core only.",
-      "last_checkpoint_commit": "d8fca02482a3d18b50030bea1d24a11f1d969a66",
+      "note": "E02-A/B reviewed the API/SDK and WebSocket core at cumulative F12/P0/R56 with two provisional conditional findings. Next bounded stage is E02-C backend WebUI transport foundations only.",
+      "last_checkpoint_commit": "b9d8cdcd8e611de4563588f67ef224342e02afad",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -721,6 +721,13 @@
           "title": "Failed SDK transcript ingestion can leave a partial live-session mutation",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on unmanaged persistent ingest (default save=True) plus metadata or a valid message prefix before a later validation failure; managed persistent ingest is rejected before mutation and save=False is detached."
+        },
+        {
+          "id": "E02-F02",
+          "priority": "P1",
+          "title": "Non-loopback WebSocket configurations can admit unauthenticated agent clients",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a network-reachable listener whose effective client authentication is disabled or publicly self-serviceable. Defaults are loopback plus token-required; static-token and properly protected token/trusted-proxy deployments are excluded."
         }
       ],
       "substage_checkpoints": [
@@ -734,12 +741,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-B",
+          "commit": "b9d8cdcd8e611de4563588f67ef224342e02afad",
+          "coverage": {
+            "full": 12,
+            "partial": 0,
+            "unread": 56
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-B only: nanobot/channels/websocket/__init__.py, manifest.py, runtime.py, validation.py.",
+    "E02-C only: backend WebUI transport foundations (shared HTTP/ingress/wire/projection/replay/session transport helpers), one manageable primary slice.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
