@@ -24,8 +24,8 @@
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 9,
-    "in_progress": 0,
+    "queued": 8,
+    "in_progress": 1,
     "report_written": 0,
     "coordinator_checked": 9,
     "integrated_review_complete": 0,
@@ -323,7 +323,7 @@
       "kind": "primary",
       "primary_target_count": 47,
       "inventory_all_roles_count": 103,
-      "status": "queued",
+      "status": "in-progress",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": null,
       "coverage": null,
@@ -348,6 +348,27 @@
         "status": "pending",
         "commit": null,
         "evidence": null
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "active",
+      "saved_handoff": "handoffs/A01.md",
+      "handoff_disposition": "active-incomplete-unaccepted",
+      "coordinator_observation": "A01-A source inspection complete at F8/P0/R39. Two provisional findings retained: synchronous SQLite process-completion persistence on async gateway/exec paths, and default /goal capability/registration mismatch. Next bounded action is A01-B only.",
+      "active_source_review_coverage": {
+        "full": 8,
+        "partial": 0,
+        "unread": 39
+      },
+      "active_provisional_findings_count": 2,
+      "active_substage_checkpoint": {
+        "stage": "A01-A",
+        "commit": "f0f152b9c631b4a32de57a1a64eb5c792a43dc61",
+        "coverage": {
+          "full": 8,
+          "partial": 0,
+          "unread": 39
+        },
+        "publication_credit_added": 0
       }
     },
     {
