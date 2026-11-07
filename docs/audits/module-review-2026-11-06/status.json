@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-H WebUI build/dev and CLI-app management is checkpointed at cumulative F51/P0/R17. Two new conditional P2 findings are retained: E02-F11 CLI-app WebUI state/refresh ownership is not scoped to the gateway's explicit config path; E02-F12 successful frontend build commands can leave the expected bundle stale/missing without failing startup. E02 now has twelve provisional findings. X01-owned registry/install lifecycle issues were retained without duplicate E02 findings. Publication/coordinator credit remains zero.",
+      "coordinator_observation": "E02-I MCP OAuth/preset APIs are checkpointed at cumulative F53/P0/R15. One new conditional P2 finding is retained: E02-F13 MCP WebUI credential/runtime state is not scoped to the gateway's explicit config path. E02 now has thirteen provisional findings. Remote owner custom stdio launch is retained as an explicit D2/D4 authority-design question because the owner contract deliberately exposes MCP custom/test/reload operations. Publication/coordinator credit remains zero.",
       "active_source_review_coverage": {
-        "full": 51,
+        "full": 53,
         "partial": 0,
-        "unread": 17
+        "unread": 15
       },
-      "active_provisional_findings_count": 12,
+      "active_provisional_findings_count": 13,
       "active_substage_checkpoint": {
-        "stage": "E02-H",
-        "commit": "382f11df3b32fededa2c5b11ef8598ee48a557b0",
+        "stage": "E02-I",
+        "commit": "d6f5b3b0a0b7d5d828bb969be7efe98fe9c82e8d",
         "coverage": {
-          "full": 51,
+          "full": 53,
           "partial": 0,
-          "unread": 17
+          "unread": 15
         },
         "publication_credit_added": 0
       }
