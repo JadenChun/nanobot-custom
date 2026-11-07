@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 53,
+        "full": 55,
         "partial": 0,
-        "unread": 15
+        "unread": 13
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E/F/G/H/I reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services, build/dev/CLI-app wrapper, and MCP OAuth/preset APIs at cumulative F53/P0/R15 with thirteen provisional findings. E02-I added E02-F13. Next bounded stage is E02-J WebUI skills APIs only.",
-      "last_checkpoint_commit": "d6f5b3b0a0b7d5d828bb969be7efe98fe9c82e8d",
+      "note": "E02-A/B/C/D/E/F/G/H/I/J reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services, build/dev/CLI-app wrapper, MCP OAuth/preset APIs, and WebUI skills surfaces at cumulative F55/P0/R13 with fourteen provisional findings. E02-J added E02-F14. Next bounded stage is E02-K WebUI workspace management only.",
+      "last_checkpoint_commit": "1b5691612ce23c912bb78ad23c1d911df0df7e77",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -805,6 +805,13 @@
           "title": "MCP WebUI credential/runtime state is not scoped to the gateway's explicit config path",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on an explicit gateway/config path differing from the process-global config path. Normal single-instance CLI startup generally aligns those paths; OAuth store locking/generations and managed-path exact-match cleanup do not fix cross-instance root selection."
+        },
+        {
+          "id": "E02-F14",
+          "priority": "P2",
+          "title": "Cancelled skills.sh installs can outlive their WebUI owner",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on cancellation after npx launch or timeout with surviving descendants. Normal successful installs are awaited; the SkillHub path does not create this child process, and remote installs remain separately package-policy gated."
         }
       ],
       "substage_checkpoints": [
@@ -906,12 +913,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-J",
+          "commit": "1b5691612ce23c912bb78ad23c1d911df0df7e77",
+          "coverage": {
+            "full": 55,
+            "partial": 0,
+            "unread": 13
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-I only: MCP OAuth and MCP preset WebUI APIs — mcp_oauth_api.py and mcp_presets_api.py.",
+    "E02-K only: WebUI workspace management surfaces — workspace_directories.py and workspaces.py.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
