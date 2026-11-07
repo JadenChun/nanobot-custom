@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 51,
+        "full": 56,
         "partial": 0,
-        "unread": 19
+        "unread": 14
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1431,6 +1431,12 @@
           "id": "R01-F14",
           "priority": "P2",
           "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F15",
+          "priority": "P2",
+          "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
           "state": "provisional-active-handoff"
         }
       ],
@@ -1522,6 +1528,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-I",
+          "commit": "9b56b304a2d31dd297eb1e68ae5ddbac8c96f618",
+          "coverage": {
+            "full": 56,
+            "partial": 0,
+            "unread": 14
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1535,8 +1552,8 @@
     }
   ],
   "resume_order": [
-    "R01-I only: fully review mobile/capacitor.config.ts, mobile/index.html, mobile/mobile-bootstrap.js, mobile/src/native-broker.ts and mobile/vite.config.ts to reach expected F56/P0/R14.",
-    "Continue R01 in later bounded Gradle-wrapper/build/qualification-script substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-J only: fully review mobile/android/gradlew, gradlew.bat, bootstrap-toolchain.sh, mobile-env.sh, build-native-network.sh, build-shared-webui.sh, build-debug.sh and build-release.sh to reach expected F64/P0/R6.",
+    "R01-K later: review the six remaining contract/parity/qualification/update scripts to reach F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
