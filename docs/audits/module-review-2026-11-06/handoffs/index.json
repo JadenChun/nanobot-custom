@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 35,
+        "full": 41,
         "partial": 0,
-        "unread": 33
+        "unread": 27
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E reviewed API/SDK, WebSocket core, WebUI transport/media and transcript persistence at cumulative F35/P0/R33 with seven provisional findings. E02-E promoted E02-F05/F06/F07. Next bounded stage is E02-F session navigation/isolation helpers only.",
-      "last_checkpoint_commit": "e8407f661e580b5a72363bcb0faf9e20c27c37d2",
+      "note": "E02-A/B/C/D/E/F reviewed API/SDK, WebSocket core, WebUI transport/media/transcript and session navigation/isolation at cumulative F41/P0/R27 with ten provisional findings. E02-F added E02-F08/F09/F10. Next bounded stage is E02-G small ancillary/session-service slice only.",
+      "last_checkpoint_commit": "96cee6ade663760a19ebc350b19c50e236a4b406",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -763,6 +763,27 @@
           "title": "Transcript rotation can duplicate completed turns after a mid-rotation write failure",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on a multi-turn transcript above the rotation threshold and a write/replace/manifest failure after segment commit but before active-tail replacement."
+        },
+        {
+          "id": "E02-F08",
+          "priority": "P2",
+          "title": "Session search can return transcript-only results that read_session rejects",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a WebUI transcript without canonical session metadata and a content query that matches it. Canonical and ordinary cross-channel persisted sessions are unaffected."
+        },
+        {
+          "id": "E02-F09",
+          "priority": "P2",
+          "title": "Failed Temporary Chat attachment deletion is forgotten instead of retried",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on an unlink/filesystem failure during Temporary Chat cleanup. Normal disposal removes tracked media."
+        },
+        {
+          "id": "E02-F10",
+          "priority": "P2",
+          "title": "Discarded Temporary Chat tombstones grow without bound until gateway shutdown",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a large number of Temporary Chats during one long-lived gateway process. Restart clears the tombstones; ordinary low-volume use has small impact."
         }
       ],
       "substage_checkpoints": [
@@ -820,12 +841,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-F",
+          "commit": "96cee6ade663760a19ebc350b19c50e236a4b406",
+          "coverage": {
+            "full": 41,
+            "partial": 0,
+            "unread": 27
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-F only: session navigation/isolation helpers — forking.py, session_access.py, session_context.py, session_list_index.py, state_sync.py, temporary_chats.py.",
+    "E02-G only: small WebUI ancillary/session-service slice — websocket webui/index.ts, session_automations.py, sidebar_state.py, transcription_ws.py, version_check.py, nanobot_features_api.py, mcp_presets_runtime.py.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
