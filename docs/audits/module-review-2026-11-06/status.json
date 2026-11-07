@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F43/P0/R27 with twelve provisional findings (one P1, eleven P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B/C/D/E/F/G bodies are unchanged.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F51/P0/R19 with fourteen provisional findings (one P1, thirteen P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B/C/D/E/F/G/H bodies are unchanged.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "R01-A/B/C/D/E/F/G fresh source-only handoff is saved at handoffs/R01.md: 43/70 primaries fully read, twelve provisional findings, zero publication credit. Next bounded substage is R01-H full Go native-broker core only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
+  "dispatch_evidence": "R01-A/B/C/D/E/F/G/H fresh source-only handoff is saved at handoffs/R01.md: 51/70 primaries fully read, fourteen provisional findings, zero publication credit. Next bounded substage is R01-I packaged-WebUI bootstrap/runtime composition only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -609,13 +609,13 @@
       "coverage": null,
       "planned_report": "reports/R01.md",
       "planned_coverage": "reports/R01-coverage.json",
-      "findings_count": 12,
+      "findings_count": 14,
       "discussion_questions_count": 0,
       "published_findings_count": 0,
       "published_discussion_questions_count": 0,
       "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 27,
-      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, allowlisted typed native ABI and streaming transport, but fix production WS scope enforcement, retry-safe credential custody, supervision/Tailscale drift, manual-pairing persistence, HTTP correlation ordering, JNI event sizing, signed-media capability logging, and concurrent native error storage. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05/F06/F07/F08/F09/F10/F11/F12 are P2 recovery/contract/qualification/lifecycle/transport/privacy/native-reliability defects. Go broker bodies plus bootstrap/tooling remain under review.",
+      "material_primary_gaps_pending_evidence": 19,
+      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, allowlisted typed native transport, encrypted tsnet state and streaming media path, but fix production WS scope enforcement, retry-safe credential custody, supervision/Tailscale drift, manual-pairing persistence, HTTP correlation ordering, JNI event sizing, signed-media logging, concurrent native error storage, broker terminal-event backpressure, and hard media-cache accounting. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05/F06/F07/F08/F09/F10/F11/F12/F13/F14 are P2 recovery/contract/qualification/lifecycle/transport/privacy/native-resource defects. Packaged bootstrap/tooling remains under review.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -634,11 +634,11 @@
       "saved_handoff": "handoffs/R01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
       "active_source_review_coverage": {
-        "full": 43,
+        "full": 51,
         "partial": 0,
-        "unread": 27
+        "unread": 19
       },
-      "active_provisional_findings_count": 12,
+      "active_provisional_findings_count": 14,
       "provisional_findings": [
         {
           "id": "R01-F01",
@@ -723,15 +723,29 @@
           "title": "Global native last_error storage is unsafe under concurrent Android calls",
           "state": "provisional-active-handoff",
           "qualification": "setError() frees/replaces one process-global C string without the mutex used by last_error(). Concurrent failing JNI calls can misattribute errors or double-free/use-after-free the diagnostic buffer; requires overlapping failure paths."
+        },
+        {
+          "id": "R01-F13",
+          "priority": "P2",
+          "title": "Bounded broker event pressure can silently drop admitted operation completions",
+          "state": "provisional-active-handoff",
+          "qualification": "HTTP admission checks queue occupancy only before launching work; terminal HTTP results and WS close/error events use non-blocking emits whose queue-full errors are ignored. Server/native state can advance while callers later time out or retain stale socket state."
+        },
+        {
+          "id": "R01-F14",
+          "priority": "P2",
+          "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
+          "state": "provisional-active-handoff",
+          "qualification": "Full media responses are tee-written into persistent filesDir state with no per-stream/global write cap; trimming runs only after EOF/rename. A large signed media item can exceed the claimed budget or reach ENOSPC before cleanup."
         }
       ],
       "active_substage_checkpoint": {
-        "stage": "R01-G",
-        "commit": "785e87449a88b640657d44b0020a87b73da47979",
+        "stage": "R01-H",
+        "commit": "074d475b92add3712d3c0f5e8cfed58e4efc2953",
         "coverage": {
-          "full": 43,
+          "full": 51,
           "partial": 0,
-          "unread": 27
+          "unread": 19
         },
         "publication_credit_added": 0
       }
@@ -977,8 +991,8 @@
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "R01-H only: fully review native-network/internal/broker/config.go, core.go, events.go, http.go, media.go, policy.go, state.go and ws.go to reach expected F51/P0/R19.",
-    "Continue R01 in later bounded mobile bootstrap/Gradle/scripts/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-I only: fully review mobile/capacitor.config.ts, mobile/index.html, mobile/mobile-bootstrap.js, mobile/src/native-broker.ts and mobile/vite.config.ts to reach expected F56/P0/R14.",
+    "Continue R01 in later bounded Gradle-wrapper/build/qualification-script substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
