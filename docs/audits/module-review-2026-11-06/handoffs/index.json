@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 43,
+        "full": 51,
         "partial": 0,
-        "unread": 27
+        "unread": 19
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1419,6 +1419,18 @@
           "id": "R01-F12",
           "priority": "P2",
           "title": "Global native last_error storage is unsafe under concurrent Android calls",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F13",
+          "priority": "P2",
+          "title": "Bounded broker event pressure can silently drop admitted operation completions",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F14",
+          "priority": "P2",
+          "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
           "state": "provisional-active-handoff"
         }
       ],
@@ -1499,6 +1511,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-H",
+          "commit": "074d475b92add3712d3c0f5e8cfed58e4efc2953",
+          "coverage": {
+            "full": 51,
+            "partial": 0,
+            "unread": 19
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1512,8 +1535,8 @@
     }
   ],
   "resume_order": [
-    "R01-H only: fully review native-network/internal/broker/config.go, core.go, events.go, http.go, media.go, policy.go, state.go and ws.go to reach expected F51/P0/R19.",
-    "Continue R01 in later bounded mobile bootstrap/Gradle/scripts/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-I only: fully review mobile/capacitor.config.ts, mobile/index.html, mobile/mobile-bootstrap.js, mobile/src/native-broker.ts and mobile/vite.config.ts to reach expected F56/P0/R14.",
+    "Continue R01 in later bounded Gradle-wrapper/build/qualification-script substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
