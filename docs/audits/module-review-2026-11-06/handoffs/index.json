@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 14,
+        "full": 21,
         "partial": 0,
-        "unread": 56
+        "unread": 49
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1353,6 +1353,30 @@
           "id": "R01-F01",
           "priority": "P2",
           "title": "Pairing can durably commit a device before credential custody is established",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F02",
+          "priority": "P1",
+          "title": "Mobile WebSocket commands bypass granted chat/media scopes",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F03",
+          "priority": "P2",
+          "title": "Refresh rotation can strand a paired device on ambiguous delivery",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F04",
+          "priority": "P2",
+          "title": "Versioned mobile route contract contradicts the production edge",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F05",
+          "priority": "P2",
+          "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
           "state": "provisional-active-handoff"
         }
       ],
@@ -1364,6 +1388,17 @@
             "full": 14,
             "partial": 0,
             "unread": 56
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-B",
+          "commit": "ba338a3ed78923e1122e98788c38f794a6945fc0",
+          "coverage": {
+            "full": 21,
+            "partial": 0,
+            "unread": 49
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
@@ -1380,8 +1415,8 @@
     }
   ],
   "resume_order": [
-    "R01-B only: fully review nanobot/remote/ipc.py, http.py, edge.py, operations.py, replay.py, staging.py and data_server.py to reach expected F21/P0/R49.",
-    "Continue R01 in later bounded substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-C only: fully review nanobot/remote/supervision.py and nanobot/remote/tailscale.py to reach expected F23/P0/R47.",
+    "Continue R01 in later bounded Android/JNI/Go/native-client substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
