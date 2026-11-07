@@ -11,7 +11,7 @@ checkpointed at `f6a41b840c7e50c8f757e8889a880bc3ce77d47d`. Integrated review an
 architecture decisions remain pending. C00 is now coordinator-checked from its saved 70/70 handoff and checkpointed at
 `85c59330c91e7982574d79f92602cc7e605acb4c`. H02 is now coordinator-checked from the
 superseding F74/P0/R0 handoff and checkpointed at `08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4`;
-H03 is now coordinator-checked at final F45/P0/R0 with seven promoted findings and seven retained questions. U01 is now coordinator-checked at final F203/P0/R0 with six qualified P2 findings and six retained questions, checkpointed at `b53644a2e20086a5d6a48e237e571d1720151270`. D01 is now coordinator-checked at final F47/P0/R0 with two qualified P2 findings and five retained questions, checkpointed at `9db80a30be08be3428ca33fda1532031dabd6a7f`. T01 is now coordinator-checked at final **F44/P0/R0** with twelve promoted findings and eight retained questions. A01 is now coordinator-checked at final **F47/P0/R0** with nine promoted findings and seven retained questions, checkpointed at `9bdcc59a5938084e843b61509e64bfb745b984a7`. K01 is coordinator-checked **PASS** at **F56/P0/R0** with thirteen promoted findings and eight final questions. E02-A/B/C/D/E/F/G/H/I/J/K/L/M have advanced the next stream to **F68/P0/R0** with twenty-three provisional findings; E02-M completed primary source review and added four P2 wrapper findings, E02 remains unpublished/unaccepted, and six later streams remain queued. No repair/design is
+H03 is now coordinator-checked at final F45/P0/R0 with seven promoted findings and seven retained questions. U01 is now coordinator-checked at final F203/P0/R0 with six qualified P2 findings and six retained questions, checkpointed at `b53644a2e20086a5d6a48e237e571d1720151270`. D01 is now coordinator-checked at final F47/P0/R0 with two qualified P2 findings and five retained questions, checkpointed at `9db80a30be08be3428ca33fda1532031dabd6a7f`. T01 is now coordinator-checked at final **F44/P0/R0** with twelve promoted findings and eight retained questions. A01 is now coordinator-checked at final **F47/P0/R0** with nine promoted findings and seven retained questions, checkpointed at `9bdcc59a5938084e843b61509e64bfb745b984a7`. K01 is coordinator-checked **PASS** at **F56/P0/R0** with thirteen promoted findings and eight final questions. E02 is now coordinator-checked **PASS** at **F68/P0/R0** with twenty-three promoted findings and nine final questions; six later streams remain queued. No repair/design is
 accepted; publication/acceptance, integrated review and Git preservation remain distinct.
 
 The foundation was independently verified **PASS** by the coordinator and committed/pushed
@@ -23,14 +23,14 @@ Start with [status.json](status.json), the exact [scope](scope.json), the
 [pending synthesis](synthesis.md) and [structural validation](validation.json).
 Future report paths are reserved in status.json and become links only after publication.
 S01/S02 exact evidence is in [S01 coverage](reports/S01-coverage.json) and
-[S02 coverage](reports/S02-coverage.json); H01 evidence is in [H01 coverage](reports/H01-coverage.json).
+[S02 coverage](reports/S02-coverage.json); H01 evidence is in [H01 coverage](reports/H01-coverage.json), and E02 evidence is in [E02 coverage](reports/E02-coverage.json).
 
 The [durable handoff index](handoffs/index.json) preserves [C00](handoffs/C00.md),
 [H02](handoffs/H02.md) and [H03](handoffs/H03.md). C00 has now been published/checked as
 [C00 report](reports/C00.md), and H02 has now been published/checked as [H02 report](reports/H02.md).
-H03 has now been published/checked as [H03 report](reports/H03.md), U01 as [U01 report](reports/U01.md), and D01 as [D01 report](reports/D01.md). H02 supplements 5A/5B supersede its initial F33/P4/R37 attribution
+H03 has now been published/checked as [H03 report](reports/H03.md), U01 as [U01 report](reports/U01.md), D01 as [D01 report](reports/D01.md), and E02 as [E02 report](reports/E02.md). H02 supplements 5A/5B supersede its initial F33/P4/R37 attribution
 with current F74/P0/R0. Pipeline states below are preserved. Resumption verified `staging` identical to pinned `9562`; no affected source evidence needed
-refresh. H01, C00, H02, H03, U01, D01, T01 and K01 are now coordinator-checked. T01 is closed at F44/P0/R0 with twelve promoted findings and eight retained questions. A01 is closed at F47/P0/R0 with nine promoted findings and seven retained questions. F06/F08/F09 remain explicitly conditional. K01-A/B/C/D/E are published and coordinator-checked at F56/P0/R0 with thirteen promoted findings and eight final questions. E02-A/B/C/D/E/F/G/H/I/J/K/L/M are saved at F68/P0/R0 with twenty-three provisional findings and zero publication credit; next is the separate E02 publication/coordinator checkpoint only before E01/R01/M01/X01/Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
+refresh. H01, C00, H02, H03, U01, D01, T01 and K01 are now coordinator-checked. T01 is closed at F44/P0/R0 with twelve promoted findings and eight retained questions. A01 is closed at F47/P0/R0 with nine promoted findings and seven retained questions. F06/F08/F09 remain explicitly conditional. K01-A/B/C/D/E are published and coordinator-checked at F56/P0/R0 with thirteen promoted findings and eight final questions. E02-A/B/C/D/E/F/G/H/I/J/K/L/M are published and coordinator-checked at F68/P0/R0 with twenty-three promoted findings and nine final questions; next is E01, followed by R01/M01/X01/Q01/P01. A fresh integrated review and D1–D7 discussion remain pending. The coordinator
 owns final structural verification and Git preservation. Continuation now proceeds stage-by-stage: keep each session to one bounded stage or substage, save its evidence/gaps/exact next action, and checkpoint before expanding scope.
 
 ## Scope and current progress
@@ -54,7 +54,7 @@ explicit supplementary reads.
 | A01 | Cron, triggers, process completion and retained goals | 47 | coordinator-checked |
 | K01 | Context repositories, knowledge, skills, prompts and templates | 56 | coordinator-checked (F56/P0/R0) |
 | E01 | Channel framework and sixteen non-WebSocket adapters | 95 | queued |
-| E02 | API, SDK, WebSocket, backend WebUI and client contracts | 68 | source-review-complete (E02-A/B/C/D/E/F/G/H/I/J/K/L/M F68/P0/R0; unpublished/unaccepted) |
+| E02 | API, SDK, WebSocket, backend WebUI and client contracts | 68 | coordinator-checked (F68/P0/R0) |
 | U01 | React WebUI and browser sources | 203 | coordinator-checked |
 | M01 | Attachments, audio/images, ingress and adoption | 14 | queued |
 | R01 | Remote IPC/auth/pairing and Android/native clients | 70 | queued |
@@ -63,7 +63,7 @@ explicit supplementary reads.
 | Q01 | Build/install/dependency/CI/deployment/migration tooling and documentation | 25 | queued |
 | P01 | Efficiency and simplification across every stream | 0 (shared) | queued |
 
-These are assignment counts. Published S01/S02/H01/C00/H02/H03/U01/D01/T01/A01/K01 evidence covers **636 primary bodies**. A01's F47/P0/R0 source review is now published and coordinator-checked, adding 47 bodies to the accepted denominator. Mechanical
+These are assignment counts. Published S01/S02/H01/C00/H02/H03/U01/D01/T01/A01/K01/E02 evidence covers **704 primary bodies**. E02's F68/P0/R0 source review is now published and coordinator-checked, adding 68 bodies to the accepted denominator. Mechanical
 existence, hash agreement, prior discovery and the earlier comparison supply no new read credit.
 Each adapter, provider and native client needs its own accounted disposition; reading a
 shared base does not review its implementations. No path count certifies all-branch semantics.
