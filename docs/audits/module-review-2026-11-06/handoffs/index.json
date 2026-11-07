@@ -1346,128 +1346,148 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "source-complete-unpublished-unaccepted",
-      "published_body_credit_added": 0,
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 70,
       "provisional_findings": [
         {
           "id": "R01-F01",
           "priority": "P2",
           "title": "Pairing can durably commit a device before credential custody is established",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on delivery/restart failure after durable approval but before client custody; local revoke/re-pair recovers."
         },
         {
           "id": "R01-F02",
           "priority": "P1",
           "title": "Mobile WebSocket commands bypass granted chat/media scopes",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on a valid owner credential whose durable scopes are narrower than the command; default owner pairing grants broad scopes."
         },
         {
           "id": "R01-F03",
           "priority": "P2",
           "title": "Refresh rotation can strand a paired device on ambiguous delivery",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on replacement-response loss after rotation invalidates old refresh/access state."
         },
         {
           "id": "R01-F04",
           "priority": "P2",
           "title": "Versioned mobile route contract contradicts the production edge",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Deterministic contract drift: declared HTTP bootstrap/mutation/attachment/logout routes are not served by the production edge."
         },
         {
           "id": "R01-F05",
           "priority": "P2",
           "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Deterministic qualification mismatch; bounded to staging/fixture fidelity rather than an ordinary product caller."
         },
         {
           "id": "R01-F06",
           "priority": "P2",
           "title": "Systemd supervision reports applied success without checking command success",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on nonzero systemctl results in the explicit opt-in supervision CLI."
         },
         {
           "id": "R01-F07",
           "priority": "P2",
           "title": "Pairing can proceed without a verified Tailscale Serve mapping",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on negative/incorrect Serve readiness plus UI fallback; owner approval/token authorization remain required."
         },
         {
           "id": "R01-F08",
           "priority": "P2",
           "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on process/plugin recreation while manual approval is pending."
         },
         {
           "id": "R01-F09",
           "priority": "P2",
           "title": "Mobile HTTP completions can arrive before request correlation is armed",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional timing race between native completion and request-ID waiter installation."
         },
         {
           "id": "R01-F10",
           "priority": "P2",
           "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on an accepted frame whose encoded event exceeds JNI retrieval capacity."
         },
         {
           "id": "R01-F11",
           "priority": "P2",
           "title": "Android logcat receives replayable signed-media bearer capabilities",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on log access plus network reachability; signed URL has no embedded expiry/separate API token."
         },
         {
           "id": "R01-F12",
           "priority": "P2",
           "title": "Global native last_error storage is unsafe under concurrent Android calls",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on overlapping failing native/JNI calls."
         },
         {
           "id": "R01-F13",
           "priority": "P2",
           "title": "Bounded broker event pressure can silently drop admitted operation completions",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on post-admission event-queue saturation."
         },
         {
           "id": "R01-F14",
           "priority": "P2",
           "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on sufficiently large/concurrent full media streams; completed entries are trimmed later."
         },
         {
           "id": "R01-F15",
           "priority": "P2",
           "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on persisted QR/link pending pairing plus Cancel/restart and later owner approval."
         },
         {
           "id": "R01-F16",
           "priority": "P2",
           "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Conditional on compromised build-time dependency/process; exposure to unrelated pre-sign child processes is deterministic."
         },
         {
           "id": "R01-F17",
           "priority": "P2",
           "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Deterministic qualification gap: cached tool existence and ambient Bun can bypass the recorded lock."
         },
         {
           "id": "R01-F18",
           "priority": "P2",
           "title": "Gradle wrapper distribution is not cryptographically pinned",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Deterministic build-integrity gap: distributionSha256Sum is absent."
         },
         {
           "id": "R01-F19",
           "priority": "P2",
           "title": "Desktop-parity checker silently skips async inbound-command and misc-route source coverage",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Deterministic checker blind spot: AsyncFunctionDef production surfaces are not extracted."
         },
         {
           "id": "R01-F20",
           "priority": "P2",
           "title": "Update-persistence qualification reinstalls the same APK instead of exercising an actual upgrade",
-          "state": "provisional-source-complete-awaiting-publication"
+          "state": "promoted-report",
+          "qualification": "Deterministic test-design gap: baseline and candidate are the same artifact."
         }
       ],
       "substage_checkpoints": [
@@ -1600,12 +1620,33 @@
           "tests/agent/test_skills_loader.py"
         ],
         "r01_impact": "none; K01 current-origin refresh deferred"
-      }
+      },
+      "note": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings and ten final discussion questions; integrated review remains pending.",
+      "last_checkpoint_commit": "a3ed5506040e5d9d09cd340bc844c0061a2369e2",
+      "completion": "All 70 R01 primaries are full; twenty findings promoted; ten final questions retained; coordinator PASS recorded.",
+      "report": "reports/R01.md",
+      "coverage": "reports/R01-coverage.json",
+      "final_coverage": {
+        "full": 70,
+        "partial": 0,
+        "unread": 0
+      },
+      "final_discussion_questions": [
+        "R01-Q1 owner scope implication versus enforceable reduced capability ceiling",
+        "R01-Q2 credential-handoff receipt for retry-safe pairing/refresh",
+        "R01-Q3 authoritative pairing lifecycle across QR/manual/cancel/restart/readiness/approval",
+        "R01-Q4 one atomic request/completion owner and effect-outcome contract",
+        "R01-Q5 one end-to-end frame/event size budget",
+        "R01-Q6 signed-media capability lifetime/secrecy and hard cache budget",
+        "R01-Q7 one source of truth for mobile routes/operations/parity",
+        "R01-Q8 release signing-secret/toolchain trust boundary",
+        "R01-Q9 real baseline/candidate Android upgrade qualification",
+        "R01-Q10 product ownership versus best-effort systemd/Tailscale lifecycle"
+      ]
     }
   ],
   "resume_order": [
-    "R01-L only: publish the F70/P0/R0 R01 report, challenge all twenty provisional findings for promotion/demotion/merge, retain final discussion questions, then perform the separate coordinator semantic check.",
-    "M01",
+    "M01 only: continue the next queued primary stream stage-by-stage; do not combine with X01/Q01/P01 or integrated review.",
     "X01",
     "Q01",
     "P01",
