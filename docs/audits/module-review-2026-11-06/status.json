@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F26/P0/R69 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F31/P0/R64 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -18,7 +18,7 @@
     "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-D has an active source-only handoff at F26/P0/R69 with zero publication credit; next bounded substage is E01-E Email package.",
+  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-E has an active source-only handoff at F31/P0/R64 with zero publication credit; next bounded substage is E01-F Feishu control/setup/instance/UI primaries only.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -446,20 +446,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E01-D Discord package is checkpointed at F26/P0/R69 with sixteen provisional findings total. New Discord findings: E01-F12 unauthorized DMs can persist attachments before pairing authorization; E01-F13 unready streaming deltas are silently lost; E01-F14 attachment upload failures can be hidden as success; E01-F15 multipart retries can duplicate delivered parts; E01-F16 startup failures are swallowed before manager failure accounting. E01 remains unpublished/unaccepted; next is E01-E Email package only.",
+      "coordinator_observation": "E01-E Email package is checkpointed at F31/P0/R64 with twenty-four provisional findings total. New Email findings: E01-F17 anti-spoofing pass results are not bound to the allowed From identity; E01-F18 mailbox acknowledgement precedes durable agent processing; E01-F19 In-Reply-To uses mutable sender-global state; E01-F20 persistent IMAP failures can report running; E01-F21 in-flight IMAP workers can outlive disable/replacement; E01-F22 full-message fetch/decode bypasses configured byte limits; E01-F23 Email can enable without allowFrom but cannot bootstrap pairing; E01-F24 colliding attachment names overwrite. E01 remains unpublished/unaccepted; next is E01-F Feishu control/setup/instance/UI only.",
       "active_source_review_coverage": {
-        "full": 26,
+        "full": 31,
         "partial": 0,
-        "unread": 69
+        "unread": 64
       },
-      "active_provisional_findings_count": 16,
+      "active_provisional_findings_count": 24,
       "active_substage_checkpoint": {
-        "stage": "E01-D",
-        "commit": "e8a5b408cbd1f132bcb2fbc875c2529140464fcd",
+        "stage": "E01-E",
+        "commit": "1f42a8f8aaa80353c85180132972cebc72acd007",
         "coverage": {
-          "full": 26,
+          "full": 31,
           "partial": 0,
-          "unread": 69
+          "unread": 64
         },
         "publication_credit_added": 0
       }
