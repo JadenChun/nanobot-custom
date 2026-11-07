@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 12,
+        "full": 26,
         "partial": 0,
-        "unread": 56
+        "unread": 42
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B reviewed the API/SDK and WebSocket core at cumulative F12/P0/R56 with two provisional conditional findings. Next bounded stage is E02-C backend WebUI transport foundations only.",
-      "last_checkpoint_commit": "b9d8cdcd8e611de4563588f67ef224342e02afad",
+      "note": "E02-A/B/C reviewed API/SDK, WebSocket core and backend WebUI transport foundations at cumulative F26/P0/R42 with two provisional conditional findings. E02-C added no finding. Next bounded stage is E02-D WebUI media and file-delivery foundations only.",
+      "last_checkpoint_commit": "7e842500783bf399c9bcc9065c3c216bfa6d901d",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -752,12 +752,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-C",
+          "commit": "7e842500783bf399c9bcc9065c3c216bfa6d901d",
+          "coverage": {
+            "full": 26,
+            "partial": 0,
+            "unread": 42
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-C only: backend WebUI transport foundations (shared HTTP/ingress/wire/projection/replay/session transport helpers), one manageable primary slice.",
+    "E02-D only: WebUI media and file-delivery foundations (media gateway/API/maintenance, generated assets, file preview, native folder picker), one manageable primary slice.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
