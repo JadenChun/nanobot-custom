@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 21,
+        "full": 23,
         "partial": 0,
-        "unread": 49
+        "unread": 47
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1378,6 +1378,18 @@
           "priority": "P2",
           "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
           "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F06",
+          "priority": "P2",
+          "title": "Systemd supervision reports applied success without checking command success",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F07",
+          "priority": "P2",
+          "title": "Pairing can proceed without a verified Tailscale Serve mapping",
+          "state": "provisional-active-handoff"
         }
       ],
       "substage_checkpoints": [
@@ -1402,6 +1414,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-C",
+          "commit": "773666969ecb852bae09bc09122df614eb2e6107",
+          "coverage": {
+            "full": 23,
+            "partial": 0,
+            "unread": 47
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1415,8 +1438,8 @@
     }
   ],
   "resume_order": [
-    "R01-C only: fully review nanobot/remote/supervision.py and nanobot/remote/tailscale.py to reach expected F23/P0/R47.",
-    "Continue R01 in later bounded Android/JNI/Go/native-client substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-D only: fully review MainActivity.java, NanobotWebViewClient.java, NativeProbe.java, RunKeepAliveRegistry.kt, RunKeepAliveService.kt, network/CustodyStore.kt and network/NativeNetwork.kt to reach expected F30/P0/R40.",
+    "Continue R01 in later bounded NativeNetworkPlugin/JNI/Go/native-client/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
