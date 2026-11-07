@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 26,
+        "full": 33,
         "partial": 0,
-        "unread": 42
+        "unread": 35
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C reviewed API/SDK, WebSocket core and backend WebUI transport foundations at cumulative F26/P0/R42 with two provisional conditional findings. E02-C added no finding. Next bounded stage is E02-D WebUI media and file-delivery foundations only.",
-      "last_checkpoint_commit": "7e842500783bf399c9bcc9065c3c216bfa6d901d",
+      "note": "E02-A/B/C/D reviewed API/SDK, WebSocket core, WebUI transport foundations and media/file delivery at cumulative F33/P0/R35 with four provisional findings. E02-D added E02-F03 and E02-F04; lossy transcript/index safe_key identity is deferred to E02-E transcript review.",
+      "last_checkpoint_commit": "34cf8ab9bf65c3fa5ed9174ed215b711e08ce759",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -728,6 +728,20 @@
           "title": "Non-loopback WebSocket configurations can admit unauthenticated agent clients",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on a network-reachable listener whose effective client authentication is disabled or publicly self-serviceable. Defaults are loopback plus token-required; static-token and properly protected token/trusted-proxy deployments are excluded."
+        },
+        {
+          "id": "E02-F03",
+          "priority": "P2",
+          "title": "Windows media GC can delete generated assets that are still referenced",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on Windows-style absolute paths plus execution of the media GC path. Default orphan grace is seven days; quota eviction can act earlier when enabled. POSIX reference discovery is unaffected."
+        },
+        {
+          "id": "E02-F04",
+          "priority": "P2",
+          "title": "Global generated-assets library silently omits sessions after the first 200",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on more than 200 persisted WebUI sessions. Per-session asset routes are unaffected; the global endpoint truncates session discovery before group pagination and exposes no continuation."
         }
       ],
       "substage_checkpoints": [
@@ -763,12 +777,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-D",
+          "commit": "34cf8ab9bf65c3fa5ed9174ed215b711e08ce759",
+          "coverage": {
+            "full": 33,
+            "partial": 0,
+            "unread": 35
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-D only: WebUI media and file-delivery foundations (media gateway/API/maintenance, generated assets, file preview, native folder picker), one manageable primary slice.",
+    "E02-E only: transcript persistence/identity core — fully review nanobot/webui/transcript.py and nanobot/webui/thread_disk.py.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
