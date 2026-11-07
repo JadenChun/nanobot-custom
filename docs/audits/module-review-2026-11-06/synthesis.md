@@ -22,7 +22,7 @@ retains its targeted historical boundary; it is not the new deep-review synthesi
 
 The coordinator accepted the publication foundation and committed/pushed checkpoint
 `5f0d14479b6ecd7a334ae72476a7c0ad5065be66`. [C00/H02/H03/U01/D01/T01/K01 handoffs](handoffs/index.json)
-remain preserved as provenance; C00, H02, H03, U01, D01, T01 and K01 are now published/checked. [A01](reports/A01.md) is now coordinator-checked at final F47/P0/R0 with nine promoted findings and seven retained questions; F06/F08/F09 remain explicitly conditional. K01 is coordinator-checked PASS at F56/P0/R0 after K01-A/B/C/D/E with thirteen promoted findings and eight final questions. E02-A/B/C/D/E/F/G/H are now checkpointed at F51/P0/R17 with twelve provisional conditional findings and zero publication credit; E02-H added two conditional P2 findings and six later streams remain queued. Published evidence
+remain preserved as provenance; C00, H02, H03, U01, D01, T01 and K01 are now published/checked. [A01](reports/A01.md) is now coordinator-checked at final F47/P0/R0 with nine promoted findings and seven retained questions; F06/F08/F09 remain explicitly conditional. K01 is coordinator-checked PASS at F56/P0/R0 after K01-A/B/C/D/E with thirteen promoted findings and eight final questions. E02-A/B/C/D/E/F/G/H/I/J are now checkpointed at F55/P0/R13 with fourteen provisional conditional findings and zero publication credit; E02-I added the explicit-config MCP state finding and E02-J added the cancelled skills.sh installer lifetime finding, while six later streams remain queued. Published evidence
 now covers 636 primary bodies. T01 is closed at F44/P0/R0 with twelve promoted findings and eight retained questions. Fifty-four promoted finding entries and fifty-two questions
 remain in the eight reports rather than becoming
 a whole-project conclusion; H01-F8 is explicitly open.
@@ -30,7 +30,7 @@ S01-F03 is cross-referenced by S02 and counted once. H02 supplements5A/5B supply
 
 The user-authorized sequence remains to inspect every module, preserve per-module Git status
 checkpoints, reconcile shared contracts and then hold the consolidated discussion. Source
-inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03/T01 checks are complete. A01 is published and coordinator-checked. K01-A/B/C/D/E are published and coordinator-checked. E02-A/B/C/D/E/F/G/H are saved at F51/P0/R17; next proceed with E02-I MCP OAuth/preset APIs only before E01/R01/M01/X01/Q01/P01. Integrated review and D1–D7 remain deferred.
+inspection has resumed. The staging check is complete with no delta; H01/C00/H02/H03/T01 checks are complete. A01 is published and coordinator-checked. K01-A/B/C/D/E are published and coordinator-checked. E02-A/B/C/D/E/F/G/H/I/J are saved at F55/P0/R13; next proceed with E02-K WebUI workspace management surfaces only before later settings/HTTP-command surfaces and E01/R01/M01/X01/Q01/P01. Integrated review and D1–D7 remain deferred.
 Fresh integrated review remains pending. No open decision blocks later source inspection. Continuation is stage-by-stage: each session should finish one bounded stage/substage, preserve exact evidence and gaps, and checkpoint before the next stage.
 
 | Prior decision area | Current review-sequencing disposition |
