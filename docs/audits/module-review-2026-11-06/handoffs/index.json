@@ -1342,120 +1342,132 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 64,
+        "full": 70,
         "partial": 0,
-        "unread": 6
+        "unread": 0
       },
-      "state": "active-incomplete-unaccepted",
+      "state": "source-complete-unpublished-unaccepted",
       "published_body_credit_added": 0,
       "provisional_findings": [
         {
           "id": "R01-F01",
           "priority": "P2",
           "title": "Pairing can durably commit a device before credential custody is established",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F02",
           "priority": "P1",
           "title": "Mobile WebSocket commands bypass granted chat/media scopes",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F03",
           "priority": "P2",
           "title": "Refresh rotation can strand a paired device on ambiguous delivery",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F04",
           "priority": "P2",
           "title": "Versioned mobile route contract contradicts the production edge",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F05",
           "priority": "P2",
           "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F06",
           "priority": "P2",
           "title": "Systemd supervision reports applied success without checking command success",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F07",
           "priority": "P2",
           "title": "Pairing can proceed without a verified Tailscale Serve mapping",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F08",
           "priority": "P2",
           "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F09",
           "priority": "P2",
           "title": "Mobile HTTP completions can arrive before request correlation is armed",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F10",
           "priority": "P2",
           "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F11",
           "priority": "P2",
           "title": "Android logcat receives replayable signed-media bearer capabilities",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F12",
           "priority": "P2",
           "title": "Global native last_error storage is unsafe under concurrent Android calls",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F13",
           "priority": "P2",
           "title": "Bounded broker event pressure can silently drop admitted operation completions",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F14",
           "priority": "P2",
           "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F15",
           "priority": "P2",
           "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F16",
           "priority": "P2",
           "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F17",
           "priority": "P2",
           "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
         },
         {
           "id": "R01-F18",
           "priority": "P2",
           "title": "Gradle wrapper distribution is not cryptographically pinned",
-          "state": "provisional-active-handoff"
+          "state": "provisional-source-complete-awaiting-publication"
+        },
+        {
+          "id": "R01-F19",
+          "priority": "P2",
+          "title": "Desktop-parity checker silently skips async inbound-command and misc-route source coverage",
+          "state": "provisional-source-complete-awaiting-publication"
+        },
+        {
+          "id": "R01-F20",
+          "priority": "P2",
+          "title": "Update-persistence qualification reinstalls the same APK instead of exercising an actual upgrade",
+          "state": "provisional-source-complete-awaiting-publication"
         }
       ],
       "substage_checkpoints": [
@@ -1568,6 +1580,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-K",
+          "commit": "d158766b9606b9f22dffcfaf61806edc7e2ee38e",
+          "coverage": {
+            "full": 70,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "source-complete-unpublished-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1581,8 +1604,7 @@
     }
   ],
   "resume_order": [
-    "R01-K only: fully review build-operations-contract.py, check-desktop-parity.py, install-release-update.sh, qualify-emulator.sh, test-cabi.sh and test-update-persistence.sh to reach F70/P0/R0.",
-    "After R01-K, publish/coordinator-check R01 separately; do not combine source completion with acceptance or integrated review.",
+    "R01-L only: publish the F70/P0/R0 R01 report, challenge all twenty provisional findings for promotion/demotion/merge, retain final discussion questions, then perform the separate coordinator semantic check.",
     "M01",
     "X01",
     "Q01",
