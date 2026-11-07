@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-K WebUI workspace management surfaces are checkpointed at cumulative F57/P0/R11. One new conditional P1 finding is retained: E02-F15 WebUI folder-grant authority is not scoped to the gateway's explicit config path, so explicit/multi-instance gateways can use the process-global grant/private-root authority. E02 now has fifteen provisional findings. Directory-browser grant commits, permission-v2 source/revision fencing and per-installation remote Full consent held under the reviewed paths. Publication/coordinator credit remains zero.",
+      "coordinator_observation": "E02-L WebUI settings domain core is checkpointed at cumulative F64/P0/R4. Four new conditional findings are retained: E02-F16 provider OAuth credential authority is shared across explicit gateway configs (P1); E02-F17 remote-access owner authority defaults to the process-global instance root (P1); E02-F18 settings usage accounting is not scoped to the explicit gateway config (P2); E02-F19 truthy non-boolean remote-access disable values enable remote access (P2). E02 now has nineteen provisional findings. Ordinary config serialization, per-gateway OAuth flow objects, secret redaction, package-install policy and restart fallback held under the reviewed paths. Publication/coordinator credit remains zero.",
       "active_source_review_coverage": {
-        "full": 57,
+        "full": 64,
         "partial": 0,
-        "unread": 11
+        "unread": 4
       },
-      "active_provisional_findings_count": 15,
+      "active_provisional_findings_count": 19,
       "active_substage_checkpoint": {
-        "stage": "E02-K",
-        "commit": "8ee9d99b2c24551e4a44e44ad18eafb080450990",
+        "stage": "E02-L",
+        "commit": "d36625dcab541008e6b3ff050b208b8e2833bdd4",
         "coverage": {
-          "full": 57,
+          "full": 64,
           "partial": 0,
-          "unread": 11
+          "unread": 4
         },
         "publication_credit_added": 0
       }
