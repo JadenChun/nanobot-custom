@@ -1049,14 +1049,14 @@
       "path": "handoffs/E01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 31,
+        "full": 40,
         "partial": 0,
-        "unread": 64
+        "unread": 55
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E01-E Email package completed at F31/P0/R64 with twenty-four provisional findings total and zero publication credit; next is E01-F Feishu control/setup/instance/UI primaries only.",
-      "last_checkpoint_commit": "1f42a8f8aaa80353c85180132972cebc72acd007",
+      "note": "E01-F Feishu control/setup/instance/UI completed at F40/P0/R55 with twenty-six provisional findings total and zero publication credit; next is E01-G Feishu runtime.py and websocket.py only.",
+      "last_checkpoint_commit": "93706841e16999f47b25ebfde4f8d8dd9796ee3a",
       "provisional_findings": [
         {
           "id": "E01-F01",
@@ -1070,14 +1070,14 @@
           "priority": "P1",
           "title": "Shared channel runtime/validation/transcription can ignore the gateway's explicit config path",
           "state": "provisional-active-handoff",
-          "qualification": "Conditional on an explicit gateway/manager config path differing from the process-global path. Common foreground CLI startup normally aligns them."
+          "qualification": "Conditional on an explicit gateway/manager config path differing from the process-global path. Feishu E01-F adds a concrete QR-flow consequence: the path-scoped settings handler owns the request, but its connector persists registration credentials through the process-global Feishu helper before separately enabling the gateway-scoped target."
         },
         {
           "id": "E01-F03",
           "priority": "P2",
           "title": "Truthy non-boolean enabled values activate packaged channels",
           "state": "provisional-active-handoff",
-          "qualification": "Conditional on malformed/manual packaged-channel config using a non-boolean truthy enabled value. Normal settings writers are expected to persist booleans."
+          "qualification": "Conditional on malformed/manual packaged-channel config using a non-boolean truthy enabled value. Feishu's own multi-instance adapter independently applies bool(config['enabled']), so truthy strings also activate Feishu instances. Normal settings writers are expected to persist booleans."
         },
         {
           "id": "E01-F04",
@@ -1225,6 +1225,20 @@
           "title": "Same-name Email attachments overwrite one another within a message",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on two accepted MIME parts in one message resolving to the same sanitized filename. Direct path traversal remains prevented."
+        },
+        {
+          "id": "E01-F25",
+          "priority": "P2",
+          "title": "Feishu validation reports Connection verified without verifying Feishu credentials",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional user-visible consequence on stale/mistyped/nonfunctional manual credentials. The default QR authorization path has stronger provider evidence; runtime startup remains a separate authority."
+        },
+        {
+          "id": "E01-F26",
+          "priority": "P2",
+          "title": "Feishu QR session storage is mutated concurrently without one session-map lock",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on overlapping local authenticated connect actions. Routes are local-browser restricted; the consequence is settings/connect failure or stale state, not unauthenticated remote memory corruption."
         }
       ],
       "substage_checkpoints": [
@@ -1282,13 +1296,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-F",
+          "commit": "93706841e16999f47b25ebfde4f8d8dd9796ee3a",
+          "coverage": {
+            "full": 40,
+            "partial": 0,
+            "unread": 55
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E01-F only: fully review the nine Feishu control/setup/instance/UI primaries (exclude runtime.py and websocket.py) to reach expected F40/P0/R55.",
-    "E01-G only afterward: Feishu runtime.py and websocket.py; do not combine with E01-F.",
+    "E01-G only: fully review nanobot/channels/feishu/runtime.py and nanobot/channels/feishu/websocket.py to reach expected F42/P0/R53; no other adapter in the same stage.",
     "Continue E01 in later bounded adapter substages until F95/P0/R0, then publish/coordinator-check E01 separately.",
     "R01",
     "M01",
