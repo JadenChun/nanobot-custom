@@ -415,7 +415,7 @@
       "path": "packages/attachment/attachment/src/types.ts",
       "range": [
         1,
-        170
+        95
       ],
       "mechanism": "Content-addressed immutable refs, byte-verified image identity and streamable file saves"
     },
@@ -434,8 +434,8 @@
       "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
       "path": "codex-rs/core/src/tools/handlers/view_image.rs",
       "range": [
-        1,
-        530
+        115,
+        205
       ],
       "mechanism": "Sandbox-backed file resolution and image-byte verification"
     },
@@ -444,8 +444,8 @@
       "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
       "path": "codex-rs/ext/image-generation/src/tool.rs",
       "range": [
-        1,
-        781
+        245,
+        310
       ],
       "mechanism": "Generated-image artifact save and separate reference publication"
     }
