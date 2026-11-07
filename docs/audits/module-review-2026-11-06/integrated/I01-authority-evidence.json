@@ -1,0 +1,581 @@
+{
+  "schema_version": 1,
+  "stage_id": "I01",
+  "report": "integrated/I01-authority.md",
+  "status": "bounded-integrated-substage-checkpoint",
+  "reviewer": "ChatGPT same-assistant cross-stream source integrator; not independent peer",
+  "pins": {
+    "frozen": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "staging": {
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "changed_paths": [
+        "nanobot/agent/skills.py",
+        "tests/agent/test_skills_loader.py"
+      ]
+    },
+    "dsh": {
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159"
+    },
+    "codex": {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
+    }
+  },
+  "groups": [
+    {
+      "id": "I01-A",
+      "title": "File/path and instruction-source selection",
+      "frozen_finding_ids": [
+        "S01-F01",
+        "K01-F01",
+        "T01-F07",
+        "X01-F01",
+        "K01-F03"
+      ],
+      "staging_only_overlay": [
+        "K01-STG-F01"
+      ],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    },
+    {
+      "id": "I01-B",
+      "title": "Risky-action approval and native admission",
+      "frozen_finding_ids": [
+        "T01-F08",
+        "K01-F06",
+        "S02-F02",
+        "S01-F03"
+      ],
+      "staging_only_overlay": [],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    },
+    {
+      "id": "I01-C",
+      "title": "Delegated read-only trust",
+      "frozen_finding_ids": [
+        "T01-F04",
+        "X01-F02"
+      ],
+      "staging_only_overlay": [],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    },
+    {
+      "id": "I01-D",
+      "title": "Authenticated browser-worker caller identity",
+      "frozen_finding_ids": [
+        "Q01-F01"
+      ],
+      "staging_only_overlay": [],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    },
+    {
+      "id": "I01-E",
+      "title": "Network listener, mobile scopes and local side effects",
+      "frozen_finding_ids": [
+        "E02-F02",
+        "R01-F02",
+        "E02-F22"
+      ],
+      "staging_only_overlay": [],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    },
+    {
+      "id": "I01-F",
+      "title": "Instance/root/credential authority",
+      "frozen_finding_ids": [
+        "C00-F06",
+        "E02-F11",
+        "E02-F13",
+        "E02-F15",
+        "E02-F16",
+        "E02-F17",
+        "E02-F18"
+      ],
+      "staging_only_overlay": [],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    },
+    {
+      "id": "I01-G",
+      "title": "External execution/data provenance and secrets",
+      "frozen_finding_ids": [
+        "K01-F08",
+        "Q01-F02",
+        "R01-F11",
+        "X01-F04"
+      ],
+      "staging_only_overlay": [],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    },
+    {
+      "id": "I01-H",
+      "title": "Instruction authority and auditable mutation",
+      "frozen_finding_ids": [
+        "K01-F12",
+        "K01-F13"
+      ],
+      "staging_only_overlay": [],
+      "disposition": "Grouped by common architectural invariant for future bounded repair, not merged as one defect; details and owners in I01 report"
+    }
+  ],
+  "finding_id_validation": {
+    "frozen": 28,
+    "staging_only": 1,
+    "all_frozen_ids_present_in_accepted_coverages": true,
+    "no_new_original_finding_credit": true
+  },
+  "source_report_inputs": [
+    {
+      "stream": "S01",
+      "report": "reports/S01.md",
+      "coverage": "reports/S01-coverage.json",
+      "coverage_blob": "1d7a40ce46bcf052b0c0657f802172f63959cd9a",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "K01",
+      "report": "reports/K01.md",
+      "coverage": "reports/K01-coverage.json",
+      "coverage_blob": "abb29b01f89515b297275abaf8a8db77a31e3505",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "T01",
+      "report": "reports/T01.md",
+      "coverage": "reports/T01-coverage.json",
+      "coverage_blob": "6d4dfb067a8ef3abf0acdec11e856abfcae36150",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "X01",
+      "report": "reports/X01.md",
+      "coverage": "reports/X01-coverage.json",
+      "coverage_blob": "0124c388fbdd804d18d23d6d1e0a89e1be407e67",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "S02",
+      "report": "reports/S02.md",
+      "coverage": "reports/S02-coverage.json",
+      "coverage_blob": "4d302094cc25b6453f1496b648d2254ad8687f01",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "Q01",
+      "report": "reports/Q01.md",
+      "coverage": "reports/Q01-coverage.json",
+      "coverage_blob": "d461b1676fb2a7c3d4a1a65e4260f0e5a684a1c0",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "E02",
+      "report": "reports/E02.md",
+      "coverage": "reports/E02-coverage.json",
+      "coverage_blob": "b46651bb7dfbd0d6fc7a74fd805838f6cf6d669b",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "R01",
+      "report": "reports/R01.md",
+      "coverage": "reports/R01-coverage.json",
+      "coverage_blob": "0442ec59262de9f58e6115c9d22ed9eb3d059e0b",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    },
+    {
+      "stream": "C00",
+      "report": "reports/C00.md",
+      "coverage": "reports/C00-coverage.json",
+      "coverage_blob": "cae600b64c0df5dc8675d8cb3270cbebab648059",
+      "source": "Previously coordinator checked; selected finding/ownership/limitations sections consulted"
+    }
+  ],
+  "crosscutting_inputs": [
+    "reports/P01.md",
+    "reports/K01.md (current-origin staging overlay)"
+  ],
+  "frozen_source_read_ranges": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/session/workspace_focus.py",
+      "ranges": [
+        [
+          150,
+          218
+        ]
+      ],
+      "purpose": "Full/task display shortcut"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/context_repo/policy.py",
+      "ranges": [
+        [
+          178,
+          270
+        ]
+      ],
+      "purpose": "Canonical policy precedence"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/shell.py",
+      "ranges": [
+        [
+          525,
+          565
+        ]
+      ],
+      "purpose": "Native reservation and input revalidation"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/apps/cli/service.py",
+      "ranges": [
+        [
+          1431,
+          1476
+        ]
+      ],
+      "purpose": "Host CLI subprocess without sandbox"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/cli_apps.py",
+      "ranges": [
+        [
+          120,
+          162
+        ]
+      ],
+      "purpose": "CLI Apps caller turn scope"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/mcp.py",
+      "ranges": [
+        [
+          645,
+          760
+        ]
+      ],
+      "purpose": "Remote MCP readOnlyHint classification"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/agent_browser.py",
+      "ranges": [
+        [
+          315,
+          453
+        ]
+      ],
+      "purpose": "Main browser working dir and delegated mode"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/desktop_use.py",
+      "ranges": [
+        [
+          304,
+          382
+        ]
+      ],
+      "purpose": "Direct global input effect"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/remote/edge.py",
+      "ranges": [
+        [
+          90,
+          118
+        ],
+        [
+          255,
+          300
+        ],
+        [
+          370,
+          401
+        ],
+        [
+          598,
+          698
+        ]
+      ],
+      "purpose": "Mobile bearer, HTTP and WS scope gates"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/inbound_commands.py",
+      "ranges": [
+        [
+          580,
+          782
+        ]
+      ],
+      "purpose": "Shared typed WebUI commands and revalidation"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/gateway_endpoint.py",
+      "ranges": [
+        [
+          84,
+          125
+        ]
+      ],
+      "purpose": "WebUI websocket handshake"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/crawler/worker.py",
+      "ranges": [
+        [
+          776,
+          803
+        ]
+      ],
+      "purpose": "Read-classified expand literal DOM click"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/ingress_policy.py",
+      "ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "purpose": "Transport capacity not auth"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/gateway_tokens.py",
+      "ranges": [
+        [
+          1,
+          130
+        ]
+      ],
+      "purpose": "Token lifetime API"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/filesystem.py",
+      "ranges": [
+        [
+          200,
+          239
+        ],
+        [
+          286,
+          357
+        ],
+        [
+          480,
+          515
+        ],
+        [
+          649,
+          705
+        ]
+      ],
+      "purpose": "Relative file path and builtin fallback"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/security/workspace_policy.py",
+      "ranges": [
+        [
+          1,
+          195
+        ]
+      ],
+      "purpose": "Relative file path binding"
+    }
+  ],
+  "staging_context_read_ranges": [
+    {
+      "path": "nanobot/agent/skills.py",
+      "ranges": [
+        [
+          237,
+          311
+        ]
+      ],
+      "purpose": "Staging builtin summary",
+      "repository": "nanobot",
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6"
+    },
+    {
+      "path": "nanobot/agent/tools/filesystem.py",
+      "ranges": [
+        [
+          200,
+          239
+        ],
+        [
+          258,
+          285
+        ],
+        [
+          286,
+          352
+        ],
+        [
+          480,
+          494
+        ],
+        [
+          649,
+          705
+        ]
+      ],
+      "purpose": "Selected project read resolution",
+      "repository": "nanobot",
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6"
+    },
+    {
+      "path": "nanobot/security/workspace_policy.py",
+      "ranges": [
+        [
+          19,
+          29
+        ],
+        [
+          96,
+          123
+        ]
+      ],
+      "purpose": "Relative path and root",
+      "repository": "nanobot",
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6"
+    },
+    {
+      "path": "nanobot/agent/context.py",
+      "ranges": [
+        [
+          235,
+          244
+        ]
+      ],
+      "purpose": "Project selection passed to skills summary",
+      "repository": "nanobot",
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6"
+    }
+  ],
+  "reference_source_reads": [
+    {
+      "repo": "deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/sandbox/sandbox-policy/src/index.ts",
+      "ranges": [
+        [
+          195,
+          215
+        ]
+      ],
+      "blob": "36fdc1f2e85b031bee52712bffe8f79e9500ecf7",
+      "purpose": "Resolved per-call mode and workspace"
+    },
+    {
+      "repo": "openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/tools/orchestrator.rs",
+      "ranges": [
+        [
+          439,
+          475
+        ]
+      ],
+      "blob": "a1a88e445449e55f3f8038adef48e0457df9a534",
+      "purpose": "Approval preconditions for any unsandboxed retry"
+    }
+  ],
+  "non_merges": [
+    {
+      "a": "S01-F01",
+      "b": "X01-F01",
+      "reason": "display vs child sandbox"
+    },
+    {
+      "a": "T01-F04",
+      "b": "X01-F02",
+      "reason": "remote annotation vs browser DOM event"
+    },
+    {
+      "a": "X01-F02",
+      "b": "Q01-F01",
+      "reason": "browser event vs worker peer auth"
+    },
+    {
+      "a": "E02-F02",
+      "b": "R01-F02",
+      "reason": "handshake vs scoped command"
+    },
+    {
+      "a": "R01-F02",
+      "b": "E02-F22",
+      "reason": "remote WS scope vs local GET side effect"
+    },
+    {
+      "a": "K01-F03",
+      "b": "K01-STG-F01",
+      "reason": "skill validation precedence vs read path collision"
+    },
+    {
+      "a": "K01-F12",
+      "b": "K01-F13",
+      "reason": "prompt role vs Dream durable mutation"
+    },
+    {
+      "a": "S02-F02",
+      "b": "S01-F03",
+      "reason": "reservation lifecycle vs duplicate counts"
+    }
+  ],
+  "counts": {
+    "frozen_source_findings_grouped": 28,
+    "staging_only_findings_grouped": 1,
+    "original_project_findings_unchanged": 136,
+    "original_project_questions_unchanged": 105,
+    "primary_body_addition": 0,
+    "prior_deep_required_checked": 824,
+    "limited_depth_E01_exception": 95,
+    "new_findings": 0,
+    "new_questions": 0,
+    "groups": 8
+  },
+  "integration": {
+    "status": "partial",
+    "completed_substage": "I01 authority/capability only",
+    "next_substage": "I02 durable effects/recovery/complete process lifetime",
+    "D1_D7_decisions": "pending",
+    "individual_stream_integrated_acceptance": false,
+    "full_integrated_review_complete": false
+  },
+  "limits": [
+    "selected excerpts not recheck of all 824 primary bodies",
+    "conditionals are not reproduced incidents",
+    "no product code, tests, application or browser execution",
+    "E01 limited-depth exception maintained"
+  ]
+}
