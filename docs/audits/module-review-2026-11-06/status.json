@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F14/P0/R56 with one provisional P2 finding; M01/X01/Q01/P01 remain queued. Current staging advanced to 29612c3 only in K01 skill-display code/tests; R01-A bodies are unchanged.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F21/P0/R49 with five provisional findings (one P1, four P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B bodies are unchanged.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "R01-A fresh source-only handoff is saved at handoffs/R01.md: 14/70 primaries fully read, one provisional finding, zero publication credit. Next bounded substage is R01-B remote IPC/listener/edge admission and replay transport. Existing coordinator-checked reports retain their frozen-pin acceptance; K01 current-origin refresh is separately pending because staging advanced after the frozen pin.",
+  "dispatch_evidence": "R01-A/B fresh source-only handoff is saved at handoffs/R01.md: 21/70 primaries fully read, five provisional findings, zero publication credit. Next bounded substage is R01-C remote supervision/Tailscale only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -609,13 +609,13 @@
       "coverage": null,
       "planned_report": "reports/R01.md",
       "planned_coverage": "reports/R01-coverage.json",
-      "findings_count": 1,
+      "findings_count": 5,
       "discussion_questions_count": 0,
       "published_findings_count": 0,
       "published_discussion_questions_count": 0,
       "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 56,
-      "architecture_judgement": "Provisional Keep: preserve independent durable device authority, short-lived access/rotating refresh credentials, local owner approval and one-use delegated permission admissions. R01-F01 identifies a bounded credential-custody/recovery seam; transport/native architecture remains under review.",
+      "material_primary_gaps_pending_evidence": 49,
+      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority and production shared WebUI transport, but centralize mobile scope enforcement and make credential handoff/refresh retry-safe. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05 are P2 recovery/contract/qualification defects. Supervision/Tailscale and Android/native architecture remain under review.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -634,27 +634,55 @@
       "saved_handoff": "handoffs/R01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
       "active_source_review_coverage": {
-        "full": 14,
+        "full": 21,
         "partial": 0,
-        "unread": 56
+        "unread": 49
       },
-      "active_provisional_findings_count": 1,
+      "active_provisional_findings_count": 5,
       "provisional_findings": [
         {
           "id": "R01-F01",
           "priority": "P2",
           "title": "Pairing can durably commit a device before credential custody is established",
           "state": "provisional-active-handoff",
-          "qualification": "Requires owner restart, client disconnect or response-write failure after desktop approval/device persistence but before the phone receives/acknowledges the plaintext credential pair. Local admin can recover by revoke/re-pair; no authorization bypass is claimed."
+          "qualification": "Requires owner restart, client disconnect or response-write failure after approval/device persistence but before client custody. Local revoke/re-pair recovers; no authorization bypass."
+        },
+        {
+          "id": "R01-F02",
+          "priority": "P1",
+          "title": "Mobile WebSocket commands bypass granted chat/media scopes",
+          "state": "provisional-active-handoff",
+          "qualification": "Production /mobile/v1/ws validates token currency but not route/per-command scopes; shared WebUI typed commands can attach/hydrate/send/upload outside reduced device scopes. Default owner pairing grants broad scopes, but approval can narrow while retaining owner."
+        },
+        {
+          "id": "R01-F03",
+          "priority": "P2",
+          "title": "Refresh rotation can strand a paired device on ambiguous delivery",
+          "state": "provisional-active-handoff",
+          "qualification": "Server persists the replacement refresh hash and invalidates prior access before client custody of the new plaintext pair; response loss requires local revoke/re-pair."
+        },
+        {
+          "id": "R01-F04",
+          "priority": "P2",
+          "title": "Versioned mobile route contract contradicts the production edge",
+          "state": "provisional-active-handoff",
+          "qualification": "ROUTES/mobile-v1.json declare HTTP bootstrap/mutation/attachment/logout that production edge does not serve; current Android mostly uses shared WS and /remote/v1/refresh, so impact is contract/tooling compatibility rather than proof every UI flow is broken."
+        },
+        {
+          "id": "R01-F05",
+          "priority": "P2",
+          "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
+          "state": "provisional-active-handoff",
+          "qualification": "Bounded to staging/qualification fidelity: no ordinary product caller established and the main emulator qualification script explicitly disclaims transport/custody proof."
         }
       ],
       "active_substage_checkpoint": {
-        "stage": "R01-A",
-        "commit": "0ba1a24e001a9efa7dc9777cdbf414026b641424",
+        "stage": "R01-B",
+        "commit": "ba338a3ed78923e1122e98788c38f794a6945fc0",
         "coverage": {
-          "full": 14,
+          "full": 21,
           "partial": 0,
-          "unread": 56
+          "unread": 49
         },
         "publication_credit_added": 0
       }
@@ -900,8 +928,8 @@
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "R01-B only: fully review nanobot/remote/ipc.py, http.py, edge.py, operations.py, replay.py, staging.py and data_server.py to reach expected F21/P0/R49.",
-    "Continue R01 in later bounded substages for supervision/Tailscale and Android/native clients until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-C only: fully review nanobot/remote/supervision.py and nanobot/remote/tailscale.py to reach expected F23/P0/R47.",
+    "Continue R01 in later bounded Android/JNI/Go/native-client substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
