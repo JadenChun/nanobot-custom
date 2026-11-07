@@ -1049,14 +1049,14 @@
       "path": "handoffs/E01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 17,
+        "full": 21,
         "partial": 0,
-        "unread": 78
+        "unread": 74
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E01-B Telegram package completed at F17/P0/R78 with six provisional findings total and zero publication credit; next is E01-C DingTalk package only.",
-      "last_checkpoint_commit": "42acf7bd6443c771b417a3738d8ed4a9be3c53ed",
+      "note": "E01-C DingTalk package completed at F21/P0/R74 with eleven provisional findings total and zero publication credit; next is E01-D Discord package only.",
+      "last_checkpoint_commit": "c2dfd60ff7fb18d97c4c62ef9440dbfeb245e509",
       "provisional_findings": [
         {
           "id": "E01-F01",
@@ -1099,6 +1099,41 @@
           "title": "Telegram ordinary delivery hides retries beneath the manager attempt cap",
           "state": "provisional-active-handoff",
           "qualification": "Ordinary best-effort Telegram delivery only; the qualified cron receipt path performs no hidden provider retries. Duplicate effects require an ambiguous timeout whose provider-side send completed."
+        },
+        {
+          "id": "E01-F07",
+          "priority": "P1",
+          "title": "DingTalk inbound filenames can escape the media root and overwrite arbitrary writable paths",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on DingTalk preserving sender-controlled absolute/parent-traversal filename syntax. If the provider canonicalizes safe basenames, the path-escape consequence does not activate."
+        },
+        {
+          "id": "E01-F08",
+          "priority": "P2",
+          "title": "Denied DingTalk senders can trigger unbounded inbound file download work before authorization",
+          "state": "provisional-active-handoff",
+          "qualification": "Practical amplification depends on DingTalk attachment/rate limits. The download URL is provider-issued; this finding does not claim directly attacker-chosen SSRF."
+        },
+        {
+          "id": "E01-F09",
+          "priority": "P2",
+          "title": "Persistent DingTalk stream failures are reported as running",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on persistent/non-transient stream/setup failure. Temporary network loss may intentionally be represented by a live reconnecting supervisor."
+        },
+        {
+          "id": "E01-F10",
+          "priority": "P2",
+          "title": "DingTalk retries replay already-delivered text/media after later part failure",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a multipart ordinary send and a retryable failure after at least one earlier part completed; single-part sends do not have this intra-message replay window."
+        },
+        {
+          "id": "E01-F11",
+          "priority": "P2",
+          "title": "DingTalk downloads inbound attachments but bypasses the canonical media/attachment pipeline",
+          "state": "provisional-active-handoff",
+          "qualification": "A sufficiently privileged agent may manually read the textual path; the defect is bypass of canonical adoption/multimodal projection, not guaranteed byte loss in every deployment."
         }
       ],
       "substage_checkpoints": [
@@ -1123,12 +1158,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-C",
+          "commit": "c2dfd60ff7fb18d97c4c62ef9440dbfeb245e509",
+          "coverage": {
+            "full": 21,
+            "partial": 0,
+            "unread": 74
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E01-C only: fully review the four DingTalk package primaries to reach expected F21/P0/R74; no other adapter in the same stage.",
+    "E01-D only: fully review the five Discord package primaries to reach expected F26/P0/R69; no other adapter in the same stage.",
     "Continue E01 in later bounded adapter substages until F95/P0/R0, then publish/coordinator-check E01 separately.",
     "R01",
     "M01",
