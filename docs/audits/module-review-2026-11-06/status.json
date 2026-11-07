@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F31/P0/R64 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F40/P0/R55 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -18,7 +18,7 @@
     "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-E has an active source-only handoff at F31/P0/R64 with zero publication credit; next bounded substage is E01-F Feishu control/setup/instance/UI primaries only.",
+  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-F has an active source-only handoff at F40/P0/R55 with zero publication credit; next bounded substage is E01-G Feishu runtime.py and websocket.py only.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -446,20 +446,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E01-E Email package is checkpointed at F31/P0/R64 with twenty-four provisional findings total. New Email findings: E01-F17 anti-spoofing pass results are not bound to the allowed From identity; E01-F18 mailbox acknowledgement precedes durable agent processing; E01-F19 In-Reply-To uses mutable sender-global state; E01-F20 persistent IMAP failures can report running; E01-F21 in-flight IMAP workers can outlive disable/replacement; E01-F22 full-message fetch/decode bypasses configured byte limits; E01-F23 Email can enable without allowFrom but cannot bootstrap pairing; E01-F24 colliding attachment names overwrite. E01 remains unpublished/unaccepted; next is E01-F Feishu control/setup/instance/UI only.",
+      "coordinator_observation": "E01-F Feishu control/setup/instance/UI is checkpointed at F40/P0/R55 with twenty-six provisional findings total. New findings: E01-F25 manual Feishu validation reports connected without credential verification; E01-F26 QR session bookkeeping races across to_thread workers. E01-F02 is strengthened with concrete Feishu QR cross-config-root credential persistence, and E01-F03 with Feishu instance truthy-enable evidence. E01 remains unpublished/unaccepted; next is E01-G Feishu runtime.py and websocket.py only.",
       "active_source_review_coverage": {
-        "full": 31,
+        "full": 40,
         "partial": 0,
-        "unread": 64
+        "unread": 55
       },
-      "active_provisional_findings_count": 24,
+      "active_provisional_findings_count": 26,
       "active_substage_checkpoint": {
-        "stage": "E01-E",
-        "commit": "1f42a8f8aaa80353c85180132972cebc72acd007",
+        "stage": "E01-F",
+        "commit": "93706841e16999f47b25ebfde4f8d8dd9796ee3a",
         "coverage": {
-          "full": 31,
+          "full": 40,
           "partial": 0,
-          "unread": 64
+          "unread": 55
         },
         "publication_credit_added": 0
       }
