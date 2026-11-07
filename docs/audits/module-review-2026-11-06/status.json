@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-F session navigation/isolation helpers are checkpointed at cumulative F41/P0/R27. Three new conditional P2 findings are retained: E02-F08 search_sessions can return transcript-only results that read_session rejects; E02-F09 failed Temporary Chat attachment deletion is forgotten instead of retried; E02-F10 discarded Temporary Chat tombstones grow without bound until shutdown. E02 now has ten provisional findings. E02-F05/F06 downstream consequences were strengthened without splitting findings. Publication/coordinator credit remains zero.",
+      "coordinator_observation": "E02-G ancillary/session-service slice is checkpointed at cumulative F48/P0/R20. No new E02 finding was promoted; the active provisional count remains ten. Feature/version/sidebar/transcription/automation caller authorization was reconciled. A transcription max-duration enforcement candidate is explicitly deferred to M01 because the root lives in nanobot/audio/transcription.py. Publication/coordinator credit remains zero.",
       "active_source_review_coverage": {
-        "full": 41,
+        "full": 48,
         "partial": 0,
-        "unread": 27
+        "unread": 20
       },
       "active_provisional_findings_count": 10,
       "active_substage_checkpoint": {
-        "stage": "E02-F",
-        "commit": "96cee6ade663760a19ebc350b19c50e236a4b406",
+        "stage": "E02-G",
+        "commit": "ec67092826146b045c9f254fcfc389b679beaa34",
         "coverage": {
-          "full": 41,
+          "full": 48,
           "partial": 0,
-          "unread": 27
+          "unread": 20
         },
         "publication_credit_added": 0
       }
