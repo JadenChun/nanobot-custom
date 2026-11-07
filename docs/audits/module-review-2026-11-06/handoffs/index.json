@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 38,
+        "full": 43,
         "partial": 0,
-        "unread": 32
+        "unread": 27
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1414,6 +1414,12 @@
           "priority": "P2",
           "title": "Android logcat receives replayable signed-media bearer capabilities",
           "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F12",
+          "priority": "P2",
+          "title": "Global native last_error storage is unsafe under concurrent Android calls",
+          "state": "provisional-active-handoff"
         }
       ],
       "substage_checkpoints": [
@@ -1482,6 +1488,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-G",
+          "commit": "785e87449a88b640657d44b0020a87b73da47979",
+          "coverage": {
+            "full": 43,
+            "partial": 0,
+            "unread": 27
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1495,8 +1512,8 @@
     }
   ],
   "resume_order": [
-    "R01-G only: fully review native_network_jni.c, probe.c, native-network/cmd/lib/interface_android.go, cmd/lib/main.go and include/nanobot_network.h to reach expected F43/P0/R27.",
-    "Continue R01 in later bounded Go broker/bootstrap/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-H only: fully review native-network/internal/broker/config.go, core.go, events.go, http.go, media.go, policy.go, state.go and ws.go to reach expected F51/P0/R19.",
+    "Continue R01 in later bounded mobile bootstrap/Gradle/scripts/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
