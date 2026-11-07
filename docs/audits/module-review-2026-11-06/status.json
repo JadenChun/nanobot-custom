@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02/R01/M01/X01 coordinator-checked at frozen source pin 9562e57. E01 limited-depth/nonpriority. Deep source coverage 799/824, only Q01 25 bodies remain. P01 synthesis, K01 current-origin refresh and integrated D1–D7 remain pending.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02/R01/M01/X01/Q01 source coordinator-checked at frozen pin 9562e57; deep review 824/824. E01 limited-depth 95-target exception. P01 cross-cutting, K01 staging-source refresh, integrated acceptance and D1–D7 remain pending.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,30 +19,30 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "M01 independently rechecked and X01 newly completed at full F11/P0/R0 source review. 799/824 coordinator-checked deep bodies, 25 Q01 primaries remaining. X01 accepted four qualified source findings (two conditional P1, two P2), six discussion questions; integrated review, product code and runtime tests pending.",
+  "dispatch_evidence": "Q01 full source F25/P0/R0 coordinator-checked at frozen pin. All required non-E01 source streams now complete: 824/824 deep bodies. 136 source findings and 105 questions; P01 simplification, K01 staging skills delta and integrated D1–D7 decisions remain.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 2,
+    "queued": 1,
     "in_progress": 0,
     "report_written": 0,
-    "coordinator_checked": 15,
+    "coordinator_checked": 16,
     "integrated_review_complete": 0,
-    "published_findings": 129,
-    "published_discussion_questions": 98,
-    "supplied_primary_body_paths": 799,
-    "primary_targets_without_new_body_evidence": 120,
-    "reports_published": 16,
+    "published_findings": 136,
+    "published_discussion_questions": 105,
+    "supplied_primary_body_paths": 824,
+    "primary_targets_without_new_body_evidence": 95,
+    "reports_published": 17,
     "limited_depth_closed": 1,
     "deep_review_required_targets": 824,
     "limited_depth_exception_targets": 95,
-    "deep_review_required_targets_without_coordinator_checked_evidence": 25,
+    "deep_review_required_targets_without_coordinator_checked_evidence": 0,
     "retained_limited_depth_findings": 26,
-    "coordinator_checked_reports": 15
+    "coordinator_checked_reports": 16
   },
-  "count_meaning": "Frozen scope: 919 primary targets. E01 95-target limited-depth exception (40 earlier deeper reads, 55 quick screens) stays outside current 824 deep-review-required denominator. Coordinator-checked deep source bodies 799/824 across 15 streams, 25 remaining in Q01 only. P01 adds zero source denominator and remains queued; integrated reviews have not been performed.",
+  "count_meaning": "Frozen inventory 919 primary sources. Explicit E01 95-target limited-depth exception (40 earlier deep, 55 quick-screen only) excluded from 824 deep-review-required denominator. All 824/824 mandatory deep primary bodies now coordinator-checked across 16 streams. E01 not deep-PASS; P01 is cross-cutting, 0 primary additions; integrated review remains pending.",
   "discussion": {
     "sequence": "All modules and shared contracts first, consolidated discussion afterward.",
     "D1_D7": "Explicitly deferred for review sequencing; no implementation accepted.",
@@ -893,32 +893,34 @@
       "kind": "primary",
       "primary_target_count": 25,
       "inventory_all_roles_count": 317,
-      "status": "queued",
+      "status": "coordinator-checked",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
-      "report": null,
-      "coverage": null,
+      "report": "reports/Q01.md",
+      "coverage": "reports/Q01-coverage.json",
       "planned_report": "reports/Q01.md",
       "planned_coverage": "reports/Q01-coverage.json",
-      "findings_count": null,
-      "discussion_questions_count": null,
-      "published_findings_count": 0,
-      "published_discussion_questions_count": 0,
-      "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 25,
-      "architecture_judgement": null,
+      "findings_count": 7,
+      "discussion_questions_count": 7,
+      "published_findings_count": 7,
+      "published_discussion_questions_count": 7,
+      "supplied_primary_body_paths": 25,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep with targeted corrections to Windows authenticated worker local transport, audit redaction, pipx installed-executable verification, frozen frontend build, staged deploy rollback, P0 verifier provenance and migration CI triggers.",
       "coordinator_check": {
-        "status": "pending",
-        "evidence": null
+        "status": "PASS",
+        "evidence": "2026-11-07 same-assistant source review: reports/Q01-coverage.json verifies all 25 pinned primary bodies with independently recomputed SHA256, Git blobs and bytes; seven qualified findings and seven questions. No independent peer, runtime or cross-module acceptance."
       },
       "integrated_review": {
         "status": "pending",
         "evidence": null
       },
       "git_checkpoint": {
-        "status": "pending",
-        "commit": null,
-        "evidence": null
-      }
+        "status": "recorded",
+        "commit": "2d03fbb55ef372d6d237e6a5a6622c5885544385",
+        "pushed": true,
+        "evidence": "Q01 source report published in 873e6a6 and 25-body evidence ledger in 2d03fbb; aggregate status and synthesis follow."
+      },
+      "coordinator_observation": "Q01 source PASS F25/P0/R0. One conditional P1 (Windows authenticated worker loopback caller auth), six P2 source findings (redaction, pipx run, nonfrozen Hatch, non-atomic deploy, P0 mutable verifier, docs migration CI exclusion); seven deferred questions. Source-only same-assistant check."
     },
     {
       "id": "P01",
@@ -1034,7 +1036,8 @@
     "T01": "T01-A+B+C+D+E+F source inspection is saved at F36/P0/R8 with twelve provisional findings (three conditional P1, nine P2 including two conditional). No T01 report/coordinator acceptance or published body credit is awarded. Next: T01-G final eight-file wrapper stage.",
     "R01": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings (one conditional P1, nineteen P2) and ten retained questions. Exact 70-path/hash/byte reconciliation matches the immutable inventory; current staging changes no R01 primary. Integrated review, D1–D7, repairs and runtime qualification remain pending.",
     "M01": "Higher-depth second pass rechecked all 14 M01 primaries using independently recomputed hashes; prior F01–F03 retained and added qualified F04 (fail-open prune with incomplete references), F05 (unbounded image-edit reference reads), F06 (PDF post-decode size guard). Six qualified P2 findings, six questions; integrated review and D1–D7 still pending.",
-    "X01": "X01 source PASS F11/P0/R0, two conditional P1 and two P2 findings, six final questions. Core concerns: CLI app subprocess file/network authority, crawler expand literal click, capture_output memory, remote app-catalog trust collisions. Same-reviewer self-check only; integration and runtime still pending."
+    "X01": "X01 source PASS F11/P0/R0, two conditional P1 and two P2 findings, six final questions. Core concerns: CLI app subprocess file/network authority, crawler expand literal click, capture_output memory, remote app-catalog trust collisions. Same-reviewer self-check only; integration and runtime still pending.",
+    "Q01": "Q01 source PASS F25/P0/R0. One conditional P1 (Windows authenticated worker loopback caller auth), six P2 source findings (redaction, pipx run, nonfrozen Hatch, non-atomic deploy, P0 mutable verifier, docs migration CI exclusion); seven deferred questions. Source-only same-assistant check."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
@@ -1051,10 +1054,9 @@
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "Q01 only: final 25 primary source bodies; do not combine with P01 or integrated review.",
-    "P01: cross-cutting efficiency and simplification (0 extra primary bodies).",
-    "Refresh K01 affected current-origin skill source evidence on staging 29612c3.",
-    "Fresh integrated review and consolidated D1–D7 discussion. E01 limited-depth exception remains."
+    "P01 only: cross-cutting efficiency and simplification with zero new primary-body denominator.",
+    "Refresh K01 current-origin skills source after staging 29612c3 changes.",
+    "Perform fresh integrated module review and consolidate D1–D7 questions/decisions; retain E01 limited-depth exception."
   ],
   "latest_staging_observation": {
     "checked_at": "2026-11-07",
