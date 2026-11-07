@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. Frozen source-review evidence remains 824/824 deep-required bodies, 136 original findings, 105 original questions; E01 95-file limited-depth exception and separate K01-STG-F01 staging-only conditional P2 retained. I01–I04 source checkpoints now assign all 136 original IDs to integrated groups. This completes mapping only; integrated_review_complete remains 0 until I05 final reconciliation. No product edits/runtime tests/build/deploy or D1–D7 decisions.",
+  "publication_stage": "INTEGRATED SOURCE REVIEW COMPLETE. Frozen evidence: 824/824 deep-required bodies, 136 original findings, 105 original questions; E01 remains 95-file limited-depth exception with its retained limited-depth findings outside the 136 denominator. I01–I05 reconcile all 136 into 22 canonical repair packages, with zero whole-finding merges and one partial subfact overlap (T01-F10/K01-F11). K01-STG-F01 remains separate staging-only conditional P2. No runtime/product validation or D1–D7 decision; no fixes authorized.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "I04 published 7 residual groups covering exactly the 26 original IDs not referenced by I01–I03. Mechanical union of I01–I04 is 136/136 unique original findings. No count inflation/new findings. Next I05 final reconciliation only.",
+  "dispatch_evidence": "I05 final reconciliation published and mechanically validated: 136/136 original IDs partition exactly once into 22 repair packages; zero missing/extra, no whole-finding collapse, one partial apply_patch fact overlap; integrated source review now complete by status definition. Next D1–D7 discussion only.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -29,7 +29,7 @@
     "in_progress": 0,
     "report_written": 0,
     "coordinator_checked": 17,
-    "integrated_review_complete": 0,
+    "integrated_review_complete": 1,
     "published_findings": 136,
     "published_discussion_questions": 105,
     "supplied_primary_body_paths": 824,
@@ -1066,23 +1066,22 @@
     "I01": "2026-11-07 I01 same-assistant source integration checkpoint, not full integrated acceptance: eight authority clusters, 28 distinct original IDs and one staging-only K01 overlay; zero primary/finding/question additions, 824/824 deep requirement unchanged. Explicit false mergers and source ranges in integrated/I01-authority.md/ledger. Next I02.",
     "I02": "2026-11-07 I02 source semantic checkpoint (same assistant): 9 durable/outcome groups, 53 distinct previous ledger IDs, 1 cross-stage overlap S02-F02, 3 H02 optional candidates; no extra body/finding/question credit or D1–D7 decisions. Reports integrated/I02-durability.md and I02-durability-evidence.json. Next I03.",
     "I03": "2026-11-07 source-only I03 checkpoint: 8 groups, 32 existing original finding references, original IDs validated against 8 coverage ledgers; known overlaps K01-F03 with I01, A01-F07 with I02; K01-STG-F01 separately cross-referenced, not counted. Same-assistant source/readback acceptance, not final integrated review. Next I04.",
-    "I04": "2026-11-07 I04 source-only checkpoint: exact 26 findings left after I01–I03, seven groups, no prior overlap; I01–I04 union now covers all 136 original findings. This is mapping completion only. Report/ledger integrated/I04-release-residuals*. Next I05 final dedup/non-merge/priority ownership reconciliation."
+    "I04": "2026-11-07 I04 source-only checkpoint: exact 26 findings left after I01–I03, seven groups, no prior overlap; I01–I04 union now covers all 136 original findings. This is mapping completion only. Report/ledger integrated/I04-release-residuals*. Next I05 final dedup/non-merge/priority ownership reconciliation.",
+    "I05": "2026-11-07 final source integration: exact 136-ID partition into 22 canonical repair packages; zero whole-finding merges, one partial T01-F10/K01-F11 apply_patch overlap, expected cross-stage repeated refs only. Material gaps/E01/runtime limits recorded. integrated_review_complete=1; D1–D7 decisions=0."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
     "state": "ACTIVE",
-    "reason": "I04 completed exact residual mapping; all 136 original findings have an integrated home, but final reconciliation incomplete.",
+    "reason": "Source-based integrated review complete after I05; only user D1–D7 decisions remain before implementation planning.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "I05 final finding reconciliation only",
-      "D1–D7 discussion separately afterward"
+      "D1–D7 discussion only: decide platform scope, authority/private boundaries, managed session/delegation, compatibility/retirement, registration/lifetime, recovery semantics and completion/resource policy. Do not implement fixes until decisions are explicit."
     ],
     "handoff_index": "handoffs/index.json",
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "I05 only: final whole-project reconciliation of all 136 original findings plus K01-STG-F01. Deduplicate only proven duplicate facts, preserve non-merges/conditionals, produce repair ownership/priority synthesis. Do NOT choose D1–D7 yet.",
-    "After I05, discuss D1–D7 as a separate user-directed decision stage."
+    "D1–D7 discussion only: decide platform scope, authority/private boundaries, managed session/delegation, compatibility/retirement, registration/lifetime, recovery semantics and completion/resource policy. Do not implement fixes until decisions are explicit."
   ],
   "latest_staging_observation": {
     "checked_at": "2026-11-07",
@@ -1096,7 +1095,7 @@
     "r01_impact": "No R01 primary path changed. The production delta changes built-in skill display paths only; retain K01 current-origin refresh as a later obligation."
   },
   "integrated_review_progress": {
-    "status": "in progress: I01–I04 source mapping covers 136/136 original findings; final reconciliation and D1–D7 pending",
+    "status": "COMPLETE source-based integrated review: I01–I05 reconcile all 136 original findings; D1–D7 and implementation remain pending",
     "completed_substages": [
       {
         "id": "I01",
@@ -1182,13 +1181,33 @@
         "commit_report": "35f000a554ad284b8235bb603268d60697902eee",
         "commit_ledger": "b668d26105eedc030e898e38da87ce2a5c4357d7",
         "scope_limit": "Exact residual 26 original IDs only; no final duplicate collapse, repair backlog acceptance or D1–D7 decisions."
+      },
+      {
+        "id": "I05",
+        "name": "Final whole-project finding reconciliation and repair ownership",
+        "status": "integrated source review COMPLETE; no runtime/product acceptance and no D1–D7 choice",
+        "report": "integrated/I05-final-reconciliation.md",
+        "ledger": "integrated/I05-final-reconciliation-evidence.json",
+        "original_findings_reconciled": 136,
+        "canonical_repair_packages": 22,
+        "whole_finding_merges": 0,
+        "partial_factual_overlaps": 1,
+        "staging_only_overlay": [
+          "K01-STG-F01"
+        ],
+        "new_promoted_findings": 0,
+        "new_questions": 0,
+        "new_primary_body_credit": 0,
+        "decisions_accepted": 0,
+        "commit_report": "e1e662bb465bcf9f1a5a187ba26c1ed01e026e77",
+        "commit_ledger": "f9be4e6e9773afee625f376eef9676b5ad838cc2",
+        "scope_limit": "Static source-based reconciliation only; E01 limited-depth exception retained; runtime/build/test/deploy proof and user decisions remain pending."
       }
     ],
     "remaining_substages": [
-      "I05 final whole-project finding reconciliation: true duplicates vs non-merges, one repair-owner/source-of-truth table, priority/order and conditional deployment reachability; no D1–D7 decisions yet",
-      "Separate D1–D7 user discussion/decisions after I05"
+      "D1–D7 consolidated user discussion/decisions only; implementation planning follows explicit decisions."
     ],
-    "full_integrated_review_complete": false,
+    "full_integrated_review_complete": true,
     "source_hashes_reused_from_published_streams": true,
     "original_finding_and_question_count_unchanged": true,
     "user_product_repairs_authorized": false,
@@ -1196,8 +1215,31 @@
       "original_findings_total": 136,
       "unique_original_findings_with_at_least_one_integrated_home": 136,
       "mapping_complete": true,
-      "final_reconciliation_complete": false,
-      "note": "Integrated home assignment is not issue deduplication, severity reprioritization, accepted repair package or runtime validation."
+      "final_reconciliation_complete": true,
+      "note": "All 136 original findings have one canonical repair-package assignment; no whole-finding collapse justified. This does not mean repaired or runtime validated."
+    },
+    "final_reconciliation": {
+      "original_findings": 136,
+      "original_questions": 105,
+      "canonical_repair_packages": 22,
+      "whole_finding_merges": 0,
+      "partial_factual_overlap": {
+        "ids": [
+          "T01-F10",
+          "K01-F11"
+        ],
+        "fact": "apply_patch registration omission is a subset of K01-F11's broader guidance mismatch"
+      },
+      "repeated_integration_refs_not_duplicates": [
+        "S02-F02",
+        "K01-F03",
+        "A01-F07"
+      ],
+      "staging_overlay": "K01-STG-F01",
+      "E01_limited_depth_bodies": 95,
+      "runtime_validation": false,
+      "product_repairs_authorized": false,
+      "D1_D7_decisions_accepted": 0
     }
   }
 }
