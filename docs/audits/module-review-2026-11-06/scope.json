@@ -256,6 +256,24 @@
     "Existence and hashes are not semantic reads.",
     "Frozen discovery evidence remains at its original pin.",
     "Per-module later coverage records actual bounded reads, exclusions and material gaps.",
-    "No exhaustive all-branch semantics or runtime reliability follows from path counts."
-  ]
+    "No exhaustive all-branch semantics or runtime reliability follows from path counts.",
+    "E01 is an explicit limited-depth exception from 2026-11-07: its remaining adapter bodies are sanity-screened, not deeply reviewed. Do not infer exhaustive channel correctness from E01 closure."
+  ],
+  "review_depth_policy": {
+    "immutable_primary_inventory_target_count": 919,
+    "deep_review_required_target_count": 824,
+    "limited_depth_exception_target_count": 95,
+    "limited_depth_exceptions": [
+      {
+        "stream": "E01",
+        "targets": 95,
+        "decision_date": "2026-11-07",
+        "authority": "explicit user scope decision",
+        "reason": "Chat channels are not a current product/audit priority; deep per-adapter review would spend disproportionate time.",
+        "treatment": "Preserve the 40 primary bodies already deeply reviewed in E01-A..F and all findings derived from them. Apply only a quick high-signal sanity screen to the remaining 55 primaries. Do not count the sanity screen as deep body coverage or coordinator PASS, and leave channel functionality untouched.",
+        "revisit_condition": "Re-open deep channel review only when channel functionality becomes a product priority, a channel-specific change is planned, or a material cross-module dependency requires it."
+      }
+    ],
+    "denominator_rule": "The frozen 919-path inventory remains unchanged for provenance. Progress toward the current deep-review objective uses 824 targets after subtracting the explicit 95-target E01 limited-depth exception."
+  }
 }
