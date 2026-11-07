@@ -30,16 +30,19 @@
     "report_written": 0,
     "coordinator_checked": 12,
     "integrated_review_complete": 0,
-    "published_findings": 125,
+    "published_findings": 99,
     "published_discussion_questions": 76,
     "supplied_primary_body_paths": 704,
-    "primary_targets_without_new_body_evidence": 120,
+    "primary_targets_without_new_body_evidence": 215,
     "reports_published": 13,
     "limited_depth_closed": 1,
     "deep_review_required_targets": 824,
-    "limited_depth_exception_targets": 95
+    "limited_depth_exception_targets": 95,
+    "deep_review_required_targets_without_coordinator_checked_evidence": 120,
+    "retained_limited_depth_findings": 26,
+    "coordinator_checked_reports": 12
   },
-  "count_meaning": "The immutable inventory still contains 919 primary targets. E01's 95 channel targets are now an explicit limited-depth exception and are excluded from the deep-review-required denominator, leaving 824 deep-review-required targets. Coordinator-checked deep evidence remains 704 bodies across 12 streams, so 120 deep-review-required targets remain. E01 separately preserves 40 prior deep body reads plus a quick sanity screen of the remaining 55; this is not coordinator-checked deep coverage.",
+  "count_meaning": "The immutable inventory still contains 919 primary targets. Coordinator-checked deep evidence remains 704 bodies across 12 streams, so 215 inventory targets still lack coordinator-checked deep body evidence. E01's 95 channel targets are now an explicit limited-depth exception and are excluded from the current deep-review-required denominator, leaving 824 deep-review-required targets and 120 of those still without coordinator-checked deep evidence. E01 separately preserves 40 prior deep body reads, 26 retained deferred findings, and a quick sanity screen of the remaining 55; this is not coordinator-checked deep coverage.",
   "discussion": {
     "sequence": "All modules and shared contracts first, consolidated discussion afterward.",
     "D1_D7": "Explicitly deferred for review sequencing; no implementation accepted.",
