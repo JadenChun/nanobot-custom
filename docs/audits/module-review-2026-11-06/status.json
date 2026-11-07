@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-D WebUI media/file-delivery foundations are checkpointed at cumulative F33/P0/R35. Two new conditional P2 findings are retained: E02-F03 Windows media GC can misclassify referenced generated assets as orphans; E02-F04 the global generated-assets library silently caps discovery at the first 200 lexicographic sessions. E02 now has four provisional findings. The lossy WebUI transcript/index safe_key collision is explicitly deferred to E02-E full transcript review. Publication/coordinator credit remains zero.",
+      "coordinator_observation": "E02-E transcript persistence/identity core is checkpointed at cumulative F35/P0/R33. Three new conditional P2 findings are retained: E02-F05 lossy WebUI transcript filenames collapse distinct valid chat IDs; E02-F06 session deletion can report success while readable transcript residue remains after filesystem deletion failure; E02-F07 transcript rotation can duplicate completed turns after a mid-rotation write failure. E02 now has seven provisional findings. Publication/coordinator credit remains zero. Next bounded stage is E02-F session navigation/isolation helpers only.",
       "active_source_review_coverage": {
-        "full": 33,
+        "full": 35,
         "partial": 0,
-        "unread": 35
+        "unread": 33
       },
-      "active_provisional_findings_count": 4,
+      "active_provisional_findings_count": 7,
       "active_substage_checkpoint": {
-        "stage": "E02-D",
-        "commit": "34cf8ab9bf65c3fa5ed9174ed215b711e08ce759",
+        "stage": "E02-E",
+        "commit": "e8407f661e580b5a72363bcb0faf9e20c27c37d2",
         "coverage": {
-          "full": 33,
+          "full": 35,
           "partial": 0,
-          "unread": 35
+          "unread": 33
         },
         "publication_credit_added": 0
       }
