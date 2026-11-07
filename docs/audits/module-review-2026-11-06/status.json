@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02/R01/M01 coordinator-checked at frozen pin 9562e57. E01 limited-depth/non-priority. M01 complete F14/P0/R0. X01/Q01/P01 remain queued. 788/824 accepted deep source bodies. Current staging 29612c3 changes only K01 skill-display source/test; K01 refresh remains before final integration.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02/R01/M01 coordinator-checked at frozen pin 9562e57. E01 limited-depth/non-priority. M01 second-pass verified F14/P0/R0 (6 qualified P2 findings, 6 questions). X01/Q01/P01 remain queued. 788/824 accepted deep source bodies. Current staging 29612c3 changes only K01 skill-display source/test; K01 refresh remains before final integration.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "M01 report/coverage published and coordinator-checked at F14/P0/R0 with three qualified P2 findings and five discussion questions. Accepted deep coverage is 788/824, with 36 bodies left (X01 11, Q01 25). E01 remains the limited-depth exception.",
+  "dispatch_evidence": "M01 rereview completed 2026-11-07, source PASS F14/P0/R0 with independent 14/14 hash/byte/blob/line verification and 6 qualified P2 findings, 6 questions. Accepted deep coverage still 788/824; X01 and Q01 remain.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -30,8 +30,8 @@
     "report_written": 0,
     "coordinator_checked": 14,
     "integrated_review_complete": 0,
-    "published_findings": 122,
-    "published_discussion_questions": 91,
+    "published_findings": 125,
+    "published_discussion_questions": 92,
     "supplied_primary_body_paths": 788,
     "primary_targets_without_new_body_evidence": 131,
     "reports_published": 15,
@@ -576,16 +576,16 @@
       "coverage": "reports/M01-coverage.json",
       "planned_report": "reports/M01.md",
       "planned_coverage": "reports/M01-coverage.json",
-      "findings_count": 3,
-      "discussion_questions_count": 5,
-      "published_findings_count": 3,
-      "published_discussion_questions_count": 5,
+      "findings_count": 6,
+      "discussion_questions_count": 6,
+      "published_findings_count": 6,
+      "published_discussion_questions_count": 6,
       "supplied_primary_body_paths": 14,
       "material_primary_gaps_pending_evidence": 0,
-      "architecture_judgement": "Provisional Keep + targeted simplification: preserve canonical ingress/store, upload binding and separate audio/image/document owners; repair dry-run storage effects, sidecar retention and conditional audio-duration enforcement.",
+      "architecture_judgement": "Provisional Keep + targeted simplification. Preserve canonical ingress, scoped upload binding, content-addressed records, separate audio/doc/image owners; prioritize fail-closed prune, zero-write migration preview, bounding image-reference reads and PDF decompression, sidecar hygiene and a duration policy decision.",
       "coordinator_check": {
         "status": "PASS",
-        "evidence": "Fresh 2026-11-07 full 14-body source and semantic self-check at reports/M01-coverage.json:coordinator_check; read-only source verification, no independent runtime attestation."
+        "evidence": "2026-11-07 second-pass source evidence check at reports/M01-coverage.json:coordinator_check: fresh 14/14 SHA256/blob/bytes/lines, six qualified findings and six questions. Same assistant rereview; no independent peer or runtime qualification."
       },
       "integrated_review": {
         "status": "pending",
@@ -593,15 +593,15 @@
       },
       "git_checkpoint": {
         "status": "recorded",
-        "commit": "91925a3843d561324c8494532730df0fa9851250",
+        "commit": "58a2817a112b5b076a0d890ec81a76c111b25968",
         "pushed": true,
-        "evidence": "M01 report plus coverage published on audit branch; aggregate status checkpoint follows."
+        "evidence": "Second-pass M01 report  fb471515, coverage 58a2817a published on audit branch; status and synthesis follow."
       },
       "dispatch_owner": "web-continuation-coordinator",
       "execution_state": "completed-source-review",
       "saved_handoff": "handoffs/M01-A.md",
       "handoff_disposition": "published-coordinator-checked",
-      "coordinator_observation": "M01 F14/P0/R0 with three promoted qualified P2 findings and five final discussion questions. Current staging changes no M01 primary. Integrated review and D1–D7 remain pending.",
+      "coordinator_observation": "Higher-depth second pass rechecked all 14 M01 primaries using independently recomputed hashes; prior F01–F03 retained and added qualified F04 (fail-open prune with incomplete references), F05 (unbounded image-edit reference reads), F06 (PDF post-decode size guard). Six qualified P2 findings, six questions; integrated review and D1–D7 still pending.",
       "final_coverage": {
         "full": 14,
         "partial": 0,
@@ -1023,7 +1023,7 @@
     "D01": "D01 coordinator PASS at F47/P0/R0 with two qualified P2 findings and five retained questions. Integrated review and D1–D7 remain pending.",
     "T01": "T01-A+B+C+D+E+F source inspection is saved at F36/P0/R8 with twelve provisional findings (three conditional P1, nine P2 including two conditional). No T01 report/coordinator acceptance or published body credit is awarded. Next: T01-G final eight-file wrapper stage.",
     "R01": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings (one conditional P1, nineteen P2) and ten retained questions. Exact 70-path/hash/byte reconciliation matches the immutable inventory; current staging changes no R01 primary. Integrated review, D1–D7, repairs and runtime qualification remain pending.",
-    "M01": "M01 coordinator source PASS at F14/P0/R0, three promoted bounded P2 findings, five final questions, no M01 staging drift. Integrated review, repairs and D1–D7 pending."
+    "M01": "Higher-depth second pass rechecked all 14 M01 primaries using independently recomputed hashes; prior F01–F03 retained and added qualified F04 (fail-open prune with incomplete references), F05 (unbounded image-edit reference reads), F06 (PDF post-decode size guard). Six qualified P2 findings, six questions; integrated review and D1–D7 still pending."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
