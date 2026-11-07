@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F40/P0/R55 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked. E01 is closed by explicit user scope decision as limited-depth/non-priority: 40 primaries retain prior deep body review, the remaining 55 received only a quick high-signal sanity screen, and no E01 body is counted as coordinator-checked deep-review credit. R01/M01/X01/Q01/P01 remain queued.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -15,27 +15,31 @@
     "in-progress": "Coordinator dispatch supplied; report/acceptance remain pending.",
     "report-written": "Supplied report and coverage published with exact evidence and limitations.",
     "coordinator-checked": "Explicit coordinator check evidence recorded by coordinator authority.",
-    "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
+    "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence.",
+    "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-F has an active source-only handoff at F40/P0/R55 with zero publication credit; next bounded substage is E01-G Feishu runtime.py and websocket.py only.",
+  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. On 2026-11-07 the user explicitly deprioritized chat channels and requested E01 remain functionally untouched. E01 therefore closed as a limited-depth exception: prior E01-A..F deep reads remain preserved at F40/P0/R55, all 55 remaining primaries received a quick high-signal sanity screen, no new finding was promoted from that shallow pass, and Weixin pathless config loading only corroborated existing E01-F02. Next deep-review stream is R01.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
     "queued": 5,
-    "in_progress": 1,
+    "in_progress": 0,
     "report_written": 0,
     "coordinator_checked": 12,
     "integrated_review_complete": 0,
-    "published_findings": 99,
+    "published_findings": 125,
     "published_discussion_questions": 76,
     "supplied_primary_body_paths": 704,
-    "primary_targets_without_new_body_evidence": 215,
-    "reports_published": 12
+    "primary_targets_without_new_body_evidence": 120,
+    "reports_published": 13,
+    "limited_depth_closed": 1,
+    "deep_review_required_targets": 824,
+    "limited_depth_exception_targets": 95
   },
-  "count_meaning": "Published coordinator-checked evidence covers 704 primary bodies across 12 streams; 215 primary targets lack published new body evidence. Full-body coverage does not certify every branch or complete integrated review.",
+  "count_meaning": "The immutable inventory still contains 919 primary targets. E01's 95 channel targets are now an explicit limited-depth exception and are excluded from the deep-review-required denominator, leaving 824 deep-review-required targets. Coordinator-checked deep evidence remains 704 bodies across 12 streams, so 120 deep-review-required targets remain. E01 separately preserves 40 prior deep body reads plus a quick sanity screen of the remaining 55; this is not coordinator-checked deep coverage.",
   "discussion": {
     "sequence": "All modules and shared contracts first, consolidated discussion afterward.",
     "D1_D7": "Explicitly deferred for review sequencing; no implementation accepted.",
@@ -416,26 +420,26 @@
       "kind": "primary",
       "primary_target_count": 95,
       "inventory_all_roles_count": 321,
-      "status": "in-progress",
+      "status": "limited-depth-closed",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
-      "report": null,
-      "coverage": null,
+      "report": "reports/E01.md",
+      "coverage": "reports/E01-coverage.json",
       "planned_report": "reports/E01.md",
       "planned_coverage": "reports/E01-coverage.json",
-      "findings_count": null,
-      "discussion_questions_count": null,
-      "published_findings_count": 0,
+      "findings_count": 26,
+      "discussion_questions_count": 0,
+      "published_findings_count": 26,
       "published_discussion_questions_count": 0,
       "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 95,
-      "architecture_judgement": null,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Deferred / leave functionally untouched for current audit phase. Chat adapters are non-priority; preserve existing findings and revisit only if channel work becomes a product priority.",
       "coordinator_check": {
-        "status": "pending",
-        "evidence": null
+        "status": "scope-exception",
+        "evidence": "2026-11-07 explicit user scope decision: quick channel sanity pass only; do not spend deep-audit time on every adapter and do not change channel functionality."
       },
       "integrated_review": {
         "status": "pending",
-        "evidence": null
+        "evidence": "E01 scope exception must be carried into final synthesis; unresolved channel-specific semantics remain intentionally outside the current deep-review objective."
       },
       "git_checkpoint": {
         "status": "pending",
@@ -443,10 +447,10 @@
         "evidence": null
       },
       "dispatch_owner": "web-continuation-coordinator",
-      "execution_state": "active",
+      "execution_state": "limited-depth-closed",
       "saved_handoff": "handoffs/E01.md",
-      "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E01-F Feishu control/setup/instance/UI is checkpointed at F40/P0/R55 with twenty-six provisional findings total. New findings: E01-F25 manual Feishu validation reports connected without credential verification; E01-F26 QR session bookkeeping races across to_thread workers. E01-F02 is strengthened with concrete Feishu QR cross-config-root credential persistence, and E01-F03 with Feishu instance truthy-enable evidence. E01 remains unpublished/unaccepted; next is E01-G Feishu runtime.py and websocket.py only.",
+      "handoff_disposition": "scope-exception-limited-depth",
+      "coordinator_observation": "E01 is intentionally not a deep-review PASS. Prior E01-A..F evidence covers 40 primaries deeply; the remaining 55 were only high-signal screened. Existing 26 findings are retained, no new finding is promoted from the shallow pass, and Weixin pathless load_config() corroborates E01-F02. No channel repair is authorized.",
       "active_source_review_coverage": {
         "full": 40,
         "partial": 0,
@@ -462,6 +466,21 @@
           "unread": 55
         },
         "publication_credit_added": 0
+      },
+      "quick_sanity_screen": {
+        "screened": 55,
+        "deep_credit_added": 0,
+        "new_findings_promoted": 0,
+        "corroborated_findings": [
+          "E01-F02"
+        ],
+        "limits": "High-signal static screen only: command execution, auth/admission, media/file/network handling, lifecycle/readiness, delivery/retry and config-path patterns. No exhaustive branch/caller/history/reference tracing."
+      },
+      "final_coverage": {
+        "deep_full": 40,
+        "deep_partial": 0,
+        "not_deeply_reviewed": 55,
+        "quick_sanity_screened": 55
       }
     },
     {
@@ -847,5 +866,13 @@
     ],
     "handoff_index": "handoffs/index.json",
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
-  }
+  },
+  "resume_order": [
+    "R01",
+    "M01",
+    "X01",
+    "Q01",
+    "P01",
+    "Fresh integrated review and final consolidated D1–D7 discussion, carrying E01 as an explicit limited-depth/non-priority exception."
+  ]
 }
