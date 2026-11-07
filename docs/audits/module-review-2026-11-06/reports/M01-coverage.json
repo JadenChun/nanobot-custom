@@ -327,26 +327,294 @@
     {
       "repository": "nanobot",
       "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
-      "paths": [
-        "nanobot/bus/events.py",
-        "nanobot/agent/loop.py",
-        "nanobot/agent/context.py",
-        "nanobot/webui/inbound_commands.py",
-        "nanobot/webui/media_gateway.py",
-        "nanobot/webui/attachment_ingress.py",
-        "nanobot/webui/transcription_ws.py",
-        "nanobot/webui/media_api.py",
-        "nanobot/webui/media_maintenance.py",
-        "nanobot/webui/gateway_services.py",
-        "nanobot/channels/websocket/runtime.py",
-        "nanobot/cli/commands.py",
-        "nanobot/utils/media_decode.py",
-        "nanobot/agent/tools/filesystem.py",
-        "nanobot/providers/transcription.py",
-        "nanobot/utils/artifacts.py",
-        "nanobot/agent/tools/image_configuration.py"
+      "path": "nanobot/cli/commands.py",
+      "ranges": [
+        [
+          207,
+          295
+        ]
       ],
-      "purpose": "Full body or bounded source excerpts inspected; reported source paths/ranges and entrypoint/caller consequences in M01.md. Not M01 primary credit."
+      "purpose": "Prune/migrate CLI preview, confirmation and direct activation",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/cli/runtime_config.py",
+      "ranges": [
+        [
+          98,
+          133
+        ]
+      ],
+      "purpose": "Explicit config-path selection",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/config/paths.py",
+      "ranges": [
+        [
+          13,
+          45
+        ]
+      ],
+      "purpose": "Media and session path roots",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/config/schema.py",
+      "ranges": [
+        [
+          990,
+          1005
+        ]
+      ],
+      "purpose": "Runtime data source path",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/inbound_commands.py",
+      "ranges": [
+        [
+          525,
+          585
+        ],
+        [
+          890,
+          1055
+        ],
+        [
+          1120,
+          1285
+        ]
+      ],
+      "purpose": "Upload ID first binding, stage/commit, later admission",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/media_gateway.py",
+      "ranges": [
+        [
+          41,
+          95
+        ]
+      ],
+      "purpose": "WebUI ingress/store/registry owner",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/transcription_ws.py",
+      "ranges": [
+        [
+          1,
+          52
+        ]
+      ],
+      "purpose": "Duration forwarding to transcription",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/bus/events.py",
+      "ranges": [
+        [
+          45,
+          131
+        ]
+      ],
+      "purpose": "Adapter media path to record",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/loop.py",
+      "ranges": [
+        [
+          1200,
+          1248
+        ],
+        [
+          4026,
+          4094
+        ]
+      ],
+      "purpose": "Canonical session source and attachment restore",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/context.py",
+      "ranges": [
+        [
+          592,
+          599
+        ]
+      ],
+      "purpose": "Image path projection",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/filesystem.py",
+      "ranges": [
+        [
+          880,
+          913
+        ]
+      ],
+      "purpose": "Document-line read use",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/providers/image_generation.py",
+      "ranges": [
+        [
+          97,
+          116
+        ],
+        [
+          378,
+          416
+        ],
+        [
+          1165,
+          1181
+        ],
+        [
+          1238,
+          1260
+        ]
+      ],
+      "purpose": "Provider reference image full reads",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/providers/transcription.py",
+      "ranges": [
+        [
+          640,
+          660
+        ],
+        [
+          682,
+          707
+        ]
+      ],
+      "purpose": "Provider file ownership",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/utils/media_decode.py",
+      "ranges": [
+        [
+          75,
+          116
+        ]
+      ],
+      "purpose": "Base64 decode and save",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/media_api.py",
+      "ranges": [
+        [
+          105,
+          160
+        ],
+        [
+          195,
+          275
+        ]
+      ],
+      "purpose": "Signed-media path and serving",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/channels/websocket/runtime.py",
+      "ranges": [
+        [
+          468,
+          498
+        ]
+      ],
+      "purpose": "Transport inbound construction",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/attachment_ingress.py",
+      "ranges": [
+        [
+          32,
+          85
+        ]
+      ],
+      "purpose": "Compatibility ingress",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/utils/artifacts.py",
+      "ranges": [
+        [
+          62,
+          90
+        ]
+      ],
+      "purpose": "Generated artifact root",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/ingress_policy.py",
+      "ranges": [
+        [
+          18,
+          63
+        ]
+      ],
+      "purpose": "WebUI frame limits and policy",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/gateway_services.py",
+      "ranges": [
+        [
+          104,
+          116
+        ]
+      ],
+      "purpose": "Media owner composition",
+      "extent": "Specific source excerpts read in first or second pass; no primary-body credit"
     }
   ],
   "search_only": [
@@ -386,6 +654,62 @@
         "tests/test_api_attachment.py"
       ],
       "extent": "test definitions and selected guarded/edge sections, read-only; no full test-body credit claimed"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/test_document_parsing.py",
+      "ranges": [
+        [
+          444,
+          467
+        ]
+      ],
+      "purpose": "Post-decode mocked PDF content stream limit test"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/attachments/test_attachment_lifecycle.py",
+      "ranges": [
+        [
+          50,
+          99
+        ],
+        [
+          140,
+          161
+        ]
+      ],
+      "purpose": "Normal prune and transcript-only dry-run tests"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/tools/test_image_generation_tool.py",
+      "ranges": [
+        [
+          41,
+          84
+        ],
+        [
+          223,
+          235
+        ]
+      ],
+      "purpose": "Normal edit reference and workspace denial"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/webui/test_transcription_ws.py",
+      "ranges": [
+        [
+          73,
+          158
+        ]
+      ],
+      "purpose": "MIME, bytes, cleanup; no duration spoof"
     }
   ],
   "support_reads": [
@@ -490,6 +814,30 @@
       "title": "Audio duration guard trusts optional client metadata",
       "source": "nanobot/audio/transcription.py:transcribe_audio_data_url; nanobot/webui/transcription_ws.py:webui_transcription_event",
       "qualification": "Only a defect if max_duration_sec is intended authoritative; byte limit still enforced."
+    },
+    {
+      "id": "M01-F04",
+      "priority": "P2",
+      "confidence": "high source / conditional destructive CLI",
+      "title": "Prune treats missing/unreadable session evidence as zero references",
+      "source": "nanobot/attachments/lifecycle.py:44-99; nanobot/cli/commands.py:207-254",
+      "qualification": "Opt-in prune with absent/unreadable JSONL sources, potential old attachment loss; not automatic background deletion or observed incident."
+    },
+    {
+      "id": "M01-F05",
+      "priority": "P2",
+      "confidence": "high source / conditional enabled image tool and large permitted file",
+      "title": "Image generation references have unbounded preflight file reads",
+      "source": "nanobot/agent/tools/image_generation.py:74-77,192-215,233-247; nanobot/providers/image_generation.py:97-116",
+      "qualification": "Authorization controls remain active, no measured OOM; image generation is disabled by default."
+    },
+    {
+      "id": "M01-F06",
+      "priority": "P2",
+      "confidence": "high source / conditional pypdf decoded stream behavior",
+      "title": "PDF decoded content stream is checked after materialization",
+      "source": "nanobot/utils/document.py:191-207,468-477; tests/test_document_parsing.py:444-467",
+      "qualification": "Compressed-stream expansion before 32 MiB guard; pypdf internal implementation limits not established and no runtime OOM measured."
     }
   ],
   "final_discussion_questions": [
@@ -533,6 +881,14 @@
         "D7"
       ],
       "text": "Is audio max duration advisory or enforceable server admission?"
+    },
+    {
+      "id": "M01-Q6",
+      "decisions": [
+        "D5",
+        "D7"
+      ],
+      "text": "What limits must PDF decoding enforce before full stream materialization, and which parser layer owns them?"
     }
   ],
   "cross_module_dependencies_and_conflicts": [
@@ -549,15 +905,31 @@
     "status": "PASS",
     "checked_at": "2026-11-07",
     "authority": "ChatGPT web continuation coordinator (same source reviewer)",
-    "evidence": "14 exact pinned full source bodies, unique inventory assignments, checked retrieved UTF-8 byte sizes, reviewed actual CLI/WebUI call sites and bounded tests, challenged 3 final findings, compared 4 pinned DSH/Codex mechanisms; no independent verification claimed",
+    "evidence": "Original source reviewer rechecked M01 at higher reasoning depth: all 14 pinned full-body SHA256 hashes independently recomputed, Git blob IDs/bytes/lines verified; six qualified source findings and six questions after caller/test challenges.",
     "coverage": {
       "full": 14,
       "partial": 0,
       "unread": 0
     },
-    "findings_promoted": 3,
-    "discussion_questions": 5,
-    "notes": "SHA-256 column copied from immutable inventory; verified byte sizes and fetched Git blob identities, not separately rehashed file bodies in this environment. Semantic source check distinct from integrated review."
+    "findings_promoted": 6,
+    "discussion_questions": 6,
+    "notes": "Same assistant as prior review, not independent peer/coordinator; runtime and integrated review still pending.",
+    "second_pass": {
+      "date": "2026-11-07",
+      "status": "PASS-source-evidence",
+      "sha256_known_answer": "abc -> ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "full_body_sha256_matches": 14,
+      "git_blob_matches": 14,
+      "utf8_bytes_matches": 14,
+      "line_count_matches": 14,
+      "primary_credit_added": 0,
+      "new_findings": [
+        "M01-F04",
+        "M01-F05",
+        "M01-F06"
+      ],
+      "runtime_execution": false
+    }
   },
   "integrated_review": {
     "status": "pending",
@@ -579,7 +951,18 @@
     "unread": 0,
     "context_sources": 17,
     "reference_bodies": 4,
-    "findings": 3,
-    "discussion_questions": 5
+    "findings": 6,
+    "discussion_questions": 6
+  },
+  "second_pass_verification": {
+    "date": "2026-11-07",
+    "scope": "Fresh source and call-chain rereview, independently computed SHA256, exact caller ranges and targeted test-source reads. No tests/imports/provider or runtime probes executed.",
+    "full": 14,
+    "partial": 0,
+    "unread": 0,
+    "sha256_verified": 14,
+    "blob_verified": 14,
+    "bytes_verified": 14,
+    "lines_verified": 14
   }
 }
