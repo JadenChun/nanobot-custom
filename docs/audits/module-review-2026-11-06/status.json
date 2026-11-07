@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02/R01 are coordinator-checked at frozen audit pin 9562e57. E01 remains closed as limited-depth/non-priority. R01 is published/checked at F70/P0/R0 with twenty promoted findings and ten final questions. M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs from the frozen pin only in K01 skill-display source/tests; K01 current-origin refresh remains pending before final integrated closure.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02/R01/M01 coordinator-checked at frozen pin 9562e57. E01 limited-depth/non-priority. M01 complete F14/P0/R0. X01/Q01/P01 remain queued. 788/824 accepted deep source bodies. Current staging 29612c3 changes only K01 skill-display source/test; K01 refresh remains before final integration.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,30 +19,30 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "R01 report and coverage are published at reports/R01.md and reports/R01-coverage.json with coordinator PASS, adding 70 accepted primary bodies. Coordinator-checked deep evidence is now 774/824 current deep-review-required targets; 50 remain in M01/X01/Q01. E01 remains the explicit 95-target limited-depth exception.",
+  "dispatch_evidence": "M01 report/coverage published and coordinator-checked at F14/P0/R0 with three qualified P2 findings and five discussion questions. Accepted deep coverage is 788/824, with 36 bodies left (X01 11, Q01 25). E01 remains the limited-depth exception.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 4,
+    "queued": 3,
     "in_progress": 0,
     "report_written": 0,
-    "coordinator_checked": 13,
+    "coordinator_checked": 14,
     "integrated_review_complete": 0,
-    "published_findings": 119,
-    "published_discussion_questions": 86,
-    "supplied_primary_body_paths": 774,
-    "primary_targets_without_new_body_evidence": 145,
-    "reports_published": 14,
+    "published_findings": 122,
+    "published_discussion_questions": 91,
+    "supplied_primary_body_paths": 788,
+    "primary_targets_without_new_body_evidence": 131,
+    "reports_published": 15,
     "limited_depth_closed": 1,
     "deep_review_required_targets": 824,
     "limited_depth_exception_targets": 95,
-    "deep_review_required_targets_without_coordinator_checked_evidence": 50,
+    "deep_review_required_targets_without_coordinator_checked_evidence": 36,
     "retained_limited_depth_findings": 26,
-    "coordinator_checked_reports": 13
+    "coordinator_checked_reports": 14
   },
-  "count_meaning": "The immutable inventory still contains 919 primary targets. Coordinator-checked deep evidence remains 704 bodies across 12 streams, so 215 inventory targets still lack coordinator-checked deep body evidence. E01's 95 channel targets are now an explicit limited-depth exception and are excluded from the current deep-review-required denominator, leaving 824 deep-review-required targets and 120 of those still without coordinator-checked deep evidence. E01 separately preserves 40 prior deep body reads, 26 retained deferred findings, and a quick sanity screen of the remaining 55; this is not coordinator-checked deep coverage.",
+  "count_meaning": "Frozen scope: 919 primary targets. E01 remains a 95-target limited-depth exception (40 prior deep reads and 55 quick screens; no coordinator-checked deep credit), leaving 824 deep-review-required targets. Source-reviewed and coordinator-checked deep evidence is 788/824 across 14 streams; 36 remain in X01 (11) and Q01 (25). Source publication, coordinator acceptance and integrated review are distinct; no integrated modules yet.",
   "discussion": {
     "sequence": "All modules and shared contracts first, consolidated discussion afterward.",
     "D1_D7": "Explicitly deferred for review sequencing; no implementation accepted.",
@@ -570,31 +570,42 @@
       "kind": "primary",
       "primary_target_count": 14,
       "inventory_all_roles_count": 19,
-      "status": "queued",
+      "status": "coordinator-checked",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
-      "report": null,
-      "coverage": null,
+      "report": "reports/M01.md",
+      "coverage": "reports/M01-coverage.json",
       "planned_report": "reports/M01.md",
       "planned_coverage": "reports/M01-coverage.json",
-      "findings_count": null,
-      "discussion_questions_count": null,
-      "published_findings_count": 0,
-      "published_discussion_questions_count": 0,
-      "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 14,
-      "architecture_judgement": null,
+      "findings_count": 3,
+      "discussion_questions_count": 5,
+      "published_findings_count": 3,
+      "published_discussion_questions_count": 5,
+      "supplied_primary_body_paths": 14,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep + targeted simplification: preserve canonical ingress/store, upload binding and separate audio/image/document owners; repair dry-run storage effects, sidecar retention and conditional audio-duration enforcement.",
       "coordinator_check": {
-        "status": "pending",
-        "evidence": null
+        "status": "PASS",
+        "evidence": "Fresh 2026-11-07 full 14-body source and semantic self-check at reports/M01-coverage.json:coordinator_check; read-only source verification, no independent runtime attestation."
       },
       "integrated_review": {
         "status": "pending",
         "evidence": null
       },
       "git_checkpoint": {
-        "status": "pending",
-        "commit": null,
-        "evidence": null
+        "status": "recorded",
+        "commit": "91925a3843d561324c8494532730df0fa9851250",
+        "pushed": true,
+        "evidence": "M01 report plus coverage published on audit branch; aggregate status checkpoint follows."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/M01-A.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "M01 F14/P0/R0 with three promoted qualified P2 findings and five final discussion questions. Current staging changes no M01 primary. Integrated review and D1–D7 remain pending.",
+      "final_coverage": {
+        "full": 14,
+        "partial": 0,
+        "unread": 0
       }
     },
     {
@@ -1011,7 +1022,8 @@
     "U01": "U01 coordinator PASS at F203/P0/R0 with six qualified P2 findings and six retained questions. Integrated review and D1–D7 remain pending.",
     "D01": "D01 coordinator PASS at F47/P0/R0 with two qualified P2 findings and five retained questions. Integrated review and D1–D7 remain pending.",
     "T01": "T01-A+B+C+D+E+F source inspection is saved at F36/P0/R8 with twelve provisional findings (three conditional P1, nine P2 including two conditional). No T01 report/coordinator acceptance or published body credit is awarded. Next: T01-G final eight-file wrapper stage.",
-    "R01": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings (one conditional P1, nineteen P2) and ten retained questions. Exact 70-path/hash/byte reconciliation matches the immutable inventory; current staging changes no R01 primary. Integrated review, D1–D7, repairs and runtime qualification remain pending."
+    "R01": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings (one conditional P1, nineteen P2) and ten retained questions. Exact 70-path/hash/byte reconciliation matches the immutable inventory; current staging changes no R01 primary. Integrated review, D1–D7, repairs and runtime qualification remain pending.",
+    "M01": "M01 coordinator source PASS at F14/P0/R0, three promoted bounded P2 findings, five final questions, no M01 staging drift. Integrated review, repairs and D1–D7 pending."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
@@ -1019,23 +1031,21 @@
     "reason": "User requested continuation from the saved ChatGPT-web handoff checkpoint.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "M01",
       "X01",
       "Q01",
       "P01",
       "Refresh K01 current-origin evidence",
-      "Fresh integrated review and final D1–D7 discussion"
+      "Fresh integrated review and consolidated D1–D7 discussion"
     ],
     "handoff_index": "handoffs/index.json",
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "M01 only: continue the next queued primary stream stage-by-stage; do not combine with X01/Q01/P01 or integrated review.",
-    "X01",
+    "X01 only: next bounded primary stream; do not combine with Q01/P01 or integrated review.",
     "Q01",
     "P01",
-    "Refresh affected K01 current-origin evidence for staging 29612c3 before final integrated closure.",
-    "Fresh integrated review and final consolidated D1–D7 discussion, carrying E01 as a limited-depth/non-priority exception."
+    "Refresh affected K01 current-origin evidence for staging 29612c3 before integrated closure.",
+    "Fresh integrated review and final consolidated D1–D7 discussion; E01 remains limited-depth."
   ],
   "latest_staging_observation": {
     "checked_at": "2026-11-07",
