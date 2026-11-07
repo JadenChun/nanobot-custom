@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-G ancillary/session-service slice is checkpointed at cumulative F48/P0/R20. No new E02 finding was promoted; the active provisional count remains ten. Feature/version/sidebar/transcription/automation caller authorization was reconciled. A transcription max-duration enforcement candidate is explicitly deferred to M01 because the root lives in nanobot/audio/transcription.py. Publication/coordinator credit remains zero.",
+      "coordinator_observation": "E02-H WebUI build/dev and CLI-app management is checkpointed at cumulative F51/P0/R17. Two new conditional P2 findings are retained: E02-F11 CLI-app WebUI state/refresh ownership is not scoped to the gateway's explicit config path; E02-F12 successful frontend build commands can leave the expected bundle stale/missing without failing startup. E02 now has twelve provisional findings. X01-owned registry/install lifecycle issues were retained without duplicate E02 findings. Publication/coordinator credit remains zero.",
       "active_source_review_coverage": {
-        "full": 48,
+        "full": 51,
         "partial": 0,
-        "unread": 20
+        "unread": 17
       },
-      "active_provisional_findings_count": 10,
+      "active_provisional_findings_count": 12,
       "active_substage_checkpoint": {
-        "stage": "E02-G",
-        "commit": "ec67092826146b045c9f254fcfc389b679beaa34",
+        "stage": "E02-H",
+        "commit": "382f11df3b32fededa2c5b11ef8598ee48a557b0",
         "coverage": {
-          "full": 48,
+          "full": 51,
           "partial": 0,
-          "unread": 20
+          "unread": 17
         },
         "publication_credit_added": 0
       }
