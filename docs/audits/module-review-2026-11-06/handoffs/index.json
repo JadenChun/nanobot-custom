@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 33,
+        "full": 35,
         "partial": 0,
-        "unread": 35
+        "unread": 33
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D reviewed API/SDK, WebSocket core, WebUI transport foundations and media/file delivery at cumulative F33/P0/R35 with four provisional findings. E02-D added E02-F03 and E02-F04; lossy transcript/index safe_key identity is deferred to E02-E transcript review.",
-      "last_checkpoint_commit": "34cf8ab9bf65c3fa5ed9174ed215b711e08ce759",
+      "note": "E02-A/B/C/D/E reviewed API/SDK, WebSocket core, WebUI transport/media and transcript persistence at cumulative F35/P0/R33 with seven provisional findings. E02-E promoted E02-F05/F06/F07. Next bounded stage is E02-F session navigation/isolation helpers only.",
+      "last_checkpoint_commit": "e8407f661e580b5a72363bcb0faf9e20c27c37d2",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -742,6 +742,27 @@
           "title": "Global generated-assets library silently omits sessions after the first 200",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on more than 200 persisted WebUI sessions. Per-session asset routes are unaffected; the global endpoint truncates session discovery before group pagination and exposes no continuation."
+        },
+        {
+          "id": "E02-F05",
+          "priority": "P2",
+          "title": "Lossy WebUI transcript filenames collapse distinct valid chat IDs",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on caller-supplied/imported/legacy chat IDs that differ only through characters collapsed by safe_key(), especially colon versus underscore. UUID-created chats do not naturally trigger it."
+        },
+        {
+          "id": "E02-F06",
+          "priority": "P2",
+          "title": "Session deletion can report success while readable WebUI transcript residue remains",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a filesystem deletion failure. Normal deletion removes both canonical and transcript state; transcript-only history is intentionally still listable/readable when canonical state is absent."
+        },
+        {
+          "id": "E02-F07",
+          "priority": "P2",
+          "title": "Transcript rotation can duplicate completed turns after a mid-rotation write failure",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a multi-turn transcript above the rotation threshold and a write/replace/manifest failure after segment commit but before active-tail replacement."
         }
       ],
       "substage_checkpoints": [
@@ -788,12 +809,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-E",
+          "commit": "e8407f661e580b5a72363bcb0faf9e20c27c37d2",
+          "coverage": {
+            "full": 35,
+            "partial": 0,
+            "unread": 33
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-E only: transcript persistence/identity core — fully review nanobot/webui/transcript.py and nanobot/webui/thread_disk.py.",
+    "E02-F only: session navigation/isolation helpers — forking.py, session_access.py, session_context.py, session_list_index.py, state_sync.py, temporary_chats.py.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
