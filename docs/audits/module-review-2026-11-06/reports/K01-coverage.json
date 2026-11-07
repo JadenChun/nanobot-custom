@@ -1370,5 +1370,240 @@
     "unread": 0,
     "findings": 13,
     "discussion_questions": 8
+  },
+  "current_origin_refresh": {
+    "status": "PASS two-file source delta readback; cross-module integrated disposition pending",
+    "checked_at": "2026-11-07",
+    "reviewer": "ChatGPT same-assistant, not an independent peer",
+    "base": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "branch": "frozen original inventory"
+    },
+    "current": {
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "branch": "staging",
+      "ahead_by": 2,
+      "behind_by": 0,
+      "commit_title": "Merge branch 'fix/skills-summary-builtin-path' into staging"
+    },
+    "compare": {
+      "paths": [
+        "nanobot/agent/skills.py",
+        "tests/agent/test_skills_loader.py"
+      ],
+      "no_other_changes": true,
+      "source_lines_added": 6,
+      "source_lines_removed": 2,
+      "test_lines_added": 3,
+      "test_lines_removed": 2
+    },
+    "files": [
+      {
+        "path": "nanobot/agent/skills.py",
+        "role": "implementation-or-tooling-source",
+        "baseline": {
+          "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+          "blob": "f4519cdbfa5ca3dc63661c91d6364a3653739825",
+          "sha256": "24a4daccff64dec31fcab4c3acfd0c68c9f38a2b539c75b5ccd05cce21a4ee42",
+          "bytes": 16522,
+          "lines": 413
+        },
+        "current": {
+          "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+          "blob": "2630a3b8f5a5ecaf0ca09eb96b3b2781e25c422b",
+          "sha256": "be6408315042f1f00058c7749215c41fc3e37c1d9b261b49e0b059e0c87202dd",
+          "bytes": 16681,
+          "lines": 417
+        },
+        "added": 6,
+        "deleted": 2,
+        "ranges": [
+          [
+            1,
+            417
+          ]
+        ],
+        "sections_changed": [
+          [
+            279,
+            308
+          ]
+        ],
+        "kind": "full body at both frozen and current staging refs"
+      },
+      {
+        "path": "tests/agent/test_skills_loader.py",
+        "role": "test-support-source",
+        "baseline": {
+          "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+          "blob": "e67bce5e6a865f0fcf308f4dddab554842d29845",
+          "sha256": "6aa438010b43a7418d65b95472885c6f67058afcfefc0b2cf944c0bf9fd326a2",
+          "bytes": 21630,
+          "lines": 598
+        },
+        "current": {
+          "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+          "blob": "3b8cc423eadffa6bba174fbe89b11a08be84505b",
+          "sha256": "9190027710d0c18292924ff9673d5dcf1b48c94b6eb5865bbe1177959f98530a",
+          "bytes": 21679,
+          "lines": 599
+        },
+        "added": 3,
+        "deleted": 2,
+        "ranges": [
+          [
+            1,
+            599
+          ]
+        ],
+        "sections_changed": [
+          [
+            301,
+            342
+          ]
+        ],
+        "kind": "full test source at both frozen and current staging refs; read, NOT executed"
+      }
+    ],
+    "source_only_summary": "Built-in skill summary displays source as skills and prefixes skill entry paths with skills/ regardless of selected project; actual discovery/validation and read_file code unchanged. Selected project may contain a same-name skills/<builtin>/SKILL.md, and read_file checks existing project file before built-in fallback, making claimed builtin provenance ambiguous.",
+    "frozen_findings_reexamined": [
+      {
+        "id": "K01-F03",
+        "conclusion": "UNRESOLVED",
+        "evidence": "SkillsLoader.list_skills/_skill_entries_from_dir and valid_skill_metadata not changed. Invalid high-priority skill shadowing remains possible; patched build_skills_summary affects display only."
+      },
+      {
+        "id": "K01-F01",
+        "conclusion": "No direct change to existing admission/policy mechanism; not individually re-reviewed",
+        "evidence": "Only summary formatting changed; exact original finding preserved."
+      },
+      {
+        "id": "K01-F11",
+        "conclusion": "No direct change to registered tool manifest or missing tool guidance",
+        "evidence": "Summary path guidance is distinct from grep/find_files/apply_patch registry drift."
+      }
+    ],
+    "staging_only_findings": [
+      {
+        "id": "K01-STG-F01",
+        "priority": "P2 conditional",
+        "count_in_frozen_136": false,
+        "category": "prompt-displayed provenance / read_file relative resolution collision",
+        "mechanism": "At staging, builtin summary always displays skills/<name>/SKILL.md; ReadFileTool resolves that relative path against selected project first, then falls back to actual bundled skill only if resolved project target missing.",
+        "source": [
+          "nanobot/agent/skills.py:237–308",
+          "nanobot/agent/context.py:238–243",
+          "nanobot/agent/tools/filesystem.py:258–285,480–494,675–684",
+          "nanobot/security/workspace_policy.py:19–29,106–123"
+        ],
+        "trigger": "Selected project distinct from agent workspace, project skill file matching bundled skill name but not registered as a skill source and not shadowing the builtin in SkillsLoader discovery, tool follows displayed read_file path.",
+        "consequence": "Project file can be read as if it were named builtin skill, causing prompt instruction provenance/content mismatch; no permission bypass or observed injection claimed.",
+        "smallest_alternative": "For selected-project context use an unambiguous allowed absolute bundled path as before, or a source-qualified bundled resolution. Test conflicting project path against actual read_file result.",
+        "confidence": "high source-path tracing; runtime incident not measured",
+        "related_existing_questions": [
+          "K01-Q4"
+        ],
+        "related_decisions": [
+          "D2",
+          "D4",
+          "D7"
+        ],
+        "integration_status": "pending"
+      }
+    ],
+    "current_caller_context_reads": [
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/agent/tools/filesystem.py",
+        "ranges": [
+          [
+            200,
+            239
+          ],
+          [
+            258,
+            285
+          ],
+          [
+            286,
+            352
+          ],
+          [
+            480,
+            494
+          ],
+          [
+            649,
+            705
+          ]
+        ],
+        "purpose": "ReadFileTool project-root selection, policy and built-in fallback ordering"
+      },
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/security/workspace_policy.py",
+        "ranges": [
+          [
+            19,
+            29
+          ],
+          [
+            96,
+            123
+          ]
+        ],
+        "purpose": "Relative path workspace binding"
+      },
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/agent/context.py",
+        "ranges": [
+          [
+            235,
+            244
+          ]
+        ],
+        "purpose": "ContextBuilder passes effective project path to the skill summary"
+      },
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/context_repo/policy.py",
+        "ranges": [
+          [
+            175,
+            265
+          ]
+        ],
+        "purpose": "Existing path policy applied before read fallback"
+      }
+    ],
+    "test_gap": "Changed tests at tests/agent/test_skills_loader.py:301–342 assert display strings for default and selected project only, not actual read_file target when a selected project's skills/<builtin-name>/SKILL.md already exists. Other tests were not exhaustively searched.",
+    "validation": {
+      "full_source_bodies_read": 2,
+      "full_test_bodies_read": 2,
+      "definition": "Both versions of the full primary + test bodies read, 4 files/versions.",
+      "source_sha256_recomputed": 4,
+      "sha256_selftests": [
+        "abc",
+        "empty string"
+      ],
+      "baseline_inventory_matches": 2,
+      "git_blobs_recorded": 4,
+      "tests_executed": 0,
+      "product_code_modified": false,
+      "prior_primary_count_unchanged": 56,
+      "prior_findings_count_unchanged": 13,
+      "prior_project_deep_total_unchanged": 824,
+      "prior_project_findings_unchanged": 136
+    },
+    "limitations": [
+      "No runtime test, reproduction, timing or malicious file introduced; potential confusion depends on a same-name file in a selected project",
+      "No change to K01 historical frozen source hash, count, status or original findings",
+      "No staging source changes outside the two compared paths observed at fixed staging ref; later changes would require refresh"
+    ]
   }
 }
