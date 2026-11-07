@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. Frozen deep-required bodies 824/824 and P01 checked; E01 95-file limited-depth exception. K01 two-file staging refresh and staging-only K01-STG-F01 recorded. Integrated I01 authority and I02 durability completed as separate source-evidence checkpoints, not full integrated acceptance. I02 reconciles 53 existing entries in nine groups (S02-F02 also used I01) without adding findings; 136 original findings/105 questions unchanged. Further integration and D1–D7 decisions pending.",
+  "publication_stage": "ACTIVE; frozen 824/824 deep-required files checked, E01 remains 95-file limited-depth exception; 136 original findings and 105 original questions unchanged, plus separately recorded staging-only K01-STG-F01. I01 authority, I02 durability, I03 client/capability source checkpoints published; integrated_review_complete remains 0, no source repairs/runtime tests or D1–D7 decisions. Next I04 release/resource/qualification only.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "I02 source-based completion checkpoint committed: 53 distinct previously published ledger entries across 9 streams, including three conditional H02 options, nine groups, original 136/105 unchanged, one cross-stage overlap S02-F02. No runtime or product edits; next I03 only.",
+  "dispatch_evidence": "I03 same-assistant source review published: eight client/route/tool/capability groups, 32 original finding IDs from 8 streams, K01-F03 overlap I01, A01-F07 overlap I02 and K01-STG-F01 staging overlay; no original finding/source credit inflation; next I04 only.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -1064,23 +1064,24 @@
     "P01": "P01 same-assistant source synthesis PASS; 16 reports/coverage compared; 10 concrete simplification packages and 7 false-merger boundaries; 0 added source paths/findings/questions; 824/824 non-E01 deep source coverage unchanged; implementation and integration pending.",
     "K01_staging_refresh": "2026-11-07 same-assistant source PASS at current staging 29612c3: only skill summary and paired tests changed; path provenance regression for selected project (K01-STG-F01 conditional P2), no K01-F03 fix. Two complete source and two complete test versions read, SHA256 independently recalculated; no tests executed. Integrated review pending.",
     "I01": "2026-11-07 I01 same-assistant source integration checkpoint, not full integrated acceptance: eight authority clusters, 28 distinct original IDs and one staging-only K01 overlay; zero primary/finding/question additions, 824/824 deep requirement unchanged. Explicit false mergers and source ranges in integrated/I01-authority.md/ledger. Next I02.",
-    "I02": "2026-11-07 I02 source semantic checkpoint (same assistant): 9 durable/outcome groups, 53 distinct previous ledger IDs, 1 cross-stage overlap S02-F02, 3 H02 optional candidates; no extra body/finding/question credit or D1–D7 decisions. Reports integrated/I02-durability.md and I02-durability-evidence.json. Next I03."
+    "I02": "2026-11-07 I02 source semantic checkpoint (same assistant): 9 durable/outcome groups, 53 distinct previous ledger IDs, 1 cross-stage overlap S02-F02, 3 H02 optional candidates; no extra body/finding/question credit or D1–D7 decisions. Reports integrated/I02-durability.md and I02-durability-evidence.json. Next I03.",
+    "I03": "2026-11-07 source-only I03 checkpoint: 8 groups, 32 existing original finding references, original IDs validated against 8 coverage ledgers; known overlaps K01-F03 with I01, A01-F07 with I02; K01-STG-F01 separately cross-referenced, not counted. Same-assistant source/readback acceptance, not final integrated review. Next I04."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
     "state": "ACTIVE",
-    "reason": "I01 and I02 integrated source checkpoints published, full review still incomplete.",
+    "reason": "I03 bounded client/capability integration source checkpoint saved; full integration pending.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "I03 client UI/capability/compatibility integration only",
-      "Other integration and final D1–D7 discussions separately"
+      "I04 release/resource/qualification only",
+      "Later final integrated dedup and D1–D7 separately"
     ],
     "handoff_index": "handoffs/index.json",
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "I03 only: integrated client/UI, tool/route/capability registry parity, compatibility and feature activation across U01/D01/T01/K01/E02/R01/A01/C00. Do not combine with release/efficiency integration or D1–D7 choices.",
-    "Later bounded resource/release/efficiency integration and final project-wide finding/decision synthesis."
+    "I04 only: integrated release/toolchain/deployment/qualification and remaining resource/budget/compatibility evidence; do not combine with final 136-finding deduplication or D1–D7 decisions.",
+    "Later: whole-project integration/reconciliation and D1–D7 discussion as separate manageable stages."
   ],
   "latest_staging_observation": {
     "checked_at": "2026-11-07",
@@ -1094,7 +1095,7 @@
     "r01_impact": "No R01 primary path changed. The production delta changes built-in skill display paths only; retain K01 current-origin refresh as a later obligation."
   },
   "integrated_review_progress": {
-    "status": "in-progress; I01/I02 source integration checkpoints complete; no final integrated acceptance",
+    "status": "in progress: I01/I02/I03 source integration checkpoints done; full integration not accepted",
     "completed_substages": [
       {
         "id": "I01",
@@ -1137,12 +1138,37 @@
         "commit_report": "11e73ce30f50d003ae1815b3eb76c54631179540",
         "commit_ledger": "1b23d0287c50060fa7f0e5ff7e2af86ada192067",
         "scope_limit": "Nine durability/recovery streams; 53 source-ledger entries not 53 new defects; selected pinned snippets. Later UI/capability/release integration and all D1–D7 decisions pending."
+      },
+      {
+        "id": "I03",
+        "name": "Client UI, tool/route capabilities, feature exposure and compatibility",
+        "status": "source-evidence checkpoint PASS (same assistant; not full integration or runtime acceptance)",
+        "report": "integrated/I03-client-capabilities.md",
+        "ledger": "integrated/I03-client-capabilities-evidence.json",
+        "distinct_frozen_finding_references": 32,
+        "groups": 8,
+        "staging_only_overlay_cross_reference": [
+          "K01-STG-F01"
+        ],
+        "previous_overlap_I01": [
+          "K01-F03"
+        ],
+        "previous_overlap_I02": [
+          "A01-F07"
+        ],
+        "new_promoted_findings": 0,
+        "new_questions": 0,
+        "new_primary_body_credit": 0,
+        "decisions_accepted": 0,
+        "scope_limit": "8 published streams plus pinned client/tool/route excerpts; no release/performance pass or D1–D7 decisions",
+        "commit_report": "e6a6f8851b99907caa03879ad2b890b84cc5904d",
+        "commit_ledger": "15d365d6cef8e788b055e2efca22b197d691ec8c"
       }
     ],
     "remaining_substages": [
-      "I03 client UI/capability registration/interface compatibility/feature exposure (bounded)",
-      "Later bounded release, performance, resource, and other remaining modules integration as evidence requires",
-      "Final deduplication/priority and consolidated D1–D7 discussion only after integrated evidence"
+      "I04 bounded release/toolchain/supply chain, qualification, resource/budget and other residual integration",
+      "Final project-wide deduplication/coverage and clear no-merge/priority reconciliation across all 136 original findings and staging K01 overlay",
+      "D1–D7 architecture discussion/decisions, separate user-directed stage"
     ],
     "full_integrated_review_complete": false,
     "source_hashes_reused_from_published_streams": true,
