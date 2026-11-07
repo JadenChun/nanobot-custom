@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked. E01 is closed by explicit user scope decision as limited-depth/non-priority: 40 primaries retain prior deep body review, the remaining 55 received only a quick high-signal sanity screen, and no E01 body is counted as coordinator-checked deep-review credit. R01/M01/X01/Q01/P01 remain queued.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F14/P0/R56 with one provisional P2 finding; M01/X01/Q01/P01 remain queued. Current staging advanced to 29612c3 only in K01 skill-display code/tests; R01-A bodies are unchanged.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,14 +19,14 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. On 2026-11-07 the user explicitly deprioritized chat channels and requested E01 remain functionally untouched. E01 therefore closed as a limited-depth exception: prior E01-A..F deep reads remain preserved at F40/P0/R55, all 55 remaining primaries received a quick high-signal sanity screen, no new finding was promoted from that shallow pass, and Weixin pathless config loading only corroborated existing E01-F02. Next deep-review stream is R01.",
+  "dispatch_evidence": "R01-A fresh source-only handoff is saved at handoffs/R01.md: 14/70 primaries fully read, one provisional finding, zero publication credit. Next bounded substage is R01-B remote IPC/listener/edge admission and replay transport. Existing coordinator-checked reports retain their frozen-pin acceptance; K01 current-origin refresh is separately pending because staging advanced after the frozen pin.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 5,
-    "in_progress": 0,
+    "queued": 4,
+    "in_progress": 1,
     "report_written": 0,
     "coordinator_checked": 12,
     "integrated_review_complete": 0,
@@ -603,19 +603,19 @@
       "kind": "primary",
       "primary_target_count": 70,
       "inventory_all_roles_count": 189,
-      "status": "queued",
+      "status": "in-progress",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": null,
       "coverage": null,
       "planned_report": "reports/R01.md",
       "planned_coverage": "reports/R01-coverage.json",
-      "findings_count": null,
-      "discussion_questions_count": null,
+      "findings_count": 1,
+      "discussion_questions_count": 0,
       "published_findings_count": 0,
       "published_discussion_questions_count": 0,
       "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 70,
-      "architecture_judgement": null,
+      "material_primary_gaps_pending_evidence": 56,
+      "architecture_judgement": "Provisional Keep: preserve independent durable device authority, short-lived access/rotating refresh credentials, local owner approval and one-use delegated permission admissions. R01-F01 identifies a bounded credential-custody/recovery seam; transport/native architecture remains under review.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -628,6 +628,35 @@
         "status": "pending",
         "commit": null,
         "evidence": null
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "active-source-review",
+      "saved_handoff": "handoffs/R01.md",
+      "handoff_disposition": "active-incomplete-unaccepted",
+      "active_source_review_coverage": {
+        "full": 14,
+        "partial": 0,
+        "unread": 56
+      },
+      "active_provisional_findings_count": 1,
+      "provisional_findings": [
+        {
+          "id": "R01-F01",
+          "priority": "P2",
+          "title": "Pairing can durably commit a device before credential custody is established",
+          "state": "provisional-active-handoff",
+          "qualification": "Requires owner restart, client disconnect or response-write failure after desktop approval/device persistence but before the phone receives/acknowledges the plaintext credential pair. Local admin can recover by revoke/re-pair; no authorization bypass is claimed."
+        }
+      ],
+      "active_substage_checkpoint": {
+        "stage": "R01-A",
+        "commit": "0ba1a24e001a9efa7dc9777cdbf414026b641424",
+        "coverage": {
+          "full": 14,
+          "partial": 0,
+          "unread": 56
+        },
+        "publication_credit_added": 0
       }
     },
     {
@@ -871,11 +900,24 @@
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "R01",
+    "R01-B only: fully review nanobot/remote/ipc.py, http.py, edge.py, operations.py, replay.py, staging.py and data_server.py to reach expected F21/P0/R49.",
+    "Continue R01 in later bounded substages for supervision/Tailscale and Android/native clients until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
     "P01",
-    "Fresh integrated review and final consolidated D1–D7 discussion, carrying E01 as an explicit limited-depth/non-priority exception."
-  ]
+    "Refresh affected K01 current-origin evidence for staging 29612c3 before final integrated closure.",
+    "Fresh integrated review and final consolidated D1–D7 discussion, carrying E01 as a limited-depth/non-priority exception."
+  ],
+  "latest_staging_observation": {
+    "checked_at": "2026-11-07",
+    "frozen_audit_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "current_staging": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+    "ahead_by": 2,
+    "changed_paths": [
+      "nanobot/agent/skills.py",
+      "tests/agent/test_skills_loader.py"
+    ],
+    "r01_impact": "No R01 primary path changed. The production delta changes built-in skill display paths only; retain K01 current-origin refresh as a later obligation."
+  }
 }
