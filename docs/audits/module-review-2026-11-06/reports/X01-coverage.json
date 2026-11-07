@@ -1,0 +1,752 @@
+{
+  "schema_version": 1,
+  "stream_id": "X01",
+  "report": "reports/X01.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "ChatGPT X01 review (higher-depth source/claim challenge)",
+    "handoff": "Fresh 2026-11-07 X01 full source reads at frozen pin, previous source inventory as provenance",
+    "published_by": "ChatGPT same-assistant audit coordinator"
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/apps/__init__.py",
+    "nanobot/apps/cli/__init__.py",
+    "nanobot/apps/cli/service.py",
+    "nanobot/apps/cli/utils.py",
+    "nanobot/apps/protocol.py",
+    "nanobot/crawler/__init__.py",
+    "nanobot/crawler/worker.py",
+    "nanobot/extensions/__init__.py",
+    "nanobot/extensions/crawler.py",
+    "nanobot/extensions/optional_tools.py",
+    "nanobot/optional_features.py"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/apps/__init__.py",
+      "ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "git_blob": "7444058f7ea94ca23264dcc4ed14a052997580cc",
+      "sha256": "5d502483d7b5d53c6c597f063aa69c1938efbe65296100c4af041cfe1bf0706f",
+      "bytes": 155,
+      "line_count": 5,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/apps/cli/__init__.py",
+      "ranges": [
+        [
+          1,
+          13
+        ]
+      ],
+      "git_blob": "b9b01b918a2318a129b7cb72e6e80a8ec7cb08bb",
+      "sha256": "e0d9d377a872e97734a036dee2f7cb43b14f7c10942157bbe7a43f8be20ced1a",
+      "bytes": 238,
+      "line_count": 13,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/apps/cli/service.py",
+      "ranges": [
+        [
+          1,
+          1487
+        ]
+      ],
+      "git_blob": "2ccf3305b18e894e591b3d117e3af06bed1d3a89",
+      "sha256": "4e111439e2b0464fb6d4b285f9e0d98bcb2bb93b66b5c5c483d1bcac8ad81066",
+      "bytes": 58606,
+      "line_count": 1487,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/apps/cli/utils.py",
+      "ranges": [
+        [
+          1,
+          61
+        ]
+      ],
+      "git_blob": "668dea161386ac1e5c73c972a29ce77b5971fedd",
+      "sha256": "57032aa9a5ba6a31d533519744df1e0677ab278e316c11635c6b061d347dcfb0",
+      "bytes": 2361,
+      "line_count": 61,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/apps/protocol.py",
+      "ranges": [
+        [
+          1,
+          56
+        ]
+      ],
+      "git_blob": "02b1e55bd95dd70f60c0bcc6c69335fc43823120",
+      "sha256": "4b68a739092d40bc8b21e0b6ab943c4cf7466be8d198459955d513c414ef2194",
+      "bytes": 1608,
+      "line_count": 56,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/crawler/__init__.py",
+      "ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "git_blob": "2459480ce80f162634396dac07b62a4575c8acc0",
+      "sha256": "6c6e77f521a40b4ef1ab1064e282879bde43201966b3bc5218d8c8ce047315fa",
+      "bytes": 40,
+      "line_count": 1,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/crawler/worker.py",
+      "ranges": [
+        [
+          1,
+          943
+        ]
+      ],
+      "git_blob": "999e377f316a4dc6ba10aae531e88ce946dd5843",
+      "sha256": "a18c18bb01a0238f504cd2fe0b46682e986af9a6382ae76ca444e47e544a7512",
+      "bytes": 37220,
+      "line_count": 943,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/extensions/__init__.py",
+      "ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "git_blob": "bb70c920594499159a8199397690e9ed2ebcfcb5",
+      "sha256": "b50d80eb60815a40064b4627917a32359480078f00117af0635df3153927826b",
+      "bytes": 94,
+      "line_count": 1,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/extensions/crawler.py",
+      "ranges": [
+        [
+          1,
+          129
+        ]
+      ],
+      "git_blob": "1b75ae13dc9d7130e9565143552dd215b1aec1f0",
+      "sha256": "9a21682cd2832600c389a84e43bf427a22db758556d55fc8d1fb2354785c20f5",
+      "bytes": 6323,
+      "line_count": 129,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/extensions/optional_tools.py",
+      "ranges": [
+        [
+          1,
+          35
+        ]
+      ],
+      "git_blob": "656dbd692c005419b34c03b4c194fc3ec05c3cba",
+      "sha256": "fcd0e215f9a7ec92cd7820c3c7c30fc4ddf8cb426f38490b3b78bf9b2134fd62",
+      "bytes": 1294,
+      "line_count": 35,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/optional_features.py",
+      "ranges": [
+        [
+          1,
+          839
+        ]
+      ],
+      "git_blob": "507787dcaed89a73b7d639ad3aad519ae14f0ad1",
+      "sha256": "22439ef5041002a27f0dda72a28dad124053ec9c4bee5e64f817ae0285be29af",
+      "bytes": 29714,
+      "line_count": 839,
+      "extent": "whole implementation source 1–EOF",
+      "purpose": "Fresh complete semantic source review with independent SHA256 verification and frozen metadata reconciliation",
+      "evidence_origin": "ChatGPT 2026-11-07 X01 single-stream source review and same-assistant coordinator check"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/agent/tools/cli_apps.py",
+      "ranges": [
+        [
+          1,
+          160
+        ]
+      ],
+      "extent": "full caller body"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/agent/tools/crawler.py",
+      "ranges": [
+        [
+          1,
+          69
+        ]
+      ],
+      "extent": "full caller body"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/agent/tools/social_crawl.py",
+      "ranges": [
+        [
+          1,
+          498
+        ]
+      ],
+      "extent": "full tool/transport body read in 3 complete parts"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/webui/cli_apps_api.py",
+      "ranges": [
+        [
+          1,
+          144
+        ]
+      ],
+      "extent": "full WebUI settings API helper"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/agent/tools/context.py",
+      "ranges": [
+        [
+          1,
+          121
+        ]
+      ],
+      "extent": "full trusted tool construction context"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/agent/tools/shell.py",
+      "ranges": [
+        [
+          117,
+          141
+        ],
+        [
+          249,
+          266
+        ],
+        [
+          507,
+          580
+        ]
+      ],
+      "extent": "selected existing native/sandbox owner comparisons"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/security/workspace_access.py",
+      "ranges": [
+        [
+          193,
+          240
+        ],
+        [
+          435,
+          458
+        ]
+      ],
+      "extent": "per-turn sandbox status and access scope"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "purpose": "Cross-stream call chain, not X01 primary credit",
+      "path": "nanobot/config/schema.py",
+      "ranges": [
+        [
+          875,
+          895
+        ]
+      ],
+      "extent": "config default and workspace restriction intent"
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/cli_apps/test_service.py",
+      "ranges": [
+        [
+          230,
+          337
+        ],
+        [
+          382,
+          424
+        ],
+        [
+          924,
+          1013
+        ]
+      ],
+      "purpose": "Registry merge/extension provenance, install plan, argv execution and workspace cwd tests"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/cli_apps/test_tool.py",
+      "ranges": [
+        [
+          1,
+          158
+        ]
+      ],
+      "purpose": "Enabled registry app tool, installed state and scoped cwd tool test"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/apps/test_cli_subprocess_env.py",
+      "ranges": [
+        [
+          1,
+          90
+        ]
+      ],
+      "purpose": "Provider environment filtering and subprocess env tests"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/tools/test_social_crawl.py",
+      "ranges": [
+        [
+          1,
+          380
+        ]
+      ],
+      "purpose": "Action classification and read-only click tests, route host filter, profile-mode click rejection, bounded output"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/agent/test_crawler_subagent.py",
+      "ranges": [
+        [
+          181,
+          212
+        ]
+      ],
+      "purpose": "Authenticated crawler instructions, no actual browser interaction"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/webui/test_cli_apps_api.py",
+      "ranges": [],
+      "extent": "function/test-name inventory only, no substantive body claim",
+      "purpose": "Catalog cache-refresh tests identified from signatures"
+    }
+  ],
+  "support_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "deploy/systemd/crawl4ai-worker.service",
+      "extent": "entire unit",
+      "purpose": "Dedicated worker Unix socket group, sandbox, memory and Linux systemd boundaries"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "deploy/crawl4ai-worker.env.example",
+      "extent": "entire example",
+      "purpose": "Operator host allowlist and authenticated profile opt-in"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "deploy/scripts/deploy_crawl4ai_worker.sh",
+      "extent": "entire installer",
+      "purpose": "Service account and package install owner; not executed"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "docs/audits/codebase-discovery/path-inventory.tsv",
+      "extent": "X01 exact rows",
+      "purpose": "Frozen primary assignment and SHA256/byte inventory"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "docs/audits/module-review-2026-11-06/reports/S01.md",
+      "extent": "selected X01/S01 dependency and comparison excerpts",
+      "purpose": "Existing sandbox enforcement context"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "docs/audits/module-review-2026-11-06/reports/T01.md",
+      "extent": "selected crawler/process findings",
+      "purpose": "Avoid duplicate process owner findings"
+    }
+  ],
+  "search_only": [
+    {
+      "repository": "nanobot",
+      "query": "GitHub commit-text search: Crawl4AI; CLI-Anything; optional features; read-only browser",
+      "result": "No relevant returned commit matches. No introduction lineage claimed."
+    },
+    {
+      "repository": "dsh",
+      "query": "GitHub file search sandbox policy",
+      "result": "Located implementation source at packages/sandbox/sandbox-policy/src/index.ts"
+    },
+    {
+      "repository": "codex",
+      "query": "candidate unified_exec source paths",
+      "result": "Fetched exec_command.rs and preparation.rs successfully; shell.rs/exec.rs were not present at pinned paths"
+    }
+  ],
+  "justified_exclusions": [
+    {
+      "paths": [
+        "tests/apps/test_cli_subprocess_env.py",
+        "tests/cli_apps/test_service.py",
+        "tests/cli_apps/test_tool.py",
+        "tests/cli_apps/test_utils.py"
+      ],
+      "role": "test-support-source",
+      "reason": "Mapped as X01 test-only support in frozen inventory; primary implementation denominator remains 11. Source tests read only, not executed.",
+      "accepting_scope": "2026-11-06 frozen assignment; same-assistant audit source review"
+    }
+  ],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/sandbox/sandbox-policy/src/index.ts",
+      "ranges": [
+        [
+          1,
+          95
+        ],
+        [
+          185,
+          217
+        ]
+      ],
+      "mechanism": "Per-call session policy resolved for enforcing filesystem, bash and terminal backends; only a comparison for X01-F01"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/core/src/tools/handlers/unified_exec/preparation.rs",
+      "ranges": [
+        [
+          1,
+          120
+        ],
+        [
+          128,
+          205
+        ]
+      ],
+      "mechanism": "Environment/path and sandbox/approval options carried through command preparation"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs",
+      "ranges": [
+        [
+          1,
+          95
+        ]
+      ],
+      "mechanism": "Explicit typed executor/tool lifetime owner"
+    },
+    {
+      "repository": "dsh+codex",
+      "commit": "as above",
+      "path": "no directly corresponding Crawl4AI DOM/CLI-Anything catalog path located",
+      "mechanism": "No parity comparison claimed for X01-F02 or X01-F04; Nanobot's source and declared read-only/provenance policy govern."
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "kind": "historical",
+      "source": "X01 immutable inventory and prior 2026-11-05 06-channels-extensions coverage",
+      "conclusion": "Carried forward as prior-relevant-sections only; current source reviewed fresh."
+    },
+    {
+      "kind": "commit-text-search",
+      "query": "Crawl4AI, CLI-Anything, optional features, read-only browser",
+      "result": "No verified matching introduction chain. npm hits involved WhatsApp bridge, not an X01 provenance claim."
+    },
+    {
+      "kind": "staging-delta",
+      "from": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "to": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "changed_paths": [
+        "nanobot/agent/skills.py",
+        "tests/agent/test_skills_loader.py"
+      ],
+      "impact": "X01 primaries unchanged; K01 refresh separate"
+    }
+  ],
+  "findings": [
+    {
+      "id": "X01-F01",
+      "priority": "P1-conditional",
+      "classification": "Restricted-workspace file/network authority gap",
+      "confidence": "high source for missing subprocess confinement; consequence conditional on restrictive scope and installed app",
+      "requirement": "Restricted tools must not gain process-host authority through CLI app family",
+      "source": "nanobot/agent/tools/cli_apps.py:136-160; nanobot/apps/cli/service.py:1337-1348,1431-1487; nanobot/security/workspace_access.py:220-240",
+      "trigger": "run_cli_app enabled and a file/network-capable installed CLI invoked inside restricted workspace without independent OS sandbox",
+      "consequence": "Child process accepts model-selected path/URL args and retains host filesystem/network rights despite cwd policy",
+      "smallest_alternative": "Reuse S01/S02/T01 native sandbox process owner, else disable CLI app execution for restricted managed turns."
+    },
+    {
+      "id": "X01-F02",
+      "priority": "P1-conditional",
+      "classification": "Read-only crawler DOM state mutation",
+      "confidence": "high source for literal click; external effect page-dependent",
+      "requirement": "Crawler read/navigation role must not click or trigger stateful authenticated page actions",
+      "source": "nanobot/agent/tools/social_crawl.py:45-71,272-377; nanobot/crawler/worker.py:623-631,788-796; nanobot/extensions/crawler.py:74-104",
+      "trigger": "enabled crawler expand on details/summary/aria-expanded=false selector, possibly authenticated page",
+      "consequence": "Calls element.click() while action class says read_navigation; page handlers may alter remote account state",
+      "smallest_alternative": "Remove DOM click or split explicit state-changing expansion behind a separate approval policy."
+    },
+    {
+      "id": "X01-F03",
+      "priority": "P2",
+      "classification": "Unbounded captured subprocess output before presentation truncation",
+      "confidence": "high source; memory consequence volume-dependent",
+      "requirement": "Installed CLI tools must cap process output capture, not merely displayed text",
+      "source": "nanobot/apps/cli/service.py:1022-1038,1431-1487",
+      "trigger": "Installed CLI outputs high-volume stdout or stderr during allowed runtime",
+      "consequence": "capture_output=True buffers the full stream(s) before _truncate/display",
+      "smallest_alternative": "Bound streaming stdout/stderr capture and use owned subprocess cancellation."
+    },
+    {
+      "id": "X01-F04",
+      "priority": "P2-conditional",
+      "classification": "Cross-registry package/provenance shadowing",
+      "confidence": "high source for merge/label; collision unverified",
+      "requirement": "App installer metadata and trust label must derive from the same explicit source",
+      "source": "nanobot/apps/cli/service.py:544-594,603-618,1176-1251",
+      "trigger": "Optional extensions registry collides with harness/public lower-case app name",
+      "consequence": "Later record overrides executable install/update metadata while merged source labeled cli-anything",
+      "smallest_alternative": "Forbid cross-source executable-field overwrite or use source-qualified app IDs and reflect actual installer source."
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "X01-Q1",
+      "decisions": [
+        "D2",
+        "D4"
+      ],
+      "text": "Should run_cli_app use native/sandbox process owner for all restricted/managed turns, or be unavailable in them?"
+    },
+    {
+      "id": "X01-Q2",
+      "decisions": [
+        "D2",
+        "D4",
+        "D7"
+      ],
+      "text": "Must crawler expand be purely non-eventful inspection, or can approved state-changing actions exist outside the read-only crawler?"
+    },
+    {
+      "id": "X01-Q3",
+      "decisions": [
+        "D2",
+        "D7"
+      ],
+      "text": "What are trust/source collision rules and package pinning requirements for CLI app registries?"
+    },
+    {
+      "id": "X01-Q4",
+      "decisions": [
+        "D5",
+        "D6"
+      ],
+      "text": "Which shared process owner should cap stdout/stderr and descendant lifetime?"
+    },
+    {
+      "id": "X01-Q5",
+      "decisions": [
+        "D2",
+        "D4"
+      ],
+      "text": "What DNS pinning, socket identity and authenticated browser profile boundaries are required on Windows/Linux?"
+    },
+    {
+      "id": "X01-Q6",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "text": "Should optional feature and CLI app installed-state/config writes have transactional receipts and serializable commit semantics?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    "S01 workspace and network authority; S02 native process confinement; T01 tool registration and process lifecycle; E02 WebUI settings/request authority; H02 config/session ownership; Q01 package/supply-chain and worker deployment; P01 simplification. E01 limited-depth exception unchanged."
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "checked_at": "2026-11-07",
+    "authority": "ChatGPT same reviewer/coordinator",
+    "evidence": "11 fresh full pinned source bodies and semantic call-chain/error-path review; 11/11 SHA256 recalculated with known-answer-tested pure JS SHA256; exact inventory bytes/Git blobs match; bounded caller/tests/deployment and 3 pinned reference bodies; 4 qualified findings and 6 final questions.",
+    "coverage": {
+      "full": 11,
+      "partial": 0,
+      "unread": 0
+    },
+    "findings_promoted": 4,
+    "discussion_questions": 6,
+    "notes": "No independent peer reviewer or runtime tests. Severity P1 is conditional on restricted/read-only promises and missing deployment enforcement. Both 4 findings and observations are source-only."
+  },
+  "integrated_review": {
+    "status": "pending",
+    "evidence": null
+  },
+  "git_checkpoint": {
+    "status": "report-written",
+    "commit": null,
+    "evidence": "Report and coverage doc publication, aggregate status update to follow."
+  },
+  "validation": {
+    "source_sha256_algorithm": "Pure JavaScript SHA-256, known-answer abc -> ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    "primary_sha256_matches": 11,
+    "primary_git_blob_matches": 11,
+    "primary_bytes_matches": 11,
+    "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "staging_delta_paths": [
+      "nanobot/agent/skills.py",
+      "tests/agent/test_skills_loader.py"
+    ],
+    "tests_executed": 0,
+    "product_code_mutated": false
+  },
+  "limits": [
+    "Read-only source/GitHub audit records, not runtime execution, browser/provider probe, package install, sandbox confinement or measured performance.",
+    "No concrete affected website, package registry collision, uncontrolled CLI execution, or OS-specific exploit reproduced.",
+    "Context/test/source excerpts do not add primary-denominator credit."
+  ],
+  "counts": {
+    "assigned_primary": 11,
+    "full": 11,
+    "partial": 0,
+    "unread": 0,
+    "total_primary_bytes": 137653,
+    "total_primary_lines": 3570,
+    "findings": 4,
+    "discussion_questions": 6,
+    "assigned_test_support": 4
+  }
+}
