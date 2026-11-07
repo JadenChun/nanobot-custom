@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F64/P0/R6 with eighteen provisional findings (one P1, seventeen P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B/C/D/E/F/G/H/I/J bodies are unchanged.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is complete at F70/P0/R0 with twenty provisional findings (one P1, nineteen P2), but its report is not yet published and coordinator acceptance remains pending. M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; all R01 primary bodies are unchanged.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "R01-A/B/C/D/E/F/G/H/I/J fresh source-only handoff is saved at handoffs/R01.md: 64/70 primaries fully read, eighteen provisional findings, zero publication credit. Next bounded substage is R01-K final mobile contract/parity/qualification/update scripts only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
+  "dispatch_evidence": "R01-A through R01-K fresh source-only handoff is complete at handoffs/R01.md: 70/70 primaries fully read, twenty provisional findings, zero publication credit. Next bounded stage is R01-L publication/coordinator check only, without new primary-body review. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -609,13 +609,13 @@
       "coverage": null,
       "planned_report": "reports/R01.md",
       "planned_coverage": "reports/R01-coverage.json",
-      "findings_count": 18,
+      "findings_count": 20,
       "discussion_questions_count": 0,
       "published_findings_count": 0,
       "published_discussion_questions_count": 0,
       "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 6,
-      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, allowlisted typed native transport, encrypted tsnet state, streaming media path and shared-WebUI mobile composition, but fix production WS scope enforcement, retry-safe credential custody, supervision/Tailscale drift, manual-pairing persistence, HTTP correlation ordering, JNI event sizing, signed-media logging, concurrent native error storage, broker terminal-event backpressure, hard media-cache accounting, durable phone-side pairing cancellation, signing-secret isolation and build-toolchain integrity. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05/F06/F07/F08/F09/F10/F11/F12/F13/F14/F15/F16/F17/F18 are P2 recovery/contract/qualification/lifecycle/transport/privacy/native-resource/consent/build-chain defects. Final contract/parity/qualification scripts remain under review.",
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Source-complete provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, allowlisted typed native transport, encrypted tsnet state, streaming media path and shared-WebUI composition, but challenge/finalize twenty provisional findings before acceptance. The source review contains one P1 production authorization defect and nineteen P2 recovery/contract/qualification/lifecycle/transport/privacy/native-resource/consent/build-chain defects. R01 is F70/P0/R0 but remains unpublished and coordinator-unaccepted.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -630,150 +630,162 @@
         "evidence": null
       },
       "dispatch_owner": "web-continuation-coordinator",
-      "execution_state": "active-source-review",
+      "execution_state": "source-review-complete-awaiting-publication",
       "saved_handoff": "handoffs/R01.md",
-      "handoff_disposition": "active-incomplete-unaccepted",
+      "handoff_disposition": "source-complete-unpublished-unaccepted",
       "active_source_review_coverage": {
-        "full": 64,
+        "full": 70,
         "partial": 0,
-        "unread": 6
+        "unread": 0
       },
-      "active_provisional_findings_count": 18,
+      "active_provisional_findings_count": 20,
       "provisional_findings": [
         {
           "id": "R01-F01",
           "priority": "P2",
           "title": "Pairing can durably commit a device before credential custody is established",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Requires owner restart, client disconnect or response-write failure after approval/device persistence but before client custody. Local revoke/re-pair recovers; no authorization bypass."
         },
         {
           "id": "R01-F02",
           "priority": "P1",
           "title": "Mobile WebSocket commands bypass granted chat/media scopes",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Production /mobile/v1/ws validates token currency but not route/per-command scopes; shared WebUI typed commands can attach/hydrate/send/upload outside reduced device scopes. Default owner pairing grants broad scopes, but approval can narrow while retaining owner."
         },
         {
           "id": "R01-F03",
           "priority": "P2",
           "title": "Refresh rotation can strand a paired device on ambiguous delivery",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Server persists the replacement refresh hash and invalidates prior access before client custody of the new plaintext pair; response loss requires local revoke/re-pair."
         },
         {
           "id": "R01-F04",
           "priority": "P2",
           "title": "Versioned mobile route contract contradicts the production edge",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "ROUTES/mobile-v1.json declare HTTP bootstrap/mutation/attachment/logout that production edge does not serve; current Android mostly uses shared WS and /remote/v1/refresh, so impact is contract/tooling compatibility rather than proof every UI flow is broken."
         },
         {
           "id": "R01-F05",
           "priority": "P2",
           "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Bounded to staging/qualification fidelity: no ordinary product caller established and the main emulator qualification script explicitly disclaims transport/custody proof."
         },
         {
           "id": "R01-F06",
           "priority": "P2",
           "title": "Systemd supervision reports applied success without checking command success",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Bounded to the explicit opt-in local supervision CLI. Nonzero systemctl results are ignored, so install/remove/status can misreport lifecycle state; no normal gateway startup caller established."
         },
         {
           "id": "R01-F07",
           "priority": "P2",
           "title": "Pairing can proceed without a verified Tailscale Serve mapping",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Serve readiness uses substring matching and the local pairing UI falls back to currentHttpsOrigin() even when readiness is negative. Owner approval/token checks remain required, so this is transport/setup policy and reachability, not token authorization bypass."
         },
         {
           "id": "R01-F08",
           "priority": "P2",
           "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "QR collection persists the poll challenge to encrypted custody; manual-code collection keeps it only in memory. Server single-winner binding prevents recollecting the same offer after process loss, so a new desktop offer is required."
         },
         {
           "id": "R01-F09",
           "priority": "P2",
           "title": "Mobile HTTP completions can arrive before request correlation is armed",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Both Android jsonRequest() and the shared JS runtime submit native HTTP before installing their request-ID waiter. A fast completion can be forwarded as an unmatched event and the owning call then times out; refresh can reproduce credential stranding."
         },
         {
           "id": "R01-F10",
           "priority": "P2",
           "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Native admits about 36 MiB WS frames but JNI retries event polling with at most 12 MiB. Base64/JSON expansion means roughly 9 MiB raw frames can exceed JNI capacity; the retained head event is never drained until transport restart."
         },
         {
           "id": "R01-F11",
           "priority": "P2",
           "title": "Android logcat receives replayable signed-media bearer capabilities",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "The production media interceptor logs the complete /api/media/<sig>/<payload> URL at INFO. That URL is a signature-authorized media capability with no embedded expiry or separate API-token requirement; replay still requires log access and network reachability."
         },
         {
           "id": "R01-F12",
           "priority": "P2",
           "title": "Global native last_error storage is unsafe under concurrent Android calls",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "setError() frees/replaces one process-global C string without the mutex used by last_error(). Concurrent failing JNI calls can misattribute errors or double-free/use-after-free the diagnostic buffer; requires overlapping failure paths."
         },
         {
           "id": "R01-F13",
           "priority": "P2",
           "title": "Bounded broker event pressure can silently drop admitted operation completions",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "HTTP admission checks queue occupancy only before launching work; terminal HTTP results and WS close/error events use non-blocking emits whose queue-full errors are ignored. Server/native state can advance while callers later time out or retain stale socket state."
         },
         {
           "id": "R01-F14",
           "priority": "P2",
           "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Full media responses are tee-written into persistent filesDir state with no per-stream/global write cap; trimming runs only after EOF/rename. A large signed media item can exceed the claimed budget or reach ENOSPC before cleanup."
         },
         {
           "id": "R01-F15",
           "priority": "P2",
           "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "QR/link pairStart persists encrypted pending pairing for restart recovery, but bootstrap Cancel only clears volatile JS state. Restart restores and polls the canceled challenge; owner approval can then complete pairing without a fresh phone-side action."
         },
         {
           "id": "R01-F16",
           "priority": "P2",
           "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "build-release.sh exports the keystore path and signing credentials before Go tests/build, Bun install/build and Capacitor sync. A compromised pre-sign build process can read both key material and password; exploitation requires build-time code compromise."
         },
         {
           "id": "R01-F17",
           "priority": "P2",
           "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "Existing JDK/Go/uv/cmdline-tools are accepted by executability only, Android SDK installation is skipped wholesale once adb exists, and Bun 1.4.2 is recorded but neither installed nor version-checked. Release evidence can therefore use non-recorded compatible tooling."
         },
         {
           "id": "R01-F18",
           "priority": "P2",
           "title": "Gradle wrapper distribution is not cryptographically pinned",
-          "state": "provisional-active-handoff",
+          "state": "provisional-source-complete-awaiting-publication",
           "qualification": "The wrapper URL is HTTPS and version-specific with validateDistributionUrl=true, but distributionSha256Sum is absent. A replaced upstream Gradle archive could execute during the release build with signing authority."
+        },
+        {
+          "id": "R01-F19",
+          "priority": "P2",
+          "title": "Desktop-parity checker silently skips async inbound-command and misc-route source coverage",
+          "state": "provisional-source-complete-awaiting-publication"
+        },
+        {
+          "id": "R01-F20",
+          "priority": "P2",
+          "title": "Update-persistence qualification reinstalls the same APK instead of exercising an actual upgrade",
+          "state": "provisional-source-complete-awaiting-publication"
         }
       ],
       "active_substage_checkpoint": {
-        "stage": "R01-J",
-        "commit": "144cfb93031514984b55e2d523e0334c74c2cb2b",
+        "stage": "R01-K",
+        "commit": "d158766b9606b9f22dffcfaf61806edc7e2ee38e",
         "coverage": {
-          "full": 64,
+          "full": 70,
           "partial": 0,
-          "unread": 6
+          "unread": 0
         },
         "publication_credit_added": 0
       }
@@ -1019,8 +1031,7 @@
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "R01-K only: fully review build-operations-contract.py, check-desktop-parity.py, install-release-update.sh, qualify-emulator.sh, test-cabi.sh and test-update-persistence.sh to reach F70/P0/R0.",
-    "After R01-K, publish/coordinator-check R01 separately; do not combine source completion with acceptance or integrated review.",
+    "R01-L only: publish the F70/P0/R0 R01 report, challenge all twenty provisional findings for promotion/demotion/merge, retain final discussion questions, then perform the separate coordinator semantic check.",
     "M01",
     "X01",
     "Q01",
