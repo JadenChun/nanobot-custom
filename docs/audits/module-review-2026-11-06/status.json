@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01/R01/M01/X01/Q01/P01 remain queued. Integrated review and D1-D7 decisions remain deferred.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F12/P0/R83 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -18,14 +18,14 @@
     "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Coordinator-checked source-review publications now include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E02 closed F68/P0/R0 with 23 promoted findings and 9 retained questions; next bounded stream is E01.",
+  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-A has an active source-only handoff at F12/P0/R83 with zero publication credit; next bounded substage is E01-B Telegram package.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
     "primary_targets": 919,
     "crosscutting_target_addition": 0,
-    "queued": 6,
-    "in_progress": 0,
+    "queued": 5,
+    "in_progress": 1,
     "report_written": 0,
     "coordinator_checked": 12,
     "integrated_review_complete": 0,
@@ -416,7 +416,7 @@
       "kind": "primary",
       "primary_target_count": 95,
       "inventory_all_roles_count": 321,
-      "status": "queued",
+      "status": "in-progress",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "report": null,
       "coverage": null,
@@ -441,6 +441,27 @@
         "status": "pending",
         "commit": null,
         "evidence": null
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "active",
+      "saved_handoff": "handoffs/E01.md",
+      "handoff_disposition": "active-incomplete-unaccepted",
+      "coordinator_observation": "E01-A shared channel framework is checkpointed at F12/P0/R83 with three provisional findings: E01-F01 pre-send duplicate fingerprints can suppress later same-origin recovery after failed delivery; E01-F02 channel hot apply/validation/transcription can ignore an explicit gateway config path; E01-F03 truthy non-boolean enabled values activate packaged channels. E01 remains unpublished/unaccepted; next is E01-B Telegram package only.",
+      "active_source_review_coverage": {
+        "full": 12,
+        "partial": 0,
+        "unread": 83
+      },
+      "active_provisional_findings_count": 3,
+      "active_substage_checkpoint": {
+        "stage": "E01-A",
+        "commit": "68b4f0a5a5b9ae7ff87acbe6a571147d18676b2f",
+        "coverage": {
+          "full": 12,
+          "partial": 0,
+          "unread": 83
+        },
+        "publication_credit_added": 0
       }
     },
     {
