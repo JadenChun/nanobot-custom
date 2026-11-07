@@ -1335,14 +1335,58 @@
         "quick_screen_result": "55/55 remaining primaries screened at high signal; no new finding promoted; Weixin pathless load_config() corroborates E01-F02.",
         "next_deep_stream": "R01"
       }
+    },
+    {
+      "stream": "R01",
+      "producer": "web-continuation-coordinator",
+      "path": "handoffs/R01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 14,
+        "partial": 0,
+        "unread": 56
+      },
+      "state": "active-incomplete-unaccepted",
+      "published_body_credit_added": 0,
+      "provisional_findings": [
+        {
+          "id": "R01-F01",
+          "priority": "P2",
+          "title": "Pairing can durably commit a device before credential custody is established",
+          "state": "provisional-active-handoff"
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "R01-A",
+          "commit": "0ba1a24e001a9efa7dc9777cdbf414026b641424",
+          "coverage": {
+            "full": 14,
+            "partial": 0,
+            "unread": 56
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        }
+      ],
+      "staging_observation": {
+        "current_staging": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "changed_paths": [
+          "nanobot/agent/skills.py",
+          "tests/agent/test_skills_loader.py"
+        ],
+        "r01_impact": "none; K01 current-origin refresh deferred"
+      }
     }
   ],
   "resume_order": [
-    "R01",
+    "R01-B only: fully review nanobot/remote/ipc.py, http.py, edge.py, operations.py, replay.py, staging.py and data_server.py to reach expected F21/P0/R49.",
+    "Continue R01 in later bounded substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
     "P01",
+    "Refresh affected K01 current-origin evidence for staging 29612c3 before final integrated closure.",
     "Fresh integrated review and final consolidated D1–D7 discussion, carrying E01 as a limited-depth/non-priority exception."
   ],
   "limits": "Historical handoffs remain preserved. E01 is an explicit 2026-11-07 limited-depth exception: 40 deep reads preserved, 55 remaining primaries quick-screened only, zero new deep body credit. D1–D7 and integrated review remain pending."
