@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 51,
+        "full": 53,
         "partial": 0,
-        "unread": 17
+        "unread": 15
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E/F/G/H reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services and build/dev/CLI-app wrapper at cumulative F51/P0/R17 with twelve provisional findings. E02-H added E02-F11/F12. Next bounded stage is E02-I MCP OAuth/preset APIs only.",
-      "last_checkpoint_commit": "382f11df3b32fededa2c5b11ef8598ee48a557b0",
+      "note": "E02-A/B/C/D/E/F/G/H/I reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services, build/dev/CLI-app wrapper, and MCP OAuth/preset APIs at cumulative F53/P0/R15 with thirteen provisional findings. E02-I added E02-F13. Next bounded stage is E02-J WebUI skills APIs only.",
+      "last_checkpoint_commit": "d6f5b3b0a0b7d5d828bb969be7efe98fe9c82e8d",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -798,6 +798,13 @@
           "title": "Successful WebUI build commands can leave a stale/missing bundle without failing startup",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on the frontend command returning zero while failing to refresh the expected bundle. The shipped Vite path normally writes the expected dist and ordinary write failures should usually return nonzero."
+        },
+        {
+          "id": "E02-F13",
+          "priority": "P2",
+          "title": "MCP WebUI credential/runtime state is not scoped to the gateway's explicit config path",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on an explicit gateway/config path differing from the process-global config path. Normal single-instance CLI startup generally aligns those paths; OAuth store locking/generations and managed-path exact-match cleanup do not fix cross-instance root selection."
         }
       ],
       "substage_checkpoints": [
@@ -885,6 +892,17 @@
             "full": 51,
             "partial": 0,
             "unread": 17
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-I",
+          "commit": "d6f5b3b0a0b7d5d828bb969be7efe98fe9c82e8d",
+          "coverage": {
+            "full": 53,
+            "partial": 0,
+            "unread": 15
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
