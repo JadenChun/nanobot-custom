@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. All 16 deep-primary source streams coordinator-checked at frozen nanobot 9562e57 (824/824 required deep primary bodies). P01 cross-cutting source synthesis now checked (0 added bodies, 10 proposals, 0 new findings/questions). E01 95-body limited-depth exception persists. K01 current-origin staging refresh, fresh integrated module review and consolidated D1–D7 decisions are still pending.",
+  "publication_stage": "ACTIVE. All original deep source streams and P01 coordinator-checked at frozen 9562e57, 824/824 deep-required bodies, original 136 findings/105 questions. K01 staging-source delta checked PASS on staging 29612c3 with K01-F03 unresolved and one separately tracked conditional P2 staging-only provenance finding K01-STG-F01 (not counted in original 136). E01 remains 95-body limited-depth. Fresh integrated review/D1–D7 not started.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Q01 full source F25/P0/R0 coordinator-checked at frozen pin. All required non-E01 source streams now complete: 824/824 deep bodies. 136 source findings and 105 questions; P01 simplification, K01 staging skills delta and integrated D1–D7 decisions remain.",
+  "dispatch_evidence": "P01 source synthesis complete and K01 frozen-to-staging refresh complete with four SHA256-verified file versions, changed summary-only code and two test assertions. Original primary counts 824/824, 136 source findings and 105 questions remain frozen; K01-STG-F01 tracked separately for integrated discussion. No test execution or product code modifications.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -415,6 +415,28 @@
           "unread": 0
         },
         "publication_credit_added": 0
+      },
+      "current_origin_refresh": {
+        "status": "PASS source-only, integrated disposition pending",
+        "base_source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+        "current_staging_pin": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "changed_paths": [
+          "nanobot/agent/skills.py",
+          "tests/agent/test_skills_loader.py"
+        ],
+        "finding_effect": "K01-F03 unresolved; 12 other frozen K01 findings not individually revalidated by changed-line inspection.",
+        "new_staging_only_finding": {
+          "id": "K01-STG-F01",
+          "priority": "P2 conditional",
+          "description": "Bundled skill shown as relative skills/name/SKILL.md can resolve to same-named selected-project file before built-in fallback.",
+          "included_in_frozen_136": false
+        },
+        "evidence": "reports/K01.md section '2026-11-07 current-origin staging refresh' and reports/K01-coverage.json:current_origin_refresh",
+        "checks": "Two full versions of each changed file, 4 independent SHA256 computations matching frozen inventory where applicable; bounded caller/path-policy reads; same-assistant semantic check. No tests or product changes.",
+        "documentation_commits": [
+          "14d45c7f6233ca058be9d096fce8e2aedacc142d",
+          "a4ef9642a518d445923b0cc27d3d60eee123b41c"
+        ]
       }
     },
     {
@@ -1039,23 +1061,22 @@
     "M01": "Higher-depth second pass rechecked all 14 M01 primaries using independently recomputed hashes; prior F01–F03 retained and added qualified F04 (fail-open prune with incomplete references), F05 (unbounded image-edit reference reads), F06 (PDF post-decode size guard). Six qualified P2 findings, six questions; integrated review and D1–D7 still pending.",
     "X01": "X01 source PASS F11/P0/R0, two conditional P1 and two P2 findings, six final questions. Core concerns: CLI app subprocess file/network authority, crawler expand literal click, capture_output memory, remote app-catalog trust collisions. Same-reviewer self-check only; integration and runtime still pending.",
     "Q01": "Q01 source PASS F25/P0/R0. One conditional P1 (Windows authenticated worker loopback caller auth), six P2 source findings (redaction, pipx run, nonfrozen Hatch, non-atomic deploy, P0 mutable verifier, docs migration CI exclusion); seven deferred questions. Source-only same-assistant check.",
-    "P01": "P01 same-assistant source synthesis PASS; 16 reports/coverage compared; 10 concrete simplification packages and 7 false-merger boundaries; 0 added source paths/findings/questions; 824/824 non-E01 deep source coverage unchanged; implementation and integration pending."
+    "P01": "P01 same-assistant source synthesis PASS; 16 reports/coverage compared; 10 concrete simplification packages and 7 false-merger boundaries; 0 added source paths/findings/questions; 824/824 non-E01 deep source coverage unchanged; implementation and integration pending.",
+    "K01_staging_refresh": "2026-11-07 same-assistant source PASS at current staging 29612c3: only skill summary and paired tests changed; path provenance regression for selected project (K01-STG-F01 conditional P2), no K01-F03 fix. Two complete source and two complete test versions read, SHA256 independently recalculated; no tests executed. Integrated review pending."
   },
   "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
   "execution_state": {
     "state": "ACTIVE",
-    "reason": "P01 complete; stage-by-stage continuation next enters K01 refresh, not integrated review.",
+    "reason": "All primary stream reviews and P01 finished; K01 current-origin two-file refresh completed, fresh integrated review is the sole remaining planned stage.",
     "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
     "resume_order": [
-      "K01 current-origin staging refresh",
-      "Integrated review and consolidated D1–D7 decisions"
+      "Fresh integrated contract/ownership review; then D1–D7 discussion (stage-scoped)"
     ],
     "handoff_index": "handoffs/index.json",
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "K01 current-origin refresh only: compare staging 29612c3df01dc3dce3501fe349bcf555cd6c58b6 changes to nanobot/agent/skills.py and tests/agent/test_skills_loader.py, reconcile K01-F03/skill precedence and update K01 evidence without changing frozen original pin.",
-    "Fresh integrated cross-module review and deduplicated D1–D7 discussion after the K01 refresh, preserving E01 limited-depth exception."
+    "Fresh integrated review only: reconcile shared contracts, original module findings and conditional staging-only K01-STG-F01; keep D1–D7 choices explicit and deferred until discussion. Preserve E01 limited-depth exception."
   ],
   "latest_staging_observation": {
     "checked_at": "2026-11-07",
