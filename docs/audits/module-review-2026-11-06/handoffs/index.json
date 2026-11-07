@@ -1049,14 +1049,14 @@
       "path": "handoffs/E01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 12,
+        "full": 17,
         "partial": 0,
-        "unread": 83
+        "unread": 78
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E01-A shared channel framework completed at F12/P0/R83 with three provisional findings and zero publication credit; next is E01-B Telegram package only.",
-      "last_checkpoint_commit": "68b4f0a5a5b9ae7ff87acbe6a571147d18676b2f",
+      "note": "E01-B Telegram package completed at F17/P0/R78 with six provisional findings total and zero publication credit; next is E01-C DingTalk package only.",
+      "last_checkpoint_commit": "42acf7bd6443c771b417a3738d8ed4a9be3c53ed",
       "provisional_findings": [
         {
           "id": "E01-F01",
@@ -1077,7 +1077,28 @@
           "priority": "P2",
           "title": "Truthy non-boolean enabled values activate packaged channels",
           "state": "provisional-active-handoff",
-          "qualification": "Conditional on malformed/manual packaged-channel config using a non-boolean truthy value such as the strings false or 0. Normal settings writers are expected to persist booleans; legacy entry-point activation is stricter."
+          "qualification": "Conditional on malformed/manual packaged-channel config using a non-boolean truthy enabled value. Normal settings writers are expected to persist booleans."
+        },
+        {
+          "id": "E01-F04",
+          "priority": "P2",
+          "title": "Telegram enablement can persist a startup-invalid config and escape as SystemExit",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on enabling Telegram with an empty/missing effective allowFrom. WebUI feature enable is local-browser restricted; correctly configured allow lists are unaffected."
+        },
+        {
+          "id": "E01-F05",
+          "priority": "P1",
+          "title": "Inline-keyboard callbacks in Telegram forum topics lose topic session identity",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on Telegram forum/topic use with inline keyboards enabled. Private and non-topic chat-wide sessions are unaffected."
+        },
+        {
+          "id": "E01-F06",
+          "priority": "P2",
+          "title": "Telegram ordinary delivery hides retries beneath the manager attempt cap",
+          "state": "provisional-active-handoff",
+          "qualification": "Ordinary best-effort Telegram delivery only; the qualified cron receipt path performs no hidden provider retries. Duplicate effects require an ambiguous timeout whose provider-side send completed."
         }
       ],
       "substage_checkpoints": [
@@ -1091,12 +1112,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-B",
+          "commit": "42acf7bd6443c771b417a3738d8ed4a9be3c53ed",
+          "coverage": {
+            "full": 17,
+            "partial": 0,
+            "unread": 78
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E01-B only: fully review the five Telegram package primaries to reach expected F17/P0/R78; no other adapter in the same stage.",
+    "E01-C only: fully review the four DingTalk package primaries to reach expected F21/P0/R74; no other adapter in the same stage.",
     "Continue E01 in later bounded adapter substages until F95/P0/R0, then publish/coordinator-check E01 separately.",
     "R01",
     "M01",
