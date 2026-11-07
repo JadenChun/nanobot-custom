@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F31/P0/R39 with ten provisional findings (one P1, nine P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B/C/D/E bodies are unchanged.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F38/P0/R32 with eleven provisional findings (one P1, ten P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B/C/D/E/F bodies are unchanged.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "R01-A/B/C/D/E fresh source-only handoff is saved at handoffs/R01.md: 31/70 primaries fully read, ten provisional findings, zero publication credit. Next bounded substage is R01-F Android attachment/link/media helper primitives only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
+  "dispatch_evidence": "R01-A/B/C/D/E/F fresh source-only handoff is saved at handoffs/R01.md: 38/70 primaries fully read, eleven provisional findings, zero publication credit. Next bounded substage is R01-G JNI/C ABI and Go-export boundary only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -609,13 +609,13 @@
       "coverage": null,
       "planned_report": "reports/R01.md",
       "planned_coverage": "reports/R01-coverage.json",
-      "findings_count": 10,
+      "findings_count": 11,
       "discussion_questions_count": 0,
       "published_findings_count": 0,
       "published_discussion_questions_count": 0,
       "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 39,
-      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, process-local keepalive, allowlisted native broker and central mobile bridge, but fix production WS scope enforcement, retry-safe credential custody, supervision/Tailscale contract drift, manual-pairing persistence, HTTP response-correlation ordering, and JNI event sizing. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05/F06/F07/F08/F09/F10 are P2 recovery/contract/qualification/lifecycle/transport defects. Android helper primitives and JNI/C/Go native transport remain under review.",
+      "material_primary_gaps_pending_evidence": 32,
+      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, allowlisted native broker and streaming media path, but fix production WS scope enforcement, retry-safe credential custody, supervision/Tailscale contract drift, manual-pairing persistence, HTTP correlation ordering, JNI event sizing, and credential-bearing media logging. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05/F06/F07/F08/F09/F10/F11 are P2 recovery/contract/qualification/lifecycle/transport/privacy defects. JNI/C ABI, Go broker bodies and bootstrap/tooling remain under review.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -634,11 +634,11 @@
       "saved_handoff": "handoffs/R01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
       "active_source_review_coverage": {
-        "full": 31,
+        "full": 38,
         "partial": 0,
-        "unread": 39
+        "unread": 32
       },
-      "active_provisional_findings_count": 10,
+      "active_provisional_findings_count": 11,
       "provisional_findings": [
         {
           "id": "R01-F01",
@@ -709,15 +709,22 @@
           "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
           "state": "provisional-active-handoff",
           "qualification": "Native admits about 36 MiB WS frames but JNI retries event polling with at most 12 MiB. Base64/JSON expansion means roughly 9 MiB raw frames can exceed JNI capacity; the retained head event is never drained until transport restart."
+        },
+        {
+          "id": "R01-F11",
+          "priority": "P2",
+          "title": "Android logcat receives replayable signed-media bearer capabilities",
+          "state": "provisional-active-handoff",
+          "qualification": "The production media interceptor logs the complete /api/media/<sig>/<payload> URL at INFO. That URL is a signature-authorized media capability with no embedded expiry or separate API-token requirement; replay still requires log access and network reachability."
         }
       ],
       "active_substage_checkpoint": {
-        "stage": "R01-E",
-        "commit": "327252adbcfa62106449a13d23c1c794aed8bd92",
+        "stage": "R01-F",
+        "commit": "e99f71190c372f5b67cdf443caf5f634c313b7a8",
         "coverage": {
-          "full": 31,
+          "full": 38,
           "partial": 0,
-          "unread": 39
+          "unread": 32
         },
         "publication_credit_added": 0
       }
@@ -963,8 +970,8 @@
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "R01-F only: fully review AttachmentPolicy.kt, PairingChallenge.kt, PairingLink.kt, TargetBinding.kt, MediaHandleStore.kt, NativeMediaFetcher.kt and NativeMediaInterceptor.kt to reach expected F38/P0/R32.",
-    "Continue R01 in later bounded JNI/C/Go/native-client/bootstrap/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-G only: fully review native_network_jni.c, probe.c, native-network/cmd/lib/interface_android.go, cmd/lib/main.go and include/nanobot_network.h to reach expected F43/P0/R27.",
+    "Continue R01 in later bounded Go broker/bootstrap/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
