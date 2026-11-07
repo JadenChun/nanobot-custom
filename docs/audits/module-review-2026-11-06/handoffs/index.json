@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 30,
+        "full": 31,
         "partial": 0,
-        "unread": 40
+        "unread": 39
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1396,6 +1396,18 @@
           "priority": "P2",
           "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
           "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F09",
+          "priority": "P2",
+          "title": "Mobile HTTP completions can arrive before request correlation is armed",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F10",
+          "priority": "P2",
+          "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
+          "state": "provisional-active-handoff"
         }
       ],
       "substage_checkpoints": [
@@ -1442,6 +1454,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-E",
+          "commit": "327252adbcfa62106449a13d23c1c794aed8bd92",
+          "coverage": {
+            "full": 31,
+            "partial": 0,
+            "unread": 39
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1455,8 +1478,8 @@
     }
   ],
   "resume_order": [
-    "R01-E only: fully review mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetworkPlugin.kt to reach expected F31/P0/R39.",
-    "Continue R01 in later bounded JNI/Go/native-client/helper/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-F only: fully review AttachmentPolicy.kt, PairingChallenge.kt, PairingLink.kt, TargetBinding.kt, MediaHandleStore.kt, NativeMediaFetcher.kt and NativeMediaInterceptor.kt to reach expected F38/P0/R32.",
+    "Continue R01 in later bounded JNI/C/Go/native-client/bootstrap/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
