@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-C backend WebUI transport foundations are checkpointed at cumulative F26/P0/R42. No new finding was added; E02-F01 and E02-F02 remain provisional and conditional. Publication/coordinator credit remains zero. Next bounded stage is E02-D WebUI media and file-delivery foundations only.",
+      "coordinator_observation": "E02-D WebUI media/file-delivery foundations are checkpointed at cumulative F33/P0/R35. Two new conditional P2 findings are retained: E02-F03 Windows media GC can misclassify referenced generated assets as orphans; E02-F04 the global generated-assets library silently caps discovery at the first 200 lexicographic sessions. E02 now has four provisional findings. The lossy WebUI transcript/index safe_key collision is explicitly deferred to E02-E full transcript review. Publication/coordinator credit remains zero.",
       "active_source_review_coverage": {
-        "full": 26,
+        "full": 33,
         "partial": 0,
-        "unread": 42
+        "unread": 35
       },
-      "active_provisional_findings_count": 2,
+      "active_provisional_findings_count": 4,
       "active_substage_checkpoint": {
-        "stage": "E02-C",
-        "commit": "7e842500783bf399c9bcc9065c3c216bfa6d901d",
+        "stage": "E02-D",
+        "commit": "34cf8ab9bf65c3fa5ed9174ed215b711e08ce759",
         "coverage": {
-          "full": 26,
+          "full": 33,
           "partial": 0,
-          "unread": 42
+          "unread": 35
         },
         "publication_credit_added": 0
       }
