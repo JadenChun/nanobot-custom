@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 48,
+        "full": 51,
         "partial": 0,
-        "unread": 20
+        "unread": 17
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E/F/G reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation and ancillary session services at cumulative F48/P0/R20 with ten provisional findings. E02-G added no finding; transcription duration enforcement is deferred to M01 root ownership. Next bounded stage is E02-H build/dev and CLI-app management only.",
-      "last_checkpoint_commit": "ec67092826146b045c9f254fcfc389b679beaa34",
+      "note": "E02-A/B/C/D/E/F/G/H reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services and build/dev/CLI-app wrapper at cumulative F51/P0/R17 with twelve provisional findings. E02-H added E02-F11/F12. Next bounded stage is E02-I MCP OAuth/preset APIs only.",
+      "last_checkpoint_commit": "382f11df3b32fededa2c5b11ef8598ee48a557b0",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -784,6 +784,20 @@
           "title": "Discarded Temporary Chat tombstones grow without bound until gateway shutdown",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on a large number of Temporary Chats during one long-lived gateway process. Restart clears the tombstones; ordinary low-volume use has small impact."
+        },
+        {
+          "id": "E02-F11",
+          "priority": "P2",
+          "title": "CLI-app WebUI state is not scoped to the gateway's explicit config path",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on multiple explicit gateway/config instances in one process or embedding with a config path different from the process-global path. Common single-instance CLI startup normally aligns the paths."
+        },
+        {
+          "id": "E02-F12",
+          "priority": "P2",
+          "title": "Successful WebUI build commands can leave a stale/missing bundle without failing startup",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on the frontend command returning zero while failing to refresh the expected bundle. The shipped Vite path normally writes the expected dist and ordinary write failures should usually return nonzero."
         }
       ],
       "substage_checkpoints": [
@@ -863,12 +877,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-H",
+          "commit": "382f11df3b32fededa2c5b11ef8598ee48a557b0",
+          "coverage": {
+            "full": 51,
+            "partial": 0,
+            "unread": 17
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-H only: WebUI build/dev and CLI-app management — build.py, dev.py, cli_apps_api.py.",
+    "E02-I only: MCP OAuth and MCP preset WebUI APIs — mcp_oauth_api.py and mcp_presets_api.py.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
