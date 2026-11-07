@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-L WebUI settings domain core is checkpointed at cumulative F64/P0/R4. Four new conditional findings are retained: E02-F16 provider OAuth credential authority is shared across explicit gateway configs (P1); E02-F17 remote-access owner authority defaults to the process-global instance root (P1); E02-F18 settings usage accounting is not scoped to the explicit gateway config (P2); E02-F19 truthy non-boolean remote-access disable values enable remote access (P2). E02 now has nineteen provisional findings. Ordinary config serialization, per-gateway OAuth flow objects, secret redaction, package-install policy and restart fallback held under the reviewed paths. Publication/coordinator credit remains zero.",
+      "coordinator_observation": "E02-M final WebUI routing/client-events wrappers are checkpointed at completed primary source-review coverage F68/P0/R0. Four new P2 findings are retained: E02-F20 post-effect mutation failures can be durably replayed as failures while suppressing shared-state invalidation; E02-F21 remote-access pairing renewal is implemented/client-called but omitted from settings routing; E02-F22 desktop notification GET has a conditional tokenless cross-origin loopback side-effect surface; E02-F23 legacy unpaginated thread reads bypass the response projection budget. E02 now has twenty-three provisional findings. Source review is complete but E02 remains unpublished/unaccepted; the next checkpoint is publication/coordinator reconciliation only.",
       "active_source_review_coverage": {
-        "full": 64,
+        "full": 68,
         "partial": 0,
-        "unread": 4
+        "unread": 0
       },
-      "active_provisional_findings_count": 19,
+      "active_provisional_findings_count": 23,
       "active_substage_checkpoint": {
-        "stage": "E02-L",
-        "commit": "d36625dcab541008e6b3ff050b208b8e2833bdd4",
+        "stage": "E02-M",
+        "commit": "fe32cf63fc847d44109b7da68075c94a2a500a6f",
         "coverage": {
-          "full": 64,
+          "full": 68,
           "partial": 0,
-          "unread": 4
+          "unread": 0
         },
         "publication_credit_added": 0
       }
