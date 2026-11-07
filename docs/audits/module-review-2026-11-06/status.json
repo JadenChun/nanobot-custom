@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F56/P0/R14 with fifteen provisional findings (one P1, fourteen P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B/C/D/E/F/G/H/I bodies are unchanged.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 remain coordinator-checked at frozen audit pin 9562e57. E01 is closed as limited-depth/non-priority. R01 source inspection is active at F64/P0/R6 with eighteen provisional findings (one P1, seventeen P2); M01/X01/Q01/P01 remain queued. Current staging 29612c3 differs only in K01 skill-display code/tests; R01-A/B/C/D/E/F/G/H/I/J bodies are unchanged.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -19,7 +19,7 @@
     "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "R01-A/B/C/D/E/F/G/H/I fresh source-only handoff is saved at handoffs/R01.md: 56/70 primaries fully read, fifteen provisional findings, zero publication credit. Next bounded substage is R01-J mobile build/package wrapper path only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
+  "dispatch_evidence": "R01-A/B/C/D/E/F/G/H/I/J fresh source-only handoff is saved at handoffs/R01.md: 64/70 primaries fully read, eighteen provisional findings, zero publication credit. Next bounded substage is R01-K final mobile contract/parity/qualification/update scripts only. Existing coordinator-checked reports retain frozen-pin acceptance; K01 current-origin refresh remains pending before final integrated closure.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -609,13 +609,13 @@
       "coverage": null,
       "planned_report": "reports/R01.md",
       "planned_coverage": "reports/R01-coverage.json",
-      "findings_count": 15,
+      "findings_count": 18,
       "discussion_questions_count": 0,
       "published_findings_count": 0,
       "published_discussion_questions_count": 0,
       "supplied_primary_body_paths": 0,
-      "material_primary_gaps_pending_evidence": 14,
-      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, allowlisted typed native transport, encrypted tsnet state, streaming media path and shared-WebUI mobile composition, but fix production WS scope enforcement, retry-safe credential custody, supervision/Tailscale drift, manual-pairing persistence, HTTP correlation ordering, JNI event sizing, signed-media logging, concurrent native error storage, broker terminal-event backpressure, hard media-cache accounting, and durable phone-side pairing cancellation. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05/F06/F07/F08/F09/F10/F11/F12/F13/F14/F15 are P2 recovery/contract/qualification/lifecycle/transport/privacy/native-resource/consent defects. Build/package/qualification tooling remains under review.",
+      "material_primary_gaps_pending_evidence": 6,
+      "architecture_judgement": "Provisional Keep/Simplify: retain the independent owner/device authority, Keystore-backed Android custody, allowlisted typed native transport, encrypted tsnet state, streaming media path and shared-WebUI mobile composition, but fix production WS scope enforcement, retry-safe credential custody, supervision/Tailscale drift, manual-pairing persistence, HTTP correlation ordering, JNI event sizing, signed-media logging, concurrent native error storage, broker terminal-event backpressure, hard media-cache accounting, durable phone-side pairing cancellation, signing-secret isolation and build-toolchain integrity. R01-F02 is a P1 production authorization defect; R01-F01/F03/F04/F05/F06/F07/F08/F09/F10/F11/F12/F13/F14/F15/F16/F17/F18 are P2 recovery/contract/qualification/lifecycle/transport/privacy/native-resource/consent/build-chain defects. Final contract/parity/qualification scripts remain under review.",
       "coordinator_check": {
         "status": "pending",
         "evidence": null
@@ -634,11 +634,11 @@
       "saved_handoff": "handoffs/R01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
       "active_source_review_coverage": {
-        "full": 56,
+        "full": 64,
         "partial": 0,
-        "unread": 14
+        "unread": 6
       },
-      "active_provisional_findings_count": 15,
+      "active_provisional_findings_count": 18,
       "provisional_findings": [
         {
           "id": "R01-F01",
@@ -744,15 +744,36 @@
           "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
           "state": "provisional-active-handoff",
           "qualification": "QR/link pairStart persists encrypted pending pairing for restart recovery, but bootstrap Cancel only clears volatile JS state. Restart restores and polls the canceled challenge; owner approval can then complete pairing without a fresh phone-side action."
+        },
+        {
+          "id": "R01-F16",
+          "priority": "P2",
+          "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
+          "state": "provisional-active-handoff",
+          "qualification": "build-release.sh exports the keystore path and signing credentials before Go tests/build, Bun install/build and Capacitor sync. A compromised pre-sign build process can read both key material and password; exploitation requires build-time code compromise."
+        },
+        {
+          "id": "R01-F17",
+          "priority": "P2",
+          "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
+          "state": "provisional-active-handoff",
+          "qualification": "Existing JDK/Go/uv/cmdline-tools are accepted by executability only, Android SDK installation is skipped wholesale once adb exists, and Bun 1.4.2 is recorded but neither installed nor version-checked. Release evidence can therefore use non-recorded compatible tooling."
+        },
+        {
+          "id": "R01-F18",
+          "priority": "P2",
+          "title": "Gradle wrapper distribution is not cryptographically pinned",
+          "state": "provisional-active-handoff",
+          "qualification": "The wrapper URL is HTTPS and version-specific with validateDistributionUrl=true, but distributionSha256Sum is absent. A replaced upstream Gradle archive could execute during the release build with signing authority."
         }
       ],
       "active_substage_checkpoint": {
-        "stage": "R01-I",
-        "commit": "9b56b304a2d31dd297eb1e68ae5ddbac8c96f618",
+        "stage": "R01-J",
+        "commit": "144cfb93031514984b55e2d523e0334c74c2cb2b",
         "coverage": {
-          "full": 56,
+          "full": 64,
           "partial": 0,
-          "unread": 14
+          "unread": 6
         },
         "publication_credit_added": 0
       }
@@ -998,8 +1019,8 @@
     "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
   },
   "resume_order": [
-    "R01-J only: fully review mobile/android/gradlew, gradlew.bat, bootstrap-toolchain.sh, mobile-env.sh, build-native-network.sh, build-shared-webui.sh, build-debug.sh and build-release.sh to reach expected F64/P0/R6.",
-    "R01-K later: review the six remaining contract/parity/qualification/update scripts to reach F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-K only: fully review build-operations-contract.py, check-desktop-parity.py, install-release-update.sh, qualify-emulator.sh, test-cabi.sh and test-update-persistence.sh to reach F70/P0/R0.",
+    "After R01-K, publish/coordinator-check R01 separately; do not combine source completion with acceptance or integrated review.",
     "M01",
     "X01",
     "Q01",
