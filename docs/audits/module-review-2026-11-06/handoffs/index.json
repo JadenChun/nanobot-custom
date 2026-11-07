@@ -1053,7 +1053,7 @@
         "partial": 0,
         "unread": 55
       },
-      "state": "active-incomplete-unaccepted",
+      "state": "scope-exception-limited-depth-closed",
       "published_body_credit_added": 0,
       "note": "E01-F Feishu control/setup/instance/UI completed at F40/P0/R55 with twenty-six provisional findings total and zero publication credit; next is E01-G Feishu runtime.py and websocket.py only.",
       "last_checkpoint_commit": "93706841e16999f47b25ebfde4f8d8dd9796ee3a",
@@ -1062,182 +1062,182 @@
           "id": "E01-F01",
           "priority": "P2",
           "title": "Failed outbound delivery can poison origin duplicate suppression",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on a source-bound fingerprint being inserted before an actual send failure and a later same-origin outbound carrying the same normalized content. Separate source IDs and the explicit receipt-capable cron path are excluded."
         },
         {
           "id": "E01-F02",
           "priority": "P1",
           "title": "Shared channel runtime/validation/transcription can ignore the gateway's explicit config path",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on an explicit gateway/manager config path differing from the process-global path. Feishu E01-F adds a concrete QR-flow consequence: the path-scoped settings handler owns the request, but its connector persists registration credentials through the process-global Feishu helper before separately enabling the gateway-scoped target."
         },
         {
           "id": "E01-F03",
           "priority": "P2",
           "title": "Truthy non-boolean enabled values activate packaged channels",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on malformed/manual packaged-channel config using a non-boolean truthy enabled value. Feishu's own multi-instance adapter independently applies bool(config['enabled']), so truthy strings also activate Feishu instances. Normal settings writers are expected to persist booleans."
         },
         {
           "id": "E01-F04",
           "priority": "P2",
           "title": "Telegram enablement can persist a startup-invalid config and escape as SystemExit",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on enabling Telegram with an empty/missing effective allowFrom. WebUI feature enable is local-browser restricted; correctly configured allow lists are unaffected."
         },
         {
           "id": "E01-F05",
           "priority": "P1",
           "title": "Inline-keyboard callbacks in Telegram forum topics lose topic session identity",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on Telegram forum/topic use with inline keyboards enabled. Private and non-topic chat-wide sessions are unaffected."
         },
         {
           "id": "E01-F06",
           "priority": "P2",
           "title": "Telegram ordinary delivery hides retries beneath the manager attempt cap",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Ordinary best-effort Telegram delivery only; the qualified cron receipt path performs no hidden provider retries. Duplicate effects require an ambiguous timeout whose provider-side send completed."
         },
         {
           "id": "E01-F07",
           "priority": "P1",
           "title": "DingTalk inbound filenames can escape the media root and overwrite arbitrary writable paths",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on DingTalk preserving sender-controlled absolute/parent-traversal filename syntax. If the provider canonicalizes safe basenames, the path-escape consequence does not activate."
         },
         {
           "id": "E01-F08",
           "priority": "P2",
           "title": "Denied DingTalk senders can trigger unbounded inbound file download work before authorization",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Practical amplification depends on DingTalk attachment/rate limits. The download URL is provider-issued; this finding does not claim directly attacker-chosen SSRF."
         },
         {
           "id": "E01-F09",
           "priority": "P2",
           "title": "Persistent DingTalk stream failures are reported as running",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on persistent/non-transient stream/setup failure. Temporary network loss may intentionally be represented by a live reconnecting supervisor."
         },
         {
           "id": "E01-F10",
           "priority": "P2",
           "title": "DingTalk retries replay already-delivered text/media after later part failure",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on a multipart ordinary send and a retryable failure after at least one earlier part completed; single-part sends do not have this intra-message replay window."
         },
         {
           "id": "E01-F11",
           "priority": "P2",
           "title": "DingTalk downloads inbound attachments but bypasses the canonical media/attachment pipeline",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "A sufficiently privileged agent may manually read the textual path; the defect is bypass of canonical adoption/multimodal projection, not guaranteed byte loss in every deployment."
         },
         {
           "id": "E01-F12",
           "priority": "P2",
           "title": "Unauthorized Discord DMs can persist attachments before pairing authorization",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on an unauthorized DM carrying attachments. Each file is checked against the adapter's declared 20 MiB cap; guild messages rejected before download are unaffected."
         },
         {
           "id": "E01-F13",
           "priority": "P2",
           "title": "Discord streaming silently loses deltas while the client is unready",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on a streaming-enabled turn while Discord client readiness is false. Non-streaming ordinary sends raise and are manager-retried."
         },
         {
           "id": "E01-F14",
           "priority": "P2",
           "title": "Discord attachment upload failures can be hidden as successful message delivery",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Transport/provider file-send failures are hidden when text or another attachment succeeds. Media-only messages where all attachments fail receive a visible fallback."
         },
         {
           "id": "E01-F15",
           "priority": "P2",
           "title": "Discord multipart retries can duplicate already-delivered files or text chunks",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on multipart ordinary or overflow-stream delivery and a retryable failure after an earlier part completed. Single-part sends are excluded."
         },
         {
           "id": "E01-F16",
           "priority": "P2",
           "title": "Discord startup failures are swallowed before manager failure accounting",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Primarily startup failures not covered by the REST token probe, stale credentials after validation, proxy/client construction, or other gateway-start exceptions. Partial client cleanup itself is preserved."
         },
         {
           "id": "E01-F17",
           "priority": "P1",
           "title": "Email anti-spoofing accepts SPF/DKIM pass results that are not bound to the allowed From identity",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on the upstream mailbox delivering mail whose visible From is allowlisted while the trusted/pass identities are unrelated, or preserving an untrusted Authentication-Results header. Strong upstream DMARC/authserv-id enforcement can prevent the trigger."
         },
         {
           "id": "E01-F18",
           "priority": "P2",
           "title": "Email acknowledges mailbox messages before durable agent processing",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on failure after UID processing/Seen or queue admission but before durable turn processing. markSeen=false/no post-action preserves the source but changes replay semantics."
         },
         {
           "id": "E01-F19",
           "priority": "P2",
           "title": "Email replies can attach to the wrong Message-ID when one sender has multiple in-flight emails",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on multiple source messages from the same sender before the earlier response is sent. Recipient identity remains the same; source-bound subject metadata is preserved."
         },
         {
           "id": "E01-F20",
           "priority": "P2",
           "title": "Persistent IMAP failures are reported as a running Email channel",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on persistent/non-healing IMAP login/TLS/protocol/poll failure. Temporary reconnecting failures may intentionally retain a live supervisor."
         },
         {
           "id": "E01-F21",
           "priority": "P1",
           "title": "A cancelled Email runtime does not own its in-flight IMAP worker",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on disable/replacement/shutdown during an active asyncio.to_thread IMAP poll. The old worker can continue mailbox/file side effects under stale config after coroutine cancellation."
         },
         {
           "id": "E01-F22",
           "priority": "P2",
           "title": "Email body and attachment limits do not bound full-message fetch or decode memory",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Practical maximum depends on upstream provider message-size limits. Oversized attachments are skipped after decode; configured limits are not pre-materialization resource bounds."
         },
         {
           "id": "E01-F23",
           "priority": "P2",
           "title": "Email can be enabled with no sender allow-list but cannot bootstrap pairing from inbound mail",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Explicit allowFrom, wildcard, or pre-existing pairing approval makes the channel usable. This is a setup/admission mismatch, not an authorization bypass."
         },
         {
           "id": "E01-F24",
           "priority": "P2",
           "title": "Same-name Email attachments overwrite one another within a message",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on two accepted MIME parts in one message resolving to the same sanitized filename. Direct path traversal remains prevented."
         },
         {
           "id": "E01-F25",
           "priority": "P2",
           "title": "Feishu validation reports Connection verified without verifying Feishu credentials",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional user-visible consequence on stale/mistyped/nonfunctional manual credentials. The default QR authorization path has stronger provider evidence; runtime startup remains a separate authority."
         },
         {
           "id": "E01-F26",
           "priority": "P2",
           "title": "Feishu QR session storage is mutated concurrently without one session-map lock",
-          "state": "provisional-active-handoff",
+          "state": "retained-deferred-channel-finding",
           "qualification": "Conditional on overlapping local authenticated connect actions. Routes are local-browser restricted; the consequence is settings/connect failure or stale state, not unauthenticated remote memory corruption."
         }
       ],
@@ -1307,19 +1307,43 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-scope-closure",
+          "coverage": {
+            "deep_full": 40,
+            "deep_partial": 0,
+            "not_deeply_reviewed": 55,
+            "quick_sanity_screened": 55
+          },
+          "state": "scope-exception-limited-depth-closed",
+          "publication_credit_added": 0,
+          "note": "User-directed 2026-11-07 channel deprioritization; former E01-G-and-later deep review cancelled."
         }
-      ]
+      ],
+      "final_coverage": {
+        "deep_full": 40,
+        "deep_partial": 0,
+        "not_deeply_reviewed": 55,
+        "quick_sanity_screened": 55
+      },
+      "scope_decision": {
+        "date": "2026-11-07",
+        "authority": "explicit user scope decision",
+        "disposition": "Chat channels are non-priority; stop per-adapter deep review, leave channel functionality untouched, retain prior E01-A..F evidence/findings, and quick-screen the remaining 55 primaries only.",
+        "deep_review_required": false,
+        "quick_screen_result": "55/55 remaining primaries screened at high signal; no new finding promoted; Weixin pathless load_config() corroborates E01-F02.",
+        "next_deep_stream": "R01"
+      }
     }
   ],
   "resume_order": [
-    "E01-G only: fully review nanobot/channels/feishu/runtime.py and nanobot/channels/feishu/websocket.py to reach expected F42/P0/R53; no other adapter in the same stage.",
-    "Continue E01 in later bounded adapter substages until F95/P0/R0, then publish/coordinator-check E01 separately.",
     "R01",
     "M01",
     "X01",
     "Q01",
     "P01",
-    "Fresh integrated review and final consolidated D1–D7 discussion."
+    "Fresh integrated review and final consolidated D1–D7 discussion, carrying E01 as a limited-depth/non-priority exception."
   ],
-  "limits": "C00/H02/H03/U01/D01/T01 handoffs are published/checked with continuation verification. Historical provenance is preserved. D1–D7 and integrated review remain pending."
+  "limits": "Historical handoffs remain preserved. E01 is an explicit 2026-11-07 limited-depth exception: 40 deep reads preserved, 55 remaining primaries quick-screened only, zero new deep body credit. D1–D7 and integrated review remain pending."
 }
