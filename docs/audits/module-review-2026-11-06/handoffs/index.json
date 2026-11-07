@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 41,
+        "full": 48,
         "partial": 0,
-        "unread": 27
+        "unread": 20
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E/F reviewed API/SDK, WebSocket core, WebUI transport/media/transcript and session navigation/isolation at cumulative F41/P0/R27 with ten provisional findings. E02-F added E02-F08/F09/F10. Next bounded stage is E02-G small ancillary/session-service slice only.",
-      "last_checkpoint_commit": "96cee6ade663760a19ebc350b19c50e236a4b406",
+      "note": "E02-A/B/C/D/E/F/G reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation and ancillary session services at cumulative F48/P0/R20 with ten provisional findings. E02-G added no finding; transcription duration enforcement is deferred to M01 root ownership. Next bounded stage is E02-H build/dev and CLI-app management only.",
+      "last_checkpoint_commit": "ec67092826146b045c9f254fcfc389b679beaa34",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -852,12 +852,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-G",
+          "commit": "ec67092826146b045c9f254fcfc389b679beaa34",
+          "coverage": {
+            "full": 48,
+            "partial": 0,
+            "unread": 20
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-G only: small WebUI ancillary/session-service slice — websocket webui/index.ts, session_automations.py, sidebar_state.py, transcription_ws.py, version_check.py, nanobot_features_api.py, mcp_presets_runtime.py.",
+    "E02-H only: WebUI build/dev and CLI-app management — build.py, dev.py, cli_apps_api.py.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
