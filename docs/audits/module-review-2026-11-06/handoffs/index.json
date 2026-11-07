@@ -25,7 +25,7 @@
     "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
     "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
   },
-  "published_primary_body_credit_added": 530,
+  "published_primary_body_credit_added": 704,
   "handoffs": [
     {
       "stream": "C00",
@@ -710,114 +710,114 @@
         "partial": 0,
         "unread": 0
       },
-      "state": "active-incomplete-unaccepted",
-      "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E/F/G/H/I/J/K/L/M completed all 68 assigned primary source bodies at F68/P0/R0 with twenty-three provisional findings. E02-M added E02-F20–F23 across mutation attempt/outcome replay, pairing-renew routing, desktop-notification admission, and unpaginated thread projection. Source review is complete; publication/coordinator acceptance remains a separate next checkpoint.",
-      "last_checkpoint_commit": "fe32cf63fc847d44109b7da68075c94a2a500a6f",
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 68,
+      "note": "E02 F68/P0/R0 report/coverage published and coordinator-checked PASS with twenty-three promoted findings and nine retained questions; integrated review remains pending.",
+      "last_checkpoint_commit": "582a7eda1ac293d197a3ebab168dfb492cd203f0",
       "provisional_findings": [
         {
           "id": "E02-F01",
           "priority": "P2",
           "title": "Failed SDK transcript ingestion can leave a partial live-session mutation",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on unmanaged persistent ingest (default save=True) plus metadata or a valid message prefix before a later validation failure; managed persistent ingest is rejected before mutation and save=False is detached."
         },
         {
           "id": "E02-F02",
           "priority": "P1",
           "title": "Non-loopback WebSocket configurations can admit unauthenticated agent clients",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on a network-reachable listener whose effective client authentication is disabled or publicly self-serviceable. Defaults are loopback plus token-required; static-token and properly protected token/trusted-proxy deployments are excluded."
         },
         {
           "id": "E02-F03",
           "priority": "P2",
           "title": "Windows media GC can delete generated assets that are still referenced",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on Windows-style absolute paths plus execution of the media GC path. Default orphan grace is seven days; quota eviction can act earlier when enabled. POSIX reference discovery is unaffected."
         },
         {
           "id": "E02-F04",
           "priority": "P2",
           "title": "Global generated-assets library silently omits sessions after the first 200",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on more than 200 persisted WebUI sessions. Per-session asset routes are unaffected; the global endpoint truncates session discovery before group pagination and exposes no continuation."
         },
         {
           "id": "E02-F05",
           "priority": "P2",
           "title": "Lossy WebUI transcript filenames collapse distinct valid chat IDs",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on caller-supplied/imported/legacy chat IDs that differ only through characters collapsed by safe_key(), especially colon versus underscore. UUID-created chats do not naturally trigger it."
         },
         {
           "id": "E02-F06",
           "priority": "P2",
           "title": "Session deletion can report success while readable WebUI transcript residue remains",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on a filesystem deletion failure. Normal deletion removes both canonical and transcript state; transcript-only history is intentionally still listable/readable when canonical state is absent."
         },
         {
           "id": "E02-F07",
           "priority": "P2",
           "title": "Transcript rotation can duplicate completed turns after a mid-rotation write failure",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on a multi-turn transcript above the rotation threshold and a write/replace/manifest failure after segment commit but before active-tail replacement."
         },
         {
           "id": "E02-F08",
           "priority": "P2",
           "title": "Session search can return transcript-only results that read_session rejects",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on a WebUI transcript without canonical session metadata and a content query that matches it. Canonical and ordinary cross-channel persisted sessions are unaffected."
         },
         {
           "id": "E02-F09",
           "priority": "P2",
           "title": "Failed Temporary Chat attachment deletion is forgotten instead of retried",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on an unlink/filesystem failure during Temporary Chat cleanup. Normal disposal removes tracked media."
         },
         {
           "id": "E02-F10",
           "priority": "P2",
           "title": "Discarded Temporary Chat tombstones grow without bound until gateway shutdown",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on a large number of Temporary Chats during one long-lived gateway process. Restart clears the tombstones; ordinary low-volume use has small impact."
         },
         {
           "id": "E02-F11",
           "priority": "P2",
           "title": "CLI-app WebUI state is not scoped to the gateway's explicit config path",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on multiple explicit gateway/config instances in one process or embedding with a config path different from the process-global path. Common single-instance CLI startup normally aligns the paths."
         },
         {
           "id": "E02-F12",
           "priority": "P2",
           "title": "Successful WebUI build commands can leave a stale/missing bundle without failing startup",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on the frontend command returning zero while failing to refresh the expected bundle. The shipped Vite path normally writes the expected dist and ordinary write failures should usually return nonzero."
         },
         {
           "id": "E02-F13",
           "priority": "P2",
           "title": "MCP WebUI credential/runtime state is not scoped to the gateway's explicit config path",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on an explicit gateway/config path differing from the process-global config path. Normal single-instance CLI startup generally aligns those paths; OAuth store locking/generations and managed-path exact-match cleanup do not fix cross-instance root selection."
         },
         {
           "id": "E02-F14",
           "priority": "P2",
           "title": "Cancelled skills.sh installs can outlive their WebUI owner",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on cancellation after npx launch or timeout with surviving descendants. Normal successful installs are awaited; the SkillHub path does not create this child process, and remote installs remain separately package-policy gated."
         },
         {
           "id": "E02-F15",
           "priority": "P1",
           "title": "WebUI folder-grant authority is not scoped to the gateway's explicit config path",
-          "state": "provisional-active-handoff",
+          "state": "promoted-report",
           "qualification": "Conditional on an explicit/multi-instance gateway whose config path differs from the process-global path. Normal single-instance CLI startup generally aligns those paths; conflicting live writers may fail closed, but stale/shared grants and private-root selection can cross instance authority."
         },
         {
@@ -825,56 +825,56 @@
           "priority": "P1",
           "title": "Provider OAuth credential authority is shared across explicit gateway configs",
           "qualification": "Conditional on explicit gateway config paths being independent instance/security boundaries. Single-instance CLI use is not claimed broken; current Codex/Copilot compatibility intentionally uses user-home auth paths and xAI uses the process-global data root.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "E02-F17",
           "priority": "P1",
           "title": "Remote-access owner authority defaults to the process-global instance root",
           "qualification": "Conditional on divergent explicit/global config paths with default remote-access state/socket paths. Explicit distinct state_dir/socket_path avoids the collision.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "E02-F18",
           "priority": "P2",
           "title": "Settings usage accounting is not scoped to the explicit gateway config",
           "qualification": "Conditional on multiple logical instances sharing the process-global data root. If usage is intentionally user-global, this becomes a product-contract/documentation question.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "E02-F19",
           "priority": "P2",
           "title": "Truthy non-boolean remote-access disable values enable remote access",
           "qualification": "Conditional on a non-boolean payload such as the string \"false\". The shipped UI is expected to send a JSON boolean and the enable route is local-browser-only.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "E02-F20",
           "priority": "P2",
           "title": "Post-effect mutation failures are replayed as completed failures and suppress shared-state invalidation",
           "qualification": "Conditional on a failure after the underlying mutation has committed. Pre-effect validation failures remain correctly cached as failures; timeout/cancellation are already uncertain.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "E02-F21",
           "priority": "P2",
           "title": "Remote-access pairing renewal is implemented and called by the WebUI but omitted from settings routing",
           "qualification": "Deterministic for the local WebUI renewal helper. The remote owner operation registry does not expose renewal, so this is a local product-route defect rather than missing owner permission.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "E02-F22",
           "priority": "P2",
           "title": "Desktop notification GET has a tokenless cross-origin loopback side-effect surface",
           "qualification": "Conditional on a browser/request form that sends the cross-origin loopback GET despite private-network/mixed-content protections. The fixed argv command prevents shell injection.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         },
         {
           "id": "E02-F23",
           "priority": "P2",
           "title": "Legacy unpaginated WebUI thread reads bypass the response projection budget",
           "qualification": "Conditional on using the no-query compatibility path with a large transcript. The paginated client path is bounded; remote post-build size checks do not prevent full projection allocation.",
-          "state": "provisional-active-handoff"
+          "state": "promoted-report"
         }
       ],
       "substage_checkpoints": [
@@ -1021,12 +1021,30 @@
           "state": "source-review-complete-unpublished-unaccepted",
           "publication_credit_added": 0
         }
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 68,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "All 68 E02 primaries are full; 23 findings promoted; coordinator PASS recorded.",
+      "report": "reports/E02.md",
+      "coverage": "reports/E02-coverage.json",
+      "final_discussion_questions": [
+        "E02-Q1 authority/effective non-loopback authentication",
+        "E02-Q2 canonical session artifact identity and transcript-only state",
+        "E02-Q3 mutation effect receipts and unknown/applied outcomes",
+        "E02-Q4 explicit gateway instance root versus deliberate shared profiles",
+        "E02-Q5 terminal lifetime ownership for cleanup/processes",
+        "E02-Q6 repository-wide response/scan budgets",
+        "E02-Q7 authenticated local host side effects",
+        "E02-Q8 one generated client/server route-operation contract",
+        "E02-Q9 package/build/install subprocess trust and environment policy"
       ]
     }
   ],
   "resume_order": [
-    "E02 publication/coordinator checkpoint only: publish/reconcile the completed F68/P0/R0 E02 evidence and perform coordinator acceptance; do not begin E01 or integrated review in the same checkpoint.",
-    "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
     "M01",
