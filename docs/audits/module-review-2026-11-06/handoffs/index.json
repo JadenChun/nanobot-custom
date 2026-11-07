@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 23,
+        "full": 30,
         "partial": 0,
-        "unread": 47
+        "unread": 40
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1390,6 +1390,12 @@
           "priority": "P2",
           "title": "Pairing can proceed without a verified Tailscale Serve mapping",
           "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F08",
+          "priority": "P2",
+          "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
+          "state": "provisional-active-handoff"
         }
       ],
       "substage_checkpoints": [
@@ -1425,6 +1431,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-D",
+          "commit": "99a92dcc7092a3d96649f03f3e5b09ff468f0d65",
+          "coverage": {
+            "full": 30,
+            "partial": 0,
+            "unread": 40
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1438,8 +1455,8 @@
     }
   ],
   "resume_order": [
-    "R01-D only: fully review MainActivity.java, NanobotWebViewClient.java, NativeProbe.java, RunKeepAliveRegistry.kt, RunKeepAliveService.kt, network/CustodyStore.kt and network/NativeNetwork.kt to reach expected F30/P0/R40.",
-    "Continue R01 in later bounded NativeNetworkPlugin/JNI/Go/native-client/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-E only: fully review mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetworkPlugin.kt to reach expected F31/P0/R39.",
+    "Continue R01 in later bounded JNI/Go/native-client/helper/tooling substages until F70/P0/R0, then publish/coordinator-check R01 separately.",
     "M01",
     "X01",
     "Q01",
