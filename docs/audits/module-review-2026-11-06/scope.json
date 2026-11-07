@@ -275,5 +275,26 @@
       }
     ],
     "denominator_rule": "The frozen 919-path inventory remains unchanged for provenance. Progress toward the current deep-review objective uses 824 targets after subtracting the explicit 95-target E01 limited-depth exception."
+  },
+  "post_pin_staging_observation": {
+    "checked_at": "2026-11-07",
+    "frozen_source_commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "observed_staging_commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+    "ahead_by": 2,
+    "changed_paths": [
+      {
+        "path": "nanobot/agent/skills.py",
+        "role": "implementation-or-tooling-source",
+        "affected_stream": "K01",
+        "r01_impact": "none observed; change adjusts built-in skill display-root/path presentation"
+      },
+      {
+        "path": "tests/agent/test_skills_loader.py",
+        "role": "test-support-source",
+        "affected_stream": "K01",
+        "r01_impact": "none"
+      }
+    ],
+    "policy": "Do not rewrite the frozen 919-target source manifest. Preserve existing accepted evidence at its original pin, record R01 as unaffected, and refresh the affected K01 current-origin evidence before final integrated closure."
   }
 }
