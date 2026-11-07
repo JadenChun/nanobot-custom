@@ -1,0 +1,585 @@
+{
+  "schema_version": 1,
+  "stream_id": "M01",
+  "report": "reports/M01.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "ChatGPT web continuation source reviewer/coordinator",
+    "handoff": "handoffs/M01-A.md plus the 2026-11-07 M01 completion source review",
+    "published_by": "ChatGPT web continuation coordinator"
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/agent/tools/image_generation.py",
+    "nanobot/attachments/__init__.py",
+    "nanobot/attachments/adoption.py",
+    "nanobot/attachments/context.py",
+    "nanobot/attachments/ingress.py",
+    "nanobot/attachments/lifecycle.py",
+    "nanobot/attachments/models.py",
+    "nanobot/attachments/policy.py",
+    "nanobot/attachments/store.py",
+    "nanobot/attachments/uploads.py",
+    "nanobot/audio/__init__.py",
+    "nanobot/audio/transcription.py",
+    "nanobot/audio/transcription_registry.py",
+    "nanobot/utils/document.py"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/tools/image_generation.py",
+      "ranges": [
+        [
+          1,
+          432
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "d59908171ac80d0847b593571195d02bcb80e918",
+      "sha256": "a56e306f74430aa8d421ff8f159924d5d13f5883ee204907454fe1be0c235916",
+      "bytes": 17936,
+      "line_count": 432,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/__init__.py",
+      "ranges": [
+        [
+          1,
+          46
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "69d755689ab609215757123a12dc2dec64b11217",
+      "sha256": "ede3a6bbb766a6e341bbd477f52287a8aee7518f5e44beb1ae0592538d8a03a1",
+      "bytes": 1290,
+      "line_count": 46,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/adoption.py",
+      "ranges": [
+        [
+          1,
+          107
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "00abb5553c1a2c61d32b37b6d96e12de77a039fc",
+      "sha256": "6ffc3b0a7ad8a9347c6d5019c4fdfbeff84c1f66b0584863aa376d583e6fb0bd",
+      "bytes": 3814,
+      "line_count": 107,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/context.py",
+      "ranges": [
+        [
+          1,
+          250
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "da0540e3b875e7457806f188b6295ed850cc0651",
+      "sha256": "0969d357a554f20dd755243fc9b587461539eb25943a631a1f1b94527bd26a79",
+      "bytes": 8795,
+      "line_count": 250,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/ingress.py",
+      "ranges": [
+        [
+          1,
+          269
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "f476df7c8c3c42c2adb49d197f13dcfd1c967c67",
+      "sha256": "e70127a2cb976aae2d2b6fd18fbe9565c36831f28c0b9d17e1f0c4704d196360",
+      "bytes": 8974,
+      "line_count": 269,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/lifecycle.py",
+      "ranges": [
+        [
+          1,
+          241
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "e0f1039e10b023e857e6fdd85d4e07476b3b306b",
+      "sha256": "adbdf4f8945f0d03d9b8466b21cbed2df4350ea1166f8505961e839075bee779",
+      "bytes": 8015,
+      "line_count": 241,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/models.py",
+      "ranges": [
+        [
+          1,
+          106
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "f3867b3076d836127f8372f246992e4b60bc093d",
+      "sha256": "7d7b51f0f61203101eb214d1877ace0344c384ed1f6d84c28ef097a323c94a4e",
+      "bytes": 2921,
+      "line_count": 106,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/policy.py",
+      "ranges": [
+        [
+          1,
+          106
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "8e2d8875a8d305fa536c24a2e2ba6db33c2a7364",
+      "sha256": "0b9c355ae79116adae9f618d9db19d55438c036a42d2493c322577c7b36e4e5b",
+      "bytes": 2582,
+      "line_count": 106,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/store.py",
+      "ranges": [
+        [
+          1,
+          346
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "844ef2fbb7a64b1e972f3be2ba9914a3076a2b21",
+      "sha256": "b123cbd731eb3933dd9b1a894164040b79e84adde12d1b24e63bd48217144441",
+      "bytes": 11697,
+      "line_count": 346,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/attachments/uploads.py",
+      "ranges": [
+        [
+          1,
+          107
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "a8cbfd58ec389fd51b383fdc609e7826485abc13",
+      "sha256": "6328079c0b0ce2188f1e77cec845a8da2e16382c4d830283be4edced25120891",
+      "bytes": 3220,
+      "line_count": 107,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/audio/__init__.py",
+      "ranges": [
+        [
+          1,
+          2
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "2e21f694de5d7f2f3c7c477964f4bd253b7b28c8",
+      "sha256": "9028e46d0989931b6ec17731ebf17feb09f4ff85e0b5e805cae5888c2651540d",
+      "bytes": 37,
+      "line_count": 2,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/audio/transcription.py",
+      "ranges": [
+        [
+          1,
+          216
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "c336cc88edd70e192e4f0e78426936628e37ebdc",
+      "sha256": "72f1562090af59fa0cb949e36a18f818a9a064c91a79d7f0a3cc6b2faa50769d",
+      "bytes": 7221,
+      "line_count": 216,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/audio/transcription_registry.py",
+      "ranges": [
+        [
+          1,
+          101
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "a044abd604046d95d76e39e987fbd8de17cc0ad4",
+      "sha256": "26a3b7170b3fe76082bef87d8ee757a725e49a1d75170ec5e740389122793a68",
+      "bytes": 3364,
+      "line_count": 101,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/utils/document.py",
+      "ranges": [
+        [
+          1,
+          701
+        ]
+      ],
+      "extent": "complete body 1–EOF",
+      "git_blob": "69d182f961f1049925c8d0712769c5ec81bbee8a",
+      "sha256": "02753efd37acc1e5e72d5a8fb07e84c697c892a08e16a4b632d55538b0b1bb1a",
+      "bytes": 24719,
+      "line_count": 701,
+      "primary_stream": "M01",
+      "purpose": "Fresh full source body review; frozen inventory SHA carried without separate local SHA256 recomputation.",
+      "evidence_origin": "ChatGPT web continuation coordinator read M01-A then M01 completion on 2026-11-07"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "paths": [
+        "nanobot/bus/events.py",
+        "nanobot/agent/loop.py",
+        "nanobot/agent/context.py",
+        "nanobot/webui/inbound_commands.py",
+        "nanobot/webui/media_gateway.py",
+        "nanobot/webui/attachment_ingress.py",
+        "nanobot/webui/transcription_ws.py",
+        "nanobot/webui/media_api.py",
+        "nanobot/webui/media_maintenance.py",
+        "nanobot/webui/gateway_services.py",
+        "nanobot/channels/websocket/runtime.py",
+        "nanobot/cli/commands.py",
+        "nanobot/utils/media_decode.py",
+        "nanobot/agent/tools/filesystem.py",
+        "nanobot/providers/transcription.py",
+        "nanobot/utils/artifacts.py",
+        "nanobot/agent/tools/image_configuration.py"
+      ],
+      "purpose": "Full body or bounded source excerpts inspected; reported source paths/ranges and entrypoint/caller consequences in M01.md. Not M01 primary credit."
+    }
+  ],
+  "search_only": [
+    {
+      "query": "GitHub index terms adopt_media_paths, commit_batch, UploadRegistry.bind, prune_unreferenced",
+      "result": "No indexed matches; direct GitHub file reads used instead; zero semantic credit."
+    },
+    {
+      "query": "attachment commit history search",
+      "result": "Broad search only, no verified full M01 historical lineage"
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "paths": [
+        "tests/attachments/test_attachment_adoption.py",
+        "tests/attachments/test_attachment_context.py",
+        "tests/attachments/test_attachment_lifecycle.py",
+        "tests/attachments/test_attachment_store.py",
+        "tests/attachments/test_service_ingress.py"
+      ],
+      "extent": "full bodies, read-only"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "paths": [
+        "tests/webui/test_transcription_ws.py",
+        "tests/providers/test_transcription.py",
+        "tests/tools/test_image_generation_tool.py",
+        "tests/agent/test_attachment_references.py",
+        "tests/agent/test_image_generation_hot_reload.py",
+        "tests/test_document_parsing.py",
+        "tests/test_context_documents.py",
+        "tests/test_api_attachment.py"
+      ],
+      "extent": "test definitions and selected guarded/edge sections, read-only; no full test-body credit claimed"
+    }
+  ],
+  "support_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "paths": [
+        "AGENTS.md",
+        ".agent/design.md",
+        ".agent/security.md",
+        ".agent/gotchas.md",
+        "docs/audits/module-review-2026-11-06/README.md",
+        "docs/audits/module-review-2026-11-06/scope.json",
+        "docs/audits/module-review-2026-11-06/report-template.md",
+        "docs/audits/module-review-2026-11-06/coverage-template.json",
+        "docs/audits/codebase-discovery/path-inventory.tsv"
+      ],
+      "purpose": "Scope, architecture, security, provenance, reporting format; no source-review body credit."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/attachment/attachment/src/types.ts",
+      "range": [
+        1,
+        170
+      ],
+      "mechanism": "Content-addressed immutable refs, byte-verified image identity and streamable file saves"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/llm/llm-deepseek/src/images.ts",
+      "range": [
+        1,
+        112
+      ],
+      "mechanism": "Per-route image input budgets and inline/offload limits"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/tools/handlers/view_image.rs",
+      "range": [
+        1,
+        530
+      ],
+      "mechanism": "Sandbox-backed file resolution and image-byte verification"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/ext/image-generation/src/tool.rs",
+      "range": [
+        1,
+        781
+      ],
+      "mechanism": "Generated-image artifact save and separate reference publication"
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "kind": "historic",
+      "note": "Frozen earlier discovery and architecture evidence retained at own pin; targeted attachment-related commit search did not establish per-file introduction lineage."
+    },
+    {
+      "kind": "staging-delta",
+      "from": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "to": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "changed_paths": [
+        "nanobot/agent/skills.py",
+        "tests/agent/test_skills_loader.py"
+      ],
+      "m01_impact": "no M01 primary path changed"
+    }
+  ],
+  "findings": [
+    {
+      "id": "M01-F01",
+      "priority": "P2",
+      "confidence": "high (source)",
+      "title": "Migration dry-run mutates blob and sidecar storage",
+      "source": "nanobot/attachments/lifecycle.py:_migrate_event/migrate_legacy_media; nanobot/cli/commands.py:attachments_migrate",
+      "qualification": "Triggered by qualifying legacy media events, including automatic pre-confirmation preview; session text stays unchanged while blob storage is written."
+    },
+    {
+      "id": "M01-F02",
+      "priority": "P2",
+      "confidence": "high (source)",
+      "title": "Blob prune retains associated metadata sidecar",
+      "source": "nanobot/attachments/lifecycle.py:prune_unreferenced; nanobot/attachments/store.py:_write_sidecar",
+      "qualification": "Retention/hygiene; not asserted security breach."
+    },
+    {
+      "id": "M01-F03",
+      "priority": "P2",
+      "confidence": "high source / conditional policy",
+      "title": "Audio duration guard trusts optional client metadata",
+      "source": "nanobot/audio/transcription.py:transcribe_audio_data_url; nanobot/webui/transcription_ws.py:webui_transcription_event",
+      "qualification": "Only a defect if max_duration_sec is intended authoritative; byte limit still enforced."
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "M01-Q1",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "text": "Must CLI migration dry-run be strictly zero-write across session and media storage?"
+    },
+    {
+      "id": "M01-Q2",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "text": "Should sidecar cleanup and cross-owner retained references be guaranteed by one retention contract?"
+    },
+    {
+      "id": "M01-Q3",
+      "decisions": [
+        "D2",
+        "D4"
+      ],
+      "text": "Which external absolute legacy attachment paths remain supported and with which live authority?"
+    },
+    {
+      "id": "M01-Q4",
+      "decisions": [
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "text": "Should model-bound image count/bytes have provider-specific admission budgets beyond upload caps?"
+    },
+    {
+      "id": "M01-Q5",
+      "decisions": [
+        "D5",
+        "D7"
+      ],
+      "text": "Is audio max duration advisory or enforceable server admission?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    "E02 WebUI admission/transcript/signed media",
+    "H01/H02 turn source and session references",
+    "S01 path authority",
+    "H03 provider budgets",
+    "T01 image tool and filesystem",
+    "R01 mobile media ingress",
+    "U01 upload UI",
+    "E01 stays limited-depth nonpriority"
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "checked_at": "2026-11-07",
+    "authority": "ChatGPT web continuation coordinator (same source reviewer)",
+    "evidence": "14 exact pinned full source bodies, unique inventory assignments, checked retrieved UTF-8 byte sizes, reviewed actual CLI/WebUI call sites and bounded tests, challenged 3 final findings, compared 4 pinned DSH/Codex mechanisms; no independent verification claimed",
+    "coverage": {
+      "full": 14,
+      "partial": 0,
+      "unread": 0
+    },
+    "findings_promoted": 3,
+    "discussion_questions": 5,
+    "notes": "SHA-256 column copied from immutable inventory; verified byte sizes and fetched Git blob identities, not separately rehashed file bodies in this environment. Semantic source check distinct from integrated review."
+  },
+  "integrated_review": {
+    "status": "pending",
+    "evidence": null
+  },
+  "git_checkpoint": {
+    "status": "pending",
+    "commit": null
+  },
+  "limits": [
+    "Source inspection only; no repository execution, tests, builds, type checks, lint, dependency installation, apps, provider calls, sandbox probes or benchmarking.",
+    "No direct runtime proof; provider-cost and duration consequences conditional.",
+    "GitHub was used for pinned full source, historical search and M01 audit docs only."
+  ],
+  "counts": {
+    "assigned_primary": 14,
+    "full": 14,
+    "partial": 0,
+    "unread": 0,
+    "context_sources": 17,
+    "reference_bodies": 4,
+    "findings": 3,
+    "discussion_questions": 5
+  }
+}
