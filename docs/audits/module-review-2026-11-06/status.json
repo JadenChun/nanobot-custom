@@ -2,7 +2,7 @@
   "schema_version": 1,
   "review": "whole-project-module-source-review-2026-11-06",
   "date": "2026-11-06",
-  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F17/P0/R78 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
+  "publication_stage": "ACTIVE. C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02 are coordinator-checked; E01 source inspection is active at F21/P0/R74 and remains unaccepted; R01/M01/X01/Q01/P01 remain queued.",
   "source_pin": {
     "repository": "https://github.com/JadenChun/nanobot-custom",
     "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
@@ -18,7 +18,7 @@
     "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence."
   },
   "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
-  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-B has an active source-only handoff at F17/P0/R78 with zero publication credit; next bounded substage is E01-C DingTalk package.",
+  "dispatch_evidence": "Coordinator-checked source-review publications include C00/H01/H02/H03/S01/S02/U01/D01/T01/A01/K01/E02. E01-C has an active source-only handoff at F21/P0/R74 with zero publication credit; next bounded substage is E01-D Discord package.",
   "counts": {
     "streams": 18,
     "primary_streams": 17,
@@ -446,20 +446,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E01.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E01-B Telegram package is checkpointed at F17/P0/R78 with six provisional findings total. New Telegram findings: E01-F04 persisted startup-invalid enablement can escape as SystemExit; E01-F05 forum inline-keyboard callbacks lose topic session identity; E01-F06 ordinary Telegram delivery hides retries beneath the manager attempt cap. E01 remains unpublished/unaccepted; next is E01-C DingTalk package only.",
+      "coordinator_observation": "E01-C DingTalk package is checkpointed at F21/P0/R74 with eleven provisional findings total. New DingTalk findings: E01-F07 provider filenames can escape the media root; E01-F08 denied senders can trigger inbound download work before authorization; E01-F09 persistent stream failures can report running; E01-F10 multipart retries can replay delivered parts; E01-F11 downloaded attachments bypass the canonical media/attachment pipeline. E01 remains unpublished/unaccepted; next is E01-D Discord package only.",
       "active_source_review_coverage": {
-        "full": 17,
+        "full": 21,
         "partial": 0,
-        "unread": 78
+        "unread": 74
       },
-      "active_provisional_findings_count": 6,
+      "active_provisional_findings_count": 11,
       "active_substage_checkpoint": {
-        "stage": "E01-B",
-        "commit": "42acf7bd6443c771b417a3738d8ed4a9be3c53ed",
+        "stage": "E01-C",
+        "commit": "c2dfd60ff7fb18d97c4c62ef9440dbfeb245e509",
         "coverage": {
-          "full": 17,
+          "full": 21,
           "partial": 0,
-          "unread": 78
+          "unread": 74
         },
         "publication_credit_added": 0
       }
