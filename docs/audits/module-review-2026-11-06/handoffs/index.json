@@ -1342,9 +1342,9 @@
       "path": "handoffs/R01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 56,
+        "full": 64,
         "partial": 0,
-        "unread": 14
+        "unread": 6
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
@@ -1437,6 +1437,24 @@
           "id": "R01-F15",
           "priority": "P2",
           "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F16",
+          "priority": "P2",
+          "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F17",
+          "priority": "P2",
+          "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "R01-F18",
+          "priority": "P2",
+          "title": "Gradle wrapper distribution is not cryptographically pinned",
           "state": "provisional-active-handoff"
         }
       ],
@@ -1539,6 +1557,17 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-J",
+          "commit": "144cfb93031514984b55e2d523e0334c74c2cb2b",
+          "coverage": {
+            "full": 64,
+            "partial": 0,
+            "unread": 6
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ],
       "staging_observation": {
@@ -1552,8 +1581,8 @@
     }
   ],
   "resume_order": [
-    "R01-J only: fully review mobile/android/gradlew, gradlew.bat, bootstrap-toolchain.sh, mobile-env.sh, build-native-network.sh, build-shared-webui.sh, build-debug.sh and build-release.sh to reach expected F64/P0/R6.",
-    "R01-K later: review the six remaining contract/parity/qualification/update scripts to reach F70/P0/R0, then publish/coordinator-check R01 separately.",
+    "R01-K only: fully review build-operations-contract.py, check-desktop-parity.py, install-release-update.sh, qualify-emulator.sh, test-cabi.sh and test-update-persistence.sh to reach F70/P0/R0.",
+    "After R01-K, publish/coordinator-check R01 separately; do not combine source completion with acceptance or integrated review.",
     "M01",
     "X01",
     "Q01",
