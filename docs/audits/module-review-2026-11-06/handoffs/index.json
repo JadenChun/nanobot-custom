@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 64,
+        "full": 68,
         "partial": 0,
-        "unread": 4
+        "unread": 0
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E/F/G/H/I/J/K/L reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services, build/dev/CLI-app wrapper, MCP OAuth/preset APIs, WebUI skills surfaces, workspace management, and settings domain core at cumulative F64/P0/R4 with nineteen provisional findings. E02-L added E02-F16–F19. Next bounded stage is E02-M final routing/client-events wrappers only.",
-      "last_checkpoint_commit": "d36625dcab541008e6b3ff050b208b8e2833bdd4",
+      "note": "E02-A/B/C/D/E/F/G/H/I/J/K/L/M completed all 68 assigned primary source bodies at F68/P0/R0 with twenty-three provisional findings. E02-M added E02-F20–F23 across mutation attempt/outcome replay, pairing-renew routing, desktop-notification admission, and unpaginated thread projection. Source review is complete; publication/coordinator acceptance remains a separate next checkpoint.",
+      "last_checkpoint_commit": "fe32cf63fc847d44109b7da68075c94a2a500a6f",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -846,6 +846,34 @@
           "priority": "P2",
           "title": "Truthy non-boolean remote-access disable values enable remote access",
           "qualification": "Conditional on a non-boolean payload such as the string \"false\". The shipped UI is expected to send a JSON boolean and the enable route is local-browser-only.",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "E02-F20",
+          "priority": "P2",
+          "title": "Post-effect mutation failures are replayed as completed failures and suppress shared-state invalidation",
+          "qualification": "Conditional on a failure after the underlying mutation has committed. Pre-effect validation failures remain correctly cached as failures; timeout/cancellation are already uncertain.",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "E02-F21",
+          "priority": "P2",
+          "title": "Remote-access pairing renewal is implemented and called by the WebUI but omitted from settings routing",
+          "qualification": "Deterministic for the local WebUI renewal helper. The remote owner operation registry does not expose renewal, so this is a local product-route defect rather than missing owner permission.",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "E02-F22",
+          "priority": "P2",
+          "title": "Desktop notification GET has a tokenless cross-origin loopback side-effect surface",
+          "qualification": "Conditional on a browser/request form that sends the cross-origin loopback GET despite private-network/mixed-content protections. The fixed argv command prevents shell injection.",
+          "state": "provisional-active-handoff"
+        },
+        {
+          "id": "E02-F23",
+          "priority": "P2",
+          "title": "Legacy unpaginated WebUI thread reads bypass the response projection budget",
+          "qualification": "Conditional on using the no-query compatibility path with a large transcript. The paginated client path is bounded; remote post-build size checks do not prevent full projection allocation.",
           "state": "provisional-active-handoff"
         }
       ],
@@ -981,12 +1009,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-M",
+          "commit": "fe32cf63fc847d44109b7da68075c94a2a500a6f",
+          "coverage": {
+            "full": 68,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "source-review-complete-unpublished-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-M only: final WebUI routing/client-events wrappers — inbound_commands.py, settings_routes.py, ws_http.py and packages/client-events/notifications.ts; save F68/P0/R0 before separate publication/coordinator check.",
+    "E02 publication/coordinator checkpoint only: publish/reconcile the completed F68/P0/R0 E02 evidence and perform coordinator acceptance; do not begin E01 or integrated review in the same checkpoint.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
