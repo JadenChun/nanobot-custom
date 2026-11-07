@@ -706,14 +706,14 @@
       "path": "handoffs/E02.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 55,
+        "full": 57,
         "partial": 0,
-        "unread": 13
+        "unread": 11
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E02-A/B/C/D/E/F/G/H/I/J reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services, build/dev/CLI-app wrapper, MCP OAuth/preset APIs, and WebUI skills surfaces at cumulative F55/P0/R13 with fourteen provisional findings. E02-J added E02-F14. Next bounded stage is E02-K WebUI workspace management only.",
-      "last_checkpoint_commit": "1b5691612ce23c912bb78ad23c1d911df0df7e77",
+      "note": "E02-A/B/C/D/E/F/G/H/I/J/K reviewed API/SDK, WebSocket core, WebUI transport/media/transcript/session navigation, ancillary services, build/dev/CLI-app wrapper, MCP OAuth/preset APIs, WebUI skills surfaces, and WebUI workspace management at cumulative F57/P0/R11 with fifteen provisional findings. E02-K added E02-F15. Next bounded stage is E02-L WebUI settings domain core only.",
+      "last_checkpoint_commit": "8ee9d99b2c24551e4a44e44ad18eafb080450990",
       "provisional_findings": [
         {
           "id": "E02-F01",
@@ -812,6 +812,13 @@
           "title": "Cancelled skills.sh installs can outlive their WebUI owner",
           "state": "provisional-active-handoff",
           "qualification": "Conditional on cancellation after npx launch or timeout with surviving descendants. Normal successful installs are awaited; the SkillHub path does not create this child process, and remote installs remain separately package-policy gated."
+        },
+        {
+          "id": "E02-F15",
+          "priority": "P1",
+          "title": "WebUI folder-grant authority is not scoped to the gateway's explicit config path",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on an explicit/multi-instance gateway whose config path differs from the process-global path. Normal single-instance CLI startup generally aligns those paths; conflicting live writers may fail closed, but stale/shared grants and private-root selection can cross instance authority."
         }
       ],
       "substage_checkpoints": [
@@ -924,12 +931,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-K",
+          "commit": "8ee9d99b2c24551e4a44e44ad18eafb080450990",
+          "coverage": {
+            "full": 57,
+            "partial": 0,
+            "unread": 11
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E02-K only: WebUI workspace management surfaces — workspace_directories.py and workspaces.py.",
+    "E02-L only: WebUI settings domain core — settings_api.py, settings_capabilities.py, settings_contracts.py, settings_models.py, settings_remote.py, settings_services.py and settings_system.py.",
     "Continue E02 in later bounded substages until F68/P0/R0, then publish/coordinator-check E02 separately.",
     "E01",
     "R01",
