@@ -1049,14 +1049,14 @@
       "path": "handoffs/E01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 26,
+        "full": 31,
         "partial": 0,
-        "unread": 69
+        "unread": 64
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E01-D Discord package completed at F26/P0/R69 with sixteen provisional findings total and zero publication credit; next is E01-E Email package only.",
-      "last_checkpoint_commit": "e8a5b408cbd1f132bcb2fbc875c2529140464fcd",
+      "note": "E01-E Email package completed at F31/P0/R64 with twenty-four provisional findings total and zero publication credit; next is E01-F Feishu control/setup/instance/UI primaries only.",
+      "last_checkpoint_commit": "1f42a8f8aaa80353c85180132972cebc72acd007",
       "provisional_findings": [
         {
           "id": "E01-F01",
@@ -1169,6 +1169,62 @@
           "title": "Discord startup failures are swallowed before manager failure accounting",
           "state": "provisional-active-handoff",
           "qualification": "Primarily startup failures not covered by the REST token probe, stale credentials after validation, proxy/client construction, or other gateway-start exceptions. Partial client cleanup itself is preserved."
+        },
+        {
+          "id": "E01-F17",
+          "priority": "P1",
+          "title": "Email anti-spoofing accepts SPF/DKIM pass results that are not bound to the allowed From identity",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on the upstream mailbox delivering mail whose visible From is allowlisted while the trusted/pass identities are unrelated, or preserving an untrusted Authentication-Results header. Strong upstream DMARC/authserv-id enforcement can prevent the trigger."
+        },
+        {
+          "id": "E01-F18",
+          "priority": "P2",
+          "title": "Email acknowledges mailbox messages before durable agent processing",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on failure after UID processing/Seen or queue admission but before durable turn processing. markSeen=false/no post-action preserves the source but changes replay semantics."
+        },
+        {
+          "id": "E01-F19",
+          "priority": "P2",
+          "title": "Email replies can attach to the wrong Message-ID when one sender has multiple in-flight emails",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on multiple source messages from the same sender before the earlier response is sent. Recipient identity remains the same; source-bound subject metadata is preserved."
+        },
+        {
+          "id": "E01-F20",
+          "priority": "P2",
+          "title": "Persistent IMAP failures are reported as a running Email channel",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on persistent/non-healing IMAP login/TLS/protocol/poll failure. Temporary reconnecting failures may intentionally retain a live supervisor."
+        },
+        {
+          "id": "E01-F21",
+          "priority": "P1",
+          "title": "A cancelled Email runtime does not own its in-flight IMAP worker",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on disable/replacement/shutdown during an active asyncio.to_thread IMAP poll. The old worker can continue mailbox/file side effects under stale config after coroutine cancellation."
+        },
+        {
+          "id": "E01-F22",
+          "priority": "P2",
+          "title": "Email body and attachment limits do not bound full-message fetch or decode memory",
+          "state": "provisional-active-handoff",
+          "qualification": "Practical maximum depends on upstream provider message-size limits. Oversized attachments are skipped after decode; configured limits are not pre-materialization resource bounds."
+        },
+        {
+          "id": "E01-F23",
+          "priority": "P2",
+          "title": "Email can be enabled with no sender allow-list but cannot bootstrap pairing from inbound mail",
+          "state": "provisional-active-handoff",
+          "qualification": "Explicit allowFrom, wildcard, or pre-existing pairing approval makes the channel usable. This is a setup/admission mismatch, not an authorization bypass."
+        },
+        {
+          "id": "E01-F24",
+          "priority": "P2",
+          "title": "Same-name Email attachments overwrite one another within a message",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on two accepted MIME parts in one message resolving to the same sanitized filename. Direct path traversal remains prevented."
         }
       ],
       "substage_checkpoints": [
@@ -1215,12 +1271,24 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-E",
+          "commit": "1f42a8f8aaa80353c85180132972cebc72acd007",
+          "coverage": {
+            "full": 31,
+            "partial": 0,
+            "unread": 64
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E01-E only: fully review the five Email package primaries to reach expected F31/P0/R64; no other adapter in the same stage.",
+    "E01-F only: fully review the nine Feishu control/setup/instance/UI primaries (exclude runtime.py and websocket.py) to reach expected F40/P0/R55.",
+    "E01-G only afterward: Feishu runtime.py and websocket.py; do not combine with E01-F.",
     "Continue E01 in later bounded adapter substages until F95/P0/R0, then publish/coordinator-check E01 separately.",
     "R01",
     "M01",
