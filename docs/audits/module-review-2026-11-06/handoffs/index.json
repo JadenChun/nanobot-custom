@@ -1042,10 +1042,62 @@
         "E02-Q8 one generated client/server route-operation contract",
         "E02-Q9 package/build/install subprocess trust and environment policy"
       ]
+    },
+    {
+      "stream": "E01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/E01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 12,
+        "partial": 0,
+        "unread": 83
+      },
+      "state": "active-incomplete-unaccepted",
+      "published_body_credit_added": 0,
+      "note": "E01-A shared channel framework completed at F12/P0/R83 with three provisional findings and zero publication credit; next is E01-B Telegram package only.",
+      "last_checkpoint_commit": "68b4f0a5a5b9ae7ff87acbe6a571147d18676b2f",
+      "provisional_findings": [
+        {
+          "id": "E01-F01",
+          "priority": "P2",
+          "title": "Failed outbound delivery can poison origin duplicate suppression",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a source-bound fingerprint being inserted before an actual send failure and a later same-origin outbound carrying the same normalized content. Separate source IDs and the explicit receipt-capable cron path are excluded."
+        },
+        {
+          "id": "E01-F02",
+          "priority": "P1",
+          "title": "Shared channel runtime/validation/transcription can ignore the gateway's explicit config path",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on an explicit gateway/manager config path differing from the process-global path. Common foreground CLI startup normally aligns them."
+        },
+        {
+          "id": "E01-F03",
+          "priority": "P2",
+          "title": "Truthy non-boolean enabled values activate packaged channels",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on malformed/manual packaged-channel config using a non-boolean truthy value such as the strings false or 0. Normal settings writers are expected to persist booleans; legacy entry-point activation is stricter."
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "E01-A",
+          "commit": "68b4f0a5a5b9ae7ff87acbe6a571147d18676b2f",
+          "coverage": {
+            "full": 12,
+            "partial": 0,
+            "unread": 83
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        }
+      ]
     }
   ],
   "resume_order": [
-    "E01",
+    "E01-B only: fully review the five Telegram package primaries to reach expected F17/P0/R78; no other adapter in the same stage.",
+    "Continue E01 in later bounded adapter substages until F95/P0/R0, then publish/coordinator-check E01 separately.",
     "R01",
     "M01",
     "X01",
