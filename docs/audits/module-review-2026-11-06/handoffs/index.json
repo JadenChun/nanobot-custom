@@ -1049,14 +1049,14 @@
       "path": "handoffs/E01.md",
       "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
       "supplied_coverage": {
-        "full": 21,
+        "full": 26,
         "partial": 0,
-        "unread": 74
+        "unread": 69
       },
       "state": "active-incomplete-unaccepted",
       "published_body_credit_added": 0,
-      "note": "E01-C DingTalk package completed at F21/P0/R74 with eleven provisional findings total and zero publication credit; next is E01-D Discord package only.",
-      "last_checkpoint_commit": "c2dfd60ff7fb18d97c4c62ef9440dbfeb245e509",
+      "note": "E01-D Discord package completed at F26/P0/R69 with sixteen provisional findings total and zero publication credit; next is E01-E Email package only.",
+      "last_checkpoint_commit": "e8a5b408cbd1f132bcb2fbc875c2529140464fcd",
       "provisional_findings": [
         {
           "id": "E01-F01",
@@ -1134,6 +1134,41 @@
           "title": "DingTalk downloads inbound attachments but bypasses the canonical media/attachment pipeline",
           "state": "provisional-active-handoff",
           "qualification": "A sufficiently privileged agent may manually read the textual path; the defect is bypass of canonical adoption/multimodal projection, not guaranteed byte loss in every deployment."
+        },
+        {
+          "id": "E01-F12",
+          "priority": "P2",
+          "title": "Unauthorized Discord DMs can persist attachments before pairing authorization",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on an unauthorized DM carrying attachments. Each file is checked against the adapter's declared 20 MiB cap; guild messages rejected before download are unaffected."
+        },
+        {
+          "id": "E01-F13",
+          "priority": "P2",
+          "title": "Discord streaming silently loses deltas while the client is unready",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on a streaming-enabled turn while Discord client readiness is false. Non-streaming ordinary sends raise and are manager-retried."
+        },
+        {
+          "id": "E01-F14",
+          "priority": "P2",
+          "title": "Discord attachment upload failures can be hidden as successful message delivery",
+          "state": "provisional-active-handoff",
+          "qualification": "Transport/provider file-send failures are hidden when text or another attachment succeeds. Media-only messages where all attachments fail receive a visible fallback."
+        },
+        {
+          "id": "E01-F15",
+          "priority": "P2",
+          "title": "Discord multipart retries can duplicate already-delivered files or text chunks",
+          "state": "provisional-active-handoff",
+          "qualification": "Conditional on multipart ordinary or overflow-stream delivery and a retryable failure after an earlier part completed. Single-part sends are excluded."
+        },
+        {
+          "id": "E01-F16",
+          "priority": "P2",
+          "title": "Discord startup failures are swallowed before manager failure accounting",
+          "state": "provisional-active-handoff",
+          "qualification": "Primarily startup failures not covered by the REST token probe, stale credentials after validation, proxy/client construction, or other gateway-start exceptions. Partial client cleanup itself is preserved."
         }
       ],
       "substage_checkpoints": [
@@ -1169,12 +1204,23 @@
           },
           "state": "active-incomplete-unaccepted",
           "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-D",
+          "commit": "e8a5b408cbd1f132bcb2fbc875c2529140464fcd",
+          "coverage": {
+            "full": 26,
+            "partial": 0,
+            "unread": 69
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
         }
       ]
     }
   ],
   "resume_order": [
-    "E01-D only: fully review the five Discord package primaries to reach expected F26/P0/R69; no other adapter in the same stage.",
+    "E01-E only: fully review the five Email package primaries to reach expected F31/P0/R64; no other adapter in the same stage.",
     "Continue E01 in later bounded adapter substages until F95/P0/R0, then publish/coordinator-check E01 separately.",
     "R01",
     "M01",
