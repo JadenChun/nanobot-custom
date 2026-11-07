@@ -479,20 +479,20 @@
       "execution_state": "active",
       "saved_handoff": "handoffs/E02.md",
       "handoff_disposition": "active-incomplete-unaccepted",
-      "coordinator_observation": "E02-I MCP OAuth/preset APIs are checkpointed at cumulative F53/P0/R15. One new conditional P2 finding is retained: E02-F13 MCP WebUI credential/runtime state is not scoped to the gateway's explicit config path. E02 now has thirteen provisional findings. Remote owner custom stdio launch is retained as an explicit D2/D4 authority-design question because the owner contract deliberately exposes MCP custom/test/reload operations. Publication/coordinator credit remains zero.",
+      "coordinator_observation": "E02-J WebUI skills surfaces are checkpointed at cumulative F55/P0/R13. One new conditional P2 finding is retained: E02-F14 cancelled skills.sh installs can outlive their WebUI owner because the raw npx child is not cleaned up on coroutine cancellation and timeout owns only the direct process. E02 now has fourteen provisional findings. Remote package-install authorization, protected/incomplete catalog handling and SkillHub archive validation held under the reviewed paths. Publication/coordinator credit remains zero.",
       "active_source_review_coverage": {
-        "full": 53,
+        "full": 55,
         "partial": 0,
-        "unread": 15
+        "unread": 13
       },
-      "active_provisional_findings_count": 13,
+      "active_provisional_findings_count": 14,
       "active_substage_checkpoint": {
-        "stage": "E02-I",
-        "commit": "d6f5b3b0a0b7d5d828bb969be7efe98fe9c82e8d",
+        "stage": "E02-J",
+        "commit": "1b5691612ce23c912bb78ad23c1d911df0df7e77",
         "coverage": {
-          "full": 53,
+          "full": 55,
           "partial": 0,
-          "unread": 15
+          "unread": 13
         },
         "publication_credit_added": 0
       }
