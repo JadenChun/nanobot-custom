@@ -1084,4 +1084,63 @@ describe("MessageBubble", () => {
     expect(onOpen).toHaveBeenCalledWith("delegated:child-a");
   });
 
+  it("routes typed wait, steer, and stop child controls", async () => {
+    const user = userEvent.setup();
+    const onControl = vi.fn();
+    const onOpen = vi.fn();
+    const message: UIMessage = {
+      id: "delegated-child-controls",
+      role: "assistant",
+      content: "",
+      createdAt: Date.now(),
+      kind: "delegated_child",
+      delegatedChild: {
+        child_session_key: "delegated:child-a",
+        child_id: "child-a",
+        profile: "delegated",
+        state: "active",
+        runtime_generation: 0,
+        turn_id: "turn-a",
+      },
+    };
+
+    const { rerender } = render(
+      <MessageBubble
+        message={message}
+        onChildControl={onControl}
+        onOpenChildSession={onOpen}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Wait" }));
+    expect(onControl).toHaveBeenCalledWith("child-a", "wait");
+
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onControl).toHaveBeenCalledWith("child-a", "stop");
+
+    await user.click(screen.getByRole("button", { name: "Steer" }));
+    await user.type(screen.getByLabelText("Child guidance"), "focus");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onControl).toHaveBeenCalledWith("child-a", "steer", "focus");
+
+    rerender(
+      <MessageBubble
+        message={{
+          ...message,
+          delegatedChild: {
+            ...message.delegatedChild!,
+            state: "completed",
+          },
+        }}
+        onChildControl={onControl}
+        onOpenChildSession={onOpen}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Wait" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open" })).not.toBeDisabled();
+  });
+
 });

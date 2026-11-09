@@ -1124,6 +1124,21 @@ class AgentLoop:
 
         logger.info("Registered {} tools: {}", len(registered), registered)
 
+    async def control_delegated_child(
+        self,
+        parent_key: str,
+        child_id: str,
+        action: str,
+        content: str | None = None,
+    ) -> dict[str, Any]:
+        """Route one authenticated child control to the delegation owner."""
+        return await self._fork_dependencies.foreground_manager.control_child(
+            parent_key=parent_key,
+            child_id=child_id,
+            action=action,
+            content=content,
+        )
+
     async def _publish_delegated_child(self, child: Any) -> None:
         """Project one typed child reference into the parent chat activity."""
         request = current_request_context()

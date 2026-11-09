@@ -71,16 +71,31 @@ interface MessageBubbleProps {
   onOpenFilePreview?: (path: string) => void;
   onForkFromHere?: () => void;
   onOpenChildSession?: (sessionKey: string) => void;
+  onChildControl?: (
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ) => void;
 }
 
 function DelegatedChildRow({
   child,
   onOpen,
+  onControl,
 }: {
   child: NonNullable<UIMessage["delegatedChild"]>;
   onOpen?: (sessionKey: string) => void;
+  onControl?: (
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ) => void;
 }) {
   const { t } = useTranslation();
+  const [steering, setSteering] = useState(false);
+  const [steerText, setSteerText] = useState("");
+  const terminal = ["completed", "failed", "stopped", "uncertain", "refused"]
+    .includes(child.state);
   const stateLabel = child.outcome
     ? `${child.state} (${child.outcome})`
     : child.state;
@@ -98,14 +113,72 @@ function DelegatedChildRow({
           {child.profile} · {stateLabel}
         </span>
       </span>
-      <button
-        type="button"
-        className="shrink-0 rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background"
-        onClick={() => onOpen?.(child.child_session_key)}
-        disabled={!onOpen}
-      >
-        {t("thread.delegatedChild.open", { defaultValue: "Open" })}
-      </button>
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        {onControl ? (
+          <>
+            <button
+              type="button"
+              className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
+              onClick={() => onControl(child.child_id, "wait")}
+              disabled={terminal}
+            >
+              {t("thread.delegatedChild.wait", { defaultValue: "Wait" })}
+            </button>
+            <button
+              type="button"
+              className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
+              onClick={() => setSteering((value) => !value)}
+              disabled={terminal}
+            >
+              {t("thread.delegatedChild.steer", { defaultValue: "Steer" })}
+            </button>
+            <button
+              type="button"
+              className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-destructive transition-colors hover:bg-background disabled:opacity-50"
+              onClick={() => onControl(child.child_id, "stop")}
+              disabled={terminal}
+            >
+              {t("thread.delegatedChild.stop", { defaultValue: "Stop" })}
+            </button>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className="rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
+          onClick={() => onOpen?.(child.child_session_key)}
+          disabled={!onOpen}
+        >
+          {t("thread.delegatedChild.open", { defaultValue: "Open" })}
+        </button>
+      </div>
+      {steering ? (
+        <div className="flex basis-full items-center gap-2">
+          <input
+            className="min-w-0 flex-1 rounded-control border border-border/60 bg-background px-2 py-1 text-[12px]"
+            value={steerText}
+            onChange={(event) => setSteerText(event.target.value)}
+            placeholder={t("thread.delegatedChild.steerPlaceholder", {
+              defaultValue: "Guidance for the child",
+            })}
+            aria-label={t("thread.delegatedChild.steerLabel", {
+              defaultValue: "Child guidance",
+            })}
+          />
+          <button
+            type="button"
+            className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium"
+            onClick={() => {
+              const text = steerText.trim();
+              if (!text) return;
+              onControl?.(child.child_id, "steer", text);
+              setSteerText("");
+              setSteering(false);
+            }}
+          >
+            {t("thread.delegatedChild.sendSteer", { defaultValue: "Send" })}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -378,6 +451,7 @@ export function MessageBubble({
   onOpenFilePreview,
   onForkFromHere,
   onOpenChildSession,
+  onChildControl,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const mentionCliApps = useMemo(
@@ -394,6 +468,7 @@ export function MessageBubble({
       <DelegatedChildRow
         child={message.delegatedChild}
         onOpen={onOpenChildSession}
+        onControl={onChildControl}
       />
     );
   }

@@ -1378,6 +1378,23 @@ export class NanobotClient {
     });
   }
 
+  controlDelegatedChild(
+    parentKey: string,
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.requestMutation<Record<string, unknown>>(
+      "delegation.child.control",
+      {
+        parent_key: parentKey,
+        child_id: childId,
+        action,
+        ...(content !== undefined ? { content } : {}),
+      },
+    );
+  }
+
   setSidebarState(
     state: SidebarStatePayload,
     requestId?: string,

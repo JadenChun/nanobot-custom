@@ -24,6 +24,11 @@ interface ThreadMessagesProps {
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onQuoteSelection?: (text: string) => void;
   onOpenChildSession?: (sessionKey: string) => void;
+  onChildControl?: (
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ) => void;
 }
 
 export type DisplayUnit = TurnUnit;
@@ -75,6 +80,7 @@ export function ThreadMessages({
   onForkFromMessage,
   onQuoteSelection,
   onOpenChildSession,
+  onChildControl,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -174,6 +180,7 @@ export function ThreadMessages({
             onOpenFilePreview={onOpenFilePreview}
             onForkFromMessage={onForkFromMessage}
             onOpenChildSession={onOpenChildSession}
+            onChildControl={onChildControl}
           />
         );
       })}
@@ -257,6 +264,11 @@ interface ThreadDisplayUnitProps {
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onOpenChildSession?: (sessionKey: string) => void;
+  onChildControl?: (
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ) => void;
 }
 
 const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
@@ -277,6 +289,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   onOpenFilePreview,
   onForkFromMessage,
   onOpenChildSession,
+  onChildControl,
 }: ThreadDisplayUnitProps) {
   const onForkFromHere = useCallback(() => {
     if (forkIndex !== undefined) onForkFromMessage?.(forkIndex);
@@ -311,6 +324,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             onOpenFilePreview={onOpenFilePreview}
             onForkFromHere={forkIndex !== undefined ? onForkFromHere : undefined}
             onOpenChildSession={onOpenChildSession}
+            onChildControl={onChildControl}
           />
         )}
       </div>
@@ -339,6 +353,7 @@ function threadDisplayUnitPropsEqual(
     && previous.slashCommands === next.slashCommands
     && previous.onOpenFilePreview === next.onOpenFilePreview
     && previous.onOpenChildSession === next.onOpenChildSession
+    && previous.onChildControl === next.onChildControl
     && previous.onForkFromMessage === next.onForkFromMessage
   );
 }

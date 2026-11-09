@@ -49,6 +49,7 @@ class GatewayServices:
     temporary_chats: WebUITemporaryChats
     session_projection: WebUISessionProjection
     session_manager: SessionManager | None
+    child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
     cron_service: CronService | None
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
@@ -60,7 +61,8 @@ def build_gateway_services(
     config: WebSocketConfig,
     bus: MessageBus,
     session_manager: SessionManager | None,
-    static_dist_path: Path | None,
+    child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
+    static_dist_path: Path | None = None,
     workspace_path: Path,
     context_manager: ContextRepoManager | None = None,
     default_restrict_to_workspace: bool,
@@ -204,6 +206,7 @@ def build_gateway_services(
         temporary_chats=temporary_chats,
         session_projection=session_projection,
         session_manager=session_manager,
+        child_control=child_control,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,

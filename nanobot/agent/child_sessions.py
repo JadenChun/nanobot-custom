@@ -86,6 +86,7 @@ class ChildAdmission:
     runtime_generation: int
     state: str = "reserved"
     outcome: str | None = None
+    transcript: tuple[dict[str, str], ...] = ()
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -112,6 +113,7 @@ class ChildAdmission:
             "runtime_generation": self.runtime_generation,
             "state": self.state,
             "outcome": self.outcome,
+            "transcript": [dict(message) for message in self.transcript],
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -186,6 +188,18 @@ class DelegationTree:
                     runtime_generation=cast(int, data["runtime_generation"]),
                     state=cast(str, data.get("state") or "uncertain"),
                     outcome=cast(str | None, data.get("outcome")),
+                    transcript=tuple(
+                        {
+                            "role": str(
+                                cast(dict[str, Any], item).get("role") or ""
+                            ),
+                            "content": str(
+                                cast(dict[str, Any], item).get("content") or ""
+                            ),
+                        }
+                        for item in cast(list[Any], data.get("transcript") or [])
+                        if isinstance(item, dict)
+                    ),
                     created_at=cast(float, data.get("created_at") or time.time()),
                     updated_at=cast(float, data.get("updated_at") or time.time()),
                 )
@@ -336,6 +350,26 @@ class DelegationTree:
         async with self._lock:
             self._tasks[child_id] = task
 
+    def record_transcript(
+        self,
+        child_id: str,
+        *,
+        assignment: str,
+        result_text: str | None,
+    ) -> bool:
+        """Store a bounded, display-only child transcript in session metadata."""
+        child = self._children.get(child_id)
+        if child is None:
+            return False
+        messages: list[dict[str, str]] = [
+            {"role": "user", "content": assignment[:4000]},
+        ]
+        if result_text:
+            messages.append({"role": "assistant", "content": result_text[:8000]})
+        updated = replace(child, transcript=tuple(messages), updated_at=time.time())
+        self._children[child_id] = updated
+        return self._persist(updated)
+
     def record_exchange(
         self,
         child_id: str,
@@ -360,6 +394,25 @@ class DelegationTree:
                 child_id,
             )
             return False
+
+    async def wait_child(
+        self,
+        child_id: str,
+        *,
+        timeout: float = 30.0,
+    ) -> ChildAdmission | None:
+        """Wait for one live child task without consuming its ownership."""
+        child = self._children.get(child_id)
+        if child is None:
+            return None
+        task = self._tasks.get(child_id)
+        if task is None:
+            return child
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pass
+        return self._children.get(child_id)
 
     async def stop_for_parent(self, parent_key: str) -> tuple[ChildAdmission, ...]:
         """Stop every live child admitted under one parent session."""

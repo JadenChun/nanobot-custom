@@ -246,6 +246,50 @@ class ForegroundAgentManager:
         if self._delegation_tree is None:
             self._delegation_tree = DelegationTree(sessions)
 
+    async def control_child(
+        self,
+        *,
+        parent_key: str,
+        child_id: str,
+        action: str,
+        content: str | None = None,
+    ) -> dict[str, Any]:
+        """Apply one typed child control to the current admitted generation."""
+        tree = self._delegation_tree
+        if tree is None:
+            return {"ok": False, "reason": "delegation_unavailable"}
+        child = tree.child(child_id)
+        if child is None or child.parent_key != parent_key:
+            return {"ok": False, "reason": "child_not_found"}
+        if action == "stop":
+            stopped = await tree.stop_subtree(child_id)
+            current = tree.child(child_id)
+            return {
+                "ok": True,
+                "child_id": child_id,
+                "state": current.state if current else "stopped",
+                "outcome": current.outcome if current else None,
+                "stopped": [item.child_id for item in stopped],
+            }
+        if action == "wait":
+            current = await tree.wait_child(child_id)
+            if current is None:
+                return {"ok": False, "reason": "child_not_found"}
+            return {
+                "ok": True,
+                "child_id": child_id,
+                "state": current.state,
+                "outcome": current.outcome,
+            }
+        if action == "steer":
+            try:
+                backend = self._child_backends.resolve(child.profile)
+                await backend.steer(child_id, content or "")
+            except ChildBackendUnavailableError as exc:
+                return {"ok": False, "reason": str(exc)}
+            return {"ok": True, "child_id": child_id, "state": "active"}
+        return {"ok": False, "reason": "unsupported_child_action"}
+
     async def stop_children(self, parent_key: str) -> int:
         """Stop the admitted active child subtree for one parent turn."""
         if self._delegation_tree is None:
@@ -740,6 +784,11 @@ class ForegroundAgentManager:
                 await backend.close(admission.child_id)
         if admission is not None:
             state, outcome = self._child_disposition(result)
+            self._delegation_tree.record_transcript(  # type: ignore[union-attr]
+                admission.child_id,
+                assignment=assignment,
+                result_text=self._result_text(result, role),
+            )
             result.policy_metadata.setdefault("delegated_child", admission.metadata())
             updated = await self._delegation_tree.complete(  # type: ignore[union-attr]
                 admission.child_id,

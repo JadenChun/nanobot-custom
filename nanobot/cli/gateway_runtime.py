@@ -408,6 +408,7 @@ def _run_gateway(
             webui_mcp_reload=gateway_mcp.reload,
             webui_skill_state_action=update_skill_state,
             webui_recovery_action=recovery.handle_action,
+            webui_child_control=agent.control_delegated_child,
             config_path=Path(config_path),
         )
 

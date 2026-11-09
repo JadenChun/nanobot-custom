@@ -60,7 +60,11 @@ from nanobot.webui.session_access import (
     WebuiSessionAccess,
     session_mentions_runtime_context,
 )
-from nanobot.webui.session_identity import is_valid_webui_chat_id, webui_session_key
+from nanobot.webui.session_identity import (
+    WEBUI_SESSION_STORAGE_PREFIX,
+    is_valid_webui_chat_id,
+    webui_session_key,
+)
 from nanobot.webui.sidebar_state import write_webui_sidebar_state
 from nanobot.webui.temporary_chats import TemporaryChatError
 from nanobot.webui.transcription_ws import webui_transcription_event
@@ -1031,7 +1035,10 @@ class WebUICommandRouter:
                 id_items: list[dict[str, Any]] = []
                 data_items: list[Any] = []
                 for item in cast(list[Any], raw_media):
-                    if isinstance(item, dict) and isinstance(item.get("id"), str):
+                    if (
+                        isinstance(item, dict)
+                        and isinstance(cast(dict[str, Any], item).get("id"), str)
+                    ):
                         id_items.append(cast(dict[str, Any], item))
                     else:
                         data_items.append(item)
@@ -1929,6 +1936,8 @@ class WebUICommandRouter:
         source_binding: dict[str, object] | None = None,
         source_binding_captured: bool = False,
     ) -> WebUIRequestResult:
+        if action == "delegation.child.control":
+            return await self._control_delegated_child(connection, payload)
         timeout_s = 30.0
         try:
             from nanobot.remote.operations import load_registry
@@ -2044,6 +2053,56 @@ class WebUICommandRouter:
                 message="WebUI mutation failed",
                 outcome="uncertain",
             )
+
+    async def _control_delegated_child(
+        self,
+        connection: ServerConnection,
+        payload: dict[str, Any],
+    ) -> WebUIRequestResult:
+        """Authorize and route one child control from an attached parent chat."""
+        parent_key = payload.get("parent_key")
+        child_id = payload.get("child_id")
+        control = payload.get("action")
+        content = payload.get("content")
+        if not (
+            isinstance(parent_key, str)
+            and parent_key.startswith(WEBUI_SESSION_STORAGE_PREFIX)
+            and isinstance(child_id, str) and child_id
+            and control in {"wait", "steer", "stop"}
+            and (content is None or isinstance(content, str))
+        ):
+            return WebUIRequestResult(
+                status=400,
+                message="invalid child control",
+                outcome="not_applied",
+            )
+        chat_id = parent_key.split(":", 1)[1]
+        if chat_id not in self._transport.webui_connection_chats(connection):
+            return WebUIRequestResult(
+                status=403,
+                message="child_parent_not_attached",
+                outcome="not_applied",
+            )
+        callback = getattr(self.gateway, "child_control", None)
+        if callback is None:
+            return WebUIRequestResult(
+                status=503,
+                message="delegation_control_unavailable",
+                outcome="not_applied",
+            )
+        result = await callback(
+            parent_key,
+            child_id,
+            str(control),
+            content,
+        )
+        if not result.get("ok"):
+            return WebUIRequestResult(
+                status=409,
+                message=str(result.get("reason") or "child_control_failed"),
+                outcome="not_applied",
+            )
+        return WebUIRequestResult(result=result, outcome="applied")
 
     async def send_webui_response(
         self,

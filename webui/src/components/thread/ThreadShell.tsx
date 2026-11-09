@@ -2305,6 +2305,20 @@ export function ThreadShell({
     };
   }, [filePreviewPath]);
 
+  const handleChildControl = useCallback((
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ) => {
+    if (!session?.key) return;
+    void client.controlDelegatedChild(
+      session.key,
+      childId,
+      action,
+      content,
+    ).catch(() => {});
+  }, [client, session?.key]);
+
   const handleForkFromMessage = useCallback(
     async (beforeUserIndex: number) => {
       if (!chatId || !onForkChat) return;
@@ -2615,6 +2629,7 @@ export function ThreadShell({
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
             onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
             onOpenChildSession={onOpenChildSession}
+            onChildControl={handleChildControl}
             onQuoteSelection={session ? handleQuoteSelection : undefined}
           />
         </FilePreviewAvailabilityProvider>

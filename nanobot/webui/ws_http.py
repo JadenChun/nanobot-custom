@@ -1471,28 +1471,98 @@ class GatewayHTTPHandler:
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
-        if not _is_websocket_channel_session_key(decoded_key):
+        is_child = decoded_key.startswith("delegated:")
+        if not (_is_websocket_channel_session_key(decoded_key) or is_child):
             return _http_error(404, "session not found")
+        child_payload: dict[str, Any] | None = None
+        if is_child:
+            child_metadata = (
+                self.session_manager.read_session_metadata(decoded_key)
+                if self.session_manager is not None else None
+            )
+            metadata_value = (
+                child_metadata.get("metadata")
+                if isinstance(child_metadata, dict) else None
+            )
+            metadata = (
+                cast(dict[str, Any], metadata_value)
+                if isinstance(metadata_value, dict) else None
+            )
+            payload_value = (
+                metadata.get("delegation_child") if metadata is not None else None
+            )
+            child_payload = (
+                cast(dict[str, Any], payload_value)
+                if isinstance(payload_value, dict) else None
+            )
+            parent_key = (
+                child_payload.get("parent_key")
+                if child_payload is not None else None
+            )
+            if (
+                not isinstance(parent_key, str)
+                or not _is_websocket_channel_session_key(parent_key)
+                or self.session_manager is None
+                or self.session_manager.read_session_metadata(parent_key) is None
+            ):
+                return _http_error(404, "session not found")
+            scope_key = parent_key
+        else:
+            scope_key = decoded_key
         try:
-            scope = self.workspaces.scope_for_session_key(decoded_key)
+            scope = self.workspaces.scope_for_session_key(scope_key)
         except Exception:
             self._log.exception("workspace thread scope projection failed")
             return _http_error(503, "permission_state_unavailable")
-        allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(decoded_key)
+        allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(scope_key)
 
         def load_session_messages() -> list[dict[str, Any]] | None:
             if self.session_manager is None:
                 return None
             session_data = self.session_manager.read_session_file(decoded_key)
             raw_messages = session_data.get("messages") if isinstance(session_data, dict) else None
-            if not isinstance(raw_messages, list):
-                return None
-            raw_session_messages = cast(list[Any], raw_messages)
-            return [
-                cast(dict[str, Any], raw_message)
-                for raw_message in raw_session_messages
-                if isinstance(raw_message, dict)
+            if isinstance(raw_messages, list) and raw_messages:
+                raw_session_messages = cast(list[Any], raw_messages)
+                return [
+                    cast(dict[str, Any], raw_message)
+                    for raw_message in raw_session_messages
+                    if isinstance(raw_message, dict)
+                ]
+            if is_child and child_payload is not None:
+                transcript = child_payload.get("transcript")
+                if isinstance(transcript, list):
+                    return [
+                        cast(dict[str, Any], item)
+                        for item in cast(list[Any], transcript)
+                        if isinstance(item, dict)
+                    ]
+            return None
+
+        if is_child:
+            transcript = (
+                child_payload.get("transcript")
+                if child_payload is not None else None
+            )
+            display_messages = [
+                {
+                    "id": f"delegated-{index}",
+                    "role": str(cast(dict[str, Any], item).get("role") or "assistant"),
+                    "content": str(cast(dict[str, Any], item).get("content") or ""),
+                }
+                for index, item in enumerate(
+                    cast(list[Any], transcript)
+                    if isinstance(transcript, list) else []
+                )
+                if isinstance(item, dict)
             ]
+            return _http_json_response({
+                "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+                "sessionKey": decoded_key,
+                "messages": display_messages,
+                "completed_turn_ids": [],
+                "has_pending_tool_calls": False,
+                "active_turn_id": None,
+            })
 
         query = _parse_query(request.path)
         raw_limit = _query_first(query, "limit")
@@ -1513,10 +1583,10 @@ class GatewayHTTPHandler:
         )
 
         chat_id = decoded_key.split(":", 1)[1]
-        active_turn_started_at = websocket_turn_wall_started_at(chat_id)
-        active_turn_id = websocket_turn_id(chat_id)
+        active_turn_started_at = None if is_child else websocket_turn_wall_started_at(chat_id)
+        active_turn_id = None if is_child else websocket_turn_id(chat_id)
         active_turn_transcript_persistence_failed = (
-            websocket_turn_transcript_persistence_failed(chat_id)
+            False if is_child else websocket_turn_transcript_persistence_failed(chat_id)
         )
 
         def build_thread(limit_value: int | None) -> dict[str, Any] | None:
@@ -1547,7 +1617,7 @@ class GatewayHTTPHandler:
             )
 
 
-        data = build_thread(limit)
+        data: dict[str, Any] | None = build_thread(limit)
         # Bound one response by showing fewer turns, never by trimming a turn:
         # every client receives identical content for the turns it gets.
         if data is not None and limit is not None:
