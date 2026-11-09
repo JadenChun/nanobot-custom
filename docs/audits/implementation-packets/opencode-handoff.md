@@ -27,11 +27,11 @@ If the fetched revision differs from the packet's pin, review the source delta b
 
 ```sh
 a3_repo=/home/jaden/Documents/Utilities/nanobot-custom
-a3_checkout=/home/jaden/Documents/Utilities/nanobot-custom-worktrees/a3-implementation
+a3_checkout=/home/jaden/Documents/Utilities/nanobot-custom-worktrees/staging-audit-implementation
 a3_pin=29612c3df01dc3dce3501fe349bcf555cd6c58b6
 git -C "$a3_repo" fetch origin &&
   test "$(git -C "$a3_repo" rev-parse origin/staging)" = "$a3_pin" &&
-  git -C "$a3_repo" worktree add -b codex/a3-implementation "$a3_checkout" "$a3_pin" &&
+  git -C "$a3_repo" worktree add -b codex/staging-audit-implementation "$a3_checkout" "$a3_pin" &&
   (cd "$a3_checkout" && opencode --model commandcode/deepseek/deepseek-v4.1-flash)
 ```
 
