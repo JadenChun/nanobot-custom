@@ -4,20 +4,15 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import math
-import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
-
-if TYPE_CHECKING:
-    from openai.types.chat import ChatCompletionContentPartParam
+from typing import Any, TypedDict
 
 
 class FrameEvent(TypedDict):
@@ -333,25 +328,6 @@ def _ocr_frame(frame_path: Path) -> OCRResult:
     }
 
 
-def _sample_frames_for_semantics(frames: list[StoryboardFrame], max_frames: int) -> list[StoryboardFrame]:
-    if len(frames) <= max_frames:
-        return frames
-    if max_frames <= 1:
-        return frames[:1]
-    if max_frames == 2:
-        return [frames[0], frames[-1]]
-
-    interior = frames[1:-1]
-    slots = max_frames - 2
-    sampled = [interior[math.floor(i * len(interior) / slots)] for i in range(slots)]
-    return [frames[0], *sampled, frames[-1]]
-
-
-def _encode_frame_data_url(frame_path: Path) -> str:
-    encoded = base64.b64encode(frame_path.read_bytes()).decode("ascii")
-    return f"data:image/jpeg;base64,{encoded}"
-
-
 def _build_fallback_semantic_storyboard(frames: list[StoryboardFrame]) -> SemanticStoryboard:
     semantic_frames: list[SemanticFrame] = []
     for frame in frames:
@@ -379,79 +355,9 @@ def _generate_semantic_storyboard(
     semantic_model: str,
     semantic_max_frames: int,
 ) -> SemanticStoryboard:
-    if not semantic_enabled:
-        return _build_fallback_semantic_storyboard(frames)
-
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        return _build_fallback_semantic_storyboard(frames)
-
-    try:
-        from openai import OpenAI
-    except Exception:
-        return _build_fallback_semantic_storyboard(frames)
-
-    sampled_frames = _sample_frames_for_semantics(frames, semantic_max_frames)
-    content: list[ChatCompletionContentPartParam] = [{
-        "type": "text",
-        "text": (
-            "Analyze these storyboard frames from a source video. "
-            "Return strict JSON with keys overall_summary, video_flow, and frames. "
-            "frames must be a list of objects with keys index, summary, viewer_value, and confidence. "
-            "viewer_value must be one of setup, waiting, proof, payoff, cta, transition. "
-            "Use OCR excerpts as hints but rely on the frame images for meaning."
-        ),
-    }]
-    for frame in sampled_frames:
-        frame_path = output_dir / str(frame["path"])
-        content.append({
-            "type": "text",
-            "text": (
-                f"Frame {frame['index']} at {frame['timestamp']} "
-                f"(reason={frame['reason']}, ocr={frame.get('ocr_excerpt') or 'none'})"
-            ),
-        })
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": _encode_frame_data_url(frame_path)},
-        })
-
-    try:
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=semantic_model,
-            messages=[{"role": "user", "content": content}],
-            response_format={"type": "json_object"},
-        )
-        raw = response.choices[0].message.content or ""
-        payload = json.loads(raw)
-        semantic_frames: list[SemanticFrame] = []
-        by_index = {int(frame["index"]): frame for frame in frames}
-        for item in payload.get("frames") or ():
-            index = int(item.get("index"))
-            source = by_index.get(index)
-            if not source:
-                continue
-            semantic_frames.append({
-                "index": index,
-                "timestamp": source["timestamp"],
-                "reason": source["reason"],
-                "viewer_value": str(item.get("viewer_value") or _default_viewer_value(str(source["reason"]))),
-                "summary": str(item.get("summary") or _default_semantic_summary(source)),
-                "confidence": float(item.get("confidence") or 0.5),
-            })
-        if not semantic_frames:
-            return _build_fallback_semantic_storyboard(frames)
-        return {
-            "generator": semantic_model,
-            "overall_summary": str(payload.get("overall_summary") or "").strip()
-            or "Semantic storyboard generated from sampled frames.",
-            "video_flow": str(payload.get("video_flow") or "").strip()
-            or "Review frame summaries in order to understand the visible progression.",
-            "frames": semantic_frames,
-        }
-    except Exception:
-        return _build_fallback_semantic_storyboard(frames)
+    """Build the local OCR storyboard; semantic analysis stays with the agent."""
+    _ = output_dir, semantic_enabled, semantic_model, semantic_max_frames
+    return _build_fallback_semantic_storyboard(frames)
 
 
 def _build_storyboard_markdown(manifest: StoryboardManifest) -> str:
@@ -595,9 +501,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=36, help="Maximum number of extracted frames")
     parser.add_argument("--width", type=int, default=1280, help="Maximum output frame width")
     parser.add_argument("--no-ocr", action="store_true", help="Skip OCR even if tesseract is available")
-    parser.add_argument("--no-semantic", action="store_true", help="Skip semantic storyboard generation")
-    parser.add_argument("--semantic-model", default="gpt-5.4-mini", help="Model to use for semantic storyboard generation")
-    parser.add_argument("--semantic-max-frames", type=int, default=12, help="Maximum number of frames to send to the semantic model")
+    parser.add_argument(
+        "--no-semantic",
+        action="store_true",
+        help="Accepted for compatibility; semantic generation is always local",
+    )
+    parser.add_argument(
+        "--semantic-model",
+        default="local-ocr",
+        help="Accepted for compatibility; no external provider is contacted",
+    )
+    parser.add_argument(
+        "--semantic-max-frames",
+        type=int,
+        default=12,
+        help="Accepted for compatibility; no frames are sent to an external model",
+    )
     parser.add_argument("--force", action="store_true", help="Ignore matching cache and rebuild")
     return parser.parse_args()
 

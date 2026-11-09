@@ -559,7 +559,10 @@ class MemoryStore:
         return workspace_prompt_file(self.workspace, "dream")
 
     def has_dream_prompt_override(self) -> bool:
-        return has_workspace_prompt_override(self.dream_prompt_file)
+        return has_workspace_prompt_override(
+            self.dream_prompt_file,
+            workspace=self.workspace,
+        )
 
     @staticmethod
     def default_dream_prompt() -> str:
@@ -572,7 +575,10 @@ class MemoryStore:
         )
 
     def _dream_template(self) -> str:
-        text, original_chars = load_workspace_prompt_override(self.dream_prompt_file)
+        text, original_chars = load_workspace_prompt_override(
+            self.dream_prompt_file,
+            workspace=self.workspace,
+        )
         if text is not None:
             if (
                 original_chars > WORKSPACE_PROMPT_MAX_CHARS

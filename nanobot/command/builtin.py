@@ -596,7 +596,11 @@ async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip().lower()
 
     if args == "init":
-        if not initialize_workspace_prompt(path, store.default_dream_prompt()):
+        if not initialize_workspace_prompt(
+            path,
+            store.default_dream_prompt(),
+            workspace=store.workspace,
+        ):
             content = (
                 f"Dream memory instructions already exist at `{display_path}`.\n\n"
                 "Edit that file, or delete/empty it to return to nanobot's default."
@@ -645,7 +649,11 @@ async def cmd_evaluator_prompt(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip().lower()
 
     if args == "init":
-        if not initialize_workspace_prompt(path, default_evaluator_prompt()):
+        if not initialize_workspace_prompt(
+            path,
+            default_evaluator_prompt(),
+            workspace=workspace,
+        ):
             content = (
                 f"Heartbeat evaluator prompt already exists at `{display_path}`.\n\n"
                 "Edit that file, or delete/empty it to return to nanobot's default."

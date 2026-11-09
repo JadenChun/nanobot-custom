@@ -477,9 +477,18 @@ def _is_blocked_device(path: str | Path) -> bool:
     return False
 
 
-def _builtin_skill_read_path(path: str) -> Path | None:
-    """Map workspace-relative skills/<name>/... reads onto bundled skills."""
-    from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+def _builtin_skill_read_path(
+    path: str,
+    workspace: Path | None = None,
+    resource_policy: Any | None = None,
+) -> Path | None:
+    """Return the bundled body when the loader selected the bundled source.
+
+    A selected project may contain its own ``skills/<name>/SKILL.md``. The
+    summary labels the bundled entry as ``skills/<name>/SKILL.md``, so the read
+    must follow the same source identity instead of a same-path project file.
+    """
+    from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 
     requested = Path(path)
     if requested.is_absolute():
@@ -491,7 +500,22 @@ def _builtin_skill_read_path(path: str) -> Path | None:
     candidate = (root / Path(*parts[1:])).resolve()
     if candidate != root and root not in candidate.parents:
         return None
-    return candidate if candidate.is_file() else None
+    if not candidate.is_file():
+        return None
+    if workspace is None:
+        return candidate
+    loader = SkillsLoader(workspace, resource_policy=resource_policy)
+    entry = next(
+        (
+            item
+            for item in loader.list_skills(filter_unavailable=False)
+            if item["name"] == parts[1]
+        ),
+        None,
+    )
+    if entry is None or entry.get("source") != "builtin":
+        return None
+    return candidate
 
 
 @tool_parameters(
@@ -676,8 +700,15 @@ class ReadFileTool(_FsTool):
                 return ToolResult.error(f"Error: Reading {path} is blocked (device path that could hang or produce infinite output).")
 
             fp = self._resolve_read(path)
-            if not fp.exists():
-                fp = _builtin_skill_read_path(path) or fp
+            builtin_skill = _builtin_skill_read_path(
+                path,
+                self._workspace,
+                self._resource_policy,
+            )
+            if builtin_skill is not None and (
+                self._workspace is not None or not fp.exists()
+            ):
+                fp = builtin_skill
             if _is_blocked_device(fp):
                 return ToolResult.error(f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output).")
             if not fp.exists():
