@@ -217,8 +217,12 @@ class TestBundledToolContract:
         assert "Use the narrowest structured tool" in content
         assert "Do not use `exec` as a universal workaround" in content
         assert "## File and Coding Workflows" in content
-        assert "`grep` returns matches with five context lines by default" in content
-        assert "apply_patch" in content
+        assert "Use a registered discovery or search tool" in content
+        assert "Use the registered search tool's documented options" in content
+        assert "Use the registered editing tool" in content
+        assert "apply_patch" not in content
+        assert "grep" not in content
+        assert "find_files" not in content
         assert "acceptance criteria into concrete checks" in content
         assert "visual evidence reaches the model" in content
         assert "clear user request as authorization" in content
