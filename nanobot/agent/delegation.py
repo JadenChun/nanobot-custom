@@ -63,6 +63,7 @@ from nanobot.config.schema import (
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.security.folder_grants import FolderGrantView
+from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.session.manager import SessionManager
 from nanobot.session.source_projection import RuntimeNode, SourceNode
 from nanobot.session.source_request import SourceTranscript
@@ -161,6 +162,7 @@ class ForegroundAgentManager:
         folder_grants: FolderGrantView | None = None,
         sessions: SessionManager | None = None,
         delegation_tree: DelegationTree | None = None,
+        disabled_skills: set[str] | None = None,
     ) -> None:
         self.provider = provider
         self.workspace = workspace
@@ -215,6 +217,7 @@ class ForegroundAgentManager:
         self._delegation_tree = delegation_tree or (
             DelegationTree(sessions) if sessions is not None else None
         )
+        self._disabled_skills = set(disabled_skills or ())
 
     def bind_session_owner(self, sessions: SessionManager) -> None:
         """Attach the canonical session owner once the loop has constructed it."""
@@ -286,7 +289,9 @@ class ForegroundAgentManager:
     def _skills_section(self) -> str:
         loader = SkillsLoader(
             self.workspace,
+            disabled_skills=self._disabled_skills or None,
             extra_paths=self._context_skill_paths() or None,
+            resource_policy=self.resource_policy,
         )
         sections: list[str] = []
         always = loader.get_always_skills()
@@ -759,7 +764,14 @@ Do not include internal system state or pretend unverified assumptions are facts
         if error := self._consume_call("worker", turn_context):
             return error
         try:
-            scopes = self._normalize_scopes(self.workspace, write_scope)
+            access = current_tool_workspace(
+                self.workspace,
+                restrict_to_workspace=self.restrict_to_workspace,
+            )
+            scopes = self._normalize_scopes(
+                access.project_path or self.workspace,
+                write_scope,
+            )
         except ValueError as exc:
             return f"Error: {exc}"
         call_id = str(uuid.uuid4())[:8]

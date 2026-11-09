@@ -419,6 +419,44 @@ def test_wrapper_resolves_uri_encoded_json_pointer() -> None:
     assert wrapper.parameters["$defs"][generated_name] == {"type": "string"}
 
 
+def test_wrapper_treats_remote_read_only_annotation_as_untrusted_hint() -> None:
+    def _tool_def(read_only: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            name="read_demo",
+            description="demo",
+            inputSchema={"type": "object", "properties": {}},
+            annotations=SimpleNamespace(readOnlyHint=read_only),
+        )
+
+    remote = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=True),
+        transport_type="streamable_http",
+        server_url="https://example.com/mcp",
+    )
+    local = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=True),
+        transport_type="stdio",
+        server_url="https://example.com/mcp",
+    )
+    remote_mutating = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=False),
+        transport_type="streamable_http",
+        server_url="https://example.com/mcp",
+    )
+
+    assert remote.is_read_only is False
+    assert remote.mcp_metadata.read_only_source == "annotation_untrusted"
+    assert local.is_read_only is True
+    assert local.mcp_metadata.read_only_source == "annotation"
+    assert remote_mutating.is_read_only is False
+
+
 def test_normalize_windows_stdio_command_is_noop_off_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

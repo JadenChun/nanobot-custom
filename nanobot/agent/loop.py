@@ -670,6 +670,7 @@ class AgentLoop:
                 workspace=workspace, runtime=self.runtime_resolver.runtime,
                 tools_config=_tc, restrict_to_workspace=restrict_to_workspace,
                 sessions_root=effective_root,
+                disabled_skills=disabled_skills,
                 refresh_web_fetch_config=provider_snapshot_loader is not None)
             _owns_fork_dependencies = True
         validate_foreground_dependencies(fork_dependencies, workspace=workspace,
@@ -908,6 +909,7 @@ class AgentLoop:
                     session_owner
                     if isinstance(session_owner, SessionManager) else None
                 ),
+                disabled_skills=defaults.disabled_skills,
                 refresh_web_fetch_config=provider_snapshot_loader is not None,
             )
             extra["_owns_fork_dependencies"] = True

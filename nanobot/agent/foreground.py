@@ -1,7 +1,7 @@
 """Compose owned foreground capabilities without activating external resources."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from nanobot.agent.delegation import ForegroundAgentManager
@@ -37,6 +37,7 @@ def build_foreground_dependencies(
     restrict_to_workspace: bool, config: Config | None = None,
     sessions_root: Path | None = None,
     sessions: SessionManager | None = None,
+    disabled_skills: Iterable[str] | None = None,
     refresh_web_fetch_config: bool = False,
 ) -> ForkToolDependencies:
     """Build one shared context/policy/lock graph; never connect or run tools."""
@@ -68,5 +69,6 @@ def build_foreground_dependencies(
         crawler_reasoning_effort=optional.reasoning_effort,
         folder_grants=grants,
         sessions=sessions,
+        disabled_skills=set(disabled_skills or ()),
     )
     return ForkToolDependencies(manager, manager.resource_policy, locks, crawler_enabled=optional.enabled)

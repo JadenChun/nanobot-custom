@@ -674,10 +674,14 @@ def _classify_read_only(
     annotations: Any,
 ) -> tuple[bool, str, bool]:
     read_only_hint = _annotation_bool(annotations, "readOnlyHint")
-    if read_only_hint is not None:
-        return read_only_hint, "annotation", _is_trusted_local_mcp(transport_type, server_url)
-
     trusted_for_heuristics = _is_trusted_local_mcp(transport_type, server_url)
+    if read_only_hint is not None:
+        # A remote annotation is a hint, not proof. An untrusted server cannot
+        # authorize a read-only child by declaring its tool non-mutating.
+        if read_only_hint and not trusted_for_heuristics:
+            return False, "annotation_untrusted", False
+        return read_only_hint, "annotation", trusted_for_heuristics
+
     if trusted_for_heuristics:
         lowered_name = tool_name.lower()
         if lowered_name.startswith(_READ_ONLY_PREFIXES):

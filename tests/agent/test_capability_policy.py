@@ -301,10 +301,10 @@ def test_main_policy_requires_run_wide_approval_for_device_mutations(tmp_path) -
 def test_browser_device_are_sequential_and_crawler_schema_has_no_click() -> None:
     assert AgentBrowserTool().supports_parallel_calls is False
     assert AgentDeviceTool().supports_parallel_calls is False
-    assert "click" not in SocialCrawlTool.parameters["properties"]["action"]["enum"]
-    assert {"follow_link", "expand", "paginate"} <= set(
-        SocialCrawlTool.parameters["properties"]["action"]["enum"]
-    )
+    enum = SocialCrawlTool.parameters["properties"]["action"]["enum"]
+    assert "click" not in enum
+    assert "expand" not in enum
+    assert {"follow_link", "paginate"} <= set(enum)
 
 
 @pytest.mark.asyncio
