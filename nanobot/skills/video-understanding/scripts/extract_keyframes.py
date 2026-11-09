@@ -145,6 +145,8 @@ def _detect_scene_times(video_path: Path, scene_threshold: float) -> list[float]
 
 
 def _add_gap_frames(events: list[FrameEvent], max_gap_seconds: float) -> list[FrameEvent]:
+    if not math.isfinite(max_gap_seconds) or max_gap_seconds <= 0:
+        raise ValueError("max_gap_seconds must be a finite positive number")
     if not events:
         return []
 
@@ -154,7 +156,10 @@ def _add_gap_frames(events: list[FrameEvent], max_gap_seconds: float) -> list[Fr
         prev_time = float(previous["time"])
         current_time = float(event["time"])
         while current_time - prev_time > max_gap_seconds:
-            prev_time += max_gap_seconds
+            next_time = prev_time + max_gap_seconds
+            if next_time <= prev_time:
+                raise ValueError("max_gap_seconds cannot advance the timestamp")
+            prev_time = next_time
             filled.append({"time": prev_time, "reason": "gap", "priority": 1})
         filled.append(event)
     return filled
@@ -565,13 +570,28 @@ def _write_storyboards(output_dir: Path, manifest: StoryboardManifest) -> None:
     )
 
 
+def _finite_positive_seconds(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a finite positive number") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a finite positive number")
+    return parsed
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video_path", help="Path to the source video file")
     parser.add_argument("--output-dir", help="Directory to write manifest, storyboard, and frames into")
     parser.add_argument("--scene-threshold", type=float, default=0.025, help="FFmpeg scene-change threshold")
     parser.add_argument("--min-spacing-seconds", type=float, default=0.75, help="Minimum time between kept frames")
-    parser.add_argument("--max-gap-seconds", type=float, default=6.0, help="Maximum uncovered gap between frames")
+    parser.add_argument(
+        "--max-gap-seconds",
+        type=_finite_positive_seconds,
+        default=6.0,
+        help="Maximum uncovered gap between frames; must be finite and positive",
+    )
     parser.add_argument("--max-frames", type=int, default=36, help="Maximum number of extracted frames")
     parser.add_argument("--width", type=int, default=1280, help="Maximum output frame width")
     parser.add_argument("--no-ocr", action="store_true", help="Skip OCR even if tesseract is available")

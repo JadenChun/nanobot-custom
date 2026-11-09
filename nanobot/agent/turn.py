@@ -239,6 +239,8 @@ class TurnRequest:
         if content and prompt and content != prompt:
             raise ValueError("prompt and content must match when both are supplied")
         canonical_content = content or prompt or message or ""
+        if message is not None and canonical_content and canonical_content != message:
+            raise ValueError("prompt and message must match when both are supplied")
         object.__setattr__(self, "prompt", canonical_content)
         object.__setattr__(self, "content", canonical_content)
         object.__setattr__(
@@ -280,14 +282,9 @@ class TurnRequest:
             tuple(tool_names) if tool_names is not None else None,
         )
         object.__setattr__(self, "scheduled", scheduled)
-        object.__setattr__(self, "message", message)
+        object.__setattr__(self, "message", canonical_content)
         if self._media_paths:
             self._adopt_media()
-        if self.message is not None:
-            if self.prompt and self.prompt != self.message:
-                raise ValueError("prompt and message must match when both are supplied")
-            object.__setattr__(self, "content", self.message)
-            object.__setattr__(self, "prompt", self.message)
         object.__setattr__(self, "message", self.content)
         if self.route is None and self.delivery_target is not None:
             object.__setattr__(self, "route", self.delivery_target)
