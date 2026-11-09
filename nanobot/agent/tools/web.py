@@ -273,6 +273,18 @@ async def _read_bounded_content(
     return bytes(chunks)
 
 
+def _bounded_json_payload(response: httpx.Response) -> Any:
+    """Decode a buffered JSON response only when it is within the fetch bound."""
+    content = getattr(response, "content", None)
+    if content is None:
+        return response.json()
+    if len(content) > MAX_FETCH_DOWNLOAD_BYTES:
+        raise _FetchTooLargeError(
+            f"Response exceeds the {MAX_FETCH_DOWNLOAD_BYTES // (1024 * 1024)} MiB download limit"
+        )
+    return json.loads(content.decode("utf-8"))
+
+
 async def _get_with_safe_redirects(
     client: httpx.AsyncClient,
     url: str,
@@ -807,7 +819,7 @@ class WebSearchTool(Tool):
                     logger.warning("TinyFish daily allowance exhausted, falling back to DuckDuckGo")
                     return await self._search_duckduckgo(query, n)
                 r.raise_for_status()
-            raw_payload: object = r.json()
+            raw_payload: object = _bounded_json_payload(r)
             payload = _json_object(raw_payload)
             raw = _json_array(payload.get("results")) if payload is not None else None
         except Exception as e:
@@ -1541,7 +1553,7 @@ class WebFetchTool(Tool):
                     return None
                 r.raise_for_status()
 
-            data = r.json().get("data", {})
+            data = _bounded_json_payload(r).get("data", {})
             title = data.get("title", "")
             text = data.get("content", "")
             if not text:

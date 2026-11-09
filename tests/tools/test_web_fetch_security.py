@@ -45,12 +45,16 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
         status_code = 200
         headers = {"content-type": "text/html"}
         url = "https://example.com/page"
+        request = httpx.Request("GET", "https://example.com/page")
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def aiter_bytes(self):
+            yield b"<html><head><title>Example</title></head><body><p>Hello</p></body></html>"
 
     class FakeJinaResponse:
         status_code = 200
