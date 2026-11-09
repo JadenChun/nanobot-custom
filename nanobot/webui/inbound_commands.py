@@ -336,6 +336,10 @@ class WebUICommandRouter:
         ] = {}
         self.request_operations: dict[str, WebUIRequestOperation] = {}
         self.request_locks: dict[ServerConnection, asyncio.Lock] = {}
+        # A WebUI attempt ID is bound to its submitted payload. A repeated ID
+        # with different input must fail; the same input may be recovered.
+        self._message_attempts: dict[tuple[str, str], str] = {}
+        self._message_attempt_limit = 4096
         if replay_store is None:
             settings = getattr(gateway, "settings", None)
             config = getattr(settings, "config", None)
@@ -801,6 +805,56 @@ class WebUICommandRouter:
             detail=f"unknown type: {command_type!r}",
         )
 
+    def _bind_message_attempt(
+        self,
+        chat_id: str,
+        turn_id: str | None,
+        envelope: dict[str, Any],
+    ) -> tuple[str, str] | None:
+        """Bind one attempt ID to its payload; reject changed repeated input."""
+        if not turn_id:
+            return None
+        payload = {
+            key: envelope.get(key)
+            for key in (
+                "content",
+                "media",
+                "attachments",
+                "cli_apps",
+                "mcp_presets",
+                "session_mentions",
+                "quoted_context",
+                "request_intent",
+                "target_turn_id",
+                "approval_decision",
+                "user_shell",
+                "webui",
+            )
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        key = (chat_id, turn_id)
+        current = self._message_attempts.get(key)
+        if current is None:
+            if len(self._message_attempts) >= self._message_attempt_limit:
+                # Bound the ledger without dropping a fresh in-flight attempt.
+                for stale_key in list(self._message_attempts)[
+                    : max(1, len(self._message_attempts) - self._message_attempt_limit + 1)
+                ]:
+                    self._message_attempts.pop(stale_key, None)
+            self._message_attempts[key] = digest
+            return None
+        if current != digest:
+            return ("not_admitted", "attempt_payload_changed")
+        return None
+
     async def _dispatch_message(
         self,
         connection: ServerConnection,
@@ -818,6 +872,21 @@ class WebUICommandRouter:
             "chat_id": chat_id,
             **({"turn_id": turn_id} if turn_id else {}),
         }
+        attempt_error = self._bind_message_attempt(
+            str(chat_id),
+            turn_id,
+            envelope,
+        )
+        if attempt_error is not None:
+            detail, reason = attempt_error
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail=detail,
+                reason=reason,
+                **rejection_fields,
+            )
+            return
         if not self._transport.is_allowed(client_id):
             await self._transport.webui_send_event(
                 connection,
