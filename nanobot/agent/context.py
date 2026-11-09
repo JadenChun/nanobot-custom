@@ -39,7 +39,7 @@ from nanobot.security.workspace_access import (
 )
 from nanobot.session.keys import last_channel_from_metadata
 from nanobot.session.manager import Session
-from nanobot.session.source_projection import RuntimeNode, SourceNode
+from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
 from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.session.summary import SessionSummary
 from nanobot.utils import helpers
@@ -107,7 +107,11 @@ class TranscriptInput:
     @property
     def message_count(self) -> int:
         """Number of boundary-preserving messages in the assembled transcript."""
-        return 1 + len(self.history) + (self.current_message is not None)
+        summary_count = int(
+            self.session_summary is not None
+            and self.session_summary["text"] != "(nothing)"
+        )
+        return 1 + summary_count + len(self.history) + (self.current_message is not None)
 
 
 class ContextBuilder:
@@ -150,7 +154,6 @@ class ContextBuilder:
         self,
         *,
         channel: str | None = None,
-        session_summary: SessionSummary | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
     ) -> str:
@@ -241,13 +244,6 @@ class ContextBuilder:
         )
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
-
-        if session_summary and session_summary["text"] != "(nothing)":
-            parts.append(
-                "[Archived Context Summary]\n\n"
-                f"Previous conversation summary (last active {session_summary['last_active']}):\n"
-                f"{session_summary['text']}"
-            )
 
         return "\n\n---\n\n".join(parts)
 
@@ -527,13 +523,19 @@ class ContextBuilder:
                 "role": "system",
                 "content": self.build_system_prompt(
                     channel=channel,
-                    session_summary=transcript.session_summary,
                     workspace=root,
                     include_memory=include_memory,
                 ),
             },
-            *transcript.history,
         ]
+        summary = transcript.session_summary
+        if summary and summary["text"] != "(nothing)":
+            summary_text = (
+                f"Previous conversation summary (last active {summary['last_active']}):\n"
+                f"{summary['text']}"
+            )
+            messages.append(CheckpointNode("legacy-summary", summary_text).message())
+        messages.extend(transcript.history)
         if transcript.current_message is None:
             return messages
 
@@ -554,7 +556,7 @@ class ContextBuilder:
         """Bind source identities at construction, never by message offsets."""
         nodes: list[RequestNode] = [RuntimeNode(uuid.uuid4().hex, {
             'role': 'system', 'content': self.build_system_prompt(
-                channel=channel, session_summary=None, workspace=workspace or self.workspace,
+                channel=channel, workspace=workspace or self.workspace,
                 include_memory=include_memory),
         }), *history.nodes]
         if transcript.current_message is not None:

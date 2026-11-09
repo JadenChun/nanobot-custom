@@ -186,7 +186,9 @@ class ContextCompactionState:
         messages = list(transcript_builder(transcript_input))
         if consolidate_history is None:
             return messages, None
-        accepted_history_boundary = 1 + len(transcript_input.history)
+        accepted_history_boundary = len(messages) - (
+            1 if transcript_input.current_message is not None else 0
+        )
         return messages, cls(
             raw_messages=messages,
             accepted_messages=deepcopy(messages[:accepted_history_boundary]),
