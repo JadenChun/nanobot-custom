@@ -271,6 +271,16 @@ class FallbackProvider(LLMProvider):
             local_usage_anchor=None,
         )
 
+    @staticmethod
+    def _route_start_index(provider_context: object) -> int:
+        if not isinstance(provider_context, ProviderCallContext):
+            return 0
+        candidate = provider_context.route_candidate_index
+        consumed = provider_context.route_consumed_through
+        safe_candidate = candidate if type(candidate) is int and candidate > 0 else 0
+        safe_consumed = consumed if type(consumed) is int else -1
+        return max(safe_candidate, safe_consumed + 1)
+
     def _preview_candidate(
         self,
         provider_context: ProviderCallContext,
@@ -284,7 +294,8 @@ class FallbackProvider(LLMProvider):
         int,
     ] | None:
         """Select the same leaf and generation facts the next dispatch will use."""
-        if not self._has_fallbacks or self._primary_available():
+        start_index = self._route_start_index(provider_context)
+        if not self._has_fallbacks or (start_index == 0 and self._primary_available()):
             return (
                 self._primary,
                 self._primary_call_context(provider_context, model),
@@ -292,7 +303,8 @@ class FallbackProvider(LLMProvider):
                 generation,
                 0,
             )
-        for index, fallback in enumerate(self._fallback_presets):
+        fallback_offset = max(0, start_index - 1)
+        for index, fallback in enumerate(self._fallback_presets[fallback_offset:], start=fallback_offset):
             try:
                 fallback_provider = self._provider_factory(fallback)
             except Exception:
@@ -330,6 +342,8 @@ class FallbackProvider(LLMProvider):
         provider_context: object,
         model: str | None,
         fallback_index: int,
+        *,
+        consumed_through: int = -1,
     ) -> None:
         if not isinstance(provider_context, ProviderCallContext):
             return
@@ -345,6 +359,10 @@ class FallbackProvider(LLMProvider):
             raise ProviderRouteChanged(
                 expected=selected.route_token,
                 actual=f"{provider.provider_name}:{actual_model}:{fallback_index}",
+                actual_provider=provider.provider_name,
+                actual_model=actual_model,
+                actual_fallback_index=fallback_index,
+                consumed_through=consumed_through,
             )
 
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
@@ -666,6 +684,14 @@ class FallbackProvider(LLMProvider):
         on_fallback_attempt: Callable[[], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         primary_model = kwargs.get("model") or self._primary.get_default_model()
+        provider_context = kwargs.get("provider_context")
+        start_index = self._route_start_index(provider_context)
+        consumed_through = (
+            provider_context.route_consumed_through
+            if isinstance(provider_context, ProviderCallContext)
+            and type(provider_context.route_consumed_through) is int
+            else -1
+        )
         primary_was_attempted = False
         primary_response: LLMResponse | None = None
         primary_error = "unknown error"
@@ -673,13 +699,14 @@ class FallbackProvider(LLMProvider):
         # continuation, so the incoming primary state remains reusable.
         preserve_primary_state = True
 
-        if self._primary_available():
+        if start_index <= 0 and self._primary_available():
             primary_was_attempted = True
             self._verify_route(
                 self._primary,
                 kwargs.get("provider_context"),
                 kwargs.get("model"),
                 0,
+                consumed_through=consumed_through,
             )
             response, primary_exception = await self._call_provider(
                 call, self._primary, kwargs
@@ -707,6 +734,7 @@ class FallbackProvider(LLMProvider):
                 )
                 return response
 
+            consumed_through = max(consumed_through, 0)
             self._primary_failures += 1
             if self._primary_failures >= _PRIMARY_FAILURE_THRESHOLD:
                 self._primary_tripped_at = time.monotonic()
@@ -715,12 +743,20 @@ class FallbackProvider(LLMProvider):
                     primary_model, self._primary_failures,
                 )
         else:
-            logger.debug("Primary model '{}' circuit open; skipping", primary_model)
+            logger.debug(
+                "Primary model '{}' {}; skipping",
+                primary_model,
+                "route candidate advanced"
+                if start_index > 0
+                else "circuit open",
+            )
 
         last_response = primary_response
         primary_skipped = not primary_was_attempted
         for idx, fallback in enumerate(self._fallback_presets):
             fallback_model = fallback.model
+            if idx + 1 < start_index:
+                continue
             if has_streamed is not None and has_streamed[0]:
                 break
             if (
@@ -736,8 +772,10 @@ class FallbackProvider(LLMProvider):
                 continue
             if idx == 0 and primary_skipped:
                 logger.info(
-                    "Primary model '{}' circuit open, trying fallback '{}'",
-                    primary_model, fallback_model,
+                    "Primary model '{}' {}; trying fallback '{}'",
+                    primary_model,
+                    "route candidate advanced" if start_index > 0 else "circuit open",
+                    fallback_model,
                 )
             elif idx == 0:
                 logger.info(
@@ -779,6 +817,7 @@ class FallbackProvider(LLMProvider):
                 fallback_kwargs.get("provider_context"),
                 fallback_model,
                 idx + 1,
+                consumed_through=consumed_through,
             )
             if fallback.reasoning_effort is None:
                 fallback_kwargs.pop("reasoning_effort", None)
@@ -806,6 +845,7 @@ class FallbackProvider(LLMProvider):
                 return fallback_response
 
             last_response = fallback_response
+            consumed_through = max(consumed_through, idx + 1)
             logger.warning(
                 "Fallback '{}' also failed: {}",
                 fallback_model,

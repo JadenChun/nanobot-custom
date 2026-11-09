@@ -416,6 +416,12 @@ class ProviderCallContext:
     selected_route: PreparedRequestRoute | None = field(
         default=None, repr=False,
     )
+    # Content-free retry position for one logical request. ``candidate_index``
+    # is the next leaf to attempt; ``consumed_through`` records the highest
+    # leaf that already ran. A pre-dispatch route change can advance the
+    # candidate without consuming the skipped leaf.
+    route_candidate_index: int = 0
+    route_consumed_through: int = -1
 
 
 @dataclass(frozen=True, slots=True)

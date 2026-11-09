@@ -1668,6 +1668,52 @@ class AgentRunner:
         )
         return RecordedResponse(response, source_event_id, anchor_eligible)
 
+    def _reprepare_route_after_change(
+        self,
+        request_state: ModelRequestState,
+        messages: list[dict[str, Any]],
+        provider_context: ProviderCallContext,
+        exc: ProviderRouteChanged,
+    ) -> tuple[list[dict[str, Any]], ProviderCallContext, LLMResponse | None]:
+        """Reprepare one logical request for the route dispatch selected."""
+        actual_index = (
+            exc.actual_fallback_index
+            if isinstance(exc.actual_fallback_index, int)
+            else 0
+        )
+        next_context = replace(
+            provider_context,
+            selected_route=None,
+            route_candidate_index=max(
+                provider_context.route_candidate_index,
+                actual_index,
+            ),
+            route_consumed_through=max(
+                provider_context.route_consumed_through,
+                exc.consumed_through,
+            ),
+        )
+        try:
+            prepared, next_context = self.context_governor.reprepare_route(
+                request_state,
+                messages,
+                tool_definitions=request_state.tool_definitions,
+                stream=request_state.prepared_stream,
+                tool_choice=request_state.prepared_tool_choice,
+                provider_context=next_context,
+            )
+        except Exception as reprepare_error:
+            return messages, next_context, LLMResponse(
+                content=(
+                    "Error: provider request could not be prepared for the "
+                    f"fallback route: {reprepare_error}"
+                ),
+                finish_reason="error",
+                error_kind="invalid_request",
+                error_should_retry=False,
+            )
+        return prepared, next_context, None
+
     async def _request_model(
         self,
         spec: AgentRunSpec,
@@ -1905,7 +1951,7 @@ class AgentRunner:
                     recovery_failure_reason,
                 )
                 break
-            except ProviderRouteChanged:
+            except ProviderRouteChanged as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
                     ticket = None
@@ -1926,7 +1972,15 @@ class AgentRunner:
                     )
                     break
                 route_reprepared = True
-                provider_context = replace(provider_context, selected_route=None)
+                messages, provider_context, route_error = self._reprepare_route_after_change(
+                    request_state, messages, provider_context, exc,
+                )
+                if route_error is not None:
+                    response = route_error
+                    break
+                source_view = self._source_view(
+                    request_state, messages, request_state.source_view,
+                )
                 continue
             except ProviderRequestRejected as exc:
                 if ticket is not None and request_state.source is not None:
@@ -2367,7 +2421,7 @@ class AgentRunner:
                     recovery_failure_reason,
                 )
                 break
-            except ProviderRouteChanged:
+            except ProviderRouteChanged as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
                     ticket = None
@@ -2388,7 +2442,15 @@ class AgentRunner:
                     )
                     break
                 route_reprepared = True
-                provider_context = replace(provider_context, selected_route=None)
+                messages, provider_context, route_error = self._reprepare_route_after_change(
+                    request_state, messages, provider_context, exc,
+                )
+                if route_error is not None:
+                    response = route_error
+                    break
+                source_view = self._source_view(
+                    request_state, messages, request_state.source_view,
+                )
                 continue
             except ProviderRequestRejected as exc:
                 if ticket is not None and request_state.source is not None:
