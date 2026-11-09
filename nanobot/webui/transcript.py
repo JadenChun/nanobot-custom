@@ -39,6 +39,9 @@ _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
 _TRANSCRIPT_SEGMENT_RE = re.compile(r"^\d{6}\.jsonl$")
 _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
 _MAX_TRANSCRIPT_PAGE_LIMIT = 1000
+# The no-query replay path uses the same bounded page budget as paginated
+# reads. Older history remains reachable through the returned page cursor.
+_NO_QUERY_TRANSCRIPT_PAGE_LIMIT = _MAX_TRANSCRIPT_PAGE_LIMIT
 _WEBUI_TURN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _WEBUI_REPLAY_IDENTITY_KEY = "_webui_replay_identity"
 _MARKDOWN_LOCAL_IMAGE_RE = re.compile(
@@ -2873,7 +2876,11 @@ def build_webui_thread_response(
     if paginated:
         lines, page = _select_transcript_page(session_key, limit=limit, before=before)
     else:
-        lines = _annotate_replay_identities(read_transcript_lines(session_key))
+        lines, page = _select_transcript_page(
+            session_key,
+            limit=_NO_QUERY_TRANSCRIPT_PAGE_LIMIT,
+            before=None,
+        )
     if not lines and active_turn_started_at is None:
         return None
     needs_user_backfill = _needs_user_event_backfill(lines)
