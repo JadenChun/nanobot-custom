@@ -131,6 +131,7 @@ from nanobot.security.desktop_permissions import (
     copy_full_permission_message_reference,
     full_permission_from_message,
 )
+from nanobot.security.network import bind_network_policy_for_cidrs
 from nanobot.security.workspace_access import (
     WorkspaceScopeError,
     WorkspaceScopeResolver,
@@ -2326,6 +2327,7 @@ class AgentLoop:
             channel=request_ctx.channel,
             workspace=self.workspace if managed_prompt else effective_scope.project_path,
             include_memory=include_memory,
+            tool_names=frozenset(effective_tools.tool_names),
         )
         if request_context is None:
             request_ctx = dataclasses.replace(
@@ -2385,7 +2387,8 @@ class AgentLoop:
                     transcript_input, history=run_context.source_history,
                     input_event_id=run_context.source_input_event_id,
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
-                    include_memory=session.policy.persist if session is not None else True)
+                    include_memory=session.policy.persist if session is not None else True,
+                    tool_names=frozenset(effective_tools.tool_names))
             run_context.artifact_read_allowed = (
                 (
                     self._artifact_reader_factory is not None
@@ -3012,18 +3015,30 @@ class AgentLoop:
                 attachments=msg.attachments,
                 approval_decision=approval_decision,
                 metadata=dict(msg.metadata))
-            await self.execute_turn(request, _options=_TurnExecutionOptions(
-                inbound=msg, admission_scope=partial(self._bus_turn_scope, msg, settlement=_compact_settlement), raise_errors=True,
-                trusted_foreground_activity=self._trusted_foreground_inbound(msg),
-                activity_already_recorded=activity_marker is not None,
-                retry_activity_notification=(
-                    activity_marker is not None
-                    and not activity_marker.notification_succeeded
-                ),
-                admitted_activity_marker=activity_marker,
-                workspace_access_continuation=continuation,
-                workspace_full_reference=full_permission_from_message(msg),
-            ))
+            bound_tools = cast(Any, getattr(self, "tools_config", None))
+            bound_cidrs: list[str] = (
+                list(cast(list[str], bound_tools.ssrf_whitelist))
+                if bound_tools is not None else []
+            )
+            with bind_network_policy_for_cidrs(bound_cidrs):
+                await self.execute_turn(request, _options=_TurnExecutionOptions(
+                    inbound=msg,
+                    admission_scope=partial(
+                        self._bus_turn_scope,
+                        msg,
+                        settlement=_compact_settlement,
+                    ),
+                    raise_errors=True,
+                    trusted_foreground_activity=self._trusted_foreground_inbound(msg),
+                    activity_already_recorded=activity_marker is not None,
+                    retry_activity_notification=(
+                        activity_marker is not None
+                        and not activity_marker.notification_succeeded
+                    ),
+                    admitted_activity_marker=activity_marker,
+                    workspace_access_continuation=continuation,
+                    workspace_full_reference=full_permission_from_message(msg),
+                ))
         except asyncio.CancelledError:
             raise
         except WorkspaceAccessContinuationRejectedError:

@@ -146,7 +146,10 @@ async def test_checkpoint_continues_through_reloaded_session(loop, trigger, summ
     expected_summary = reloaded.metadata["_last_summary"] if summary != "(nothing)" else None
     assert sent[0] == {
         "role": "system",
-        "content": loop.context.build_system_prompt(channel="cli"),
+        "content": loop.context.build_system_prompt(
+            channel="cli",
+            tool_names=frozenset(loop.tools.tool_names),
+        ),
     }
     assert summary not in sent[0]["content"]
     assert "Historical context summary" not in sent[0]["content"]

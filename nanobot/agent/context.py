@@ -2,6 +2,7 @@
 
 import json
 import platform
+import re
 import uuid
 from dataclasses import dataclass
 from enum import Enum
@@ -114,6 +115,61 @@ class TranscriptInput:
         return 1 + summary_count + len(self.history) + (self.current_message is not None)
 
 
+_TOOL_GUIDANCE_NAMES = frozenset({
+    "apply_patch",
+    "cron",
+    "edit_file",
+    "exec",
+    "exec_session",
+    "generate_image",
+    "list_dir",
+    "list_exec_sessions",
+    "message",
+    "read_artifact",
+    "read_file",
+    "repository_catalog",
+    "request_folder_access",
+    "run_cli_app",
+    "save_knowledge",
+    "select_workspace",
+    "web_fetch",
+    "web_search",
+    "write_file",
+})
+_TOOL_REFERENCE_RE = re.compile(r"[`'\"]([a-z][a-z0-9_]+)[`'\"]")
+
+
+def _filter_tool_guidance(
+    text: str,
+    tool_names: frozenset[str] | None,
+) -> str:
+    """Remove guidance lines that name a tool this turn cannot use."""
+    if tool_names is None:
+        return text
+    unavailable = sorted(_TOOL_GUIDANCE_NAMES - tool_names)
+    if not unavailable:
+        return text
+    pattern = re.compile(r"\b(?:" + "|".join(map(re.escape, unavailable)) + r")\b")
+    return "\n".join(line for line in text.splitlines() if not pattern.search(line))
+
+
+def _render_tool_contract(tool_names: frozenset[str] | None) -> str:
+    """Render tool guidance against the tools admitted for this turn."""
+    template = render_template("agent/tool_contract.md")
+    if tool_names is None:
+        return template
+    lines: list[str] = []
+    for line in template.splitlines():
+        referenced = {
+            name for name in _TOOL_REFERENCE_RE.findall(line)
+            if name in _TOOL_GUIDANCE_NAMES
+        }
+        if referenced and not referenced.issubset(tool_names):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
@@ -156,6 +212,7 @@ class ContextBuilder:
         channel: str | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
@@ -187,7 +244,7 @@ class ContextBuilder:
         elif catalog:
             parts.append("# Repository Catalog\n\nMetadata for discovery; read the selected repository's "
                          "instructions and relevant files on demand. Use absolute paths when switching work.\n" + catalog)
-        parts.append(render_template("agent/tool_contract.md"))
+        parts.append(_render_tool_contract(tool_names))
 
         project_path = focus.expanduser().resolve()
         if project_path != self.workspace.expanduser().resolve():
@@ -245,7 +302,7 @@ class ContextBuilder:
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
-        return "\n\n---\n\n".join(parts)
+        return _filter_tool_guidance("\n\n---\n\n".join(parts), tool_names)
 
     def _managed_prompt_roots(self) -> list[Path]:
         roots = [self.workspace.expanduser().resolve(strict=False)]
@@ -460,6 +517,7 @@ class ContextBuilder:
         runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Compatibility wrapper for callers that need merged adjacent roles."""
         blocks = runtime_context_blocks
@@ -515,6 +573,7 @@ class ContextBuilder:
         channel: str | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build a model transcript while preserving the fresh-turn boundary."""
         root = workspace or self.workspace
@@ -525,6 +584,7 @@ class ContextBuilder:
                     channel=channel,
                     workspace=root,
                     include_memory=include_memory,
+                    tool_names=tool_names,
                 ),
             },
         ]
@@ -552,12 +612,13 @@ class ContextBuilder:
         self, transcript: TranscriptInput, *, history: SourceTranscript,
         input_event_id: str | None, channel: str | None = None,
         workspace: Path | None = None, include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
     ) -> SourceTranscript:
         """Bind source identities at construction, never by message offsets."""
         nodes: list[RequestNode] = [RuntimeNode(uuid.uuid4().hex, {
             'role': 'system', 'content': self.build_system_prompt(
                 channel=channel, workspace=workspace or self.workspace,
-                include_memory=include_memory),
+                include_memory=include_memory, tool_names=tool_names),
         }), *history.nodes]
         if transcript.current_message is not None:
             current = self.build_current_message(

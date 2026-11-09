@@ -39,6 +39,25 @@ _CATALOG_SOURCES = (
     ("public", CLI_ANYTHING_PUBLIC_REGISTRY_URL, CLI_ANYTHING_RAW_BASE, True),
     ("extensions", NANOBOT_EXTENSION_REGISTRY_URL, NANOBOT_EXTENSION_RAW_BASE, False),
 )
+_SOURCE_TRUST = {"public": 1, "harness": 2, "extensions": 3}
+# A lower-trust source may refresh display copy, but it cannot supply executable
+# or install metadata for an entry already admitted from a higher-trust source.
+_EXECUTION_FIELDS = frozenset({
+    "install_cmd",
+    "update_cmd",
+    "uninstall_cmd",
+    "entry_point",
+    "package_manager",
+    "npm_package",
+    "skill_md",
+    "requires",
+    "install",
+    "run",
+    "command",
+    "args",
+    "bin",
+    "executable",
+})
 
 _MAX_TOOL_OUTPUT_CHARS = 12_000
 _MAX_ARTIFACT_SCAN_PATHS = 4_000
@@ -585,11 +604,20 @@ class CliAppManager:
                 key = str(entry["name"]).lower()
                 previous = apps_by_name.get(key)
                 if previous:
-                    previous_source = str(previous.get("_source") or source)
-                    merged_source = (
-                        previous_source if previous_source == source else f"{previous_source}+{source}"
-                    )
-                    apps_by_name[key] = {**previous, **entry, "_source": merged_source}
+                    previous_source = str(previous.get("_source") or "harness")
+                    previous_rank = _SOURCE_TRUST.get(previous_source, 0)
+                    current_rank = _SOURCE_TRUST.get(source, 0)
+                    merged = {**previous, **entry}
+                    if current_rank > previous_rank:
+                        merged["_source"] = source
+                        merged["_raw_base"] = raw_base
+                    else:
+                        for field in _EXECUTION_FIELDS:
+                            if field in previous:
+                                merged[field] = previous[field]
+                        merged["_source"] = previous_source
+                        merged["_raw_base"] = previous.get("_raw_base") or raw_base
+                    apps_by_name[key] = merged
                 else:
                     apps_by_name[key] = entry
         return list(apps_by_name.values()), max(updated_values) if updated_values else None

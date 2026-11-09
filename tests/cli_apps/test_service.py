@@ -149,7 +149,7 @@ def test_payload_merges_catalog_and_marks_unsupported_installs(tmp_path: Path) -
         "suno",
     }
     assert apps["gimp"]["install_supported"] is True
-    assert apps["gimp"]["source"] == "harness+public"
+    assert apps["gimp"]["source"] == "harness"
     assert apps["gimp"]["description"] == "Public duplicate entry"
     assert apps["feishu"]["description"] == "Lark CLI"
     assert apps["feishu"]["manifest"]["description"] == "Lark CLI"
@@ -160,7 +160,7 @@ def test_payload_merges_catalog_and_marks_unsupported_installs(tmp_path: Path) -
     gimp_manifest = apps["gimp"]["manifest"]
     assert gimp_manifest["schema"] == "agent-app.v1"
     assert gimp_manifest["id"] == "gimp"
-    assert gimp_manifest["source"] == "cli-anything:harness+public"
+    assert gimp_manifest["source"] == "cli-anything:harness"
     assert gimp_manifest["capabilities"][0]["type"] == "cli"
     assert gimp_manifest["capabilities"][0]["entry_point"] == "cli-anything-gimp"
     assert gimp_manifest["install"]["verification"] == ["entry_point_available"]
