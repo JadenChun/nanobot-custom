@@ -85,7 +85,7 @@ class MemoryStore:
     # Durable files whose real working-tree delta grounds Dream commit messages.
     # Deliberately excludes memory/.dream_cursor so progress bookkeeping never
     # appears as a durable-memory edit in the audit record.
-    _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md")
+    _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md", "skills")
     _LEGACY_ENTRY_START_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*")
     _LEGACY_TIMESTAMP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\s*")
     _LEGACY_RAW_MESSAGE_RE = re.compile(
@@ -123,6 +123,7 @@ class MemoryStore:
             self._append_lock = threading.Lock()  # serialize cursor allocation + append
             self._git = GitStore(workspace, tracked_files=[
                 "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+                "skills",
             ])
             self._maybe_migrate_legacy_history()
             if memory_lock is not None:

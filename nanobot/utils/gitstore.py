@@ -101,7 +101,10 @@ class GitStore:
             for rel in self._tracked_files:
                 p = self._workspace / rel
                 p.parent.mkdir(parents=True, exist_ok=True)
-                if not p.exists():
+                if rel == "skills":
+                    # Directory-scoped tracking for workspace skills.
+                    p.mkdir(exist_ok=True)
+                elif not p.exists():
                     p.write_text("", encoding="utf-8")
 
             # Initial commit
@@ -338,7 +341,30 @@ class GitStore:
         try:
             with Repo(str(self._workspace)) as repo:
                 head_tree = self._head_tree(repo)
-                for path in paths:
+                expanded: set[str] = set()
+                for raw_path in paths:
+                    target = self._workspace / raw_path
+                    if target.is_dir():
+                        expanded.update(
+                            item.relative_to(self._workspace).as_posix()
+                            for item in target.rglob("*")
+                            if item.is_file()
+                        )
+                        if head_tree is not None:
+                            prefix = raw_path.rstrip("/")
+                            try:
+                                for entry in repo.object_store.iter_tree_contents(head_tree):
+                                    entry_path = entry.path.decode("utf-8")
+                                    if (
+                                        entry_path == prefix
+                                        or entry_path.startswith(prefix + "/")
+                                    ):
+                                        expanded.add(entry_path)
+                            except Exception:
+                                pass
+                    else:
+                        expanded.add(raw_path)
+                for path in sorted(expanded):
                     head_text = (
                         self._read_blob_from_tree(repo, head_tree, path)
                         if head_tree is not None
