@@ -77,6 +77,13 @@ class RemoteDevice:
         return OWNER_SCOPE in self.scopes
 
 
+@dataclass(frozen=True)
+class DeviceProofRecord:
+    fingerprint: str
+    generation: int
+    origin: str = ""
+
+
 @dataclass
 class RemoteAccessState:
     version: int = STATE_VERSION
@@ -84,6 +91,7 @@ class RemoteAccessState:
     revision: int = 1
     enabled: bool = False
     devices: dict[str, RemoteDevice] = field(default_factory=dict)
+    device_proofs: dict[str, DeviceProofRecord] = field(default_factory=dict)
     owned_entries: list[dict[str, Any]] = field(default_factory=list)
     audit: list[dict[str, Any]] = field(default_factory=list)
     updated_at: float = field(default_factory=time.time)
@@ -221,7 +229,9 @@ class RemoteAccessStore:
                 scopes=tuple(scopes),
                 created_at=now,
                 last_seen_at=now,
-                refresh_hash=hash_refresh_token(refresh_token),
+                refresh_hash=(
+                    hash_refresh_token(refresh_token) if refresh_token else ""
+                ),
                 refresh_expires_at=refresh_expires_at,
             )
             state.devices[installation_id] = device
@@ -232,6 +242,38 @@ class RemoteAccessStore:
     def get_device(self, installation_id: str) -> RemoteDevice | None:
         state = self.load()
         return state.devices.get(installation_id) if state else None
+
+    def set_device_proof(
+        self,
+        installation_id: str,
+        *,
+        fingerprint: str,
+        generation: int,
+        origin: str = "",
+    ) -> None:
+        if not fingerprint or generation < 1:
+            raise StoreError("device proof is invalid")
+        with self._locked():
+            state = self._require_state()
+            if installation_id not in state.devices:
+                raise StoreError("device is unknown")
+            state.device_proofs[installation_id] = DeviceProofRecord(
+                fingerprint=fingerprint,
+                generation=generation,
+                origin=origin,
+            )
+            state.revision += 1
+            self._save_locked(state)
+
+    def get_device_proof(self, installation_id: str) -> tuple[str, int, str] | None:
+        state = self.load()
+        if state is None:
+            return None
+        record = state.device_proofs.get(installation_id)
+        return (
+            (record.fingerprint, record.generation, record.origin)
+            if record is not None else None
+        )
 
     def update_scopes(self, installation_id: str, scopes: tuple[str, ...]) -> RemoteDevice:
         with self._locked():
@@ -498,6 +540,14 @@ class RemoteAccessStore:
                 }
                 for installation_id, device in state.devices.items()
             },
+            "device_proofs": {
+                installation_id: {
+                    "fingerprint": record.fingerprint,
+                    "generation": record.generation,
+                    "origin": record.origin,
+                }
+                for installation_id, record in state.device_proofs.items()
+            },
             "owned_entries": list(state.owned_entries),
             "audit": list(state.audit[-500:]),
         }
@@ -556,6 +606,29 @@ class RemoteAccessStore:
             if device.installation_id != key:
                 raise StoreCorruptError("device key does not match its record")
             devices[key] = device
+        raw_proofs = raw.get("device_proofs", {})
+        if not isinstance(raw_proofs, dict):
+            raise StoreCorruptError("device proofs are invalid")
+        proofs: dict[str, DeviceProofRecord] = {}
+        for key, raw_proof in cast(dict[str, Any], raw_proofs).items():
+            if not isinstance(raw_proof, dict):
+                raise StoreCorruptError("device proof record is invalid")
+            proof = cast(dict[str, Any], raw_proof)
+            fingerprint = proof.get("fingerprint")
+            generation = proof.get("generation")
+            if (
+                not isinstance(fingerprint, str)
+                or not fingerprint
+                or len(fingerprint) > 128
+                or not isinstance(generation, int)
+                or generation < 1
+            ):
+                raise StoreCorruptError("device proof record is invalid")
+            proofs[key] = DeviceProofRecord(
+                fingerprint=fingerprint,
+                generation=generation,
+                origin=str(proof.get("origin") or ""),
+            )
         raw_entries = raw.get("owned_entries", [])
         if not isinstance(raw_entries, list):
             raise StoreCorruptError("owned entries are invalid")
@@ -613,6 +686,7 @@ class RemoteAccessStore:
             owned_entries=entries,
             audit=audit,
             updated_at=float(updated_at) if isinstance(updated_at, (int, float)) else time.time(),
+            device_proofs=proofs,
         )
 
 

@@ -293,6 +293,54 @@ class OwnerIPCServer:
                 }
             assert isinstance(result, PairingPending)
             return {"ok": True, "result": _pending_payload(result)}
+        if method == "pair_recover_begin":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            installation_id = _string_param(params, "installation_id")
+            device_key = _base64_param(params, "device_public_key")
+            if installation_id is None or device_key is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "recovery fields are required"}}
+            try:
+                claims = self.pairing.begin_device_recovery(
+                    installation_id=installation_id,
+                    device_public_key_der=device_key,
+                )
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {"ok": True, "result": {"proof_challenge": claims}}
+        if method == "pair_recover_complete":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            installation_id = _string_param(params, "installation_id")
+            raw_claims = params.get("claims")
+            signature = _base64_param(params, "signature")
+            if installation_id is None or not isinstance(raw_claims, dict) or signature is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "proof fields are required"}}
+            from nanobot.remote.device_proof import DeviceProofClaims, DeviceProofError
+
+            try:
+                claims = DeviceProofClaims.from_payload(cast(dict[str, object], raw_claims))
+                pair = self.pairing.complete_device_recovery(
+                    installation_id=installation_id,
+                    claims=claims,
+                    signature_der=signature,
+                )
+            except DeviceProofError as exc:
+                return {"ok": False, "error": {"code": "pairing_rejected", "message": exc.reason}}
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {
+                "ok": True,
+                "result": {
+                    "status": "approved",
+                    "installation_id": installation_id,
+                    "access_token": pair.access_token,
+                    "refresh_token": pair.refresh_token,
+                    "expires_in": pair.expires_in,
+                    "refresh_expires_in": pair.refresh_expires_in,
+                    "scopes": list(pair.scopes),
+                },
+            }
         if method == "pair_prove":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}

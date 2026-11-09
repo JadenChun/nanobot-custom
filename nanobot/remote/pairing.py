@@ -172,6 +172,20 @@ class PairingResult:
 
 
 @dataclass
+class _RecoveryChallenge:
+    installation_id: str
+    fingerprint: str
+    generation: int
+    origin: str
+    public_key_der: bytes
+    challenge_id: str
+    nonce: str
+    expires_at: int
+    consumed: bool = False
+    issued: IssuedPair | None = None
+
+
+@dataclass
 class _Challenge:
     offer: PairingOffer
     scopes: tuple[str, ...]
@@ -215,6 +229,7 @@ class PairingService:
         self._lock = threading.RLock()
         self._challenges: dict[str, _Challenge] = {}
         self._code_attempts: dict[str, list[float]] = {}
+        self._recoveries: dict[str, _RecoveryChallenge] = {}
         self._state_path = state_path or (store.root / "pairing-pending.json")
         self._load_state()
 
@@ -619,6 +634,88 @@ class PairingService:
         self._save_locked()
         return self._pending_payload(challenge)
 
+    def begin_device_recovery(
+        self,
+        *,
+        installation_id: str,
+        device_public_key_der: bytes,
+    ) -> dict[str, object]:
+        """Mint a fresh proof challenge for an already approved v2 device."""
+        try:
+            fingerprint = device_proof_fingerprint(device_public_key_der)
+        except DeviceProofError as exc:
+            raise PairingRejectedError(str(exc)) from exc
+        with self._lock:
+            state = self.store.load()
+            device = self.store.get_device(installation_id)
+            if state is None or not state.enabled or device is None or device.revoked:
+                raise PairingRejectedError("installation is not recoverable")
+            binding = self.store.get_device_proof(installation_id)
+            if binding is None or binding[0] != fingerprint:
+                raise PairingRejectedError("device proof is not current")
+            now = int(self.clock())
+            recovery = _RecoveryChallenge(
+                installation_id=installation_id,
+                fingerprint=fingerprint,
+                generation=binding[1],
+                origin=binding[2],
+                public_key_der=bytes(device_public_key_der),
+                challenge_id=uuid.uuid4().hex,
+                nonce=secrets.token_urlsafe(32),
+                expires_at=now + DEVICE_PROOF_TTL_SECONDS,
+            )
+            self._recoveries[installation_id] = recovery
+            return DeviceProofClaims(
+                instance_id=state.installation_id,
+                origin=binding[2],
+                installation_id=installation_id,
+                device_fingerprint=fingerprint,
+                device_generation=binding[1],
+                challenge_id=recovery.challenge_id,
+                nonce=recovery.nonce,
+                expires_at=recovery.expires_at,
+            ).payload()
+
+    def complete_device_recovery(
+        self,
+        *,
+        installation_id: str,
+        claims: DeviceProofClaims,
+        signature_der: bytes,
+    ) -> IssuedPair:
+        """Verify a fresh recovery proof, consume it, and issue access."""
+        with self._lock:
+            recovery = self._recoveries.get(installation_id)
+            if recovery is None or recovery.consumed:
+                raise PairingConsumedError("device recovery challenge is not current")
+            if self.clock() >= recovery.expires_at:
+                raise PairingExpiredError("device recovery challenge has expired")
+            state = self.store.load()
+            if state is None or not state.enabled:
+                raise PairingRejectedError("remote access is disabled")
+            device = self.store.get_device(installation_id)
+            if device is None or device.revoked:
+                raise PairingRejectedError("installation is revoked")
+            try:
+                verify_device_proof(
+                    claims,
+                    public_key_der=recovery.public_key_der,
+                    signature_der=signature_der,
+                    expected_instance_id=state.installation_id,
+                    expected_origin=recovery.origin,
+                    expected_installation_id=installation_id,
+                    expected_device_generation=recovery.generation,
+                    expected_challenge_id=recovery.challenge_id,
+                    expected_nonce=recovery.nonce,
+                    now=self.clock(),
+                )
+            except DeviceProofError as exc:
+                raise PairingRejectedError(exc.reason) from exc
+            recovery.consumed = True
+            pair = self.tokens.reissue_device(installation_id)
+            recovery.issued = pair
+            return pair
+
     def proof_challenge_claims(self, pairing_id: str) -> dict[str, object] | None:
         """Return the exact claims the bound device must sign, if one is bound."""
         with self._lock:
@@ -671,6 +768,7 @@ class PairingService:
                     challenge.scopes,
                     device_fingerprint=challenge.device_fingerprint,
                     device_generation=challenge.device_generation,
+                    origin=challenge.offer.origin,
                     label=challenge.pending_label or challenge.offer.label,
                 )
             except (AuthConflictError, AuthRejectedError, AuthError) as exc:

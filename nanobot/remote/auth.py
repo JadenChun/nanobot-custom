@@ -98,6 +98,7 @@ class TokenService:
         *,
         device_fingerprint: str,
         device_generation: int,
+        origin: str = "",
         label: str = "mobile",
     ) -> IssuedPair:
         """Issue one proof-bound access grant without a bearer refresh authority."""
@@ -121,6 +122,12 @@ class TokenService:
                 )
             except StoreError as exc:
                 raise AuthConflictError(str(exc)) from exc
+            self.store.set_device_proof(
+                installation_id,
+                fingerprint=device_fingerprint,
+                generation=device_generation,
+                origin=origin,
+            )
             expires_at = self.clock() + ACCESS_TTL_SECONDS
             self._access[_token_hash(access_token)] = AccessGrant(
                 installation_id=installation_id,
@@ -133,6 +140,33 @@ class TokenService:
                 expires_in=ACCESS_TTL_SECONDS,
                 refresh_expires_in=0,
                 scopes=tuple(scopes),
+            )
+
+    def reissue_device(self, installation_id: str) -> IssuedPair:
+        """Issue a fresh access token for an already proof-bound device."""
+        with self._lock:
+            state = self.store.load()
+            if state is None or not state.enabled:
+                raise AuthRejectedError("remote access is disabled")
+            device = state.devices.get(installation_id)
+            if device is None or device.revoked:
+                raise AuthRejectedError("installation is revoked")
+            if self.store.get_device_proof(installation_id) is None:
+                raise AuthRejectedError("installation has no device proof binding")
+            access_token = f"nbm_at_{secrets.token_urlsafe(32)}"
+            expires_at = self.clock() + ACCESS_TTL_SECONDS
+            self._remove_installation_grants(installation_id)
+            self._access[_token_hash(access_token)] = AccessGrant(
+                installation_id=installation_id,
+                scopes=tuple(device.scopes),
+                expires_at=expires_at,
+            )
+            return IssuedPair(
+                access_token=access_token,
+                refresh_token="",
+                expires_in=ACCESS_TTL_SECONDS,
+                refresh_expires_in=0,
+                scopes=tuple(device.scopes),
             )
 
     def validate_access(self, access_token: str) -> AccessGrant:

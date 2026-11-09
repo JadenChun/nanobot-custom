@@ -553,6 +553,66 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun pairRecover(call: PluginCall) {
+        operationExecutor.execute {
+            try {
+                val record = custody.load()
+                    ?: throw IllegalStateException("custody target is missing")
+                val recovered = recoverAccess(record)
+                mainHandler.post {
+                    call.resolve(
+                        JSObject()
+                            .put("status", if (recovered) "approved" else "pending")
+                            .put("installationId", record.installationId)
+                    )
+                }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "pairing recovery failed") }
+            }
+        }
+    }
+
+    private fun recoverAccess(record: CustodyRecord): Boolean {
+        val installationId = record.installationId
+        val begun = jsonRequest(
+            "mobile_pair_recover",
+            "/mobile/v1/pair/recover",
+            body = null,
+            headers = mapOf(
+                "X-Nanobot-Installation" to installationId,
+                "X-Nanobot-Device-Key" to Base64.encodeToString(
+                    custody.deviceProofPublicKey(),
+                    Base64.NO_WRAP,
+                ),
+            ),
+        )
+        val claims = begun.getJSONObject("proof_challenge")
+        val canonical = DeviceProofCanonicalizer.canonicalBytes(
+            DeviceProofCanonicalizer.fromJson(claims)
+        )
+        val signature = custody.signDeviceProof(canonical)
+        val completed = jsonRequest(
+            "mobile_pair_recover_complete",
+            "/mobile/v1/pair/recover/complete",
+            body = null,
+            headers = mapOf(
+                "X-Nanobot-Installation" to installationId,
+                "X-Nanobot-Device-Signature" to Base64.encodeToString(signature, Base64.NO_WRAP),
+                "X-Nanobot-Proof-Claims" to Base64.encodeToString(canonical, Base64.NO_WRAP),
+            ),
+        )
+        custody.saveRefreshedTokens(
+            record.origin,
+            installationId,
+            completed.getString("access_token"),
+            completed.optString("refresh_token"),
+            completed.optInt("expires_in", 600),
+            completed.optInt("refresh_expires_in", 0),
+        )
+        return true
+    }
+
+    @PluginMethod
     fun pendingPairingLink(call: PluginCall) {
         val raw = MainActivity.pendingPairingLink
         MainActivity.pendingPairingLink = null

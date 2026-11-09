@@ -65,6 +65,8 @@ _PAIRING_ROUTES = {
     "/mobile/v1/pair/poll",
     "/mobile/v1/pair/code",
     "/mobile/v1/pair/prove",
+    "/mobile/v1/pair/recover",
+    "/mobile/v1/pair/recover/complete",
 }
 _REFRESH_ROUTE = "/mobile/v1/refresh"
 _LEGACY_MUTATION_ACTIONS = frozenset(
@@ -525,6 +527,49 @@ class MobileGatewayEdge:
         platform = header("X-Nanobot-Platform") or None
         model = header("X-Nanobot-Model") or None
         device_public_key = header("X-Nanobot-Device-Key") or None
+        if path.endswith("/recover"):
+            installation_id = header("X-Nanobot-Installation")
+            device_public_key = header("X-Nanobot-Device-Key")
+            if not installation_id or not device_public_key:
+                return http_json_response({"error": "bad_request"}, status=400)
+            try:
+                result = await asyncio.to_thread(
+                    self.validator.client.begin_pairing_recovery,
+                    installation_id=installation_id,
+                    device_public_key=device_public_key,
+                )
+            except OwnerUnavailableError:
+                return http_json_response({"error": "owner_unavailable"}, status=503)
+            except OwnerRequestError as exc:
+                status = _PAIRING_STATUS.get(exc.code, 400)
+                return http_json_response({"error": exc.code}, status=status)
+            return http_json_response(result)
+        if path.endswith("/recover/complete"):
+            installation_id = header("X-Nanobot-Installation")
+            signature = header("X-Nanobot-Device-Signature")
+            encoded_claims = header("X-Nanobot-Proof-Claims")
+            if not installation_id or not signature or not encoded_claims:
+                return http_json_response({"error": "bad_request"}, status=400)
+            try:
+                decoded = base64.b64decode(encoded_claims, validate=True)
+                parsed = json.loads(decoded.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                return http_json_response({"error": "bad_request"}, status=400)
+            if not isinstance(parsed, dict):
+                return http_json_response({"error": "bad_request"}, status=400)
+            try:
+                result = await asyncio.to_thread(
+                    self.validator.client.complete_pairing_recovery,
+                    installation_id=installation_id,
+                    claims=cast(dict[str, object], parsed),
+                    signature=signature,
+                )
+            except OwnerUnavailableError:
+                return http_json_response({"error": "owner_unavailable"}, status=503)
+            except OwnerRequestError as exc:
+                status = _PAIRING_STATUS.get(exc.code, 400)
+                return http_json_response({"error": exc.code}, status=status)
+            return http_json_response(result)
         if path.endswith("/prove"):
             pairing_id = header("X-Nanobot-Pairing-Id")
             signature = header("X-Nanobot-Device-Signature")

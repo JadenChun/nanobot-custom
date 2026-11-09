@@ -837,10 +837,14 @@
         refreshed = await plugin.refresh();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
-        if (
-          message.indexOf("pairing was revoked") < 0 &&
-          message.indexOf("no refresh credential") < 0
-        ) {
+        if (message.indexOf("no refresh credential") >= 0) {
+          try {
+            var recovered = await plugin.pairRecover();
+            refreshed = recovered && recovered.status === "approved";
+          } catch (_) {
+            /* Fall through to the revoked/repair path. */
+          }
+        } else if (message.indexOf("pairing was revoked") < 0) {
           return "unreachable";
         }
       }

@@ -153,6 +153,38 @@ class RemoteAccessClient:
             role="pairing",
         )
 
+    def begin_pairing_recovery(
+        self,
+        *,
+        installation_id: str,
+        device_public_key: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_recover_begin",
+            {
+                "installation_id": installation_id,
+                "device_public_key": device_public_key,
+            },
+            role="pairing",
+        )
+
+    def complete_pairing_recovery(
+        self,
+        *,
+        installation_id: str,
+        claims: dict[str, object],
+        signature: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_recover_complete",
+            {
+                "installation_id": installation_id,
+                "claims": claims,
+                "signature": signature,
+            },
+            role="pairing",
+        )
+
     def prove_pairing(
         self,
         *,
