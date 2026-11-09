@@ -98,6 +98,17 @@ export type InboundEvent =
       started_at?: number
     }
   | {
+      event: "delegated_child"
+      chat_id: string
+      child_session_key: string
+      child_id: string
+      profile: string
+      state: string
+      outcome?: string
+      runtime_generation: number
+      turn_id?: string
+    }
+  | {
       event: "user_message"
       chat_id: string
       text: string
@@ -584,11 +595,12 @@ export async function fetchHistory(
   chatId: string,
   beforeCursor?: string | null,
   reauthenticate?: ApiReauthenticator,
+  sessionKey?: string,
 ): Promise<HistorySnapshot> {
   if (!apiUrl || !apiToken) {
     return { messages: [], hasMoreBefore: false, beforeCursor: null, userMessageOffset: 0 }
   }
-  const key = encodeURIComponent(`websocket:${chatId}`)
+  const key = encodeURIComponent(sessionKey ?? `websocket:${chatId}`)
   const params = new URLSearchParams({ limit: "120", direction: "latest" })
   if (beforeCursor) params.set("before", beforeCursor)
   const response = await fetchApi(
@@ -1215,6 +1227,20 @@ export class NanobotClient {
     this.socket = null
     socket?.close()
     this.rejectPendingMutations("gateway connection closed")
+  }
+
+  controlDelegatedChild(
+    parentKey: string,
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ): Promise<unknown> {
+    return this.requestMutation<unknown>("delegation.child.control", {
+      parent_key: parentKey,
+      child_id: childId,
+      action,
+      ...(content !== undefined ? { content } : {}),
+    })
   }
 
   send(content: string, options: MessageOptions = {}): string {

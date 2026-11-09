@@ -132,6 +132,12 @@ interface ChatClient {
     chatId: string,
     recoveryId: string,
   ): Promise<RecoveryState>
+  controlDelegatedChild?(
+    parentKey: string,
+    childId: string,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ): Promise<unknown>
 }
 
 interface Palette {
@@ -499,6 +505,15 @@ export class NanobotTui {
   private backgroundKnown: boolean
   private activeTurn = false
   private activeTurnId: string | null = null
+  private readonly delegatedChildren = new Map<string, {
+    child_session_key: string
+    child_id: string
+    profile: string
+    state: string
+    outcome?: string
+    runtime_generation: number
+    turn_id?: string
+  }>()
   private activeLabel = "Thinking"
   private retryStatus: RenderedRetryStatus | null = null
   private activeStartedAt = 0
@@ -959,6 +974,10 @@ export class NanobotTui {
       this.quit()
       return
     }
+    if (visibleContent.toLowerCase() === "/child" || visibleContent.toLowerCase().startsWith("/child ")) {
+      void this.handleChildCommand(visibleContent)
+      return
+    }
     if (["/continue", "/dismiss"].includes(visibleContent.toLowerCase())) {
       if (!this.ready) {
         this.markSubmitUnsent()
@@ -1011,6 +1030,79 @@ export class NanobotTui {
       return
     }
     this.sendPrompt(prompt)
+  }
+
+  private async handleChildCommand(content: string): Promise<void> {
+    const parts = content.trim().split(/\s+/u)
+    const sub = (parts[1] || "list").toLowerCase()
+    const childId = parts[2]
+    this.clearComposer()
+    this.commandMenu.hide()
+    if (sub === "list") {
+      if (this.delegatedChildren.size === 0) {
+        this.transcript.notice("No delegated children in this chat")
+        return
+      }
+      for (const child of this.delegatedChildren.values()) {
+        const outcome = child.outcome ? ` (${child.outcome})` : ""
+        this.transcript.notice(
+          `Delegated child ${child.child_id} · ${child.state}${outcome} · ${child.profile}`,
+        )
+      }
+      return
+    }
+    if (!childId || !this.delegatedChildren.has(childId)) {
+      this.transcript.notice(`Unknown delegated child: ${childId || "(missing id)"}`, true)
+      return
+    }
+    const child = this.delegatedChildren.get(childId)!
+    if (sub === "open") {
+      try {
+        const history = await fetchHistory(
+          this.options.apiUrl,
+          this.options.apiToken,
+          this.currentChatId,
+          undefined,
+          this.apiReauthenticator,
+          child.child_session_key,
+        )
+        this.transcript.notice(`Delegated child ${childId} transcript (read-only)`)
+        this.transcript.history(history.messages)
+        this.status.content = `${history.messages.length} child messages`
+      } catch (error) {
+        this.status.content = error instanceof Error ? error.message : String(error)
+      }
+      return
+    }
+    if (sub === "wait" || sub === "stop" || sub === "steer") {
+      const text = sub === "steer" ? parts.slice(3).join(" ").trim() : undefined
+      if (sub === "steer" && !text) {
+        this.transcript.notice("Usage: /child steer <id> <guidance>", true)
+        return
+      }
+      const control = this.client.controlDelegatedChild
+      if (!control) {
+        this.transcript.notice("Child controls are unavailable in this client", true)
+        return
+      }
+      try {
+        const result = await control.call(
+          this.client,
+          `websocket:${this.currentChatId}`,
+          childId,
+          sub,
+          text || undefined,
+        )
+        this.transcript.notice(`Child ${childId} ${sub}: ${JSON.stringify(result)}`)
+      } catch (error) {
+        this.transcript.notice(
+          error instanceof Error ? error.message : String(error),
+          true,
+        )
+      }
+      return
+    }
+    this.transcript.notice("Usage: /child [list|open|wait|steer|stop] <id> [text]", true)
   }
 
   private sendPrompt(prompt: QueuedPrompt, steering = false): boolean {
@@ -1117,6 +1209,22 @@ export class NanobotTui {
       case "context_compaction":
         this.transcript.compaction({ id: event.compaction_id, phase: event.phase })
         return
+      case "delegated_child": {
+        this.delegatedChildren.set(event.child_id, {
+          child_session_key: event.child_session_key,
+          child_id: event.child_id,
+          profile: event.profile,
+          state: event.state,
+          ...(event.outcome ? { outcome: event.outcome } : {}),
+          runtime_generation: event.runtime_generation,
+          ...(event.turn_id ? { turn_id: event.turn_id } : {}),
+        })
+        const outcome = event.outcome ? ` (${event.outcome})` : ""
+        this.transcript.notice(
+          `Delegated child ${event.child_id} · ${event.state}${outcome} · /child open ${event.child_id}`,
+        )
+        return
+      }
       case "message_accepted":
         this.reconcileTurnOwnership(event)
         return

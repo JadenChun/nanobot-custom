@@ -3360,6 +3360,68 @@ describe("NanobotTui layout", () => {
 
     expect(setup.renderer.isDestroyed).toBe(true)
   })
+
+  test("projects delegated child rows and routes slash controls", async () => {
+    setup = await createTestRenderer({
+      width: 100,
+      height: 20,
+      screenMode: "alternate-screen",
+      consoleMode: "disabled",
+    })
+    const calls: Array<[string, string, string, string | undefined]> = []
+    const transport = {
+      ...client(),
+      controlDelegatedChild(
+        parentKey: string,
+        childId: string,
+        action: string,
+        content?: string,
+      ) {
+        calls.push([parentKey, childId, action, content])
+        return Promise.resolve({ ok: true, state: "active" })
+      },
+    }
+    const app = NanobotTui.mount(
+      setup.renderer,
+      options,
+      transport,
+      new MockTreeSitterClient({ autoResolveTimeout: 0 }),
+    )
+    const ui = app as unknown as { composer: TextareaRenderable }
+
+    app.accept({ event: "attached", chat_id: "chat" })
+    app.accept({
+      event: "delegated_child",
+      chat_id: "chat",
+      child_session_key: "delegated:child-a",
+      child_id: "child-a",
+      profile: "delegated",
+      state: "active",
+      runtime_generation: 0,
+    })
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Delegated child child-a")
+    expect(frame).toContain("/child open child-a")
+
+    await setup.mockInput.typeText("/child wait child-a")
+    ui.composer.submit()
+    await waitUntil(() => calls.length === 1)
+
+    await setup.mockInput.typeText("/child stop child-a")
+    ui.composer.submit()
+    await waitUntil(() => calls.length === 2)
+
+    await setup.mockInput.typeText("/child steer child-a focus")
+    ui.composer.submit()
+    await waitUntil(() => calls.length === 3)
+
+    expect(calls).toEqual([
+      ["websocket:chat", "child-a", "wait", undefined],
+      ["websocket:chat", "child-a", "stop", undefined],
+      ["websocket:chat", "child-a", "steer", "focus"],
+    ])
+  })
 })
 
 describe("NanobotTui with a Herdr pane title reporter", () => {
