@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { MessageBubble } from "@/components/MessageBubble";
@@ -1052,6 +1053,35 @@ describe("MessageBubble", () => {
     expect(screen.getByRole("button", { name: /view image: growth.svg/i })).toBeInTheDocument();
     expect(container.querySelector('img[src="/api/media/sig/svg"]')).toBeInTheDocument();
     expect(screen.queryByLabelText("File attachment")).not.toBeInTheDocument();
+  });
+
+  it("renders a delegated child row and opens the child session", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const message: UIMessage = {
+      id: "delegated-child-a",
+      role: "assistant",
+      content: "",
+      createdAt: Date.now(),
+      kind: "delegated_child",
+      delegatedChild: {
+        child_session_key: "delegated:child-a",
+        child_id: "child-a",
+        profile: "delegated",
+        state: "active",
+        runtime_generation: 0,
+        turn_id: "turn-a",
+      },
+    };
+
+    render(<MessageBubble message={message} onOpenChildSession={onOpen} />);
+
+    expect(screen.getByText("Delegated child")).toBeInTheDocument();
+    expect(screen.getByText(/delegated/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open" }));
+
+    expect(onOpen).toHaveBeenCalledWith("delegated:child-a");
   });
 
 });

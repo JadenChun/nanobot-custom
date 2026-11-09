@@ -1039,6 +1039,7 @@ function Shell({
   );
   const [view, setView] = useState<ShellView>(initialRouteRef.current.view);
   const [temporarySessions, setTemporarySessions] = useState<Record<string, ChatSummary>>({});
+  const [childSessionOverrides, setChildSessionOverrides] = useState<Record<string, ChatSummary>>({});
   const [temporaryChatEnabled, setTemporaryChatEnabled] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSectionKey>(initialRouteRef.current.settingsSection);
@@ -1254,8 +1255,10 @@ function Shell({
   const activeSession = useMemo<ChatSummary | null>(() => {
     if (!activeKey) return null;
     if (temporarySessions[activeKey]) return temporarySessions[activeKey];
-    return sessions.find((s) => s.key === activeKey) ?? null;
-  }, [sessions, activeKey, temporarySessions]);
+    return sessions.find((s) => s.key === activeKey)
+      ?? childSessionOverrides[activeKey]
+      ?? null;
+  }, [sessions, activeKey, temporarySessions, childSessionOverrides]);
   const activeTabMatch = useMemo(() => (
     activeKey && !temporarySessions[activeKey]
       ? workbenchTabForPane(workbenchState, activeKey)
@@ -1735,6 +1738,29 @@ function Shell({
     },
     [navigate, sessions],
   );
+
+  const openChildSession = useCallback((key: string) => {
+    const separator = key.indexOf(":");
+    const channel = separator > 0 ? key.slice(0, separator) : "delegated";
+    const chatId = separator > 0 ? key.slice(separator + 1) : key;
+    setChildSessionOverrides((current) => (
+      current[key]
+        ? current
+        : {
+            ...current,
+            [key]: {
+              key,
+              channel,
+              chatId,
+              createdAt: null,
+              updatedAt: null,
+              title: "Delegated child",
+              preview: "Delegated child session",
+            },
+          }
+    ));
+    onSelectChat(key);
+  }, [onSelectChat]);
 
   const onCloseTemporaryChat = useCallback((key: string) => {
     const session = temporarySessionsRef.current[key];
@@ -2764,6 +2790,7 @@ function Shell({
                           temporaryChatEnabled ? onCreateTemporaryChat : onCreateChat
                         }
                         onForkChat={temporaryChatActive ? undefined : onForkChat}
+                        onOpenChildSession={openChildSession}
                         onTurnEnd={onTurnEnd}
                         theme={theme}
                         onToggleTheme={toggle}
@@ -2804,6 +2831,7 @@ function Shell({
                       onNewChat={onNewChat}
                       onCreateChat={onCreateChat}
                       onForkChat={onForkChat}
+                      onOpenChildSession={openChildSession}
                       onTurnEnd={context.active ? onTurnEnd : () => void refresh()}
                       theme={theme}
                       onToggleTheme={toggle}

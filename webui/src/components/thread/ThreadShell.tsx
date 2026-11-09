@@ -633,6 +633,7 @@ interface ThreadShellProps {
     options?: { fullAccess?: boolean },
   ) => Promise<string | null>;
   onForkChat?: (sourceChatId: string, beforeUserIndex: number) => Promise<string | null>;
+  onOpenChildSession?: (sessionKey: string) => void;
   onTurnEnd?: () => void;
   theme?: "light" | "dark";
   onToggleTheme?: () => void;
@@ -935,6 +936,7 @@ export function ThreadShell({
   onToggleSidebar,
   onCreateChat,
   onForkChat,
+  onOpenChildSession,
   onTurnEnd,
   theme = "light",
   onToggleTheme = () => {},
@@ -2612,6 +2614,7 @@ export function ThreadShell({
             onLoadOlder={loadOlder}
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
             onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
+            onOpenChildSession={onOpenChildSession}
             onQuoteSelection={session ? handleQuoteSelection : undefined}
           />
         </FilePreviewAvailabilityProvider>

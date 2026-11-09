@@ -7,6 +7,7 @@ import contextvars
 import json
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -75,8 +76,6 @@ from nanobot.session.source_request import SourceTranscript
 from nanobot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.session.artifact_reader import ArtifactReader as _ArtifactReader
     from nanobot.session.turn_writer import SourceTurnWriter
@@ -224,6 +223,23 @@ class ForegroundAgentManager:
         )
         self._disabled_skills = set(disabled_skills or ())
         self._child_backends = ChildBackendRegistry()
+        self._child_event_sink: Callable[[Any], Awaitable[None]] | None = None
+
+    def set_child_event_sink(
+        self,
+        sink: Callable[[Any], Awaitable[None]] | None,
+    ) -> None:
+        """Publish typed child references to the parent activity owner."""
+        self._child_event_sink = sink
+
+    async def _emit_child(self, admission: Any) -> None:
+        sink = self._child_event_sink
+        if sink is None:
+            return
+        try:
+            await sink(admission)
+        except Exception:
+            logger.debug("Delegated child event projection failed")
 
     def bind_session_owner(self, sessions: SessionManager) -> None:
         """Attach the canonical session owner once the loop has constructed it."""
@@ -553,7 +569,10 @@ class ForegroundAgentManager:
                     },
                 )
             admission = reserved
-            await tree.activate(admission.child_id)
+            activated = await tree.activate(admission.child_id)
+            if activated is not None:
+                admission = activated
+            await self._emit_child(admission)
         if role in DELEGATED_READ_ONLY_ROLES:
             profile = role_capabilities(role)
             capability_prompt = (
@@ -722,11 +741,13 @@ class ForegroundAgentManager:
         if admission is not None:
             state, outcome = self._child_disposition(result)
             result.policy_metadata.setdefault("delegated_child", admission.metadata())
-            await self._delegation_tree.complete(  # type: ignore[union-attr]
+            updated = await self._delegation_tree.complete(  # type: ignore[union-attr]
                 admission.child_id,
                 outcome=outcome,
                 state=state,
             )
+            if updated is not None:
+                await self._emit_child(updated)
             if source_writer is None:
                 self._delegation_tree.record_exchange(  # type: ignore[union-attr]
                     admission.child_id,

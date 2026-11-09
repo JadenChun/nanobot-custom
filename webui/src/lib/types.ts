@@ -5,7 +5,7 @@ type Role = "user" | "assistant" | "tool" | "system";
 
 /** "trace" rows are intermediate agent breadcrumbs (tool-call hints,
  * progress pings) that should not be rendered as conversational replies. */
-type MessageKind = "message" | "trace" | "compaction";
+type MessageKind = "message" | "trace" | "compaction" | "delegated_child";
 
 export interface UIContextCompaction extends ContextCompaction {
   /** Live wire transitions announce; hydrated transcript rows stay silent. */
@@ -71,6 +71,16 @@ export interface RetryStatus extends WireRetryStatus {
   next_retry_at?: number;
   turn_id?: string;
 }
+export interface DelegatedChildPayload {
+  child_session_key: string;
+  child_id: string;
+  profile: string;
+  state: string;
+  outcome?: string;
+  runtime_generation: number;
+  turn_id?: string;
+}
+
 export interface UIMessage {
   id: string;
   role: Role;
@@ -93,6 +103,8 @@ export interface UIMessage {
   activityKind?: "model";
   /** Context-compaction lifecycle rendered as a standalone channel notice. */
   compaction?: UIContextCompaction;
+  /** Typed delegated-child reference projected from the parent activity owner. */
+  delegatedChild?: DelegatedChildPayload;
   /** Display-only localization marker for fixed /compact command replies. */
   compactReply?: "empty" | "failed";
   /** User turn: optimistic blob URLs for preview. Replay: placeholder chips. */
@@ -1693,6 +1705,17 @@ export type InboundEvent =
       active_turn_id?: string;
       starts_turn?: boolean;
       started_at?: number;
+    }
+  | {
+      event: "delegated_child";
+      chat_id: string;
+      child_session_key: string;
+      child_id: string;
+      profile: string;
+      state: string;
+      outcome?: string;
+      runtime_generation: number;
+      turn_id?: string;
     }
   | {
       event: "user_message";

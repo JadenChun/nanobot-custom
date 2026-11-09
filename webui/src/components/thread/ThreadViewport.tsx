@@ -59,6 +59,7 @@ interface ThreadViewportProps {
   onLoadOlder?: () => Promise<void> | void;
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
+  onOpenChildSession?: (sessionKey: string) => void;
   onQuoteSelection?: (text: string) => void;
 }
 
@@ -242,6 +243,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   onLoadOlder,
   onOpenFilePreview,
   onForkFromMessage,
+  onOpenChildSession,
   onQuoteSelection,
 }, ref) {
   const { t } = useTranslation();
@@ -889,6 +891,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   forkBoundaryMessageCount={visibleForkBoundaryMessageCount}
                   onOpenFilePreview={onOpenFilePreview}
                   onForkFromMessage={onForkFromMessage}
+                  onOpenChildSession={onOpenChildSession}
                   onQuoteSelection={onQuoteSelection}
                 />
               </div>

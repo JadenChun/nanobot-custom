@@ -3567,6 +3567,59 @@ describe("useNanobotStream", () => {
     expect(result.current.goalState).toEqual({ active: false });
   });
 
+  it("projects and updates a typed delegated child row", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-child", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    const activeEvent: InboundEvent = {
+      event: "delegated_child",
+      chat_id: "chat-child",
+      child_session_key: "delegated:child-a",
+      child_id: "child-a",
+      profile: "delegated",
+      state: "active",
+      runtime_generation: 0,
+      turn_id: "turn-a",
+    };
+
+    act(() => {
+      fake.emit("chat-child", activeEvent);
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      kind: "delegated_child",
+      role: "assistant",
+      delegatedChild: {
+        child_id: "child-a",
+        state: "active",
+      },
+      turnId: "turn-a",
+    });
+
+    act(() => {
+      fake.emit("chat-child", {
+        ...activeEvent,
+        state: "completed",
+        outcome: "completed",
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      kind: "delegated_child",
+      role: "assistant",
+      delegatedChild: {
+        child_id: "child-a",
+        state: "completed",
+        outcome: "completed",
+      },
+      turnId: "turn-a",
+    });
+  });
+
 });
 
 describe("live/replay projection before canonical-event revision migration", () => {

@@ -9,6 +9,7 @@ from loguru import logger
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
+    DelegatedChildEvent,
     GoalStateSyncEvent,
     GoalStatusEvent,
     MessageAdmittedEvent,
@@ -195,6 +196,24 @@ class WebUIOutboundProjector:
                     model_preset=event.model_preset,
                     context_window_tokens=event.context_window_tokens,
                     fallback=event.fallback,
+                )
+            return
+        if isinstance(event, DelegatedChildEvent):
+            if conns:
+                await self._transport.send_payload(
+                    msg.chat_id,
+                    cast(WebUIWirePayload, {
+                        "event": "delegated_child",
+                        "chat_id": msg.chat_id,
+                        "child_session_key": event.child_session_key,
+                        "child_id": event.child_id,
+                        "profile": event.profile,
+                        "state": event.state,
+                        **({"outcome": event.outcome} if event.outcome else {}),
+                        **({"turn_id": event.turn_id} if event.turn_id else {}),
+                        "runtime_generation": event.runtime_generation,
+                    }),
+                    persistence="turn_activity",
                 )
             return
         if isinstance(event, MessageAdmittedEvent):

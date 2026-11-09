@@ -23,6 +23,7 @@ interface ThreadMessagesProps {
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onQuoteSelection?: (text: string) => void;
+  onOpenChildSession?: (sessionKey: string) => void;
 }
 
 export type DisplayUnit = TurnUnit;
@@ -73,6 +74,7 @@ export function ThreadMessages({
   onOpenFilePreview,
   onForkFromMessage,
   onQuoteSelection,
+  onOpenChildSession,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -171,6 +173,7 @@ export function ThreadMessages({
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
             onForkFromMessage={onForkFromMessage}
+            onOpenChildSession={onOpenChildSession}
           />
         );
       })}
@@ -253,6 +256,7 @@ interface ThreadDisplayUnitProps {
   slashCommands: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
+  onOpenChildSession?: (sessionKey: string) => void;
 }
 
 const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
@@ -272,6 +276,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   slashCommands,
   onOpenFilePreview,
   onForkFromMessage,
+  onOpenChildSession,
 }: ThreadDisplayUnitProps) {
   const onForkFromHere = useCallback(() => {
     if (forkIndex !== undefined) onForkFromMessage?.(forkIndex);
@@ -305,6 +310,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
             onForkFromHere={forkIndex !== undefined ? onForkFromHere : undefined}
+            onOpenChildSession={onOpenChildSession}
           />
         )}
       </div>
@@ -332,6 +338,7 @@ function threadDisplayUnitPropsEqual(
     && previous.mcpPresets === next.mcpPresets
     && previous.slashCommands === next.slashCommands
     && previous.onOpenFilePreview === next.onOpenFilePreview
+    && previous.onOpenChildSession === next.onOpenChildSession
     && previous.onForkFromMessage === next.onForkFromMessage
   );
 }

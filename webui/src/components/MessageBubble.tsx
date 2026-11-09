@@ -70,6 +70,44 @@ interface MessageBubbleProps {
   slashCommands?: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromHere?: () => void;
+  onOpenChildSession?: (sessionKey: string) => void;
+}
+
+function DelegatedChildRow({
+  child,
+  onOpen,
+}: {
+  child: NonNullable<UIMessage["delegatedChild"]>;
+  onOpen?: (sessionKey: string) => void;
+}) {
+  const { t } = useTranslation();
+  const stateLabel = child.outcome
+    ? `${child.state} (${child.outcome})`
+    : child.state;
+  return (
+    <section
+      className="my-2 flex max-w-[49.5rem] items-center gap-3 rounded-control border border-border/60 bg-muted/35 px-3 py-2 text-[13px]"
+      data-delegated-child={child.child_id}
+      aria-label={t("thread.delegatedChild.label", { defaultValue: "Delegated child" })}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium text-foreground">
+          {t("thread.delegatedChild.title", { defaultValue: "Delegated child" })}
+        </span>
+        <span className="block truncate text-muted-foreground">
+          {child.profile} · {stateLabel}
+        </span>
+      </span>
+      <button
+        type="button"
+        className="shrink-0 rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background"
+        onClick={() => onOpen?.(child.child_session_key)}
+        disabled={!onOpen}
+      >
+        {t("thread.delegatedChild.open", { defaultValue: "Open" })}
+      </button>
+    </section>
+  );
 }
 
 function ForkArrowIcon({ className }: { className?: string }) {
@@ -339,6 +377,7 @@ export function MessageBubble({
   slashCommands = [],
   onOpenFilePreview,
   onForkFromHere,
+  onOpenChildSession,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const mentionCliApps = useMemo(
@@ -349,6 +388,15 @@ export function MessageBubble({
     () => mergeMcpMentionPresets(mcpPresets, message.mcpPresets),
     [mcpPresets, message.mcpPresets],
   );
+
+  if (message.kind === "delegated_child" && message.delegatedChild) {
+    return (
+      <DelegatedChildRow
+        child={message.delegatedChild}
+        onOpen={onOpenChildSession}
+      />
+    );
+  }
 
   if (message.kind === "compaction" && message.compaction) {
     return <ContextCompactionNotice compaction={message.compaction} />;

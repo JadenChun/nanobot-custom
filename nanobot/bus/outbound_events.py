@@ -98,6 +98,20 @@ class MessageAdmittedEvent(AgentEvent):
 
 
 @dataclass(frozen=True)
+class DelegatedChildEvent(AgentEvent):
+    """Typed reference from a parent activity row to one delegated child."""
+
+    parent_session_key: str = ""
+    child_session_key: str = ""
+    child_id: str = ""
+    profile: str = "delegated"
+    state: str = ""
+    outcome: str | None = None
+    runtime_generation: int = 0
+    turn_id: str | None = None
+
+
+@dataclass(frozen=True)
 class SessionUpdatedEvent(AgentEvent):
     scope: str | None = None
     workspace_scope: WorkspaceScopePayload | None = None

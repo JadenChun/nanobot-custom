@@ -918,6 +918,37 @@ export function useNanobotStream(
         return;
       }
 
+      if (ev.event === "delegated_child") {
+        const child = {
+          child_session_key: ev.child_session_key,
+          child_id: ev.child_id,
+          profile: ev.profile,
+          state: ev.state,
+          ...(ev.outcome ? { outcome: ev.outcome } : {}),
+          runtime_generation: ev.runtime_generation,
+          ...(ev.turn_id ? { turn_id: ev.turn_id } : {}),
+        };
+        setMessages((prev) => {
+          const index = prev.findIndex(
+            (message) => message.delegatedChild?.child_id === child.child_id,
+          );
+          const row: UIMessage = {
+            id: `delegated-child-${child.child_id}`,
+            role: "assistant",
+            kind: "delegated_child",
+            content: "",
+            createdAt: Date.now(),
+            delegatedChild: child,
+            ...(ev.turn_id ? { turnId: ev.turn_id } : {}),
+          };
+          if (index < 0) return [...prev, row];
+          const next = prev.slice();
+          next[index] = { ...next[index], delegatedChild: child };
+          return next;
+        });
+        return;
+      }
+
       if (ev.event === "goal_state") {
         setGoalState(ev.goal_state);
         return;

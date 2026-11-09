@@ -57,6 +57,7 @@ from nanobot.agent.tools.context import (
     ForkToolDependencies,
     RequestContext,
     bind_request_context,
+    current_request_context,
     reset_request_context,
 )
 from nanobot.agent.tools.exec_session import ExecCompletionSink, ExecSessionManager
@@ -94,6 +95,7 @@ from nanobot.agent.turn_delivery import TurnRoute as TurnRoute
 from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 from nanobot.bus.events import INBOUND_META_USER_SHELL, InboundMessage, OutboundMessage
 from nanobot.bus.outbound_events import (
+    DelegatedChildEvent,
     SessionUpdatedEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
@@ -676,6 +678,9 @@ class AgentLoop:
         validate_foreground_dependencies(fork_dependencies, workspace=workspace,
                                          restrict_to_workspace=restrict_to_workspace)
         self._fork_dependencies = fork_dependencies
+        fork_dependencies.foreground_manager.set_child_event_sink(
+            self._publish_delegated_child,
+        )
         folder_grants = fork_dependencies.resource_policy.folder_grants
         self.workspace_scopes = WorkspaceScopeResolver(
             default_workspace=workspace,
@@ -1118,6 +1123,32 @@ class AgentLoop:
         registered = loader.load(ctx, self.tools)
 
         logger.info("Registered {} tools: {}", len(registered), registered)
+
+    async def _publish_delegated_child(self, child: Any) -> None:
+        """Project one typed child reference into the parent chat activity."""
+        request = current_request_context()
+        if request is None or not request.chat_id:
+            return
+        await self.bus.publish_outbound(OutboundMessage(
+            channel=request.channel,
+            chat_id=request.chat_id,
+            content="",
+            event=DelegatedChildEvent(
+                parent_session_key=child.parent_key,
+                child_session_key=child.session_key,
+                child_id=child.child_id,
+                profile=child.profile,
+                state=child.state,
+                outcome=child.outcome,
+                runtime_generation=child.runtime_generation,
+                turn_id=(
+                    str(request.metadata.get(WEBUI_TURN_METADATA_KEY))
+                    if isinstance(request.metadata.get(WEBUI_TURN_METADATA_KEY), str)
+                    else None
+                ),
+            ),
+            metadata=dict(request.metadata or {}),
+        ))
 
     def _resolve_policy_write_target(self, tool_name: str, raw_path: str) -> Path | None:
         """Resolve risk assessment through the same tool boundary as dispatch."""
