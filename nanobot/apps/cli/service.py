@@ -7,10 +7,12 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -1019,18 +1021,75 @@ class CliAppManager:
             "PYTHONUNBUFFERED": "1",
         }
 
-    def _run_argv(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
-        command = subprocess.list2cmdline(argv)
-        logger.info("CLI Apps: running {}", command)
-        result = subprocess.run(
+    @staticmethod
+    def _terminate_owned_process(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        if os.name == "nt":
+            with suppress(OSError, subprocess.SubprocessError):
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+        else:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                with suppress(ProcessLookupError, PermissionError):
+                    process.kill()
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=2)
+
+    def _run_owned_argv(
+        self,
+        argv: list[str],
+        *,
+        timeout: int,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run one CLI app in its own process group and reap the group on timeout."""
+        kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
+            )
+        else:
+            kwargs["start_new_session"] = True
+        process = subprocess.Popen(
             argv,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
             env=self._subprocess_env(),
+            cwd=str(cwd) if cwd is not None else None,
+            **kwargs,
         )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._terminate_owned_process(process)
+            stdout, stderr = process.communicate()
+            raise subprocess.TimeoutExpired(
+                process.args,
+                timeout,
+                output=stdout,
+                stderr=stderr,
+            ) from None
+        return subprocess.CompletedProcess(
+            process.args,
+            process.returncode,
+            stdout,
+            stderr,
+        )
+
+    def _run_argv(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+        command = subprocess.list2cmdline(argv)
+        logger.info("CLI Apps: running {}", command)
+        result = self._run_owned_argv(argv, timeout=timeout)
         logger.info("CLI Apps: command exited with code {}: {}", result.returncode, command)
         output = (result.stderr or result.stdout or "").strip()
         if output:
@@ -1453,15 +1512,10 @@ Use the `run_cli_app` tool with `name="{name}"` for command execution. Do not in
         effective_timeout = max(1, min(timeout or self.runtime.run_timeout, 600))
         artifact_snapshot = self._artifact_snapshot(cwd)
         try:
-            result = subprocess.run(
+            result = self._run_owned_argv(
                 [resolved, *clean_args],
-                cwd=str(cwd),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=effective_timeout,
-                env=self._subprocess_env(),
+                cwd=cwd,
             )
         except subprocess.TimeoutExpired:
             return f"CLI app '{name}' timed out after {effective_timeout}s"
