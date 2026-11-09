@@ -64,6 +64,7 @@ _PAIRING_ROUTES = {
     "/mobile/v1/pair/collect",
     "/mobile/v1/pair/poll",
     "/mobile/v1/pair/code",
+    "/mobile/v1/pair/prove",
 }
 _REFRESH_ROUTE = "/mobile/v1/refresh"
 _LEGACY_MUTATION_ACTIONS = frozenset(
@@ -523,6 +524,54 @@ class MobileGatewayEdge:
         label = header("X-Nanobot-Label") or "mobile"
         platform = header("X-Nanobot-Platform") or None
         model = header("X-Nanobot-Model") or None
+        device_public_key = header("X-Nanobot-Device-Key") or None
+        if path.endswith("/prove"):
+            pairing_id = header("X-Nanobot-Pairing-Id")
+            signature = header("X-Nanobot-Device-Signature")
+            encoded_claims = header("X-Nanobot-Proof-Claims")
+            claims: dict[str, object] | None = None
+            if encoded_claims:
+                try:
+                    decoded = base64.b64decode(encoded_claims, validate=True)
+                    parsed = json.loads(decoded.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return http_json_response({"error": "bad_request"}, status=400)
+                if isinstance(parsed, dict):
+                    claims = cast(dict[str, object], parsed)
+            if claims is None:
+                try:
+                    raw_body = cast(bytes, getattr(request, "body", b""))
+                    payload = json.loads(raw_body.decode("utf-8"))
+                except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+                    return http_json_response({"error": "bad_request"}, status=400)
+                if not isinstance(payload, dict):
+                    return http_json_response({"error": "bad_request"}, status=400)
+                body = cast(dict[str, Any], payload)
+                pairing_id = body.get("pairing_id") if not pairing_id else pairing_id
+                candidate = body.get("claims")
+                claims = cast(dict[str, object], candidate) if isinstance(candidate, dict) else None
+                signature = body.get("signature") if not signature else signature
+            if (
+                not isinstance(pairing_id, str)
+                or not pairing_id
+                or claims is None
+                or not isinstance(signature, str)
+                or not signature
+            ):
+                return http_json_response({"error": "bad_request"}, status=400)
+            try:
+                result = await asyncio.to_thread(
+                    self.validator.client.prove_pairing,
+                    pairing_id=pairing_id,
+                    claims=claims,
+                    signature=signature,
+                )
+            except OwnerUnavailableError:
+                return http_json_response({"error": "owner_unavailable"}, status=503)
+            except OwnerRequestError as exc:
+                status = _PAIRING_STATUS.get(exc.code, 400)
+                return http_json_response({"error": exc.code}, status=status)
+            return http_json_response(result)
         if path.endswith("/code"):
             origin = header("X-Nanobot-Origin")
             if not origin:
@@ -543,6 +592,7 @@ class MobileGatewayEdge:
                     label=label,
                     platform=platform,
                     model=model,
+                    device_public_key=device_public_key,
                 )
             except OwnerUnavailableError:
                 return http_json_response({"error": "owner_unavailable"}, status=503)
@@ -568,6 +618,7 @@ class MobileGatewayEdge:
                     label=label,
                     platform=platform,
                     model=model,
+                    device_public_key=device_public_key,
                 )
             else:
                 result = await asyncio.to_thread(

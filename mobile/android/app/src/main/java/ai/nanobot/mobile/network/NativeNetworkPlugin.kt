@@ -318,6 +318,10 @@ class NativeNetworkPlugin : Plugin() {
                         "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
                         "X-Nanobot-Installation" to installationId,
                         "X-Nanobot-Label" to label,
+                        "X-Nanobot-Device-Key" to Base64.encodeToString(
+                            custody.deviceProofPublicKey(),
+                            Base64.NO_WRAP,
+                        ),
                     ),
                 )
                 try {
@@ -384,6 +388,10 @@ class NativeNetworkPlugin : Plugin() {
                         "X-Nanobot-Pairing-Code" to code,
                         "X-Nanobot-Installation" to installationId,
                         "X-Nanobot-Label" to label,
+                        "X-Nanobot-Device-Key" to Base64.encodeToString(
+                            custody.deviceProofPublicKey(),
+                            Base64.NO_WRAP,
+                        ),
                     ),
                 )
                 val rawChallenge = collected.optString("challenge")
@@ -501,8 +509,18 @@ class NativeNetworkPlugin : Plugin() {
                         "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
                     ),
                 )
-                if (polled.optString("status") != "approved") {
-                    mainHandler.post { call.resolve(JSObject(polled.toString())) }
+                val proofChallenge = polled.optJSONObject("proof_challenge")
+                val approved = if (
+                    polled.optString("status") == "approved" &&
+                    proofChallenge != null &&
+                    !polled.has("access_token")
+                ) {
+                    provePairing(challenge.pairingId, proofChallenge)
+                } else {
+                    polled
+                }
+                if (approved.optString("status") != "approved") {
+                    mainHandler.post { call.resolve(JSObject(approved.toString())) }
                     return@execute
                 }
                 val record = custody.load()
@@ -510,10 +528,10 @@ class NativeNetworkPlugin : Plugin() {
                 custody.saveRefreshedTokens(
                     record.origin,
                     record.installationId,
-                    polled.getString("access_token"),
-                    polled.getString("refresh_token"),
-                    polled.optInt("expires_in", 600),
-                    polled.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
+                    approved.getString("access_token"),
+                    approved.getString("refresh_token"),
+                    approved.optInt("expires_in", 600),
+                    approved.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
                 )
                 activePairing = null
                 try {
@@ -1274,6 +1292,23 @@ class NativeNetworkPlugin : Plugin() {
             Thread.sleep(250)
         }
         throw IllegalStateException("native transport readiness timeout")
+    }
+
+    private fun provePairing(pairingId: String, claims: JSONObject): JSONObject {
+        val canonical = DeviceProofCanonicalizer.canonicalBytes(
+            DeviceProofCanonicalizer.fromJson(claims)
+        )
+        val signature = custody.signDeviceProof(canonical)
+        return jsonRequest(
+            "mobile_pair_prove",
+            "/mobile/v1/pair/prove",
+            body = null,
+            headers = mapOf(
+                "X-Nanobot-Pairing-Id" to pairingId,
+                "X-Nanobot-Device-Signature" to Base64.encodeToString(signature, Base64.NO_WRAP),
+                "X-Nanobot-Proof-Claims" to Base64.encodeToString(canonical, Base64.NO_WRAP),
+            ),
+        )
     }
 
     private fun jsonRequest(

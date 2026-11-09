@@ -7,8 +7,11 @@ import android.util.Base64
 import java.io.File
 import java.io.FileOutputStream
 import java.security.GeneralSecurityException
+import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -428,6 +431,60 @@ class CustodyStore(context: Context) {
         File(appContext.filesDir, "nanobot-tmp").deleteRecursively()
     }
 
+    /** Return this installation's P-256 SubjectPublicKeyInfo DER bytes. */
+    @Synchronized
+    fun deviceProofPublicKey(): ByteArray {
+        val certificate = keyStore.getCertificate(DEVICE_PROOF_ALIAS)
+            ?: generateDeviceProofKey()
+        return certificate.publicKey.encoded
+    }
+
+    /** Sign canonical proof bytes with the non-exportable Android Keystore key. */
+    @Synchronized
+    fun signDeviceProof(payload: ByteArray): ByteArray {
+        if (payload.isEmpty() || payload.size > 4096) {
+            throw CustodyException("device proof payload is outside the bound")
+        }
+        deviceProofPublicKey()
+        val privateKey = (keyStore.getEntry(DEVICE_PROOF_ALIAS, null) as? KeyStore.PrivateKeyEntry)
+            ?.privateKey
+            ?: throw CustodyKeyInvalidException("device proof key is missing")
+        return try {
+            Signature.getInstance("SHA256withECDSA").run {
+                initSign(privateKey)
+                update(payload)
+                sign()
+            }
+        } catch (exception: GeneralSecurityException) {
+            throw CustodyKeyInvalidException("device proof signing failed", exception)
+        }
+    }
+
+    internal fun deleteDeviceProofKeyForTest() {
+        if (keyStore.containsAlias(DEVICE_PROOF_ALIAS)) {
+            keyStore.deleteEntry(DEVICE_PROOF_ALIAS)
+        }
+    }
+
+    private fun generateDeviceProofKey(): java.security.cert.Certificate {
+        val generator = KeyPairGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_EC,
+            "AndroidKeyStore",
+        )
+        generator.initialize(
+            KeyGenParameterSpec.Builder(
+                DEVICE_PROOF_ALIAS,
+                KeyProperties.PURPOSE_SIGN,
+            )
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                .build()
+        )
+        generator.generateKeyPair()
+        return keyStore.getCertificate(DEVICE_PROOF_ALIAS)
+            ?: throw CustodyKeyInvalidException("device proof key could not be created")
+    }
+
     internal fun deleteKeyForTest() {
         if (keyStore.containsAlias(ALIAS)) {
             keyStore.deleteEntry(ALIAS)
@@ -483,6 +540,7 @@ class CustodyStore(context: Context) {
 
     companion object {
         private const val ALIAS = "nanobot.mobile.custody.v1"
+        private const val DEVICE_PROOF_ALIAS = "nanobot.mobile.device-proof.v1"
         private const val MAGIC = "NBC1"
         private const val FILE_VERSION = 1
         private val AAD = "nanobot-custody-v1".toByteArray(Charsets.UTF_8)

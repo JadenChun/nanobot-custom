@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import socket
@@ -231,6 +232,7 @@ class OwnerIPCServer:
                     label=cast(str, label),
                     platform=_string_param(params, "platform"),
                     model=_string_param(params, "model"),
+                    device_public_key_der=_base64_param(params, "device_public_key"),
                 )
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
@@ -254,6 +256,7 @@ class OwnerIPCServer:
                     label=cast(str, label),
                     platform=_string_param(params, "platform"),
                     model=_string_param(params, "model"),
+                    device_public_key_der=_base64_param(params, "device_public_key"),
                 )
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
@@ -290,6 +293,40 @@ class OwnerIPCServer:
                 }
             assert isinstance(result, PairingPending)
             return {"ok": True, "result": _pending_payload(result)}
+        if method == "pair_prove":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            raw_claims = params.get("claims")
+            signature = _base64_param(params, "signature")
+            if pairing_id is None or not isinstance(raw_claims, dict) or signature is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "proof fields are required"}}
+            from nanobot.remote.device_proof import DeviceProofClaims, DeviceProofError
+
+            try:
+                claims = DeviceProofClaims.from_payload(cast(dict[str, object], raw_claims))
+                pair = self.pairing.complete_device_proof(
+                    pairing_id=pairing_id,
+                    claims=claims,
+                    signature_der=signature,
+                )
+            except DeviceProofError as exc:
+                return {"ok": False, "error": {"code": "pairing_rejected", "message": exc.reason}}
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {
+                "ok": True,
+                "result": {
+                    "status": "approved",
+                    "pairing_id": pairing_id,
+                    "installation_id": claims.installation_id,
+                    "access_token": pair.access_token,
+                    "refresh_token": pair.refresh_token,
+                    "expires_in": pair.expires_in,
+                    "refresh_expires_in": pair.refresh_expires_in,
+                    "scopes": list(pair.scopes),
+                },
+            }
         if method == "ping":
             return {"ok": True, "result": {"version": 1, "started_at": self._started_at}}
         if method == "status":
@@ -819,6 +856,16 @@ def _string_param(params: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _base64_param(params: dict[str, Any], key: str) -> bytes | None:
+    value = params.get(key)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return base64.b64decode(value, validate=True)
+    except (ValueError, TypeError):
+        return None
+
+
 def _bool_param(params: dict[str, Any], key: str, *, default: bool | None = None) -> bool | None:
     value = params.get(key, default)
     return value if isinstance(value, bool) else None
@@ -885,6 +932,9 @@ def _pending_payload(pending: PairingPending) -> dict[str, Any]:
         "comparison_code": pending.comparison_code,
         "created_at": pending.created_at,
         "renewable": pending.renewable,
+        "device_fingerprint": pending.device_fingerprint,
+        "device_generation": pending.device_generation,
+        "proof_challenge": pending.proof_challenge,
         "nonce": pending.nonce,
         "collector_secret": pending.collector_secret,
         "challenge": (

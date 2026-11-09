@@ -111,6 +111,7 @@ class RemoteAccessClient:
         label: str,
         platform: str | None = None,
         model: str | None = None,
+        device_public_key: str | None = None,
     ) -> dict[str, Any]:
         return self._call(
             "pair_collect",
@@ -122,6 +123,7 @@ class RemoteAccessClient:
                 "label": label,
                 "platform": platform,
                 "model": model,
+                "device_public_key": device_public_key,
             },
             role="pairing",
         )
@@ -135,6 +137,7 @@ class RemoteAccessClient:
         label: str,
         platform: str | None = None,
         model: str | None = None,
+        device_public_key: str | None = None,
     ) -> dict[str, Any]:
         return self._call(
             "pair_collect_code",
@@ -145,6 +148,24 @@ class RemoteAccessClient:
                 "label": label,
                 "platform": platform,
                 "model": model,
+                "device_public_key": device_public_key,
+            },
+            role="pairing",
+        )
+
+    def prove_pairing(
+        self,
+        *,
+        pairing_id: str,
+        claims: dict[str, object],
+        signature: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_prove",
+            {
+                "pairing_id": pairing_id,
+                "claims": claims,
+                "signature": signature,
             },
             role="pairing",
         )
