@@ -579,6 +579,8 @@ class AgentLoop:
         ] | None = None,
         idle_integration: ForegroundIdleIntegration | None = None,
         enable_legacy_auto_compact: bool = True,
+        media_root: Path | None = None,
+        config_path: Path | None = None,
     ):
         from nanobot.config.paths import get_default_sessions_root
 
@@ -700,6 +702,14 @@ class AgentLoop:
         self.sessions.set_delete_observer(self._file_state_store.discard)
         self.tools = tool_registry if tool_registry is not None else ToolRegistry()
         self._exec_session_manager = ExecSessionManager()
+        self.media_root = (
+            Path(media_root).expanduser().resolve(strict=False)
+            if media_root is not None else None
+        )
+        self._config_path = (
+            Path(config_path).expanduser().resolve(strict=False)
+            if config_path is not None else None
+        )
         self._artifact_reader_factory = artifact_reader_factory
         self.runner = AgentRunner(artifact_reader_factory=artifact_reader_factory)
         self.subagents = SubagentManager(
@@ -843,12 +853,13 @@ class AgentLoop:
         allowing callers to override or extend the standard config-derived
         parameters (e.g. ``cron_service``, ``session_manager``).
         """
-        from nanobot.config.paths import get_default_sessions_root
+        from nanobot.config.paths import get_default_sessions_root, get_media_dir
         from nanobot.providers.factory import make_provider
         from nanobot.runtime_composition import runtime_preflight
 
         canonical_workspace = config.workspace_path.expanduser().resolve(strict=False)
         data_dir = config.runtime_data_dir
+        media_root = data_dir / "media" if data_dir is not None else get_media_dir()
         effective_root = ((data_dir / "sessions").expanduser().resolve(strict=False)
                           if data_dir is not None else get_default_sessions_root())
         manager = extra.get("session_manager")
@@ -894,7 +905,6 @@ class AgentLoop:
             )
             extra["_owns_fork_dependencies"] = True
         if config.artifacts.enabled and extra.get("artifact_reader_factory") is None:
-            from nanobot.config.paths import get_media_dir
             from nanobot.session.artifact_factory import ConfiguredArtifactReaderFactory
 
             root = config.artifacts.root
@@ -922,7 +932,7 @@ class AgentLoop:
                 max_blob_bytes=config.artifacts.max_blob_bytes,
                 max_namespace_bytes=config.artifacts.max_namespace_bytes,
                 static_roots=static_roots,
-                media_root=data_dir / "media" if data_dir is not None else get_media_dir(),
+                media_root=media_root,
             )
         return cls(
             bus=bus,
@@ -963,6 +973,8 @@ class AgentLoop:
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
+            media_root=media_root,
+            config_path=getattr(config, "_source_path", None),
             **extra,
         )
 
@@ -1086,6 +1098,7 @@ class AgentLoop:
             sessions=self.sessions,
             provider_snapshot_loader=provider_snapshot_loader,
             image_generation_provider_configs=self._image_generation_provider_configs,
+            media_root=self.media_root,
             timezone=self.context.timezone or "UTC",
             workspace_sandbox=self.workspace_scopes.sandbox_status,
             runtime_control=AgentRuntimeControl(self),
@@ -1096,6 +1109,18 @@ class AgentLoop:
         registered = loader.load(ctx, self.tools)
 
         logger.info("Registered {} tools: {}", len(registered), registered)
+
+    def _resolve_policy_write_target(self, tool_name: str, raw_path: str) -> Path | None:
+        """Resolve risk assessment through the same tool boundary as dispatch."""
+        tool = self.tools.get(tool_name)
+        resolver = getattr(tool, "resolve_write_path", None)
+        if not callable(resolver):
+            return None
+        try:
+            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
+            return Path(resolved).expanduser().resolve(strict=False)
+        except (OSError, PermissionError, ValueError):
+            return None
 
     def _workspace_focus_owner(self) -> WorkspaceFocusOwner | None:
         from nanobot.context_repo.catalog import RepositoryCatalog
@@ -2017,6 +2042,7 @@ class AgentLoop:
             workspace=run_context.policy.workspace,
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
+            write_target_resolver=self._resolve_policy_write_target,
         )
         self._sync_subagent_runtime_limits()
 

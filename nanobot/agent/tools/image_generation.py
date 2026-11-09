@@ -114,6 +114,7 @@ class ImageGenerationTool(Tool):
         return cls(
             workspace=ctx.workspace, config=effective.config, provider_configs=effective.providers,
             legacy_config=effective.legacy, write_tool=WriteFileTool.create(ctx),
+            media_root=ctx.media_root,
         )
 
     def __init__(
@@ -125,10 +126,14 @@ class ImageGenerationTool(Tool):
         provider_configs: dict[str, ProviderConfig] | None = None,
         legacy_config: ImageConfig | None = None,
         write_tool: WriteFileTool | None = None,
+        media_root: Path | None = None,
     ) -> None:
         self.workspace = Path(workspace).expanduser()
         self.config = config
         self.legacy_config = legacy_config
+        self.media_root = (
+            Path(media_root).expanduser() if media_root is not None else None
+        )
         self._write_tool = write_tool or WriteFileTool(workspace=self.workspace, allowed_dir=self.workspace)
         self.provider_configs = dict(provider_configs or {})
         if provider_config is not None and "openrouter" not in self.provider_configs:
@@ -143,13 +148,14 @@ class ImageGenerationTool(Tool):
         provider_configs: dict[str, ProviderConfig],
         legacy_config: ImageConfig | None,
         make_writer: Callable[[], WriteFileTool],
+        media_root: Path | None = None,
     ) -> ImageGenerationTool | None:
         """Construct the canonical reload replacement using the existing writer when present."""
         writer = previous._write_tool if previous else make_writer()
         return (
             ImageGenerationTool(
                 workspace=workspace, config=config, provider_configs=provider_configs,
-                legacy_config=legacy_config, write_tool=writer,
+                legacy_config=legacy_config, write_tool=writer, media_root=media_root,
             ) if config.enabled else None
         )
 
@@ -255,6 +261,7 @@ class ImageGenerationTool(Tool):
                         source_images=refs,
                         save_dir=self.config.save_dir,
                         provider=self.config.provider,
+                        media_root=self.media_root,
                     )
                     artifacts.append(artifact)
                     if len(artifacts) >= requested:
@@ -312,7 +319,8 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
     try:
         from nanobot.config.loader import load_config, resolve_config_env_vars
 
-        config = resolve_config_env_vars(load_config())
+        config_path = getattr(state, "_config_path", None)
+        config = resolve_config_env_vars(load_config(config_path), config_path=config_path)
         effective = effective_image_configuration(config.tools, image_gen_provider_configs(config))
         tool_config = effective.config
         provider_configs = effective.providers
@@ -337,9 +345,11 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
     next_tool = ImageGenerationTool.replacement_for(
         previous, workspace=state.workspace, config=tool_config, provider_configs=provider_configs,
         legacy_config=effective.legacy,
+        media_root=getattr(state, "media_root", None),
         make_writer=lambda: WriteFileTool.create(ToolContext(
             config=config.tools, workspace=str(state.workspace), fork_dependencies=dependencies,
             file_state_store=getattr(state, "_file_state_store", None),
+            media_root=getattr(state, "media_root", None),
         )),
     )
 

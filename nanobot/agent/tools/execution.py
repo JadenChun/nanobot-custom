@@ -156,6 +156,7 @@ async def execute_tool_calls(
                     hook,
                     context,
                     turn_context,
+                    tool_policy=tool_policy,
                 )
                 for tool_call in batch
             ))
@@ -183,6 +184,7 @@ async def execute_tool_calls(
                             turn_context,
                             tool_result_callback,
                             ordinal,
+                            tool_policy=tool_policy,
                         )
                         ordinal += 1
                         outcome, event = result
@@ -211,6 +213,7 @@ async def execute_tool_calls(
                     turn_context,
                     tool_result_callback,
                     ordinal,
+                    tool_policy=tool_policy,
                 )
                 ordinal += 1
                 outcome, event = result
@@ -256,6 +259,7 @@ async def _execute_tool_call(
     turn_context: TurnContext | None = None,
     tool_result_callback: ToolResultCallback | None = None,
     ordinal: int = 0,
+    tool_policy: ToolPolicy | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     lookup_error = repeated_external_lookup_error(
         tool_call.name,
@@ -317,6 +321,25 @@ async def _execute_tool_call(
         await _record_result(tool_result_callback, ordinal, tool_call, prep_error,
                              payload, event, dispatched=False)
         return payload, event
+
+    if tool_policy is not None:
+        validate_target = getattr(tool_policy, "validate_write_target", None)
+        if callable(validate_target):
+            validation_tool = tool if tool is not None else tools.get(tool_call.name)
+            target_error = cast(
+                Callable[[ToolCallRequest, Any], str | None],
+                validate_target,
+            )(tool_call, validation_tool)
+            if target_error:
+                payload = _with_retry_hint(target_error)
+                event: dict[str, Any] = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": target_error[:120],
+                }
+                await _record_result(tool_result_callback, ordinal, tool_call,
+                                     target_error, payload, event, dispatched=False)
+                return payload, event
 
     await hook.before_execute_tool(context, tool_call, tool, params)
     with tools.dispatch_admission(tool_call.name) as dispatch_error:

@@ -180,6 +180,12 @@ class RiskyActionPolicy(ToolPolicy):
     workspace: Path
     approval_granted: bool = False
     context_manager: ContextRepoManager = field(default_factory=ContextRepoManager)
+    write_target_resolver: Callable[[str, str], Path | None] | None = field(
+        default=None, repr=False, compare=False,
+    )
+    _assessed_write_targets: dict[str, Path] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
 
     _RISKY_EXEC_PATTERNS = (
         (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
@@ -207,16 +213,17 @@ class RiskyActionPolicy(ToolPolicy):
         messages: list[dict[str, Any]],
         tool_calls: list[ToolCallRequest],
     ) -> ToolPolicyDecision:
-        if self.approval_granted or not tool_calls:
+        if not tool_calls:
             return ToolPolicyDecision()
 
+        self._assessed_write_targets.clear()
         reasons: list[str] = []
         for tool_call in tool_calls:
             reason = self._risky_reason(tool_call)
             if reason:
                 reasons.append(reason)
 
-        if not reasons:
+        if self.approval_granted or not reasons:
             return ToolPolicyDecision()
 
         summary = "; ".join(dict.fromkeys(reasons))
@@ -241,17 +248,26 @@ class RiskyActionPolicy(ToolPolicy):
                 str(tool_call.arguments.get("command") or ""),
                 str(tool_call.arguments.get("working_dir") or ""),
             )
-        if tool_call.name == "write_file":
-            return self._risky_write_reason(
-                str(tool_call.arguments.get("path") or ""),
-                str(tool_call.arguments.get("content") or ""),
-            )
-        if tool_call.name == "edit_file":
+        if tool_call.name in {"write_file", "edit_file"}:
+            raw_path = str(tool_call.arguments.get("path") or "")
+            resolved = self._resolve_write_target(tool_call.name, raw_path)
+            if resolved is None:
+                # The owning tool denies this target. Let dispatch return the
+                # existing denial without reading the target for risk.
+                return None
+            self._assessed_write_targets[tool_call.id] = resolved
+            if tool_call.name == "write_file":
+                return self._risky_write_reason(
+                    raw_path,
+                    str(tool_call.arguments.get("content") or ""),
+                    resolved,
+                )
             return self._risky_edit_reason(
-                str(tool_call.arguments.get("path") or ""),
+                raw_path,
                 str(tool_call.arguments.get("old_text") or ""),
                 str(tool_call.arguments.get("new_text") or ""),
                 bool(tool_call.arguments.get("replace_all")),
+                resolved,
             )
         if tool_call.name == "cron":
             return "schedule a recurring automation"
@@ -338,6 +354,44 @@ class RiskyActionPolicy(ToolPolicy):
             candidate = self.workspace / candidate
         return candidate.resolve()
 
+    def _resolve_write_target(self, tool_name: str, raw_path: str) -> Path | None:
+        if not raw_path:
+            return None
+        if self.write_target_resolver is not None:
+            try:
+                return self.write_target_resolver(tool_name, raw_path)
+            except (OSError, PermissionError, ValueError):
+                # The owning tool refuses this target. Let dispatch return its
+                # existing denial instead of reading the target for risk.
+                return None
+        return self._resolve_workspace_path(raw_path)
+
+    def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
+        """Recheck the assessed target through the tool immediately before dispatch."""
+        assessed = self._assessed_write_targets.pop(tool_call.id, None)
+        if assessed is None:
+            return None
+        arguments = tool_call.arguments
+        if not isinstance(arguments, dict):
+            return None
+        raw_path = str(cast(dict[object, object], arguments).get("path") or "")
+        if not raw_path:
+            return None
+        resolver = getattr(tool, "resolve_write_path", None)
+        if not callable(resolver):
+            return None
+        try:
+            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
+            current = Path(resolved).expanduser().resolve(strict=False)
+        except (OSError, PermissionError, ValueError):
+            return f"Error: write target is no longer accessible: {raw_path}"
+        if current != assessed:
+            return (
+                f"Error: write target changed before dispatch: {raw_path}. "
+                "Retry the request so the new target can be assessed."
+            )
+        return None
+
     def _changed_line_count(self, before: str, after: str) -> tuple[int, int]:
         before_lines = before.splitlines()
         after_lines = after.splitlines()
@@ -354,17 +408,12 @@ class RiskyActionPolicy(ToolPolicy):
     # The absolute ``changed > 200`` guard still catches genuinely large edits.
     _SMALL_FILE_LINE_THRESHOLD = 10
 
-    def _is_agent_state_file(self, raw_path: str) -> bool:
+    def _is_agent_state_file(self, path: Path) -> bool:
         """Memory files the agent manages freely — no size checks."""
-        p = Path(raw_path)
-        return "memory" in p.parts
+        return "memory" in path.parts
 
-    def _is_autonomous_managed_path(self, raw_path: str) -> bool:
+    def _is_autonomous_managed_path(self, path: Path) -> bool:
         """Writable managed paths already have finer-grained repo policy checks."""
-        if not raw_path:
-            return False
-        path = self._resolve_workspace_path(raw_path)
-
         target = self.context_manager.find_target_repo_for_path(path)
         repo = self.context_manager.find_repo_for_path(path)
         if target and (repo is None or len(str(target.path or "")) >= len(str(repo.path))):
@@ -389,12 +438,17 @@ class RiskyActionPolicy(ToolPolicy):
 
         return False
 
-    def _risky_write_reason(self, raw_path: str, new_content: str) -> str | None:
+    def _risky_write_reason(
+        self,
+        raw_path: str,
+        new_content: str,
+        resolved_path: Path | None = None,
+    ) -> str | None:
         if not raw_path:
             return None
-        if self._is_agent_state_file(raw_path) or self._is_autonomous_managed_path(raw_path):
+        path = resolved_path or self._resolve_workspace_path(raw_path)
+        if self._is_agent_state_file(path) or self._is_autonomous_managed_path(path):
             return None
-        path = self._resolve_workspace_path(raw_path)
         if not path.exists() or not path.is_file():
             return None
         try:
@@ -416,19 +470,20 @@ class RiskyActionPolicy(ToolPolicy):
         old_text: str,
         new_text: str,
         replace_all: bool,
+        resolved_path: Path | None = None,
     ) -> str | None:
         if not raw_path:
             return None
-        if self._is_agent_state_file(raw_path) or self._is_autonomous_managed_path(raw_path):
+        path = resolved_path or self._resolve_workspace_path(raw_path)
+        if self._is_agent_state_file(path) or self._is_autonomous_managed_path(path):
             return None
         if replace_all:
-            return f"apply a bulk replace in {Path(raw_path).name}"
+            return f"apply a bulk replace in {path.name}"
 
         touched_lines = max(len(old_text.splitlines()), len(new_text.splitlines()))
         if touched_lines > 200:
-            return f"edit more than 200 lines in {Path(raw_path).name}"
+            return f"edit more than 200 lines in {path.name}"
 
-        path = self._resolve_workspace_path(raw_path)
         if not path.exists() or not path.is_file():
             return None
 
