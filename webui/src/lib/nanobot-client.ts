@@ -13,6 +13,7 @@ import type {
   FolderAccessRequest,
   WorkspaceScopePayload,
   WorkspacePermissionProjection,
+  WebUIMutationOutcome,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
 import {
@@ -160,11 +161,20 @@ interface PendingWebUIRequest extends PendingRequest<unknown> {
 class WebUIMutationError extends Error {
   status: number;
   workspaceModeConflict?: unknown;
+  outcome?: WebUIMutationOutcome;
+  requestId?: string;
 
-  constructor(status: number, message: string, workspaceModeConflict?: unknown) {
+  constructor(
+    status: number,
+    message: string,
+    workspaceModeConflict?: unknown,
+    options?: { outcome?: WebUIMutationOutcome; requestId?: string },
+  ) {
     super(message);
     this.status = status;
     this.workspaceModeConflict = workspaceModeConflict;
+    this.outcome = options?.outcome;
+    this.requestId = options?.requestId;
     this.name = "WebUIMutationError";
   }
 }
@@ -1155,14 +1165,17 @@ export class NanobotClient {
     action: string,
     payload: Record<string, unknown> = {},
     timeoutMs: number = 20_000,
+    requestId: string = crypto.randomUUID(),
   ): Promise<T> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WS_OPEN) {
       return Promise.reject(
-        new WebUIMutationError(503, "WebUI connection is not open"),
+        new WebUIMutationError(503, "WebUI connection is not open", undefined, {
+          outcome: "uncertain",
+          requestId,
+        }),
       );
     }
-    const requestId = crypto.randomUUID();
     const frame: Outbound = {
       type: "webui_request",
       request_id: requestId,
@@ -1171,7 +1184,10 @@ export class NanobotClient {
     };
     if (!this.frameFitsTransport(frame)) {
       return Promise.reject(
-        new WebUIMutationError(413, "WebUI mutation payload is too large"),
+        new WebUIMutationError(413, "WebUI mutation payload is too large", undefined, {
+          outcome: "not_applied",
+          requestId,
+        }),
       );
     }
 
@@ -1180,7 +1196,10 @@ export class NanobotClient {
       try {
         serializedFrame = JSON.stringify(frame);
       } catch {
-        reject(new WebUIMutationError(503, "Could not encode WebUI request"));
+        reject(new WebUIMutationError(503, "Could not encode WebUI request", undefined, {
+          outcome: "uncertain",
+          requestId,
+        }));
         return;
       }
       const timer = setTimeout(() => {
@@ -1189,6 +1208,8 @@ export class NanobotClient {
           new WebUIMutationError(
             504,
             `WebUI request timed out after ${timeoutMs}ms`,
+            undefined,
+            { outcome: "uncertain", requestId },
           ),
         );
       }, timeoutMs);
@@ -1203,7 +1224,10 @@ export class NanobotClient {
       } catch {
         clearTimeout(timer);
         this.pendingWebUIRequests.delete(requestId);
-        reject(new WebUIMutationError(503, "Could not send WebUI request"));
+        reject(new WebUIMutationError(503, "Could not send WebUI request", undefined, {
+          outcome: "uncertain",
+          requestId,
+        }));
       }
     });
   }
@@ -1354,8 +1378,16 @@ export class NanobotClient {
     });
   }
 
-  setSidebarState(state: SidebarStatePayload): Promise<SidebarStatePayload> {
-    return this.requestMutation<SidebarStatePayload>("sidebar.update", { state });
+  setSidebarState(
+    state: SidebarStatePayload,
+    requestId?: string,
+  ): Promise<SidebarStatePayload> {
+    return this.requestMutation<SidebarStatePayload>(
+      "sidebar.update",
+      { state },
+      20_000,
+      requestId,
+    );
   }
 
   // -- internals ---------------------------------------------------------
@@ -1451,7 +1483,10 @@ export class NanobotClient {
           workspace_scope: parsed.error.workspace_scope,
           workspace_permissions: parsed.error.workspace_permissions,
         } : undefined;
-        pending.reject(new WebUIMutationError(status, message, workspaceModeConflict));
+        pending.reject(new WebUIMutationError(status, message, workspaceModeConflict, {
+          outcome: parsed.error?.outcome,
+          requestId: parsed.request_id,
+        }));
       }
       return;
     }

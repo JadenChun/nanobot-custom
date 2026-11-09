@@ -2829,6 +2829,8 @@ describe("useNanobotStream", () => {
     act(() => {
       result.current.send("long task");
     });
+    const activeTurnId = fake.client.sendMessage.mock.calls.at(-1)![3]?.turnId;
+    expect(activeTurnId).toBeTruthy();
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.isStreaming).toBe(true);
 
@@ -2836,11 +2838,65 @@ describe("useNanobotStream", () => {
       result.current.stop();
     });
 
-    expect(fake.client.sendMessage).toHaveBeenLastCalledWith("chat-stop", "/stop");
+    expect(fake.client.sendMessage).toHaveBeenLastCalledWith(
+      "chat-stop",
+      "/stop",
+      undefined,
+      { targetTurnId: activeTurnId },
+    );
     expect(fake.client.finishRunLocally).toHaveBeenCalledWith("chat-stop");
     expect(result.current.isStreaming).toBe(false);
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0].content).toBe("long task");
+  });
+
+  it("sends an unaddressed stop command when no turn is active", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-stop", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      result.current.stop();
+    });
+
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+    const [chatId, content, media, options] = fake.client.sendMessage.mock.calls[0];
+    expect(chatId).toBe("chat-stop");
+    expect(content).toBe("/stop");
+    expect(media).toBeUndefined();
+    expect(options).toBeUndefined();
+  });
+
+  it("keeps streaming while a stop is in progress", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-stopping", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      result.current.send("long task");
+    });
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      fake.emit("chat-stopping", {
+        event: "goal_status",
+        chat_id: "chat-stopping",
+        status: "stopping",
+        started_at: 1_700,
+      });
+    });
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      fake.emit("chat-stopping", {
+        event: "goal_status",
+        chat_id: "chat-stopping",
+        status: "interrupted",
+      });
+    });
+    expect(result.current.isStreaming).toBe(false);
   });
 
   it("does not mark side-channel slash commands as streaming", () => {

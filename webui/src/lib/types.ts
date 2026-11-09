@@ -1795,7 +1795,7 @@ export type InboundEvent =
       event: "goal_status";
       chat_id: string;
       /** Turn executing (user message through agent loop). */
-      status: "running" | "idle";
+      status: "running" | "stopping" | "interrupted" | "idle";
       /** Server ``time.time()`` when ``status`` is ``running``. */
       started_at?: number;
     } & InboundTurnMetadata)
@@ -1839,6 +1839,7 @@ export type InboundEvent =
       request_id: string;
       ok: true;
       result: unknown;
+      outcome?: WebUIMutationOutcome;
     }
   | {
       event: "webui_response";
@@ -1849,7 +1850,14 @@ export type InboundEvent =
         message: string;
         workspace_scope?: WorkspaceScopePayload;
         workspace_permissions?: WorkspacePermissionProjection;
+        outcome?: WebUIMutationOutcome;
       };
+    }
+  | {
+      event: "projection_error";
+      request_id?: string;
+      action?: string;
+      reason?: string;
     }
   | {
       event: "error";
@@ -1946,6 +1954,12 @@ export interface FilePreviewPayload {
   media_url?: string;
   entries?: FilePreviewEntry[];
 }
+
+export type WebUIMutationOutcome =
+  | "applied"
+  | "not_applied"
+  | "uncertain"
+  | "partial";
 
 export interface ApprovalDecisionPayload {
   approval_id: string;

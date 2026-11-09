@@ -1997,8 +1997,13 @@ export function ThreadComposer({
   const sendNextQueuedPrompt = useCallback(() => {
     if (workspaceFullRetiring) return;
     if (queuedPrompts.length === 0) return;
+    // Queue selection accepts text, attachments, or both. The same rule
+    // applies to manual and automatic sends.
     const nextPrompt = queuedPrompts.find(
-      (prompt) => prompt.text.trim() && !heldQueuedPromptIdsRef.current.has(prompt.id),
+      (prompt) => (
+        (prompt.text.trim().length > 0 || (prompt.images?.length ?? 0) > 0)
+        && !heldQueuedPromptIdsRef.current.has(prompt.id)
+      ),
     );
     if (!nextPrompt) return;
     heldQueuedPromptIdsRef.current.delete(nextPrompt.id);

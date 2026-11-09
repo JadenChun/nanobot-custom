@@ -2586,3 +2586,146 @@ describe("bounded mobile recovery", () => {
     expect(client.status).toBe("open");
   });
 });
+
+describe("WebUI mutation replay safety", () => {
+  type MutationRejection = Error & {
+    status?: number;
+    outcome?: string;
+    requestId?: string;
+  };
+
+  function connectedClient() {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+    return { client, socket };
+  }
+
+  async function rejectionOf(failure: Promise<unknown>): Promise<MutationRejection> {
+    const rejection = await failure.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).name).toBe("WebUIMutationError");
+    return rejection as MutationRejection;
+  }
+
+  it("sends an explicit request id on the mutation frame", async () => {
+    const { client, socket } = connectedClient();
+
+    const pending = client.requestMutation<{ saved: boolean }>(
+      "sidebar.update",
+      {},
+      1_000,
+      "request-fixed",
+    );
+    const frame = JSON.parse(socket.sent.at(-1) as string) as {
+      type: string;
+      action: string;
+      request_id: string;
+    };
+    expect(frame).toEqual({
+      type: "webui_request",
+      action: "sidebar.update",
+      request_id: "request-fixed",
+      payload: {},
+    });
+
+    socket.fakeMessage({
+      event: "webui_response",
+      request_id: "request-fixed",
+      ok: true,
+      result: { saved: true },
+    });
+    await expect(pending).resolves.toEqual({ saved: true });
+  });
+
+  it("rejects with the server outcome and the originating request id", async () => {
+    const { client, socket } = connectedClient();
+
+    const pending = client.requestMutation(
+      "sidebar.update",
+      {},
+      1_000,
+      "request-fixed",
+    );
+    const rejection = rejectionOf(pending);
+    socket.fakeMessage({
+      event: "webui_response",
+      request_id: "request-fixed",
+      ok: false,
+      error: { status: 409, message: "replay_uncertain", outcome: "uncertain" },
+    });
+
+    const error = await rejection;
+    expect(error.status).toBe(409);
+    expect(error.message).toBe("replay_uncertain");
+    expect(error.outcome).toBe("uncertain");
+    expect(error.requestId).toBe("request-fixed");
+  });
+
+  it("rejects a timed-out mutation as uncertain with status 504 and its request id", async () => {
+    const { client } = connectedClient();
+
+    const rejection = rejectionOf(
+      client.requestMutation(
+        "sidebar.update",
+        {},
+        10,
+        "request-timeout",
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(10);
+
+    const error = await rejection;
+    expect(error.status).toBe(504);
+    expect(error.outcome).toBe("uncertain");
+    expect(error.requestId).toBe("request-timeout");
+  });
+
+  it("forwards an explicit request id through setSidebarState", async () => {
+    const { client, socket } = connectedClient();
+    const state: SidebarStatePayload = {
+      schema_version: 1,
+      pinned_keys: [],
+      archived_keys: [],
+      session_order: [],
+      title_overrides: {},
+      project_name_overrides: {},
+      tags_by_key: {},
+      collapsed_groups: {},
+      workbench: { version: 1, tabs: {} },
+      view: {
+        density: "comfortable",
+        show_previews: false,
+        show_timestamps: false,
+        show_archived: false,
+        sort: "manual",
+      },
+      updated_at: null,
+    };
+
+    const pending = client.setSidebarState(state, "sidebar-fixed");
+    const frame = JSON.parse(socket.sent.at(-1) as string);
+    expect(frame).toEqual({
+      type: "webui_request",
+      request_id: "sidebar-fixed",
+      action: "sidebar.update",
+      payload: { state },
+    });
+
+    socket.fakeMessage({
+      event: "webui_response",
+      request_id: "sidebar-fixed",
+      ok: true,
+      result: state,
+    });
+    await expect(pending).resolves.toEqual(state);
+  });
+});

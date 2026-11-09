@@ -2144,6 +2144,7 @@ describe("App layout", () => {
       expect.objectContaining({
         view: expect.objectContaining({ show_archived: true }),
       }),
+      expect.any(String),
     );
 
     expect(within(sidebar).queryByRole("button", { name: "View" })).not.toBeInTheDocument();
@@ -3481,6 +3482,7 @@ describe("App layout", () => {
           }),
         }),
       }),
+      expect.any(String),
     ));
 
     fireEvent.pointerDown(within(tabGroup).getByRole("button", {

@@ -1139,6 +1139,7 @@ async def test_authenticated_webui_request_returns_correlated_success(bus: Magic
         "request_id": "request-1",
         "ok": True,
         "result": {"saved": True},
+        "outcome": "applied",
     }
 
 
@@ -1307,6 +1308,7 @@ async def test_webui_request_replays_completed_result_after_reconnect(bus: Magic
         "request_id": "request-completed",
         "ok": True,
         "result": {"installed": True},
+        "outcome": "applied",
     }
 
 
@@ -1354,6 +1356,7 @@ async def test_webui_request_rejects_request_id_reuse_with_different_payload(
         "error": {
             "status": 409,
             "message": "request_id was already used for a different WebUI mutation",
+            "outcome": "not_applied",
         },
     }
 
@@ -1432,7 +1435,11 @@ async def test_webui_request_returns_correlated_route_error(bus: MagicMock) -> N
         "event": "webui_response",
         "request_id": "request-2",
         "ok": False,
-        "error": {"status": 400, "message": "invalid settings payload"},
+        "error": {
+            "status": 400,
+            "message": "invalid settings payload",
+            "outcome": "not_applied",
+        },
     }
 
 
@@ -1460,7 +1467,11 @@ async def test_webui_request_requires_bootstrap_authenticated_connection(
         "event": "webui_response",
         "request_id": "request-3",
         "ok": False,
-        "error": {"status": 403, "message": "access_denied"},
+        "error": {
+            "status": 403,
+            "message": "access_denied",
+            "outcome": "not_applied",
+        },
     }
 
 
@@ -1499,6 +1510,7 @@ async def test_webui_persists_sidebar_state_larger_than_http_request_line(
         "request_id": request_id,
         "ok": True,
         "result": saved,
+        "outcome": "applied",
     }
 
 

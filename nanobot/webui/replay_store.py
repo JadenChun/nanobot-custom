@@ -35,6 +35,7 @@ def result_to_dict(result: Any) -> dict[str, Any]:
         "result": getattr(result, "result", None),
         "workspace_scope": getattr(result, "workspace_scope", None),
         "workspace_permissions": getattr(result, "workspace_permissions", None),
+        "outcome": getattr(result, "outcome", None),
     }
 
 

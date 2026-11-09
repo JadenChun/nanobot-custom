@@ -217,6 +217,31 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Cancel all active tasks and subagents for the session."""
     loop = ctx.loop
     msg = ctx.msg
+    metadata = dict(msg.metadata or {})
+    from nanobot.session.webui_turns import websocket_turn_id
+    from nanobot.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
+
+    target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+    if isinstance(target_turn_id, str) and target_turn_id:
+        current_turn_id = websocket_turn_id(str(msg.chat_id))
+        if current_turn_id != target_turn_id:
+            # A repeated or late Stop must not stop a later turn.
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+
+    publisher = getattr(loop, "runtime_event_publisher", None)
+
+    async def project(status: str) -> None:
+        if publisher is None:
+            return
+        with suppress(Exception):
+            await publisher.run_status_changed(msg, ctx.key, status)
+
+    await project("stopping")
     try:
         total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
     except PendingFollowupStopError:
@@ -224,8 +249,9 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id,
             content="Could not complete the stop request. Please retry.",
-            metadata=dict(msg.metadata or {}),
+            metadata=metadata,
         )
+    await project("interrupted")
     # Also drain pending queue to prevent mid-turn injection deadlock
     pending = loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
     if pending is not None:
@@ -238,7 +264,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     content = f"Stopped {total} task(s)." if total else "No active task to stop."
     return OutboundMessage(
         channel=msg.channel, chat_id=msg.chat_id, content=content,
-        metadata=dict(msg.metadata or {})
+        metadata=metadata
     )
 
 

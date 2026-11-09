@@ -3614,6 +3614,76 @@ describe("ThreadComposer", () => {
     });
   });
 
+  it("sends an attachment-only queued item before a later text item", async () => {
+    mockBlobUrls();
+    const onSend = vi.fn();
+    const { container, rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    const file = new File(["image"], "draft.png", { type: "image/png" });
+    fireEvent.change(fileInput!, { target: { files: [file] } });
+    await screen.findByText("draft.png");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "later text" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByRole("group", { name: "Queued guidance" })).toBeInTheDocument();
+    expect(screen.getByText("later text")).toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend).toHaveBeenNthCalledWith(
+      1,
+      "",
+      [expect.objectContaining({
+        media: expect.objectContaining({
+          data_url: "data:image/png;base64,aW1hZ2U=",
+          name: "draft.png",
+        }),
+      })],
+    );
+    expect(screen.getByText("later text")).toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend).toHaveBeenNthCalledWith(2, "later text");
+  });
+
   it("reorders queued guidance while dragging over another row", async () => {
     const onSend = vi.fn();
     const { rerender } = render(

@@ -928,6 +928,9 @@ export function useNanobotStream(
           setStreamError(null);
           setRunStartedAt(ev.started_at);
           setIsStreaming(true);
+        } else if (ev.status === "stopping") {
+          // Stop was accepted; keep the turn visible until settlement.
+          setIsStreaming(true);
         } else {
           setRunStartedAt(null);
           setIsStreaming(false);
@@ -1403,6 +1406,7 @@ export function useNanobotStream(
 
   const stop = useCallback(() => {
     if (!chatId) return;
+    const targetTurnId = client.getRunTurnId(chatId);
     flushPendingStreamEvents();
     setIsStreaming(false);
     setRetryStatus(null);
@@ -1416,7 +1420,12 @@ export function useNanobotStream(
     suppressStreamUntilTurnEndRef.current = false;
     setRunStartedAt(null);
     client.finishRunLocally(chatId);
-    client.sendMessage(chatId, "/stop");
+    client.sendMessage(
+      chatId,
+      "/stop",
+      undefined,
+      targetTurnId ? { targetTurnId } : undefined,
+    );
   }, [chatId, clearActivitySegment, client, flushPendingStreamEvents]);
 
   const reconcileTurnComplete = useCallback(() => {
