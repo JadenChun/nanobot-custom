@@ -1518,12 +1518,13 @@ class AgentLoop:
                 except BaseException as exc:
                     errors.append(exc)
             sub_cancelled = await self.subagents.cancel_by_session(key)
+            child_cancelled = await self._fork_dependencies.foreground_manager.stop_children(key)
             exec_cancelled = await self._exec_session_manager.terminate_by_owner(key)
             if errors:
                 for error in errors[1:]:
                     logger.warning("Additional queued completion failed: {}", type(error).__name__)
                 raise errors[0]
-            return cancelled + sub_cancelled + exec_cancelled
+            return cancelled + sub_cancelled + child_cancelled + exec_cancelled
 
         cleanup = asyncio.create_task(join_and_settle())
         owner_cancelled = False

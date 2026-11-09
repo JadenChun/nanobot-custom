@@ -147,6 +147,67 @@ class DelegationTree:
         self._children: dict[str, ChildAdmission] = {}
         self._attempts: dict[tuple[str, str, str], str] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._restore()
+
+    def _restore(self) -> None:
+        """Load durable child records; fence unresolved live states on restart."""
+        try:
+            sessions = self.sessions.list_sessions()
+        except Exception:
+            logger.exception("Delegated child recovery scan failed")
+            return
+        for info in sessions:
+            key = info.get("key")
+            if not isinstance(key, str) or not key.startswith(CHILD_SESSION_PREFIX):
+                continue
+            try:
+                raw = self.sessions.read_session_metadata(key)
+                metadata = cast(
+                    dict[str, Any] | None,
+                    raw.get("metadata") if raw is not None else None,
+                )
+                if metadata is None:
+                    continue
+                payload = metadata.get(DELEGATION_CHILD_METADATA_KEY)
+                if not isinstance(payload, Mapping):
+                    continue
+                data = dict(cast(Mapping[str, Any], payload))
+                admission = ChildAdmission(
+                    child_id=cast(str, data["child_id"]),
+                    session_key=cast(str, data["session_key"]),
+                    parent_key=cast(str, data["parent_key"]),
+                    parent_incarnation=cast(str, data["parent_incarnation"]),
+                    root_key=cast(str, data["root_key"]),
+                    profile=cast(str, data["profile"]),
+                    depth=cast(int, data["depth"]),
+                    attempt_id=cast(str, data["attempt_id"]),
+                    assignment_digest=cast(str, data["assignment_digest"]),
+                    policy_facts=dict(cast(Mapping[str, Any], data.get("policy_facts") or {})),
+                    runtime_generation=cast(int, data["runtime_generation"]),
+                    state=cast(str, data.get("state") or "uncertain"),
+                    outcome=cast(str | None, data.get("outcome")),
+                    created_at=cast(float, data.get("created_at") or time.time()),
+                    updated_at=cast(float, data.get("updated_at") or time.time()),
+                )
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Ignoring malformed delegated child record {}", key)
+                continue
+            if admission.live:
+                admission = replace(
+                    admission,
+                    state="uncertain",
+                    outcome="restart_unresolved",
+                    updated_at=time.time(),
+                )
+                self._persist(admission)
+            self._children[admission.child_id] = admission
+            self._attempts[
+                (
+                    admission.parent_key,
+                    admission.profile,
+                    f"{admission.attempt_id}:{admission.assignment_digest}",
+                )
+            ] = admission.child_id
 
     def child(self, child_id: str) -> ChildAdmission | None:
         return self._children.get(child_id)
@@ -299,6 +360,18 @@ class DelegationTree:
                 child_id,
             )
             return False
+
+    async def stop_for_parent(self, parent_key: str) -> tuple[ChildAdmission, ...]:
+        """Stop every live child admitted under one parent session."""
+        async with self._lock:
+            child_ids = [
+                child.child_id for child in self._children.values()
+                if child.parent_key == parent_key and child.live
+            ]
+        stopped: list[ChildAdmission] = []
+        for child_id in child_ids:
+            stopped.extend(await self.stop_subtree(child_id))
+        return tuple(stopped)
 
     async def stop_subtree(self, child_id: str) -> tuple[ChildAdmission, ...]:
         """Cancel one child and its descendants; siblings remain independent."""

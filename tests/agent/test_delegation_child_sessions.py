@@ -1,5 +1,7 @@
 """Regression tests for durable delegated child sessions (A3-5 AC5.1)."""
 
+import asyncio
+
 import pytest
 
 from nanobot.agent.child_sessions import (
@@ -334,3 +336,187 @@ async def test_unsupported_role_profile_is_refused(tmp_path):
 
     assert list(tree.children_of(parent.key)) == []
     assert list(tree.live_descendants(parent.key)) == []
+
+
+@pytest.mark.asyncio
+async def test_restart_fences_live_child_and_restores_attempt(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+
+    child = await _reserve(
+        tree,
+        parent,
+        assignment="survive a restart",
+        attempt_id="attempt-restart",
+    )
+    assert isinstance(child, ChildAdmission)
+    activated = await tree.activate(child.child_id)
+    assert activated is not None
+    assert activated.state == "active"
+
+    restored_sessions, restored = _new_tree(tmp_path)
+    restored_parent = restored_sessions.get_or_create(parent.key)
+
+    restored_child = restored.child(child.child_id)
+    assert restored_child is not None
+    assert restored_child.state == "uncertain"
+    assert restored_child.outcome == "restart_unresolved"
+
+    repeated = await _reserve(
+        restored,
+        restored_parent,
+        assignment="survive a restart",
+        attempt_id="attempt-restart",
+    )
+    assert isinstance(repeated, ChildAdmission)
+    assert repeated.child_id == child.child_id
+    assert repeated.session_key == child.session_key
+
+
+@pytest.mark.asyncio
+async def test_stop_for_parent_stops_subtree_and_leaves_other_parents(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent_a = _new_parent(sessions, key="websocket:parent-a")
+    parent_b = _new_parent(sessions, key="websocket:parent-b")
+
+    child_a1 = await _reserve(
+        tree,
+        parent_a,
+        assignment="parent A child one",
+        attempt_id="attempt-a-one",
+    )
+    child_a2 = await _reserve(
+        tree,
+        parent_a,
+        assignment="parent A child two",
+        attempt_id="attempt-a-two",
+    )
+    child_b1 = await _reserve(
+        tree,
+        parent_b,
+        assignment="parent B child one",
+        attempt_id="attempt-b-one",
+    )
+    assert isinstance(child_a1, ChildAdmission)
+    assert isinstance(child_a2, ChildAdmission)
+    assert isinstance(child_b1, ChildAdmission)
+
+    await tree.stop_for_parent(parent_a.key)
+
+    for stopped_child_id in (child_a1.child_id, child_a2.child_id):
+        record = tree.child(stopped_child_id)
+        assert record is not None
+        assert record.state == "stopped"
+        assert record.live is False
+
+    survivor = tree.child(child_b1.child_id)
+    assert survivor is not None
+    assert survivor.state != "stopped"
+    assert survivor.live is True
+
+    assert list(tree.live_descendants(parent_a.key)) == []
+    assert {record.child_id for record in tree.live_descendants(parent_b.key)} == {
+        child_b1.child_id
+    }
+
+
+@pytest.mark.asyncio
+async def test_stop_subtree_cancels_attached_task_and_keeps_sibling(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+
+    sibling_a = await _reserve(
+        tree,
+        parent,
+        assignment="attached task sibling A",
+        attempt_id="attempt-attached-a",
+    )
+    sibling_b = await _reserve(
+        tree,
+        parent,
+        assignment="attached task sibling B",
+        attempt_id="attempt-attached-b",
+    )
+    assert isinstance(sibling_a, ChildAdmission)
+    assert isinstance(sibling_b, ChildAdmission)
+
+    sibling_a_session_key = tree.child(sibling_a.child_id).session_key
+    sibling_a_as_parent = sessions.get_or_create(sibling_a_session_key)
+    nested = await _reserve(
+        tree,
+        sibling_a_as_parent,
+        assignment="nested under attached sibling A",
+        attempt_id="attempt-attached-nested",
+    )
+    assert isinstance(nested, ChildAdmission)
+
+    task = asyncio.create_task(asyncio.sleep(60))
+    await tree.attach_task(sibling_a.child_id, task)
+
+    await tree.stop_subtree(sibling_a.child_id)
+
+    # stop_subtree requests cancellation; yield so the task observes it.
+    await asyncio.sleep(0)
+    assert task.cancelled() or task.done()
+
+    stopped_a = tree.child(sibling_a.child_id)
+    stopped_nested = tree.child(nested.child_id)
+    live_b = tree.child(sibling_b.child_id)
+    assert stopped_a is not None
+    assert stopped_nested is not None
+    assert live_b is not None
+    assert stopped_a.state == "stopped"
+    assert stopped_nested.state == "stopped"
+    assert stopped_a.live is False
+    assert stopped_nested.live is False
+    assert live_b.state != "stopped"
+    assert live_b.live is True
+
+    if not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_failed_or_refused_child_releases_capacity(tmp_path):
+    sessions, tree = _new_tree(
+        tmp_path,
+        policy=DelegationTreePolicy(max_live_children_per_parent=1),
+    )
+    parent = _new_parent(sessions)
+
+    refused = await _reserve(
+        tree,
+        parent,
+        assignment="unsupported profile assignment",
+        attempt_id="attempt-unsupported",
+        profile="crawler",
+    )
+    assert isinstance(refused, ChildRefusal)
+    assert refused.reason == "unsupported_profile"
+    assert list(tree.children_of(parent.key)) == []
+
+    first = await _reserve(
+        tree,
+        parent,
+        assignment="fails and frees the slot",
+        attempt_id="attempt-fails",
+    )
+    assert isinstance(first, ChildAdmission)
+
+    await tree.complete(first.child_id, outcome="failed", state="failed")
+    failed = tree.child(first.child_id)
+    assert failed is not None
+    assert failed.state == "failed"
+    assert failed.live is False
+
+    second = await _reserve(
+        tree,
+        parent,
+        assignment="fits after the failure",
+        attempt_id="attempt-after-failure",
+    )
+    assert isinstance(second, ChildAdmission)
+    assert second.child_id != first.child_id
+    live = [record for record in tree.children_of(parent.key) if record.live]
+    assert [record.child_id for record in live] == [second.child_id]

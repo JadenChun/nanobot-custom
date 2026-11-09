@@ -224,6 +224,13 @@ class ForegroundAgentManager:
         if self._delegation_tree is None:
             self._delegation_tree = DelegationTree(sessions)
 
+    async def stop_children(self, parent_key: str) -> int:
+        """Stop the admitted active child subtree for one parent turn."""
+        if self._delegation_tree is None:
+            return 0
+        stopped = await self._delegation_tree.stop_for_parent(parent_key)
+        return len(stopped)
+
     @property
     def file_lock_registry(self) -> FileLockRegistry:
         return self._file_lock_registry
