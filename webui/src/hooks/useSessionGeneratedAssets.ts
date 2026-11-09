@@ -24,12 +24,15 @@ export function useSessionGeneratedAssets(
   nextRef.current = next;
   const loadingMoreRef = useRef(loadingMore);
   loadingMoreRef.current = loadingMore;
+  const sessionKeyRef = useRef(sessionKey);
+  sessionKeyRef.current = sessionKey;
 
   useEffect(() => {
     setGroups([]);
     setTotal(0);
     setNext(null);
     setLoadFailed(false);
+    setLoadingMore(false);
   }, [sessionKey]);
 
   useEffect(() => {
@@ -67,12 +70,19 @@ export function useSessionGeneratedAssets(
   const loadMore = useCallback(() => {
     const cursor = nextRef.current;
     if (!cursor || loadingMoreRef.current) return;
+    const requestedSession = sessionKey;
     setLoadingMore(true);
-    void fetchSessionGeneratedAssets(tokenRef.current, sessionKey, "", {
+    void fetchSessionGeneratedAssets(tokenRef.current, requestedSession, "", {
       cursor,
       limit: PAGE_SIZE,
     })
       .then((payload) => {
+        // A late page may belong to a previous session or cursor. Never append
+        // it to the current selection.
+        if (
+          sessionKeyRef.current !== requestedSession
+          || nextRef.current !== cursor
+        ) return;
         setGroups((current) => [...current, ...payload.groups]);
         setTotal(payload.total);
         setNext(payload.next ?? null);
@@ -81,7 +91,9 @@ export function useSessionGeneratedAssets(
         // Keep the current page; the user can retry with the same cursor.
       })
       .finally(() => {
-        setLoadingMore(false);
+        if (sessionKeyRef.current === requestedSession) {
+          setLoadingMore(false);
+        }
       });
   }, [sessionKey]);
 
