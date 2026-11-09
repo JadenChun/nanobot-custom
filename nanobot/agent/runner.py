@@ -523,7 +523,13 @@ class AgentRunner:
                 items = await callback(limit=_MAX_INJECTIONS_PER_TURN)
             else:
                 items = await callback()
-        except Exception:
+        except Exception as exc:
+            if spec.source_writer is not None and (
+                spec.source_writer.failed or isinstance(exc, SourceValidationError)
+            ):
+                # A mandatory source write or binding failed. The owning turn
+                # must stop; this is not an optional legacy callback failure.
+                raise
             logger.exception("injection_callback failed")
             return []
         if not items:
@@ -799,6 +805,12 @@ class AgentRunner:
         governance_config = request_state.config
 
         for iteration in range(spec.max_iterations):
+            # A continuation starts a new attempt. A prior attempt's terminal
+            # disposition must not leak into this attempt's public result.
+            stop_reason = "completed"
+            error = None
+            failure_error_kind = None
+            policy_metadata = {}
             context = AgentHookContext(
                 iteration=iteration,
                 messages=messages,
