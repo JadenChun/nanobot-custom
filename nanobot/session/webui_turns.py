@@ -18,6 +18,7 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
     GoalStateSyncEvent,
     GoalStatusEvent,
+    MessageAdmittedEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
     TurnEndEvent,
@@ -55,6 +56,7 @@ from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_REQUEST_INTENT_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
 from nanobot.webui.session_identity import is_webui_session_key
@@ -840,11 +842,32 @@ class WebuiTurnCoordinator:
             ),
         ))
 
-    def _handle_session_turn_started(self, event: SessionTurnStarted) -> None:
+    async def _handle_session_turn_started(self, event: SessionTurnStarted) -> None:
         if not self._is_websocket_event(event.context):
             return
         session = self.sessions.get_or_create(event.context.session_key)
         mark_webui_session(session, event.context.metadata)
+        raw_turn_id = event.context.metadata.get(WEBUI_TURN_METADATA_KEY)
+        turn_id = raw_turn_id if isinstance(raw_turn_id, str) and raw_turn_id else None
+        active_turn_id = websocket_turn_id(event.context.chat_id)
+        await self.bus.publish_outbound(
+            outbound_message_for_event(
+                channel=event.context.channel,
+                chat_id=event.context.chat_id,
+                event=MessageAdmittedEvent(
+                    turn_id=turn_id,
+                    attempt_id=turn_id,
+                    session_key=event.context.session_key,
+                    session_incarnation=session.incarnation,
+                    active_turn_id=active_turn_id,
+                    starts_turn=(
+                        event.context.metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY)
+                        != "steer"
+                    ),
+                ),
+                metadata=event.context.metadata,
+            )
+        )
 
     async def _handle_run_status_changed(self, event: TurnRunStatusChanged) -> None:
         if not self._is_websocket_event(event.context):

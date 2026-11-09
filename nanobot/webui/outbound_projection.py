@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger
 
@@ -11,6 +11,7 @@ from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
     GoalStateSyncEvent,
     GoalStatusEvent,
+    MessageAdmittedEvent,
     ProgressEvent,
     RetryStatusEvent,
     RetryWaitEvent,
@@ -194,6 +195,29 @@ class WebUIOutboundProjector:
                     model_preset=event.model_preset,
                     context_window_tokens=event.context_window_tokens,
                     fallback=event.fallback,
+                )
+            return
+        if isinstance(event, MessageAdmittedEvent):
+            if conns:
+                await self._transport.send_payload(
+                    msg.chat_id,
+                    cast(WebUIWirePayload, {
+                        "event": "message_admitted",
+                        "chat_id": msg.chat_id,
+                        **({"turn_id": event.turn_id} if event.turn_id else {}),
+                        **({"attempt_id": event.attempt_id} if event.attempt_id else {}),
+                        **({"session_key": event.session_key} if event.session_key else {}),
+                        **(
+                            {"session_incarnation": event.session_incarnation}
+                            if event.session_incarnation else {}
+                        ),
+                        **(
+                            {"active_turn_id": event.active_turn_id}
+                            if event.active_turn_id else {}
+                        ),
+                        "starts_turn": event.starts_turn,
+                    }),
+                    persistence="transient",
                 )
             return
         if isinstance(event, UserInputEvent):

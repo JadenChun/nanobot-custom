@@ -1684,6 +1684,17 @@ export type InboundEvent =
       started_at?: number;
     }
   | {
+      event: "message_admitted";
+      chat_id: string;
+      turn_id?: string;
+      attempt_id?: string;
+      session_key?: string;
+      session_incarnation?: string;
+      active_turn_id?: string;
+      starts_turn?: boolean;
+      started_at?: number;
+    }
+  | {
       event: "user_message";
       chat_id: string;
       text: string;

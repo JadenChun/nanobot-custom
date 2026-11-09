@@ -86,6 +86,18 @@ class GoalStateSyncEvent(AgentEvent):
 
 
 @dataclass(frozen=True)
+class MessageAdmittedEvent(AgentEvent):
+    """The session owner committed one submitted input attempt."""
+
+    turn_id: str | None = None
+    attempt_id: str | None = None
+    session_key: str | None = None
+    session_incarnation: str | None = None
+    active_turn_id: str | None = None
+    starts_turn: bool = True
+
+
+@dataclass(frozen=True)
 class SessionUpdatedEvent(AgentEvent):
     scope: str | None = None
     workspace_scope: WorkspaceScopePayload | None = None

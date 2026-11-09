@@ -9,6 +9,7 @@ from nanobot.agent.turn_delivery import TurnDeliveryFactory
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
     GoalStatusEvent,
+    MessageAdmittedEvent,
     RetryStatusEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
@@ -17,6 +18,7 @@ from nanobot.bus.outbound_events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import (
     RuntimeEventContext,
+    SessionTurnStarted,
     TurnRuntimeAdmitted,
     UserInputAccepted,
 )
@@ -334,6 +336,35 @@ async def test_session_input_is_projected_by_the_webui_coordinator(
         "id": source.id,
         "name": source.name,
     }
+
+
+@pytest.mark.asyncio
+async def test_session_turn_started_publishes_owner_admission_receipt(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    await bus.publish(SessionTurnStarted(
+        context=RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-a"},
+        ),
+    ))
+
+    outbound = bus.publish_outbound.await_args.args[0]
+    assert isinstance(outbound.event, MessageAdmittedEvent)
+    assert outbound.event.turn_id == "turn-a"
+    assert outbound.event.attempt_id == "turn-a"
+    assert outbound.event.session_key == "websocket:chat-a"
+    assert outbound.event.session_incarnation
+    assert outbound.event.starts_turn is True
 
 
 @pytest.mark.asyncio

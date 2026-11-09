@@ -906,7 +906,7 @@ describe("NanobotClient", () => {
     });
     const requestGeneration = client.getRunGeneration("chat-accepted");
     lastSocket().fakeMessage({
-      event: "message_accepted",
+      event: "message_admitted",
       chat_id: "chat-accepted",
       turn_id: "turn-accepted",
     });
@@ -1238,7 +1238,7 @@ describe("NanobotClient", () => {
       turnId: "turn-already-accepted",
     });
     lastSocket().fakeMessage({
-      event: "message_accepted",
+      event: "message_admitted",
       chat_id: "chat-legacy-scope",
       turn_id: "turn-already-accepted",
     });

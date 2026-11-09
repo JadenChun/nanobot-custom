@@ -799,7 +799,10 @@ export class NanobotClient {
   }
 
   private recordCanonicalTurnOwnership(
-    ev: Extract<InboundEvent, { event: "message_accepted" | "user_message" }>,
+    ev: Extract<
+      InboundEvent,
+      { event: "message_accepted" | "message_admitted" | "user_message" }
+    >,
   ): void {
     const activeTurnId = ev.active_turn_id;
     if (!activeTurnId) return;
@@ -1474,11 +1477,18 @@ export class NanobotClient {
     const turnId = "turn_id" in parsed && typeof parsed.turn_id === "string"
       ? parsed.turn_id
       : null;
-    if (parsed.event === "message_accepted" || parsed.event === "user_message") {
+    if (
+      parsed.event === "message_accepted"
+      || parsed.event === "message_admitted"
+      || parsed.event === "user_message"
+    ) {
       this.recordCanonicalTurnOwnership(parsed);
     }
-    if (parsed.event === "message_accepted") {
+    if (parsed.event === "message_admitted") {
       this.recordRunAcceptance(parsed.chat_id, parsed.turn_id);
+      return;
+    }
+    if (parsed.event === "message_accepted") {
       if (!isSystemCommandTurnId(turnId)) {
         this.dispatch(parsed.chat_id, parsed);
       }
