@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from nanobot.webui.media_maintenance import (
+    collect_referenced_media_evidence,
     collect_referenced_media_paths,
     garbage_collect_generated_media,
 )
@@ -47,7 +48,7 @@ def test_orphan_cleanup_deletes_only_unreferenced_old_assets(tmp_path: Path) -> 
     assert result["kept"] == 1
 
 
-def test_retention_deletes_referenced_assets(tmp_path: Path) -> None:
+def test_retention_retains_referenced_assets(tmp_path: Path) -> None:
     root = tmp_path / "generated"
     old = _asset(root, "old.png", size=10, age_days=40)
 
@@ -58,8 +59,11 @@ def test_retention_deletes_referenced_assets(tmp_path: Path) -> None:
         now=NOW,
     )
 
-    assert not old.exists()
-    assert result["deleted"] == 1
+    assert old.is_file()
+    assert old.with_suffix(".json").is_file()
+    assert result["deleted"] == 0
+    assert result["kept"] == 1
+    assert result["evidence_complete"] is True
 
 
 def test_dry_run_reports_without_deleting(tmp_path: Path) -> None:
@@ -120,3 +124,38 @@ def test_collect_referenced_media_paths_reads_transcripts_and_indexes(tmp_path: 
     referenced = collect_referenced_media_paths(webui, media_root)
 
     assert referenced == {first.resolve(), second.resolve()}
+
+
+def test_incomplete_reference_evidence_prevents_prune(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "generated"
+    asset = _asset(root, "unreferenced.png", size=10, age_days=20)
+
+    webui = tmp_path / "webui"
+    webui.mkdir()
+    (webui / "session.jsonl").write_text("{}\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def failing_read_text(self: Path, *args, **kwargs):
+        if self.suffix == ".jsonl":
+            raise OSError("temporary read failure")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", failing_read_text)
+
+    referenced, complete = collect_referenced_media_evidence(webui, root)
+    assert complete is False
+
+    result = garbage_collect_generated_media(
+        artifact_root=root,
+        referenced=referenced,
+        orphan_grace_days=0,
+        evidence_complete=False,
+        now=NOW,
+    )
+
+    assert asset.is_file()
+    assert result["deleted"] == 0
+    assert result["evidence_complete"] is False

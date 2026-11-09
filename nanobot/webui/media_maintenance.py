@@ -15,16 +15,21 @@ from nanobot.config.schema import Config
 _JSON_STRING_RE = re.compile(r'"((?:[^"\\]|\\.)+)"')
 
 
-def collect_referenced_media_paths(webui_dir: Path, media_root: Path) -> set[Path]:
-    """Collect absolute media paths mentioned by any WebUI transcript or asset index."""
+def collect_referenced_media_evidence(
+    webui_dir: Path,
+    media_root: Path,
+) -> tuple[set[Path], bool]:
+    """Collect references and report whether every evidence file was readable."""
     root = media_root.resolve()
     referenced: set[Path] = set()
+    complete = True
     for path in webui_dir.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in {".json", ".jsonl"}:
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
+            complete = False
             continue
         for match in _JSON_STRING_RE.finditer(text):
             try:
@@ -40,7 +45,12 @@ def collect_referenced_media_paths(webui_dir: Path, media_root: Path) -> set[Pat
             except (OSError, ValueError):
                 continue
             referenced.add(resolved)
-    return referenced
+    return referenced, complete
+
+
+def collect_referenced_media_paths(webui_dir: Path, media_root: Path) -> set[Path]:
+    """Collect absolute media paths mentioned by readable WebUI evidence."""
+    return collect_referenced_media_evidence(webui_dir, media_root)[0]
 
 
 def garbage_collect_generated_media(
@@ -52,11 +62,12 @@ def garbage_collect_generated_media(
     max_bytes: int = 0,
     now: datetime | None = None,
     dry_run: bool = False,
+    evidence_complete: bool = True,
 ) -> dict[str, Any]:
     """Delete unreferenced/expired generated media and enforce a byte quota.
 
-    Quota cleanup never deletes a referenced asset; if referenced assets alone
-    exceed the quota, the remaining overage is reported instead.
+    A retained reference always blocks reclamation. If any reference evidence
+    is missing or unreadable, no deletion is attempted.
     """
     now_ts = (now or datetime.now().astimezone()).timestamp()
     root = artifact_root.resolve()
@@ -72,15 +83,22 @@ def garbage_collect_generated_media(
             assets.append((path, (now_ts - info.st_mtime) / 86400, info.st_size))
 
     to_delete: list[tuple[Path, int, str]] = []
-    for path, age_days, size in assets:
-        try:
-            resolved = path.resolve()
-        except OSError:
-            continue
-        if retention_days > 0 and age_days >= retention_days:
-            to_delete.append((path, size, "retention"))
-        elif resolved not in referenced and age_days >= orphan_grace_days:
-            to_delete.append((path, size, "orphan"))
+    if evidence_complete:
+        for path, age_days, size in assets:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                evidence_complete = False
+                break
+            if resolved in referenced:
+                continue
+            if retention_days > 0 and age_days >= retention_days:
+                to_delete.append((path, size, "retention"))
+            elif age_days >= orphan_grace_days:
+                to_delete.append((path, size, "orphan"))
+    if not evidence_complete:
+        # Missing or unreadable reference evidence can hide a live file.
+        to_delete = []
 
     deleted_paths = {path for path, _size, _reason in to_delete}
     deleted_count = len(to_delete)
@@ -125,6 +143,7 @@ def garbage_collect_generated_media(
         "kept_bytes": kept_bytes,
         "quota_unmet_bytes": quota_unmet,
         "dry_run": dry_run,
+        "evidence_complete": evidence_complete,
     }
 
 
@@ -135,7 +154,9 @@ def run_generated_media_gc(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     media_root = get_media_dir()
-    referenced = collect_referenced_media_paths(get_webui_dir(), media_root)
+    referenced, evidence_complete = collect_referenced_media_evidence(
+        get_webui_dir(), media_root
+    )
     return garbage_collect_generated_media(
         artifact_root=media_root / "generated",
         referenced=referenced,
@@ -144,6 +165,7 @@ def run_generated_media_gc(
         max_bytes=config.tools.generated_media_max_bytes,
         now=now,
         dry_run=dry_run,
+        evidence_complete=evidence_complete,
     )
 
 
