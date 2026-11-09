@@ -1332,17 +1332,6 @@ def _split_transcript_turns(lines: list[dict[str, Any]]) -> list[list[dict[str, 
     return turns
 
 
-def _annotate_replay_identities(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        record
-        for turn_ordinal, turn in enumerate(_split_transcript_turns(lines))
-        for record in _records_with_replay_identity(
-            turn,
-            turn_ordinal=turn_ordinal,
-        )
-    ]
-
-
 def _stable_record_digest(record: dict[str, Any]) -> str:
     persisted = {
         key: value
@@ -2927,9 +2916,8 @@ def build_webui_thread_response(
         ),
         "active_turn_id": active_turn_id,
     }
-    if page is not None:
-        page["loaded_message_count"] = len(msgs)
-        payload["page"] = page
+    page["loaded_message_count"] = len(msgs)
+    payload["page"] = page
     if fork_boundary is not None:
         payload["fork_boundary_message_count"] = fork_boundary
     return payload
