@@ -552,3 +552,41 @@ func TestWebSocketPingTracksTheLiveSocket(t *testing.T) {
 		t.Fatalf("WSPing retired socket: %v", err)
 	}
 }
+
+func TestQueueFullRetainsTerminalResult(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
+	if err := core.emit(map[string]any{"type": "filler"}); err != nil {
+		t.Fatalf("filler: %v", err)
+	}
+	if err := core.emit(map[string]any{
+		"type":       "http_response",
+		"request_id": 7,
+		"status":     200,
+	}); err != nil {
+		t.Fatalf("terminal emit: %v", err)
+	}
+	buffer := make([]byte, 512)
+	n, err := core.PollEvent(buffer)
+	if err != nil || n == 0 {
+		t.Fatalf("terminal poll: n=%d err=%v", n, err)
+	}
+	if string(buffer[:n]) != `{"request_id":7,"status":200,"type":"http_response"}` {
+		t.Fatalf("terminal event: %s", buffer[:n])
+	}
+}
+
+func TestHTTPRequestCountIsBounded(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.MaxRequests = 1 })
+	core.mu.Lock()
+	core.requests[99] = func() {}
+	core.mu.Unlock()
+	if _, err := core.HTTP(HTTPRequest{
+		Operation: "fixture_read",
+		Method:    http.MethodGet,
+		Path:      "/fixture/v1/read",
+	}); err != ErrQueueFull {
+		t.Fatalf("request count bound: %v", err)
+	}
+}

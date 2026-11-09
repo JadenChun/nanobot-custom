@@ -56,6 +56,15 @@ function formatRemaining(seconds: number): string {
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
 }
 
+function DeviceFingerprint({ value }: { value?: string }) {
+  if (!value) return null;
+  return (
+    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+      Key fingerprint: {value}
+    </p>
+  );
+}
+
 export function RemoteAccessSettings({
   token,
   initialStatus = null,
@@ -328,6 +337,7 @@ export function RemoteAccessSettings({
           <p className="mt-1 text-xs text-muted-foreground">
             {pending.device.platform || "Android"} · files, commands, settings, existing chats
           </p>
+          <DeviceFingerprint value={pending.device_fingerprint} />
           <div className="mt-3 flex gap-2">
             <button
               type="button"
@@ -623,6 +633,7 @@ export function RemoteAccessSettings({
                   <p className="mt-1 text-xs text-muted-foreground">
                     {pending.device.platform || "Android"} · files, commands, settings, existing chats
                   </p>
+                  <DeviceFingerprint value={pending.device_fingerprint} />
                   <div className="mt-3 flex gap-2">
                     <button
                       type="button"

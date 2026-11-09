@@ -774,7 +774,13 @@ class NativeNetworkPlugin : Plugin() {
         }
         call.getString("bodyBase64")?.let { request.put("body_base64", it) }
         call.getInt("timeoutMs")?.let { request.put("timeout_ms", it) }
-        val requestId = NativeNetwork.http(current, request.toString())
+        val encodedRequest = request.toString()
+        val refusal = NativeRequestLimits.refusal(
+            encodedRequest.toByteArray(Charsets.UTF_8).size,
+            pendingNative.size,
+        )
+        if (refusal != null) throw IllegalArgumentException(refusal)
+        val requestId = NativeNetwork.http(current, encodedRequest)
         if (requestId == 0L) {
             call.reject(NativeNetwork.lastError())
             return

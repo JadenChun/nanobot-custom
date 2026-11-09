@@ -44,6 +44,12 @@ type Core struct {
 	pending []byte
 	eventMu sync.Mutex
 
+	terminalMu        sync.Mutex
+	terminalEvents    map[uint64][]byte
+	terminalOrder     []uint64
+	terminalBytes     int
+	terminalByteLimit int
+
 	peerMu  sync.Mutex
 	peerIPs map[string]string
 	peerAt  time.Time
@@ -62,12 +68,14 @@ func NewCore(cfg Config) (*Core, error) {
 		return nil, fmt.Errorf("%w: origin cannot be parsed", ErrInvalid)
 	}
 	return &Core{
-		cfg:          cfg,
-		origin:       origin,
-		state:        "new",
-		requests:     make(map[uint64]context.CancelFunc),
-		events:       make(chan []byte, cfg.QueueSize),
-		mediaStreams: make(map[uint64]*mediaStream),
+		cfg:               cfg,
+		origin:            origin,
+		state:             "new",
+		requests:          make(map[uint64]context.CancelFunc),
+		events:            make(chan []byte, cfg.QueueSize),
+		mediaStreams:      make(map[uint64]*mediaStream),
+		terminalEvents:    make(map[uint64][]byte),
+		terminalByteLimit: 16 << 20,
 	}, nil
 }
 

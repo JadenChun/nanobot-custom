@@ -68,6 +68,11 @@ func (c *Core) HTTP(input HTTPRequest) (uint64, error) {
 	ctx, cancel := context.WithTimeout(baseContext, timeout)
 	id := c.nextID()
 	c.mu.Lock()
+	if len(c.requests) >= c.cfg.MaxRequests {
+		c.mu.Unlock()
+		cancel()
+		return 0, ErrQueueFull
+	}
 	c.requests[id] = cancel
 	c.mu.Unlock()
 	go c.doHTTP(ctx, id, target, route, headers, body)
