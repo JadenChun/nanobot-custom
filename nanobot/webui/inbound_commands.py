@@ -1122,6 +1122,11 @@ class WebUICommandRouter:
             target_turn_id = envelope.get("target_turn_id")
             if isinstance(target_turn_id, str):
                 metadata[WEBUI_TARGET_TURN_METADATA_KEY] = target_turn_id
+            approval_decision = envelope.get("approval_decision")
+            if isinstance(approval_decision, dict):
+                metadata["approval_decision"] = dict(
+                    cast(dict[str, Any], approval_decision),
+                )
             if is_user_shell:
                 metadata[INBOUND_META_USER_SHELL] = True
             dispatch_content = (

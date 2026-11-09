@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from nanobot.agent.turn import ApprovalDecision
 from nanobot.agent.turn_admission import ApprovalAdmission
 
 
@@ -99,3 +100,74 @@ async def test_command_snapshot_leaves_replacement_approval_pending():
     newer = await store(admission, 'new')
     assert await admission.consume(snapshot) == 'command'
     assert (await admission.snapshot('telegram:42', 'yes')).pending is newer
+
+
+@pytest.mark.asyncio
+async def test_typed_approval_matches_exact_id_and_is_single_use():
+    admission = ApprovalAdmission()
+    pending = await store(admission)
+    decision = ApprovalDecision(approval_id=pending.approval_id, decision='approve')
+    snapshot = await admission.snapshot_decision('cron:job', decision)
+    assert snapshot.pending is pending
+    assert snapshot.action == 'affirmative' and snapshot.typed
+    assert await admission.consume(snapshot) == 'affirmative'
+
+    again = await admission.snapshot_decision(
+        'cron:job', ApprovalDecision(approval_id=pending.approval_id, decision='approve'))
+    assert again.pending is None
+    assert await admission.consume(again) in {'stale', 'none'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mismatch', ['approval_id', 'generation'])
+async def test_wrong_typed_id_or_stale_generation_is_stale(mismatch):
+    admission = ApprovalAdmission()
+    pending = await admission.store(
+        session_key='cron:job', channel='telegram', chat_id='42', summary='action',
+        generation=1 if mismatch == 'generation' else None,
+    )
+    fields = {'approval_id': pending.approval_id, 'decision': 'approve'}
+    if mismatch == 'approval_id':
+        fields['approval_id'] = 'not-the-pending-id'
+    else:
+        fields['generation'] = 2
+    snapshot = await admission.snapshot_decision('cron:job', ApprovalDecision(**fields))
+    assert snapshot.pending is pending
+    assert snapshot.action == 'stale'
+    assert await admission.consume(snapshot) == 'stale'
+    assert (await admission.snapshot_decision('cron:job', None)).pending is pending
+
+
+@pytest.mark.asyncio
+async def test_typed_deny_consumes_without_grant():
+    admission = ApprovalAdmission()
+    pending = await store(admission)
+    decision = ApprovalDecision(approval_id=pending.approval_id, decision='deny')
+    snapshot = await admission.snapshot_decision('cron:job', decision)
+    assert snapshot.pending is pending
+    assert snapshot.action == 'negative'
+    assert await admission.consume(snapshot) == 'negative'
+    assert (await admission.snapshot_decision('cron:job', None)).pending is None
+
+
+@pytest.mark.asyncio
+async def test_two_typed_clients_race_one_decision():
+    admission = ApprovalAdmission()
+    pending = await store(admission)
+    def matching():
+        return ApprovalDecision(approval_id=pending.approval_id, decision='approve')
+    first = await admission.snapshot_decision('cron:job', matching())
+    second = await admission.snapshot_decision('cron:job', matching())
+    results = await asyncio.gather(admission.consume(first), admission.consume(second))
+    assert sorted(results) == ['affirmative', 'stale']
+
+
+@pytest.mark.asyncio
+async def test_text_does_not_consume_typed_request():
+    admission = ApprovalAdmission()
+    pending = await store(admission)
+    snapshot = await admission.snapshot_decision('cron:job', None)
+    assert snapshot.pending is pending
+    assert snapshot.action == 'other' and not snapshot.typed
+    assert await admission.consume(snapshot) == 'other'
+    assert (await admission.snapshot_decision('cron:job', None)).pending is pending

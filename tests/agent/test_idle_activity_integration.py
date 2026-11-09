@@ -8,7 +8,13 @@ import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunStatus, TurnSource
+from nanobot.agent.turn import (
+    ApprovalDecision,
+    DeliveryTarget,
+    RunStatus,
+    TurnRequest,
+    TurnSource,
+)
 from nanobot.bus.events import InboundMessage
 from nanobot.providers.base import LLMResponse
 from nanobot.session.recovery import RECOVERY_INBOUND_METADATA_KEY
@@ -319,13 +325,22 @@ async def test_rejected_approvals_do_not_record_foreground_activity(engine_confi
     integration = _IdleIntegration(backend)
     loop._idle_integration = integration
     try:
-        await loop.approval_admission.store(
+        denied = await loop.approval_admission.store(
             session_key="cli:idle", channel="cli", chat_id="direct", summary="risky"
         )
-        negative = await loop._execute_direct("no", session_key="cli:idle")
+        negative = await loop.execute_turn(TurnRequest(
+            content="approval_decision",
+            session_key="cli:idle",
+            route=DeliveryTarget(channel="cli", chat_id="direct"),
+            approval_decision=ApprovalDecision(
+                approval_id=denied.approval_id,
+                decision="deny",
+                session_key="cli:idle",
+            ),
+        ))
         assert negative.stop_reason == "cancelled"
 
-        await loop.approval_admission.store(
+        old = await loop.approval_admission.store(
             session_key="cli:idle", channel="cli", chat_id="direct", summary="old"
         )
         consume = loop.approval_admission.consume
@@ -337,7 +352,16 @@ async def test_rejected_approvals_do_not_record_foreground_activity(engine_confi
             return await consume(snapshot)
 
         monkeypatch.setattr(loop.approval_admission, "consume", replace_before_consume)
-        stale = await loop._execute_direct("yes", session_key="cli:idle")
+        stale = await loop.execute_turn(TurnRequest(
+            content="approval_decision",
+            session_key="cli:idle",
+            route=DeliveryTarget(channel="cli", chat_id="direct"),
+            approval_decision=ApprovalDecision(
+                approval_id=old.approval_id,
+                decision="approve",
+                session_key="cli:idle",
+            ),
+        ))
         assert stale.stop_reason == "approval_stale"
         assert integration.calls == []
         assert "user_activity_revision" not in backend.source.load_source_snapshot(

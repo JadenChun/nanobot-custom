@@ -11,6 +11,7 @@ from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind, _TurnExecutionO
 from nanobot.agent.tools.context import RequestContext
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.agent.turn import (
+    ApprovalDecision,
     DeliveryTarget,
     RunPolicyContext,
     RunStatus,
@@ -581,13 +582,17 @@ async def test_canonical_approval_attachment_keeps_expansion_out_of_source_and_t
     doc_path.write_text("private document body", encoding="utf-8")
     key = "telegram:attachment-approval"
     summary = "private expanded approval instructions"
-    await loop.approval_admission.store(
+    pending = await loop.approval_admission.store(
         session_key=key, channel="telegram", chat_id="attachment-approval", summary=summary,
     )
     request = TurnRequest(
-        content="yes",
+        content="approval_decision",
+        session_key=key,
         source=TurnSource.GATEWAY,
         route=DeliveryTarget(channel="telegram", chat_id="attachment-approval"),
+        approval_decision=ApprovalDecision(
+            approval_id=pending.approval_id, decision="approve", session_key=key,
+        ),
         media=(str(doc_path),),
         trace_mode=TraceMode.SANITIZED,
     )
@@ -610,9 +615,9 @@ async def test_canonical_approval_attachment_keeps_expansion_out_of_source_and_t
     loop.sessions.invalidate(key)
     reloaded = loop.sessions.get_or_create(key)
     assert [event["role"] for event in reloaded.messages] == ["user", "assistant"]
-    assert reloaded.messages[0]["content"] == f"yes\n\n[Attachment: {doc_path.resolve()}]"
+    assert reloaded.messages[0]["content"] == f"approval_decision\n\n[Attachment: {doc_path.resolve()}]"
     assert "media" not in reloaded.messages[0]
     assert summary not in str(reloaded.messages)
     assert result.messages == [
-        {"role": "user", "content": "yes"}, {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "approval_decision"}, {"role": "assistant", "content": "ok"},
     ]

@@ -6,7 +6,7 @@ import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import HistoryMode, TraceMode, TurnRequest
+from nanobot.agent.turn import ApprovalDecision, HistoryMode, TraceMode, TurnRequest
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.source import validate_execution_links
 from tests.agent import test_migration_engine as engine_fixtures
@@ -279,10 +279,22 @@ async def test_source_waiter_does_not_consume_approval_before_owner_releases(eng
     backend = upgrade(loop)
     consume = AsyncMock(wraps=loop.approval_admission.consume)
     loop.approval_admission.consume = consume
+    pending = await loop.approval_admission.store(
+        session_key='cli:source', channel='cli', chat_id='direct', summary='task',
+    )
+    decision = ApprovalDecision(
+        approval_id=pending.approval_id,
+        decision='approve',
+        session_key='cli:source',
+    )
     task = None
     try:
         async with acquire_execution(backend, 'cli:source', run_id='other-process-equivalent'):
-            task = asyncio.create_task(loop.execute_turn(TurnRequest(content='input', session_key='cli:source')))
+            task = asyncio.create_task(loop.execute_turn(TurnRequest(
+                content='approval_decision',
+                session_key='cli:source',
+                approval_decision=decision,
+            )))
             await asyncio.sleep(0.08)
             assert not task.done() and not provider.calls
             consume.assert_not_awaited()

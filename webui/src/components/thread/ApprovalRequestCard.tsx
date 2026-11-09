@@ -6,25 +6,26 @@ import { Button } from "@/components/ui/button";
 
 export interface ApprovalRequestCardProps {
   summary: string;
+  approvalId?: string | null;
   busy?: boolean;
   onApprove: () => void;
   onCancel: () => void;
 }
 
 /**
- * Inline approval card for the risky-action policy. The buttons send the same
- * ordinary affirmative/negative replies the policy already accepts, so this
- * fits the current gateway/UI flow without a new mutation endpoint.
+ * Inline approval card for the risky-action policy. The buttons send a typed
+ * decision for the server-owned approval ID. Chat text alone cannot grant it.
  */
 export function ApprovalRequestCard({
   summary,
+  approvalId = null,
   busy = false,
   onApprove,
   onCancel,
 }: ApprovalRequestCardProps) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<"approve" | "cancel" | null>(null);
-  const disabled = busy || pending !== null;
+  const disabled = busy || pending !== null || !approvalId;
 
   const submit = (action: "approve" | "cancel") => {
     if (disabled) return;
@@ -43,10 +44,15 @@ export function ApprovalRequestCard({
         {t("approval.title", { defaultValue: "Approval required" })}
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        {t("approval.description", {
-          defaultValue:
-            "Nanobot paused before a risky action. Review the planned action before continuing.",
-        })}
+        {approvalId
+          ? t("approval.description", {
+              defaultValue:
+                "Nanobot paused before a risky action. Review the planned action before continuing.",
+            })
+          : t("approval.updateRequired", {
+              defaultValue:
+                "This approval request needs an updated client. Chat text cannot grant it.",
+            })}
       </p>
       <div className="rounded-control bg-muted/35 px-3 py-2 text-[12px] leading-relaxed">
         <span className="font-medium">

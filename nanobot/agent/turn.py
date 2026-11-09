@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from nanobot.session.turn_writer import SourceTurnWriter
 
 __all__ = [
+    "ApprovalDecision",
     "ApprovalGrant",
     "Callback",
     "DelegationBudget",
@@ -174,6 +175,60 @@ class ApprovalGrant:
 
 
 @dataclass(frozen=True, slots=True)
+class ApprovalDecision:
+    """Typed, single-use response to one server-owned approval request."""
+
+    approval_id: str
+    decision: str
+    session_key: str | None = None
+    session_incarnation: str | None = None
+    run_id: str | None = None
+    turn_id: str | None = None
+    effect_id: str | None = None
+    generation: int | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.approval_id) is not str or not self.approval_id.strip():
+            raise ValueError("approval decision requires an approval_id")
+        if self.decision not in {"approve", "deny"}:
+            raise ValueError("approval decision must be approve or deny")
+        for name in (
+            "session_key",
+            "session_incarnation",
+            "run_id",
+            "turn_id",
+            "effect_id",
+        ):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not str or not value):
+                raise ValueError(f"approval decision {name} is invalid")
+        if self.generation is not None and (
+            type(self.generation) is not int or self.generation < 0
+        ):
+            raise ValueError("approval decision generation is invalid")
+
+    @classmethod
+    def from_mapping(cls, payload: Any) -> "ApprovalDecision":
+        if not isinstance(payload, dict):
+            raise ValueError("approval decision must be an object")
+        data = cast(dict[str, Any], payload)
+        approval_id = data.get("approval_id")
+        decision = data.get("decision")
+        if not isinstance(approval_id, str) or not isinstance(decision, str):
+            raise ValueError("approval decision requires an approval_id and decision")
+        return cls(
+            approval_id=approval_id,
+            decision=decision,
+            session_key=cast(str | None, data.get("session_key")),
+            session_incarnation=cast(str | None, data.get("session_incarnation")),
+            run_id=cast(str | None, data.get("run_id")),
+            turn_id=cast(str | None, data.get("turn_id")),
+            effect_id=cast(str | None, data.get("effect_id")),
+            generation=cast(int | None, data.get("generation")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TurnCallbacks:
     """Optional callbacks owned by the caller of a turn."""
 
@@ -203,6 +258,7 @@ class TurnRequest:
     scheduled_link: ScheduledTurnLink | None = None
     approval_grant: ApprovalGrant | None = None
     approval: ApprovalGrant = field(default_factory=ApprovalGrant)
+    approval_decision: ApprovalDecision | None = None
     callbacks: TurnCallbacks = field(default_factory=TurnCallbacks)
     metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
     run_id: str | None = None
@@ -229,6 +285,7 @@ class TurnRequest:
         scheduled_link: ScheduledTurnLink | None = None,
         approval_grant: ApprovalGrant | None = None,
         approval: ApprovalGrant | None = None,
+        approval_decision: ApprovalDecision | None = None,
         callbacks: TurnCallbacks | None = None,
         metadata: Mapping[str, Any] | None = None,
         run_id: str | None = None,
@@ -274,6 +331,7 @@ class TurnRequest:
         object.__setattr__(self, "scheduled_link", scheduled_link)
         object.__setattr__(self, "approval_grant", approval_grant)
         object.__setattr__(self, "approval", approval or ApprovalGrant())
+        object.__setattr__(self, "approval_decision", approval_decision)
         object.__setattr__(self, "callbacks", callbacks or TurnCallbacks())
         object.__setattr__(self, "metadata", metadata or {})
         object.__setattr__(self, "run_id", run_id)

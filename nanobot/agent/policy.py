@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 import re
 import shlex
+import uuid
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -180,6 +183,7 @@ class RiskyActionPolicy(ToolPolicy):
     workspace: Path
     approval_granted: bool = False
     context_manager: ContextRepoManager = field(default_factory=ContextRepoManager)
+    approved_effect_ids: frozenset[str] = field(default_factory=frozenset)
     write_target_resolver: Callable[[str, str], Path | None] | None = field(
         default=None, repr=False, compare=False,
     )
@@ -217,25 +221,45 @@ class RiskyActionPolicy(ToolPolicy):
             return ToolPolicyDecision()
 
         self._assessed_write_targets.clear()
+        calls_to_assess = tool_calls
+        if self.approval_granted and self.approved_effect_ids:
+            calls_to_assess = [
+                tool_call for tool_call in tool_calls
+                if self._effect_fingerprint(tool_call) not in self.approved_effect_ids
+            ]
+            if not calls_to_assess:
+                return ToolPolicyDecision()
+
         reasons: list[str] = []
-        for tool_call in tool_calls:
+        for tool_call in calls_to_assess:
             reason = self._risky_reason(tool_call)
             if reason:
                 reasons.append(reason)
 
-        if self.approval_granted or not reasons:
+        if (self.approval_granted and not self.approved_effect_ids) or not reasons:
             return ToolPolicyDecision()
 
         summary = "; ".join(dict.fromkeys(reasons))
+        approval_id = uuid.uuid4().hex
+        effect_id = ",".join(
+            self._effect_fingerprint(tool_call) for tool_call in calls_to_assess
+        )
         response = (
             "I'm about to take a risky action and want your approval first. "
-            f"Planned action: {summary}. Reply `yes` to continue or `no` to cancel."
+            f"Planned action: {summary}. Approval ID: {approval_id}. "
+            "Reply with the approval control to continue or deny."
         )
         return ToolPolicyDecision(
             action="respond",
             stop_reason=_APPROVAL_REQUIRED,
             response=response,
-            metadata={"reasons": reasons, "summary": summary, "requires_approval": True},
+            metadata={
+                "reasons": reasons,
+                "summary": summary,
+                "requires_approval": True,
+                "approval_id": approval_id,
+                "effect_id": effect_id or None,
+            },
             requires_approval=True,
         )
 
@@ -353,6 +377,29 @@ class RiskyActionPolicy(ToolPolicy):
         if not candidate.is_absolute():
             candidate = self.workspace / candidate
         return candidate.resolve()
+
+    def _effect_fingerprint(self, tool_call: ToolCallRequest) -> str:
+        arguments = (
+            cast(dict[str, Any], tool_call.arguments)
+            if isinstance(tool_call.arguments, dict) else {}
+        )
+        payload: dict[str, Any] = {
+            "name": tool_call.name,
+            "arguments": arguments,
+        }
+        if tool_call.name in {"write_file", "edit_file"}:
+            raw_path = str(arguments.get("path") or "")
+            target = self._resolve_write_target(tool_call.name, raw_path)
+            if target is not None:
+                payload["target"] = str(target)
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _resolve_write_target(self, tool_name: str, raw_path: str) -> Path | None:
         if not raw_path:

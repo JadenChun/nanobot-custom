@@ -8,7 +8,10 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import uuid
 from dataclasses import dataclass
+
+from nanobot.agent.turn import ApprovalDecision
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +19,12 @@ class PendingApproval:
     summary: str
     created_at: float
     session_key: str
+    approval_id: str = ""
+    session_incarnation: str | None = None
+    run_id: str | None = None
+    turn_id: str | None = None
+    effect_id: str | None = None
+    generation: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +33,9 @@ class ApprovalSnapshot:
     pending: PendingApproval | None
     action: str
     effective_key: str
+    decision: ApprovalDecision | None = None
+    typed: bool = False
+    strict: bool = False
 
 
 class ApprovalAdmission:
@@ -49,20 +61,84 @@ class ApprovalAdmission:
                 action, effective_key = 'other', key
             return ApprovalSnapshot(key, pending, action, effective_key)
 
+    async def snapshot_decision(
+        self,
+        key: str,
+        decision: ApprovalDecision | None,
+    ) -> ApprovalSnapshot:
+        """Resolve one exact typed decision under the admission lock."""
+        async with self._guard:
+            pending = self._pending.get(key)
+            if pending is None:
+                return ApprovalSnapshot(
+                    key, None, 'none', key, decision=decision,
+                    typed=decision is not None, strict=True,
+                )
+            if decision is None:
+                return ApprovalSnapshot(key, pending, 'other', key, strict=True)
+            if not self._decision_matches(pending, decision):
+                return ApprovalSnapshot(
+                    key, pending, 'stale', key, decision=decision, typed=True,
+                    strict=True,
+                )
+            action = 'affirmative' if decision.decision == 'approve' else 'negative'
+            effective_key = pending.session_key if action == 'affirmative' else key
+            return ApprovalSnapshot(
+                key, pending, action, effective_key, decision=decision, typed=True,
+                strict=True,
+            )
+
     async def consume(self, snapshot: ApprovalSnapshot) -> str:
         """Revalidate under the selected session lock and consume by identity.
 
-        Only affirmative grants approval. Negative/stale callers must terminate
-        without model calls. Unrelated text consumes the old request without
-        granting; slash commands leave it pending, matching staging.
+        A typed decision must still match the stored request. Unrelated text
+        and slash commands do not consume the request.
         """
         if snapshot.pending is None or snapshot.action == 'command':
             return snapshot.action
+        if snapshot.strict and not snapshot.typed:
+            # The typed loop never grants or consumes from text.
+            return 'other'
+        if not snapshot.typed:
+            # Legacy text remains available only to direct callers and tests;
+            # the loop uses snapshot_decision and never grants from text.
+            async with self._guard:
+                if self._pending.get(snapshot.alias_key) is not snapshot.pending:
+                    return 'stale'
+                self._remove_identity(snapshot.pending)
+                return snapshot.action
         async with self._guard:
             if self._pending.get(snapshot.alias_key) is not snapshot.pending:
                 return 'stale'
+            if snapshot.typed and (
+                snapshot.decision is None
+                or not self._decision_matches(snapshot.pending, snapshot.decision)
+            ):
+                return 'stale'
             self._remove_identity(snapshot.pending)
             return snapshot.action
+
+    @staticmethod
+    def _decision_matches(
+        pending: PendingApproval,
+        decision: ApprovalDecision,
+    ) -> bool:
+        if decision.approval_id != pending.approval_id:
+            return False
+        for expected, actual in (
+            (pending.session_incarnation, decision.session_incarnation),
+            (pending.run_id, decision.run_id),
+            (pending.turn_id, decision.turn_id),
+            (pending.effect_id, decision.effect_id),
+            (pending.generation, decision.generation),
+        ):
+            if expected is not None and actual is not None and expected != actual:
+                return False
+        if decision.session_key is not None and (
+            decision.session_key not in {pending.session_key, pending.session_key.split(':', 1)[-1]}
+        ):
+            return False
+        return True
 
     def _remove_identity(self, pending: PendingApproval) -> bool:
         removed = False
@@ -72,10 +148,32 @@ class ApprovalAdmission:
                 removed = True
         return removed
 
-    async def store(self, *, session_key: str, channel: str, chat_id: str,
-                    summary: str) -> PendingApproval:
+    async def store(
+        self,
+        *,
+        session_key: str,
+        channel: str,
+        chat_id: str,
+        summary: str,
+        approval_id: str | None = None,
+        session_incarnation: str | None = None,
+        run_id: str | None = None,
+        turn_id: str | None = None,
+        effect_id: str | None = None,
+        generation: int | None = None,
+    ) -> PendingApproval:
         async with self._guard:
-            pending = PendingApproval(summary, time.time(), session_key)
+            pending = PendingApproval(
+                summary,
+                time.time(),
+                session_key,
+                approval_id=approval_id or uuid.uuid4().hex,
+                session_incarnation=session_incarnation,
+                run_id=run_id,
+                turn_id=turn_id,
+                effect_id=effect_id,
+                generation=generation,
+            )
             self._pending[session_key] = pending
             self._pending[f'{channel}:{chat_id}'] = pending
             return pending

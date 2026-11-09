@@ -1,5 +1,6 @@
 import { decodeNotification } from "../../../packages/client-events/notifications";
 import type {
+  ApprovalDecisionPayload,
   ConnectionStatus,
   InboundEvent,
   Outbound,
@@ -1249,6 +1250,7 @@ export class NanobotClient {
       requestIntent?: "new" | "steer";
       targetTurnId?: string;
       turnId?: string;
+      approvalDecision?: ApprovalDecisionPayload;
       /** False for side-channel or injected messages that do not own a lifecycle. */
       startsNewRun?: boolean;
       /** Internal/side-channel turns never raise completion notifications. */
@@ -1272,6 +1274,9 @@ export class NanobotClient {
         : {}),
       ...(options?.quotedContext?.trim() ? { quoted_context: options.quotedContext.trim() } : {}),
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
+      ...(options?.approvalDecision
+        ? { approval_decision: options.approvalDecision }
+        : {}),
       // System commands are internal chat controls, not workspace requests.
       ...(systemCommand
         ? {}
@@ -1304,6 +1309,23 @@ export class NanobotClient {
       this.trackPendingMessageSend(chatId, options.turnId, startsNewRun);
     }
     this.queueSend(frame);
+  }
+
+  sendApprovalDecision(
+    chatId: string,
+    approvalId: string,
+    decision: "approve" | "deny",
+    sessionKey?: string,
+  ): void {
+    this.sendMessage(chatId, "approval_decision", undefined, {
+      approvalDecision: {
+        approval_id: approvalId,
+        decision,
+        ...(sessionKey ? { session_key: sessionKey } : {}),
+      },
+      startsNewRun: false,
+      sideChannel: true,
+    });
   }
 
   sendSystemCommand(chatId: string, command: string, timeoutMs = 5_000): Promise<void> {

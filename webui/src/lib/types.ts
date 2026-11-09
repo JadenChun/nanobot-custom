@@ -1936,6 +1936,17 @@ export interface FilePreviewPayload {
   entries?: FilePreviewEntry[];
 }
 
+export interface ApprovalDecisionPayload {
+  approval_id: string;
+  decision: "approve" | "deny";
+  session_key?: string;
+  session_incarnation?: string;
+  run_id?: string;
+  turn_id?: string;
+  effect_id?: string;
+  generation?: number;
+}
+
 export type Outbound =
   | { type: "new_chat"; workspace_scope?: WorkspaceScopePayload }
   | { type: "new_temporary_chat" }
@@ -1973,6 +1984,7 @@ export type Outbound =
       request_settings_version?: 1;
       request_intent?: "new" | "steer";
       target_turn_id?: string;
+      approval_decision?: ApprovalDecisionPayload;
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;

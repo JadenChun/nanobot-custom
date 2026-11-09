@@ -177,6 +177,30 @@ async def test_main_policy_requires_approval_for_browser_device_screenshots() ->
 
 
 @pytest.mark.asyncio
+async def test_approval_effect_binding_requires_new_decision_for_different_effect(tmp_path) -> None:
+    policy = RiskyActionPolicy(workspace=tmp_path)
+    first = ToolCallRequest(id="first", name="exec", arguments={"command": "rm -rf old"})
+
+    decision = await policy.evaluate(messages=[], tool_calls=[first])
+    assert decision.stop_reason == "approval_required"
+    assert decision.metadata["effect_id"]
+    assert decision.metadata["approval_id"]
+
+    approved = RiskyActionPolicy(
+        workspace=tmp_path,
+        approval_granted=True,
+        approved_effect_ids=frozenset(decision.metadata["effect_id"].split(",")),
+    )
+    same = await approved.evaluate(messages=[], tool_calls=[first])
+    assert same.action == "allow"
+
+    second = ToolCallRequest(id="second", name="exec", arguments={"command": "rm -rf other"})
+    different = await approved.evaluate(messages=[], tool_calls=[second])
+    assert different.stop_reason == "approval_required"
+    assert different.metadata["approval_id"] != decision.metadata["approval_id"]
+
+
+@pytest.mark.asyncio
 async def test_delegated_unsafe_browser_call_is_blocked_before_tool_execution() -> None:
     provider = _provider()
     provider.chat_with_retry.return_value = LLMResponse(

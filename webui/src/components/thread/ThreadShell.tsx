@@ -2335,9 +2335,26 @@ export function ThreadShell({
         {riskyApproval ? (
           <ApprovalRequestCard
             summary={riskyApproval.summary}
+            approvalId={riskyApproval.approvalId}
             busy={turnActive || booting || preparingFull}
-            onApprove={() => handleThreadSend("yes")}
-            onCancel={() => handleThreadSend("no")}
+            onApprove={() => {
+              if (!chatId || !riskyApproval.approvalId) return;
+              client.sendApprovalDecision(
+                chatId,
+                riskyApproval.approvalId,
+                "approve",
+                session?.key,
+              );
+            }}
+            onCancel={() => {
+              if (!chatId || !riskyApproval.approvalId) return;
+              client.sendApprovalDecision(
+                chatId,
+                riskyApproval.approvalId,
+                "deny",
+                session?.key,
+              );
+            }}
           />
         ) : null}
         {!temporary && workspaceAccessRequest ? (

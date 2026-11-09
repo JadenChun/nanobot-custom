@@ -70,6 +70,7 @@ from nanobot.agent.tools.registry import (
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.trace import sanitize_trace
 from nanobot.agent.turn import (
+    ApprovalDecision,
     DeliveryState,
     DeliveryTarget,
     HistoryMode,
@@ -2042,6 +2043,11 @@ class AgentLoop:
             workspace=run_context.policy.workspace,
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
+            approved_effect_ids=frozenset(
+                str(value)
+                for value in run_context.policy.metadata.get("approved_effect_ids", ())
+                if isinstance(value, str) and value
+            ),
             write_target_resolver=self._resolve_policy_write_target,
         )
         self._sync_subagent_runtime_limits()
@@ -2936,12 +2942,19 @@ class AgentLoop:
                     registered = True
                 if not await recovery.admit(msg):
                     return
+            approval_payload = msg.metadata.get("approval_decision")
+            approval_decision = (
+                ApprovalDecision.from_mapping(approval_payload)
+                if approval_payload is not None
+                else None
+            )
             request = TurnRequest(content=msg.content, session_key=registration_key,
                 source=self._inbound_turn_source(msg),
                 route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id,
                                      message_id=msg.metadata.get('message_id')),
                 sender_id=msg.sender_id, media=tuple(msg.media),
                 attachments=msg.attachments,
+                approval_decision=approval_decision,
                 metadata=dict(msg.metadata))
             await self.execute_turn(request, _options=_TurnExecutionOptions(
                 inbound=msg, admission_scope=partial(self._bus_turn_scope, msg, settlement=_compact_settlement), raise_errors=True,
@@ -3541,7 +3554,9 @@ class AgentLoop:
                 options.inbound is not None and options.inbound.require_existing_session
             )),
         ) as cancellation_receipt:
-            snapshot = await self.approval_admission.snapshot(key, request.content)
+            snapshot = await self.approval_admission.snapshot_decision(
+                key, request.approval_decision,
+            )
             if options.silent_output and snapshot.pending is not None:
                 raise ValueError("silent cron turn cannot consume a pending approval")
             cancellation_key_unchanged = snapshot.effective_key == key
@@ -3602,7 +3617,10 @@ class AgentLoop:
                     try:
                         scope = options.admission_scope(key) if options.admission_scope else nullcontext(_AdmittedTurnIO())
                         async with scope as io:
-                            action = await self.approval_admission.consume(snapshot)
+                            action = (
+                                await self.approval_admission.consume(snapshot)
+                                if snapshot.typed else snapshot.action
+                            )
                             activity_marker = options.admitted_activity_marker
                             if activity_marker is not None and context.execution_owner is not None:
                                 owner = context.execution_owner
@@ -3673,9 +3691,14 @@ class AgentLoop:
                                 content = request.content
                                 if action == 'affirmative' and snapshot.pending is not None:
                                     context.policy.approval_granted = True
+                                    context.policy.metadata["approved_effect_ids"] = tuple(
+                                        value
+                                        for value in (snapshot.pending.effect_id or "").split(",")
+                                        if value
+                                    )
                                     content = ('The user approved the previously blocked risky action. '
                                         f'Resume the task that required approval: {snapshot.pending.summary}.'
-                                        f'\n\nOriginal approval reply: {request.content}')
+                                        '\n\nApproval decision: approve.')
                                 routing_metadata = dict(request.metadata)
                                 if target.message_id is not None:
                                     routing_metadata["message_id"] = target.message_id
@@ -3732,8 +3755,33 @@ class AgentLoop:
                                     sent_messages=tuple(context.delivery.sent_messages),
                                     llm_usage=runner.usage if runner else None)
                                 if status is RunStatus.APPROVAL_REQUIRED and options.persist_approval_request:
-                                    await self.approval_admission.store(session_key=key, channel=target.channel,
-                                        chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
+                                    owner = context.execution_owner
+                                    state = owner.read_snapshot().state if owner is not None else None
+                                    raw_turn_id = request.metadata.get(WEBUI_TURN_METADATA_KEY)
+                                    await self.approval_admission.store(
+                                        session_key=key,
+                                        channel=target.channel,
+                                        chat_id=target.chat_id or '',
+                                        summary=str(result.policy_metadata.get('summary') or 'risky action'),
+                                        approval_id=(
+                                            str(result.policy_metadata.get('approval_id'))
+                                            if result.policy_metadata.get('approval_id')
+                                            else None
+                                        ),
+                                        session_incarnation=(state.incarnation if state else None),
+                                        run_id=result.run_id,
+                                        turn_id=(
+                                            raw_turn_id
+                                            if isinstance(raw_turn_id, str) and raw_turn_id
+                                            else None
+                                        ),
+                                        effect_id=(
+                                            str(result.policy_metadata.get('effect_id'))
+                                            if result.policy_metadata.get('effect_id')
+                                            else None
+                                        ),
+                                        generation=(state.generation if state else None),
+                                    )
                             io.result = result
                         if io.delivery_error:
                             record.metadata['delivery_error_type'] = io.delivery_error
