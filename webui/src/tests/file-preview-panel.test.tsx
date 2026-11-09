@@ -103,4 +103,62 @@ describe("FilePreviewPanel", () => {
 
     expect(fetchFilePreview).toHaveBeenCalledTimes(1);
   });
+
+  it("refetches only when the refresh key changes for the same preview", async () => {
+    vi.mocked(fetchFilePreview)
+      .mockResolvedValueOnce({
+        path: "/workspace/notes.txt",
+        display_path: "notes.txt",
+        language: "text",
+        content: "notes v1",
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        path: "/workspace/notes.txt",
+        display_path: "notes.txt",
+        language: "text",
+        content: "notes v2",
+        truncated: false,
+      });
+
+    const { rerender } = render(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="notes.txt"
+        token="tok"
+        refreshKey={0}
+        onClose={() => {}}
+      />,
+    );
+
+    const codeBlock = await screen.findByTestId("mock-code-block");
+    expect(codeBlock).toHaveTextContent("notes v1");
+    expect(fetchFilePreview).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="notes.txt"
+        token="tok"
+        refreshKey={1}
+        onClose={() => {}}
+      />,
+    );
+
+    await screen.findByText("notes v2");
+    expect(screen.getByTestId("mock-code-block")).toHaveTextContent("notes v2");
+    expect(fetchFilePreview).toHaveBeenCalledTimes(2);
+
+    rerender(
+      <FilePreviewPanel
+        sessionKey="websocket:chat-1"
+        path="notes.txt"
+        token="tok"
+        refreshKey={1}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(fetchFilePreview).toHaveBeenCalledTimes(2);
+  });
 });

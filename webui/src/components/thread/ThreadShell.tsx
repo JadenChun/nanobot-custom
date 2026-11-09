@@ -1169,6 +1169,8 @@ export function ThreadShell({
   const [heroGreetingKey, setHeroGreetingKey] = useState(randomHeroGreetingKey);
   const [submittedViewportTurnId, setSubmittedViewportTurnId] = useState<string | null>(null);
   const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
+  const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
+  const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
   const [filePreviewClosing, setFilePreviewClosing] = useState(false);
   const [filePreviewWidth, setFilePreviewWidth] = useState(FILE_PREVIEW_DEFAULT_WIDTH);
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
@@ -2226,6 +2228,31 @@ export function ThreadShell({
     setFilePreviewPath(path);
   }, []);
 
+  useEffect(() => {
+    filePreviewEditKeysRef.current = new Set();
+  }, [filePreviewPath]);
+
+  useEffect(() => {
+    if (!filePreviewPath) return;
+    const normalize = (value: string) => value.replace(/\\/g, "/");
+    const target = normalize(filePreviewPath);
+    let refreshed = false;
+    for (const message of messages) {
+      for (const edit of message.fileEdits ?? []) {
+        if (edit.status !== "done" || edit.pending) continue;
+        const candidate = normalize(edit.absolute_path || edit.path);
+        const samePath = candidate === target
+          || candidate.endsWith(`/${target}`)
+          || target.endsWith(`/${candidate}`);
+        const editKey = `${edit.call_id}|${candidate}|${edit.status}`;
+        if (!samePath || filePreviewEditKeysRef.current.has(editKey)) continue;
+        filePreviewEditKeysRef.current.add(editKey);
+        refreshed = true;
+      }
+    }
+    if (refreshed) setFilePreviewRefreshKey((value) => value + 1);
+  }, [filePreviewPath, messages]);
+
   const handleCloseFilePreview = useCallback(() => {
     if (!filePreviewPath || filePreviewClosing) return;
     setFilePreviewClosing(true);
@@ -2652,6 +2679,7 @@ export function ThreadShell({
           sessionKey={historyKey}
           path={filePreviewPath}
           token={token}
+          refreshKey={filePreviewRefreshKey}
           desktopWidth={filePreviewWidth}
           isClosing={filePreviewClosing}
           onResizeStart={handleFilePreviewResizeStart}

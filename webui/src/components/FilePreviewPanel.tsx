@@ -15,6 +15,7 @@ interface FilePreviewPanelProps {
   sessionKey: string;
   path: string;
   token: string;
+  refreshKey?: number;
   desktopWidth?: number;
   isClosing?: boolean;
   onResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -42,6 +43,7 @@ export function FilePreviewPanel({
   sessionKey,
   path,
   token,
+  refreshKey = 0,
   desktopWidth = 544,
   isClosing = false,
   onResizeStart,
@@ -83,7 +85,7 @@ export function FilePreviewPanel({
     return () => {
       cancelled = true;
     };
-  }, [activePath, sessionKey]);
+  }, [activePath, sessionKey, refreshKey]);
 
   const navigateToPath = (next: string) => {
     if (next === activePath) return;
