@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 from loguru import logger
 
 from nanobot.agent.capabilities import DELEGATED_READ_ONLY_ROLES, role_capabilities
+from nanobot.agent.child_backend import (
+    ChildBackendBinding,
+    ChildBackendRegistry,
+    ChildBackendUnavailableError,
+)
 from nanobot.agent.child_sessions import (
     DEFAULT_CHILD_PROFILE,
     ChildRefusal,
@@ -218,6 +223,7 @@ class ForegroundAgentManager:
             DelegationTree(sessions) if sessions is not None else None
         )
         self._disabled_skills = set(disabled_skills or ())
+        self._child_backends = ChildBackendRegistry()
 
     def bind_session_owner(self, sessions: SessionManager) -> None:
         """Attach the canonical session owner once the loop has constructed it."""
@@ -618,8 +624,9 @@ class ForegroundAgentManager:
             ))
         artifact_read_allowed = bool(turn_context is not None and turn_context.artifact_read_allowed
                                      and 'read_file' in tools.tool_names)
-        try:
-            result = await (runner or self.runner).run(AgentRunSpec(
+
+        async def run_child() -> AgentRunResult:
+            return await (runner or self.runner).run(AgentRunSpec(
                 artifact_read_allowed=artifact_read_allowed,
                 source_transcript=source_transcript,
                 initial_messages=None if source_transcript is not None else [
@@ -646,22 +653,72 @@ class ForegroundAgentManager:
                     else None
                 ),
             ))
+
+        backend = None
+        try:
+            if admission is not None and source_writer is None:
+                backend = self._child_backends.resolve(admission.profile)
+                handle = await backend.start(
+                    admission,
+                    run_child,
+                    ChildBackendBinding(
+                        runtime_generation=admission.runtime_generation,
+                        proof="native-runner",
+                    ),
+                )
+                await self._delegation_tree.attach_task(  # type: ignore[union-attr]
+                    admission.child_id,
+                    handle.task,
+                )
+                result = await backend.wait(handle)
+            else:
+                # Canonical source streams are task-owned. Run the child inline
+                # so its child stream keeps the parent's source ownership; the
+                # parent Stop still cancels the awaited child.
+                result = await run_child()
         except asyncio.CancelledError:
+            current = asyncio.current_task()
+            parent_cancelled = current is not None and current.cancelling() > 0
             if admission is not None:
+                if backend is not None:
+                    await backend.close(admission.child_id)
                 await self._delegation_tree.complete(  # type: ignore[union-attr]
                     admission.child_id,
                     outcome="cancelled",
                     state="stopped",
                 )
-            raise
+            if parent_cancelled:
+                raise
+            return AgentRunResult(
+                final_content="Error: delegated child was stopped.",
+                messages=[],
+                stop_reason="cancelled",
+            )
+        except ChildBackendUnavailableError as exc:
+            if admission is not None:
+                await self._delegation_tree.release(  # type: ignore[union-attr]
+                    admission.child_id,
+                    reason="backend_unavailable",
+                )
+            return AgentRunResult(
+                final_content=f"Error: {exc}",
+                messages=[],
+                stop_reason="policy_blocked",
+                policy_metadata={"child_backend_unavailable": True},
+            )
         except Exception:
             if admission is not None:
+                if backend is not None:
+                    await backend.close(admission.child_id)
                 await self._delegation_tree.complete(  # type: ignore[union-attr]
                     admission.child_id,
                     outcome="uncertain",
                     state="uncertain",
                 )
             raise
+        finally:
+            if admission is not None and backend is not None:
+                await backend.close(admission.child_id)
         if admission is not None:
             state, outcome = self._child_disposition(result)
             result.policy_metadata.setdefault("delegated_child", admission.metadata())
