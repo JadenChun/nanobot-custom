@@ -91,6 +91,50 @@ class TokenService:
                 scopes=tuple(scopes),
             )
 
+    def issue_device(
+        self,
+        installation_id: str,
+        scopes: tuple[str, ...],
+        *,
+        device_fingerprint: str,
+        device_generation: int,
+        label: str = "mobile",
+    ) -> IssuedPair:
+        """Issue one proof-bound access grant without a bearer refresh authority."""
+        validate_scopes(scopes)
+        if not device_fingerprint or device_generation < 1:
+            raise AuthRejectedError("device proof binding is invalid")
+        with self._lock:
+            state = self.store.load()
+            if state is None or not state.enabled:
+                raise AuthRejectedError("remote access is disabled")
+            if self.store.get_device(installation_id) is not None:
+                raise AuthConflictError("installation already has a device record")
+            access_token = f"nbm_at_{secrets.token_urlsafe(32)}"
+            try:
+                self.store.add_device(
+                    installation_id=installation_id,
+                    label=label,
+                    scopes=scopes,
+                    refresh_token="",
+                    refresh_expires_at=0.0,
+                )
+            except StoreError as exc:
+                raise AuthConflictError(str(exc)) from exc
+            expires_at = self.clock() + ACCESS_TTL_SECONDS
+            self._access[_token_hash(access_token)] = AccessGrant(
+                installation_id=installation_id,
+                scopes=tuple(scopes),
+                expires_at=expires_at,
+            )
+            return IssuedPair(
+                access_token=access_token,
+                refresh_token="",
+                expires_in=ACCESS_TTL_SECONDS,
+                refresh_expires_in=0,
+                scopes=tuple(scopes),
+            )
+
     def validate_access(self, access_token: str) -> AccessGrant:
         with self._lock:
             self._purge_expired()

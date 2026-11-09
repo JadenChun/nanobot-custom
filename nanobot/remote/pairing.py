@@ -666,9 +666,11 @@ class PairingService:
             if challenge.result is not None:
                 raise PairingBusyError("pairing result is already issued")
             try:
-                pair = self.tokens.issue(
+                pair = self.tokens.issue_device(
                     challenge.pending_installation,
                     challenge.scopes,
+                    device_fingerprint=challenge.device_fingerprint,
+                    device_generation=challenge.device_generation,
                     label=challenge.pending_label or challenge.offer.label,
                 )
             except (AuthConflictError, AuthRejectedError, AuthError) as exc:

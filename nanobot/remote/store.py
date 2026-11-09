@@ -369,7 +369,7 @@ class RemoteAccessStore:
         if state is None or not state.enabled:
             return None
         device = state.devices.get(installation_id)
-        if device is None or device.revoked:
+        if device is None or device.revoked or not device.refresh_hash:
             return None
         now = self.clock()
         if device.refresh_expires_at and now >= device.refresh_expires_at:

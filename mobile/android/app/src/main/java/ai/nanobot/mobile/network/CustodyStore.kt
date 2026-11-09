@@ -310,7 +310,10 @@ class CustodyStore(context: Context) {
         accessExpiresIn: Int = 600,
         refreshExpiresIn: Int = 30 * 24 * 60 * 60,
     ): CustodyRecord {
-        if (accessToken.isBlank() || refreshToken.isBlank()) {
+        if (accessToken.isBlank()) {
+            throw CustodyException("refreshed credentials are empty")
+        }
+        if (refreshToken.isBlank() && refreshExpiresIn > 0) {
             throw CustodyException("refreshed credentials are empty")
         }
         if (accessToken.length > 512 || refreshToken.length > 512) {
