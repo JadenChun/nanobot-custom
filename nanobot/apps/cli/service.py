@@ -10,6 +10,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterable
 from contextlib import suppress
@@ -1042,6 +1043,34 @@ class CliAppManager:
         with suppress(subprocess.TimeoutExpired):
             process.wait(timeout=2)
 
+    @staticmethod
+    def _read_bounded(
+        stream: Any,
+        limit_bytes: int,
+    ) -> tuple[bytes, bool]:
+        """Read one pipe with a hard buffer bound while draining the rest."""
+        kept = bytearray()
+        truncated = False
+        while True:
+            chunk = stream.read(64 * 1024)
+            if not chunk:
+                break
+            if len(kept) < limit_bytes:
+                take = chunk[: limit_bytes - len(kept)]
+                kept.extend(take)
+                if len(take) < len(chunk):
+                    truncated = True
+            else:
+                truncated = True
+        return bytes(kept), truncated
+
+    @staticmethod
+    def _decode_bounded(raw: bytes, truncated: bool) -> str:
+        text = raw.decode("utf-8", errors="replace")
+        if truncated:
+            text += "\n\n... output truncated ..."
+        return text
+
     def _run_owned_argv(
         self,
         argv: list[str],
@@ -1061,29 +1090,65 @@ class CliAppManager:
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             env=self._subprocess_env(),
             cwd=str(cwd) if cwd is not None else None,
             **kwargs,
         )
+        if getattr(process, "stdout", None) is None or getattr(process, "stderr", None) is None:
+            # Injected process doubles may expose only communicate(); the
+            # production path always supplies both pipes.
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._terminate_owned_process(process)
+                stdout, stderr = process.communicate()
+                raise subprocess.TimeoutExpired(
+                    process.args, timeout, output=stdout, stderr=stderr,
+                ) from None
+            return subprocess.CompletedProcess(
+                process.args, process.returncode, stdout, stderr,
+            )
+        limit_bytes = _MAX_TOOL_OUTPUT_CHARS * 4
+        outputs: dict[str, tuple[bytes, bool]] = {}
+        readers = {
+            "stdout": threading.Thread(
+                target=lambda: outputs.__setitem__(
+                    "stdout", self._read_bounded(process.stdout, limit_bytes),
+                ),
+                daemon=True,
+            ),
+            "stderr": threading.Thread(
+                target=lambda: outputs.__setitem__(
+                    "stderr", self._read_bounded(process.stderr, limit_bytes),
+                ),
+                daemon=True,
+            ),
+        }
+        for reader in readers.values():
+            reader.start()
         try:
-            stdout, stderr = process.communicate(timeout=timeout)
+            process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             self._terminate_owned_process(process)
-            stdout, stderr = process.communicate()
+            for reader in readers.values():
+                reader.join(timeout=2)
+            stdout_raw, stdout_truncated = outputs.get("stdout", (b"", False))
+            stderr_raw, stderr_truncated = outputs.get("stderr", (b"", False))
             raise subprocess.TimeoutExpired(
                 process.args,
                 timeout,
-                output=stdout,
-                stderr=stderr,
+                output=self._decode_bounded(stdout_raw, stdout_truncated),
+                stderr=self._decode_bounded(stderr_raw, stderr_truncated),
             ) from None
+        for reader in readers.values():
+            reader.join(timeout=2)
+        stdout_raw, stdout_truncated = outputs.get("stdout", (b"", False))
+        stderr_raw, stderr_truncated = outputs.get("stderr", (b"", False))
         return subprocess.CompletedProcess(
             process.args,
             process.returncode,
-            stdout,
-            stderr,
+            self._decode_bounded(stdout_raw, stdout_truncated),
+            self._decode_bounded(stderr_raw, stderr_truncated),
         )
 
     def _run_argv(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:

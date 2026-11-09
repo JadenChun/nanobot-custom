@@ -171,3 +171,38 @@ async def test_text_does_not_consume_typed_request():
     assert snapshot.action == 'other' and not snapshot.typed
     assert await admission.consume(snapshot) == 'other'
     assert (await admission.snapshot_decision('cron:job', None)).pending is pending
+
+
+@pytest.mark.asyncio
+async def test_expired_approval_is_removed_before_decision(monkeypatch):
+    admission = ApprovalAdmission()
+    now = [1_000_000.0]
+    monkeypatch.setattr('nanobot.agent.turn_admission.time.time', lambda: now[0])
+    pending = await store(admission)
+
+    now[0] += 899
+    assert (await admission.snapshot('telegram:42', 'yes')).pending is pending
+    now[0] += 2
+    assert (await admission.snapshot('telegram:42', 'yes')).pending is None
+    now[0] -= 901
+    assert (await admission.snapshot('telegram:42', 'yes')).pending is None
+
+    typed = await store(admission, 'typed')
+    now[0] += 901
+    decision = ApprovalDecision(approval_id=typed.approval_id, decision='approve')
+    assert (await admission.snapshot_decision('cron:job', decision)).pending is None
+
+
+@pytest.mark.asyncio
+async def test_revoke_removes_session_and_alias_keys():
+    admission = ApprovalAdmission()
+    pending = await store(admission)
+    other = await admission.store(
+        session_key='cron:other', channel='telegram', chat_id='99', summary='other')
+    assert (await admission.snapshot('cron:job', 'yes')).pending is pending
+
+    await admission.revoke('cron:job')
+
+    assert (await admission.snapshot('cron:job', 'yes')).pending is None
+    assert (await admission.snapshot('telegram:42', 'yes')).pending is None
+    assert (await admission.snapshot('cron:other', 'yes')).pending is other

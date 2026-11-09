@@ -1540,6 +1540,7 @@ class AgentLoop:
         self._discarding_sessions.add(key)
         try:
             self.sessions.invalidate(key)
+            await self.approval_admission.revoke(key)
             await self._cancel_active_tasks(key)
         finally:
             self.discard_session_file_state(key)
@@ -4429,6 +4430,7 @@ class AgentLoop:
                 await admission.close()
             await writer.owner.quiesce()
             self.sessions.reset_session(writer.owner.key, owner=writer.owner)
+            await self.approval_admission.revoke(writer.owner.key)
             self.discard_session_file_state(ctx.session_key)
             self.sessions.invalidate(ctx.session_key)
             text = 'New session started.'

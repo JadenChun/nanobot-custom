@@ -29,6 +29,7 @@ from nanobot.session.session_handles import session_handle_for_name
 from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.session_projection import WebUISessionProjection
 
 
 @pytest.fixture(autouse=True)
@@ -377,3 +378,31 @@ async def test_fallback_model_ignores_non_websocket_requests() -> None:
         await observer("fallback")
 
     bus.publish_outbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_hydration_preserves_stopping_status(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    msg = InboundMessage(
+        channel="websocket",
+        sender_id="u",
+        chat_id="chat-stop",
+        content="hi",
+        metadata={"webui_turn_id": "turn-stop"},
+    )
+    await wth.publish_turn_run_status(bus, msg, "running")
+    projection = WebUISessionProjection(SessionManager(tmp_path))
+
+    wth.mark_websocket_turn_stopping("chat-stop", True)
+    stopping = projection.hydration_events("websocket:chat-stop", "chat-stop")
+    goal_status = next(event for event in stopping if event["event"] == "goal_status")
+    assert goal_status["status"] == "stopping"
+
+    wth.mark_websocket_turn_stopping("chat-stop", False)
+    resumed = projection.hydration_events("websocket:chat-stop", "chat-stop")
+    goal_status = next(event for event in resumed if event["event"] == "goal_status")
+    assert goal_status["status"] == "running"
+
+    wth.clear_websocket_turns("chat-stop")
+    assert wth.websocket_turn_stopping("chat-stop") is False

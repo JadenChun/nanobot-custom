@@ -79,6 +79,8 @@ TITLE_GENERATION_REASONING_EFFORT = "none"
 _WEBSOCKET_TURN_WALL_STARTED_AT: dict[str, float] = {}
 _WEBSOCKET_TURN_IDS: dict[str, str] = {}
 _WEBSOCKET_TURN_OWNERS: dict[str, str] = {}
+# Owner-projected Stop state survives a reconnect while the turn settles.
+_WEBSOCKET_TURN_STOPPING: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,7 @@ def _sync_websocket_turn_projection(chat_id: str) -> None:
         _WEBSOCKET_TURN_WALL_STARTED_AT.pop(chat_id, None)
         _WEBSOCKET_TURN_IDS.pop(chat_id, None)
         _WEBSOCKET_TURN_OWNERS.pop(chat_id, None)
+        _WEBSOCKET_TURN_STOPPING.discard(chat_id)
         return
 
     owner = next(reversed(turns))
@@ -368,6 +371,19 @@ def websocket_turn_id(chat_id: str) -> str | None:
     return _WEBSOCKET_TURN_IDS.get(chat_id)
 
 
+def websocket_turn_stopping(chat_id: str) -> bool:
+    """Whether the owner accepted Stop for the current turn and it is settling."""
+    return chat_id in _WEBSOCKET_TURN_STOPPING
+
+
+def mark_websocket_turn_stopping(chat_id: str, stopping: bool = True) -> None:
+    """Project the owner Stop state for reconnect hydration."""
+    if stopping:
+        _WEBSOCKET_TURN_STOPPING.add(chat_id)
+    else:
+        _WEBSOCKET_TURN_STOPPING.discard(chat_id)
+
+
 def bind_queued_websocket_turn_scope(
     chat_id: str,
     owner: str | None,
@@ -587,6 +603,7 @@ def clear_websocket_turn_if_current(
 def clear_websocket_turns(chat_id: str) -> None:
     """Forget every in-process turn projection for a discarded chat."""
     _WEBSOCKET_ACTIVE_TURNS.pop(chat_id, None)
+    _WEBSOCKET_TURN_STOPPING.discard(chat_id)
     _sync_websocket_turn_projection(chat_id)
 
 
@@ -602,6 +619,10 @@ async def publish_turn_run_status(
         return
     cid = str(msg.chat_id)
     started_at_event: float | None = None
+    if status == "stopping":
+        mark_websocket_turn_stopping(cid, True)
+    elif status in {"running", "interrupted", "idle"}:
+        mark_websocket_turn_stopping(cid, False)
     if status == "running":
         if isinstance(started_at, int | float) and started_at > 0:
             t0 = float(started_at)

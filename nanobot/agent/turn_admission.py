@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from nanobot.agent.turn import ApprovalDecision
 
+APPROVAL_TTL_SECONDS = 15 * 60
+
 
 @dataclass(frozen=True, slots=True)
 class PendingApproval:
@@ -25,6 +27,7 @@ class PendingApproval:
     turn_id: str | None = None
     effect_id: str | None = None
     generation: int | None = None
+    expires_at: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +53,9 @@ class ApprovalAdmission:
             pending = self._pending.get(key)
             if pending is None:
                 return ApprovalSnapshot(key, None, 'none', key)
+            if pending.expires_at and pending.expires_at <= time.time():
+                self._remove_identity(pending)
+                return ApprovalSnapshot(key, None, 'none', key)
             raw = content.strip()
             if re.fullmatch(r"(yes|y|approve|approved|go ahead|continue|do it|run it)\s*[.!]?", raw, re.I):
                 action, effective_key = 'affirmative', pending.session_key
@@ -69,6 +75,9 @@ class ApprovalAdmission:
         """Resolve one exact typed decision under the admission lock."""
         async with self._guard:
             pending = self._pending.get(key)
+            if pending is not None and pending.expires_at and pending.expires_at <= time.time():
+                self._remove_identity(pending)
+                pending = None
             if pending is None:
                 return ApprovalSnapshot(
                     key, None, 'none', key, decision=decision,
@@ -140,6 +149,16 @@ class ApprovalAdmission:
             return False
         return True
 
+    async def revoke(self, session_key: str) -> int:
+        """Revoke every pending approval bound to one session identity."""
+        async with self._guard:
+            victims = [
+                pending for pending in set(self._pending.values())
+                if pending.session_key == session_key
+            ]
+            removed = sum(1 for pending in victims if self._remove_identity(pending))
+            return removed
+
     def _remove_identity(self, pending: PendingApproval) -> bool:
         removed = False
         for key, value in list(self._pending.items()):
@@ -163,9 +182,10 @@ class ApprovalAdmission:
         generation: int | None = None,
     ) -> PendingApproval:
         async with self._guard:
+            created_at = time.time()
             pending = PendingApproval(
                 summary,
-                time.time(),
+                created_at,
                 session_key,
                 approval_id=approval_id or uuid.uuid4().hex,
                 session_incarnation=session_incarnation,
@@ -173,6 +193,7 @@ class ApprovalAdmission:
                 turn_id=turn_id,
                 effect_id=effect_id,
                 generation=generation,
+                expires_at=created_at + APPROVAL_TTL_SECONDS,
             )
             self._pending[session_key] = pending
             self._pending[f'{channel}:{chat_id}'] = pending

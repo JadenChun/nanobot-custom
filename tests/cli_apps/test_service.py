@@ -475,6 +475,25 @@ def test_run_argv_decodes_utf8_output(tmp_path: Path) -> None:
     assert result.stdout == "\u2713"
 
 
+def test_run_owned_argv_bounds_stdout_and_stderr_flood(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+
+    result = manager._run_owned_argv(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('x'*1000000); sys.stderr.write('y'*1000000)",
+        ],
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    assert len(result.stdout) < 100_000
+    assert "output truncated" in result.stdout
+    assert len(result.stderr) < 100_000
+    assert "output truncated" in result.stderr
+
+
 def test_install_records_available_cli_without_reinstalling(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

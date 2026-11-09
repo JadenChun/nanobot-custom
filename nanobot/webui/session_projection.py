@@ -10,7 +10,11 @@ from nanobot.providers.base import LLMUsage
 from nanobot.session.goal_state import goal_state_ws_blob
 from nanobot.session.model_selection import model_preset_from_metadata
 from nanobot.session.recovery import recovery_state_from_metadata
-from nanobot.session.webui_turns import websocket_turn_id, websocket_turn_wall_started_at
+from nanobot.session.webui_turns import (
+    websocket_turn_id,
+    websocket_turn_stopping,
+    websocket_turn_wall_started_at,
+)
 
 
 class SessionMetadataReader(Protocol):
@@ -74,7 +78,9 @@ class WebUISessionProjection:
             event: dict[str, Any] = {
                 "event": "goal_status",
                 "chat_id": chat_id,
-                "status": "running",
+                "status": (
+                    "stopping" if websocket_turn_stopping(chat_id) else "running"
+                ),
                 "started_at": started_at,
             }
             if turn_id is not None:
