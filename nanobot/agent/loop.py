@@ -692,6 +692,7 @@ class AgentLoop:
             folder_grants=fork_dependencies.resource_policy.folder_grants,
         )
         self.sessions = session_manager or SessionManager(workspace, sessions_root=effective_root)
+        fork_dependencies.foreground_manager.bind_session_owner(self.sessions)
         self.approval_admission = ApprovalAdmission()
         self.run_store = RunStore(workspace, self.sessions)
         # One file-read/write tracker per logical session. The tool registry is
@@ -896,12 +897,17 @@ class AgentLoop:
             provider_snapshot_loader,
         )
         if extra.get("fork_dependencies") is None:
+            session_owner = extra.get("session_manager")
             extra["fork_dependencies"] = build_foreground_dependencies(
                 workspace=config.workspace_path,
                 runtime=LLMRuntime.capture(provider, model, context_window_tokens=context_window_tokens),
                 tools_config=config.tools, restrict_to_workspace=config.tools.restrict_to_workspace,
                 config=config,
                 sessions_root=effective_root,
+                sessions=(
+                    session_owner
+                    if isinstance(session_owner, SessionManager) else None
+                ),
                 refresh_web_fetch_config=provider_snapshot_loader is not None,
             )
             extra["_owns_fork_dependencies"] = True

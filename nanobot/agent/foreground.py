@@ -12,6 +12,7 @@ from nanobot.config.schema import Config, ToolsConfig
 from nanobot.context_repo import ContextRepoManager
 from nanobot.extensions.crawler import crawler_settings
 from nanobot.security.folder_grants import FolderGrantStore
+from nanobot.session.manager import SessionManager
 from nanobot.utils.llm_runtime import LLMRuntime
 
 
@@ -35,6 +36,7 @@ def build_foreground_dependencies(
     *, workspace: Path, runtime: LLMRuntime, tools_config: ToolsConfig,
     restrict_to_workspace: bool, config: Config | None = None,
     sessions_root: Path | None = None,
+    sessions: SessionManager | None = None,
     refresh_web_fetch_config: bool = False,
 ) -> ForkToolDependencies:
     """Build one shared context/policy/lock graph; never connect or run tools."""
@@ -65,5 +67,6 @@ def build_foreground_dependencies(
         crawler_max_output_tokens=optional.max_output_tokens,
         crawler_reasoning_effort=optional.reasoning_effort,
         folder_grants=grants,
+        sessions=sessions,
     )
     return ForkToolDependencies(manager, manager.resource_policy, locks, crawler_enabled=optional.enabled)

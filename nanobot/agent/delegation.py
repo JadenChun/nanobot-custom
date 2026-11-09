@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 from loguru import logger
 
 from nanobot.agent.capabilities import DELEGATED_READ_ONLY_ROLES, role_capabilities
+from nanobot.agent.child_sessions import (
+    DEFAULT_CHILD_PROFILE,
+    ChildRefusal,
+    DelegationTree,
+)
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import DelegatedReadOnlyPolicy
 from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
@@ -58,6 +63,7 @@ from nanobot.config.schema import (
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.security.folder_grants import FolderGrantView
+from nanobot.session.manager import SessionManager
 from nanobot.session.source_projection import RuntimeNode, SourceNode
 from nanobot.session.source_request import SourceTranscript
 from nanobot.utils.llm_runtime import LLMRuntime
@@ -153,6 +159,8 @@ class ForegroundAgentManager:
         crawler_runtime: LLMRuntime | None = None,
         context_window_tokens: int = 120000,
         folder_grants: FolderGrantView | None = None,
+        sessions: SessionManager | None = None,
+        delegation_tree: DelegationTree | None = None,
     ) -> None:
         self.provider = provider
         self.workspace = workspace
@@ -204,6 +212,14 @@ class ForegroundAgentManager:
             f"{self.__class__.__name__}_legacy_budget",
             default=None,
         )
+        self._delegation_tree = delegation_tree or (
+            DelegationTree(sessions) if sessions is not None else None
+        )
+
+    def bind_session_owner(self, sessions: SessionManager) -> None:
+        """Attach the canonical session owner once the loop has constructed it."""
+        if self._delegation_tree is None:
+            self._delegation_tree = DelegationTree(sessions)
 
     @property
     def file_lock_registry(self) -> FileLockRegistry:
@@ -481,9 +497,45 @@ class ForegroundAgentManager:
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
         runtime_override: LLMRuntime | None = None,
+        authority: dict[str, Any] | None = None,
     ) -> AgentRunResult:
         call_id = str(uuid.uuid4())[:8]
         logger.info("Foreground {} [{}] started", role, call_id)
+        admission = None
+        if (
+            self._delegation_tree is not None
+            and turn_context is not None
+            and turn_context.session_key
+        ):
+            tree = self._delegation_tree
+            parent = tree.sessions.get_or_create(turn_context.session_key)
+            attempt_id = turn_context.run_id or call_id
+            policy_facts: dict[str, Any] = {
+                "role": role,
+                "tools": sorted(tools.tool_names),
+                "read_only": role in DELEGATED_READ_ONLY_ROLES,
+                "authority": dict(authority or {}),
+            }
+            reserved = await tree.reserve(
+                parent=parent,
+                parent_key=turn_context.session_key,
+                assignment=assignment,
+                attempt_id=attempt_id,
+                profile=DEFAULT_CHILD_PROFILE,
+                policy_facts=policy_facts,
+            )
+            if isinstance(reserved, ChildRefusal):
+                return AgentRunResult(
+                    final_content=f"Error: {reserved.detail}",
+                    messages=[],
+                    stop_reason="policy_blocked",
+                    policy_metadata={
+                        "child_refusal": reserved.reason,
+                        "delegation_refused": True,
+                    },
+                )
+            admission = reserved
+            await tree.activate(admission.child_id)
         if role in DELEGATED_READ_ONLY_ROLES:
             profile = role_capabilities(role)
             capability_prompt = (
@@ -554,35 +606,75 @@ class ForegroundAgentManager:
             ))
         artifact_read_allowed = bool(turn_context is not None and turn_context.artifact_read_allowed
                                      and 'read_file' in tools.tool_names)
-        result = await (runner or self.runner).run(AgentRunSpec(
-            artifact_read_allowed=artifact_read_allowed,
-            source_transcript=source_transcript,
-            initial_messages=None if source_transcript is not None else [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": assignment},
-            ],
-            tools=tools,
-            runtime=runtime,
-            max_iterations=max_iterations,
-            max_tool_result_chars=16000,
-            turn_context=child_context,
-            source_writer=source_writer,
-            artifact_grants=child_grants,
-            artifact_reader_factory=child_factory,
-            hook=_DelegationHook(role, call_id),
-            concurrent_tools=role in {"planner", "reviewer", "explorer"},
-            fail_on_tool_error=True,
-            tool_policy=(
-                DelegatedReadOnlyPolicy(
-                    allowed_tools=[*tools.tool_names, *(["read_artifact"] if artifact_read_allowed else [])],
-                    role=role,
+        try:
+            result = await (runner or self.runner).run(AgentRunSpec(
+                artifact_read_allowed=artifact_read_allowed,
+                source_transcript=source_transcript,
+                initial_messages=None if source_transcript is not None else [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": assignment},
+                ],
+                tools=tools,
+                runtime=runtime,
+                max_iterations=max_iterations,
+                max_tool_result_chars=16000,
+                turn_context=child_context,
+                source_writer=source_writer,
+                artifact_grants=child_grants,
+                artifact_reader_factory=child_factory,
+                hook=_DelegationHook(role, call_id),
+                concurrent_tools=role in {"planner", "reviewer", "explorer"},
+                fail_on_tool_error=True,
+                tool_policy=(
+                    DelegatedReadOnlyPolicy(
+                        allowed_tools=[*tools.tool_names, *(["read_artifact"] if artifact_read_allowed else [])],
+                        role=role,
+                    )
+                    if role in DELEGATED_READ_ONLY_ROLES
+                    else None
+                ),
+            ))
+        except asyncio.CancelledError:
+            if admission is not None:
+                await self._delegation_tree.complete(  # type: ignore[union-attr]
+                    admission.child_id,
+                    outcome="cancelled",
+                    state="stopped",
                 )
-                if role in DELEGATED_READ_ONLY_ROLES
-                else None
-            ),
-        ))
+            raise
+        except Exception:
+            if admission is not None:
+                await self._delegation_tree.complete(  # type: ignore[union-attr]
+                    admission.child_id,
+                    outcome="uncertain",
+                    state="uncertain",
+                )
+            raise
+        if admission is not None:
+            state, outcome = self._child_disposition(result)
+            result.policy_metadata.setdefault("delegated_child", admission.metadata())
+            await self._delegation_tree.complete(  # type: ignore[union-attr]
+                admission.child_id,
+                outcome=outcome,
+                state=state,
+            )
+            if source_writer is None:
+                self._delegation_tree.record_exchange(  # type: ignore[union-attr]
+                    admission.child_id,
+                    assignment=assignment,
+                    result_text=self._result_text(result, role),
+                )
         logger.info("Foreground {} [{}] completed with {}", role, call_id, result.stop_reason)
         return result
+
+    @staticmethod
+    def _child_disposition(result: AgentRunResult) -> tuple[str, str]:
+        """Map one runner outcome to the durable child state and outcome."""
+        if result.stop_reason == "completed":
+            return "completed", "completed"
+        if result.stop_reason == "cancelled":
+            return "stopped", "cancelled"
+        return "failed", result.stop_reason or "failed"
 
     @staticmethod
     def _result_text(result: AgentRunResult, role: str) -> str:
@@ -696,6 +788,7 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
             max_iterations=30,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            authority={"write_scope": list(write_scope)},
         )
         return self._role_result(result, "worker", turn_context)
 
