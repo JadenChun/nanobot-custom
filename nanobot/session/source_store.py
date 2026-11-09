@@ -59,6 +59,8 @@ from nanobot.workspace_access_recovery import (
     parse_workspace_scope_metadata,
 )
 
+MAX_SOURCE_SERIALIZED_BYTES = 67_108_864
+
 if TYPE_CHECKING:
     from nanobot.session.artifact import ArtifactDescriptor
     from nanobot.session.artifact_reader import ArtifactReader
@@ -1207,7 +1209,12 @@ class SourceSessionStore:
         records = [header, *events]
         canonical_events(records)
         result = self._snapshot(header, events)
-        text = _source_bytes(header, events).decode("utf-8")
+        raw = _source_bytes(header, events)
+        if len(raw) > MAX_SOURCE_SERIALIZED_BYTES:
+            raise SourceValidationError(
+                "source exceeds the maximum readable serialized size"
+            )
+        text = raw.decode("utf-8")
         return PreparedSourcePersistence(result, text, lambda: header["key"])
 
     def _write(

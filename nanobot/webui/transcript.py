@@ -8,9 +8,11 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple, Sequence, cast
 from urllib.parse import unquote, urlparse
@@ -32,7 +34,7 @@ WEBUI_TRANSCRIPT_INCOMPLETE_KEY = "transcript_incomplete"
 _MAX_TRANSCRIPT_FILE_BYTES = 8 * 1024 * 1024
 _ACTIVE_TRANSCRIPT_ROTATE_BYTES = 2 * 1024 * 1024
 _TARGET_ACTIVE_TRANSCRIPT_BYTES = _ACTIVE_TRANSCRIPT_ROTATE_BYTES // 2
-_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 2
+_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 3
 _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
 _TRANSCRIPT_SEGMENT_RE = re.compile(r"^\d{6}\.jsonl$")
 _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
@@ -147,6 +149,14 @@ def _media_kind_from_name(name: str) -> str:
     if ext in _INLINE_MARKDOWN_VIDEO_EXTS:
         return "video"
     return "file"
+
+
+def active_transcript_path(session_key: str) -> Path:
+    """Return the committed active transcript file for this session."""
+    _entries, active_name = _read_segment_manifest_state(session_key)
+    if active_name:
+        return get_webui_dir() / active_name
+    return webui_transcript_path(session_key)
 
 
 def webui_transcript_path(session_key: str) -> Path:
@@ -310,12 +320,18 @@ def _normalize_manifest_entry(session_key: str, entry: Any) -> dict[str, Any] | 
     }
 
 
-def _write_segment_manifest(session_key: str, entries: list[dict[str, Any]]) -> None:
+def _write_segment_manifest(
+    session_key: str,
+    entries: list[dict[str, Any]],
+    *,
+    active_name: str | None = None,
+) -> None:
     directory = webui_transcript_segments_dir(session_key)
     directory.mkdir(parents=True, exist_ok=True)
     data = {
         "version": _TRANSCRIPT_SEGMENT_MANIFEST_VERSION,
         "segments": entries,
+        "active": active_name,
     }
     path = _webui_transcript_manifest_path(session_key)
     tmp_path = path.with_suffix(".json.tmp")
@@ -327,20 +343,33 @@ def _write_segment_manifest(session_key: str, entries: list[dict[str, Any]]) -> 
         raise
 
 
-def _rebuild_segment_manifest(session_key: str) -> list[dict[str, Any]]:
+def _rebuild_segment_manifest(
+    session_key: str,
+) -> tuple[list[dict[str, Any]], str | None]:
     segment_ids = _segment_ids_on_disk(session_key)
     entries = [_segment_manifest_entry(session_key, segment_id) for segment_id in segment_ids]
-    if entries:
-        _write_segment_manifest(session_key, entries)
+    stem = SessionManager.safe_key(session_key)
+    active_names = sorted(
+        path.name
+        for path in get_webui_dir().glob(f"{stem}.active.*.jsonl")
+        if path.is_file()
+    )
+    # Never merge two active generations. One committed file is recoverable;
+    # multiple candidates need operator review.
+    active_name = active_names[0] if len(active_names) == 1 else None
+    if entries or active_name:
+        _write_segment_manifest(session_key, entries, active_name=active_name)
     else:
         _webui_transcript_manifest_path(session_key).unlink(missing_ok=True)
-    return entries
+    return entries, active_name
 
 
-def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
+def _read_segment_manifest_state(
+    session_key: str,
+) -> tuple[list[dict[str, Any]], str | None]:
     directory = webui_transcript_segments_dir(session_key)
     if not directory.is_dir():
-        return []
+        return [], None
     path = _webui_transcript_manifest_path(session_key)
     if not path.is_file():
         return _rebuild_segment_manifest(session_key)
@@ -360,20 +389,35 @@ def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
             if normalized is None:
                 return _rebuild_segment_manifest(session_key)
             entries.append(normalized)
-        if [entry["id"] for entry in entries] != _segment_ids_on_disk(session_key):
+        active_name = manifest.get("active")
+        if active_name is not None and (
+            not isinstance(active_name, str)
+            or "/" in active_name
+            or "\\" in active_name
+            or not active_name.endswith(".jsonl")
+        ):
             return _rebuild_segment_manifest(session_key)
-        return entries
+        return entries, active_name
     except (OSError, json.JSONDecodeError, TypeError, AttributeError):
         return _rebuild_segment_manifest(session_key)
+
+
+def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
+    return _read_segment_manifest_state(session_key)[0]
 
 
 def _read_segment_ids(session_key: str) -> list[str]:
     return [entry["id"] for entry in _read_segment_manifest_entries(session_key)]
 
 
-def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -> None:
+def _append_segment_turns(
+    session_key: str,
+    turns: list[list[dict[str, Any]]],
+    *,
+    write_manifest: bool = True,
+) -> list[dict[str, Any]]:
     if not turns:
-        return
+        return _read_segment_manifest_entries(session_key)
     entries = _read_segment_manifest_entries(session_key)
     next_id = int(entries[-1]["id"]) + 1 if entries else 1
     batch: list[list[dict[str, Any]]] = []
@@ -407,20 +451,22 @@ def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -
         batch_bytes += turn_bytes
     if batch:
         write_batch()
-    _write_segment_manifest(session_key, entries)
+    if write_manifest:
+        _write_segment_manifest(session_key, entries)
+    return entries
 
 
 def _rotate_active_transcript_if_needed(session_key: str) -> None:
-    path = webui_transcript_path(session_key)
-    if not path.is_file():
+    active_path = active_transcript_path(session_key)
+    if not active_path.is_file():
         return
     try:
-        if path.stat().st_size <= _ACTIVE_TRANSCRIPT_ROTATE_BYTES:
+        if active_path.stat().st_size <= _ACTIVE_TRANSCRIPT_ROTATE_BYTES:
             return
     except OSError:
         return
 
-    lines = _read_transcript_file(path)
+    lines = _read_transcript_file(active_path)
     if not lines:
         return
     turns = _split_transcript_turns(lines)
@@ -441,21 +487,28 @@ def _rotate_active_transcript_if_needed(session_key: str) -> None:
     kept = turns[keep_start:]
     if not moved:
         return
-    _append_segment_turns(session_key, moved)
-    _write_records_to_path(path, _flatten_turns(kept))
+    entries = _append_segment_turns(session_key, moved, write_manifest=False)
+    active_name = f"{SessionManager.safe_key(session_key)}.active.{secrets.token_hex(8)}.jsonl"
+    next_active = get_webui_dir() / active_name
+    _write_records_to_path(next_active, _flatten_turns(kept))
+    # The manifest commit is the rotation point. Before it, readers use the
+    # old active file. After it, readers use the segments plus the new active.
+    _write_segment_manifest(session_key, entries, active_name=active_name)
+    with suppress(OSError):
+        active_path.unlink()
 
 
 def _chunk_ids(session_key: str) -> list[str]:
     _rotate_active_transcript_if_needed(session_key)
     ids = _read_segment_ids(session_key)
-    if webui_transcript_path(session_key).is_file():
+    if active_transcript_path(session_key).is_file():
         ids.append(_TRANSCRIPT_ACTIVE_CHUNK_ID)
     return ids
 
 
 def _read_chunk_turns(session_key: str, chunk_id: str) -> list[list[dict[str, Any]]]:
     if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
-        path = webui_transcript_path(session_key)
+        path = active_transcript_path(session_key)
     else:
         path = _segment_file_path(session_key, chunk_id)
     if not path.is_file():
@@ -523,7 +576,7 @@ def _chunk_turn_refs(
             continue
         refs.append(_TranscriptChunkRef(chunk_id, ordinal, turn_count, int(entry["user_count"])))
         ordinal += turn_count
-    if webui_transcript_path(session_key).is_file():
+    if active_transcript_path(session_key).is_file():
         active_turns = _cached_chunk_turns(
             session_key,
             _TRANSCRIPT_ACTIVE_CHUNK_ID,
@@ -651,7 +704,7 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
     lines: list[dict[str, Any]] = []
     for chunk_id in _chunk_ids(session_key):
         if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
-            lines.extend(_read_transcript_file(webui_transcript_path(session_key)))
+            lines.extend(_read_transcript_file(active_transcript_path(session_key)))
         else:
             lines.extend(_read_transcript_file(_segment_file_path(session_key, chunk_id)))
     return lines
@@ -662,7 +715,7 @@ def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], 
     entries: list[tuple[str, int, int]] = []
     for chunk_id in _chunk_ids(session_key):
         path = (
-            webui_transcript_path(session_key)
+            active_transcript_path(session_key)
             if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID
             else _segment_file_path(session_key, chunk_id)
         )
@@ -687,7 +740,7 @@ def _append_to_active_transcript(session_key: str, obj: dict[str, Any]) -> None:
     if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
         msg = "webui transcript line too large"
         raise ValueError(msg)
-    path = webui_transcript_path(session_key)
+    path = active_transcript_path(session_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = raw + "\n"
     with open(path, "a", encoding="utf-8") as f:
@@ -1013,6 +1066,13 @@ def delete_webui_transcript(session_key: str) -> bool:
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript {}: {}", path, e)
+    active_glob = f"{SessionManager.safe_key(session_key)}.active.*.jsonl"
+    for active_path in get_webui_dir().glob(active_glob):
+        try:
+            active_path.unlink()
+            removed = True
+        except OSError as e:
+            logger.warning("Failed to delete active webui transcript {}: {}", active_path, e)
     segments_dir = webui_transcript_segments_dir(session_key)
     if segments_dir.is_dir():
         try:
