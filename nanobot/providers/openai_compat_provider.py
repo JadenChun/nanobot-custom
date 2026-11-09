@@ -45,6 +45,7 @@ from nanobot.providers.base import (
 )
 from nanobot.providers.capabilities import ModelCapabilities, model_capabilities_from_metadata
 from nanobot.providers.openai_responses import (
+    MISSING_TERMINAL_EVENT_MESSAGE,
     ResponsesStreamCapture,
     build_responses_compaction_state,
     build_responses_state,
@@ -3207,15 +3208,31 @@ class OpenAICompatProvider(LLMProvider):
 
             timed_iterator = _timed_stream()
             capture = ResponsesStreamCapture()
-            content, tool_calls, finish_reason, usage, reasoning_content = (
-                await consume_sdk_stream(
-                    timed_iterator,
-                    callbacks["on_content_delta"],
-                    on_tool_call_delta=callbacks["on_tool_call_delta"],
-                    on_reasoning_delta=callbacks["on_thinking_delta"],
-                    capture=capture,
+            try:
+                content, tool_calls, finish_reason, usage, reasoning_content = (
+                    await consume_sdk_stream(
+                        timed_iterator,
+                        callbacks["on_content_delta"],
+                        on_tool_call_delta=callbacks["on_tool_call_delta"],
+                        on_reasoning_delta=callbacks["on_thinking_delta"],
+                        capture=capture,
+                    )
                 )
-            )
+            except RuntimeError as exc:
+                if (
+                    str(exc) == MISSING_TERMINAL_EVENT_MESSAGE
+                    and provider_context is not None
+                    and provider_context.source_summary_mode is not None
+                ):
+                    # A summary request may use its visible partial text, but
+                    # only as an explicitly incomplete auxiliary result.
+                    return LLMResponse(
+                        content=f"Error calling LLM: {exc}",
+                        finish_reason="error",
+                        error_kind="summary_incomplete_stream",
+                        error_should_retry=False,
+                    )
+                raise
             incomplete_auxiliary = (
                 provider_context is not None
                 and provider_context.source_summary_mode is not None

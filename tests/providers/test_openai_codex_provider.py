@@ -203,6 +203,21 @@ async def test_codex_request_marks_rejected_compaction_without_retaining_raw_bod
     assert not hasattr(error, "body")
 
 
+_TERMINAL_SSE_EVENT = (
+    'data: {"type":"response.completed",'
+    '"response":{"status":"completed","output":[]}}\n\n'
+)
+
+
+def _terminal_sse_response(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        text=_TERMINAL_SSE_EVENT,
+        request=request,
+    )
+
+
 @pytest.mark.asyncio
 async def test_codex_request_honors_stream_idle_timeout_env(monkeypatch) -> None:
     """NANOBOT_STREAM_IDLE_TIMEOUT_S overrides the default Codex stream timeout."""
@@ -211,7 +226,7 @@ async def test_codex_request_honors_stream_idle_timeout_env(monkeypatch) -> None
     seen: dict[str, int] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, request=request)
+        return _terminal_sse_response(request)
 
     def fake_client(
         *,
@@ -236,7 +251,7 @@ async def test_codex_request_uses_configured_proxy(monkeypatch) -> None:
     proxy = "http://127.0.0.1:23458"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, request=request)
+        return _terminal_sse_response(request)
 
     def fake_client(
         *,

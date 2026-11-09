@@ -8,6 +8,7 @@ from nanobot.providers.openai_responses.converters import (
 )
 from nanobot.providers.openai_responses.parsing import (
     FINISH_REASON_MAP,
+    MISSING_TERMINAL_EVENT_MESSAGE,
     ResponsesStreamCapture,
     consume_sdk_stream,
     consume_sse,
@@ -50,4 +51,5 @@ __all__ = [
     "responses_state_items",
     "responses_state_matches",
     "FINISH_REASON_MAP",
+    "MISSING_TERMINAL_EVENT_MESSAGE",
 ]

@@ -1282,7 +1282,7 @@ class TestConsumeSse:
         assert capture.output_items == output
 
     @pytest.mark.asyncio
-    async def test_capture_does_not_commit_interrupted_stream(self):
+    async def test_interrupted_stream_raises_and_does_not_commit_capture(self):
         capture = ResponsesStreamCapture()
         response = _SseResponse([
             {
@@ -1296,7 +1296,8 @@ class TestConsumeSse:
             },
         ])
 
-        await consume_sse_with_reasoning(response, capture=capture)
+        with pytest.raises(RuntimeError, match="without a terminal event"):
+            await consume_sse_with_reasoning(response, capture=capture)
 
         assert capture.completed is False
 
@@ -1985,6 +1986,10 @@ class TestConsumeSdkStream:
             MagicMock(type="response.reasoning_text.delta", delta="step 1 "),
             MagicMock(type="response.reasoning_text.delta", delta="step 2"),
             MagicMock(type="response.reasoning_text.done", text="step 1 step 2"),
+            MagicMock(
+                type="response.completed",
+                response=MagicMock(status="completed", usage=None, output=[]),
+            ),
         ]
         emitted: list[str] = []
 

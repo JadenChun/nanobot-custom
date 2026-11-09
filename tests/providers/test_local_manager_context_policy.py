@@ -645,7 +645,7 @@ async def test_auxiliary_chat_stream_requires_explicit_terminal_chunk(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mode", "expected_finish"),
-    [("canonical", "error"), (None, "stop")],
+    [("canonical", "error"), (None, "error")],
     ids=["auxiliary-no-response-completed", "legacy-main-no-response-completed"],
 )
 async def test_responses_stream_requires_explicit_terminal_completion(

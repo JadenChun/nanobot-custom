@@ -548,11 +548,13 @@ async def test_mcp_tool_reconnects_after_session_terminated(
         mcp_servers={"remote": _stdio_server("remote")}
     )
     closed: list[str] = []
+    close_event = asyncio.Event()
     sessions: list[Any] = []
     connect_count = 0
 
     async def _mark_closed(name: str) -> None:
         closed.append(name)
+        close_event.set()
 
     class _FakeSession:
         def __init__(self, index: int) -> None:
@@ -595,6 +597,7 @@ async def test_mcp_tool_reconnects_after_session_terminated(
 
     output = await old_tool.execute(symbol="AAPL")
 
+    await asyncio.wait_for(close_event.wait(), timeout=1)
     assert output == "recovered"
     assert connect_count == 2
     assert closed == ["remote"]
