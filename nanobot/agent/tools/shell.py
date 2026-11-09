@@ -551,6 +551,8 @@ class ExecTool(Tool):
 
         revalidation_error = self._revalidate_input_files(staged_inputs or [])
         if revalidation_error is not None:
+            if native_admission is not None:
+                native_admission.cancel_if_unlaunched()
             return revalidation_error
 
         if yield_time_ms is not None or notify_on_exit:

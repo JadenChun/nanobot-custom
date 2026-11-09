@@ -180,8 +180,35 @@ class _ExecSession:
         self._stderr = _BoundedOutputBuffer(MAX_OUTPUT_CHARS)
         self._lock = asyncio.Lock()
         self._timed_out = False
+        self._termination_task: asyncio.Task[None] | None = None
         self._stdout_task = asyncio.create_task(self._read_stream(process.stdout, self._stdout))
         self._stderr_task = asyncio.create_task(self._read_stream(process.stderr, self._stderr))
+        self._deadline_task = (
+            asyncio.create_task(self._expire_at_deadline())
+            if self.deadline != float("inf")
+            else None
+        )
+
+    async def _expire_at_deadline(self) -> None:
+        remaining = self.deadline - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        if self.process.returncode is not None:
+            return
+        self._timed_out = True
+        try:
+            await self.kill()
+        except Exception:
+            logger.exception(
+                "Exec session {} deadline termination failed; owned process remains",
+                self.session_id,
+            )
+
+    def _cancel_deadline(self) -> None:
+        task = self._deadline_task
+        if task is None or task is asyncio.current_task() or task.done():
+            return
+        task.cancel()
     def validate_input_access(self) -> None:
         permission_owner = self._permission_owner
         permission_reference = self._permission_reference
@@ -274,6 +301,7 @@ class _ExecSession:
             await self.kill()
 
         if self.process.returncode is not None:
+            self._cancel_deadline()
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
                     asyncio.gather(self._stdout_task, self._stderr_task),
@@ -310,6 +338,14 @@ class _ExecSession:
         )
 
     async def kill(self) -> None:
+        task = self._termination_task
+        if task is None:
+            task = asyncio.create_task(self._terminate_once())
+            self._termination_task = task
+        await asyncio.shield(task)
+        self._cancel_deadline()
+
+    async def _terminate_once(self) -> None:
         from nanobot.agent.tools.shell import ExecTool
 
         try:
