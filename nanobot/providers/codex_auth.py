@@ -229,8 +229,11 @@ def _canonical_codex_path() -> Path:
     override = os.environ.get("NANOBOT_CODEX_AUTH_PATH")
     if override:
         return Path(os.path.abspath(os.fspath(Path(override).expanduser())))
-    home = Path(os.environ.get("HOME", str(Path.home())))
-    return Path(os.path.abspath(os.fspath(home / ".nanobot" / "auth" / "openai-codex.json")))
+    from nanobot.config.paths import get_data_dir
+
+    return Path(
+        os.path.abspath(os.fspath(get_data_dir() / "auth" / "openai-codex.json"))
+    )
 
 
 # Compatibility name for callers that only need the active Nanobot path.
