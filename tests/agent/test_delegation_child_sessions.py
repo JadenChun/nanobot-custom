@@ -44,7 +44,9 @@ def _reserve(tree, parent, *, assignment, attempt_id, profile=DEFAULT_CHILD_PROF
 
 
 @pytest.mark.asyncio
-async def test_siblings_and_nested_child_have_distinct_identities(tmp_path):
+async def test_siblings_have_distinct_identities_and_grandchild_is_refused_by_depth(
+    tmp_path,
+):
     sessions, tree = _new_tree(tmp_path)
     parent = _new_parent(sessions)
 
@@ -65,33 +67,22 @@ async def test_siblings_and_nested_child_have_distinct_identities(tmp_path):
 
     first_session_key = tree.child(first.child_id).session_key
     assert first_session_key == first.session_key
-    first_as_parent = sessions.get_or_create(first_session_key)
 
-    nested = await _reserve(
-        tree,
-        first_as_parent,
-        assignment="nested child assignment",
-        attempt_id="attempt-nested",
-    )
-    assert isinstance(nested, ChildAdmission)
-
-    assert len({first.child_id, second.child_id, nested.child_id}) == 3
-    assert len({first.session_key, second.session_key, nested.session_key}) == 3
+    assert first.child_id != second.child_id
+    assert first.session_key != second.session_key
     assert all(
         admission.session_key.startswith(CHILD_SESSION_PREFIX)
-        for admission in (first, second, nested)
+        for admission in (first, second)
     )
 
     assert first.depth == 1
     assert second.depth == 1
-    assert nested.depth == 2
     assert first.parent_key == parent.key
     assert second.parent_key == parent.key
-    assert nested.parent_key == first.session_key
     assert first.parent_incarnation == second.parent_incarnation
-    assert first.root_key == second.root_key == nested.root_key == parent.key
+    assert first.root_key == second.root_key == parent.key
 
-    for admission in (first, second, nested):
+    for admission in (first, second):
         child_session = sessions.get_or_create(admission.session_key)
         runtime = child_session.metadata["_runtime_session"]
         assert runtime["profile"] == "delegated"
@@ -99,6 +90,22 @@ async def test_siblings_and_nested_child_have_distinct_identities(tmp_path):
         assert runtime["parent_incarnation"] == admission.parent_incarnation
         assert runtime["delegation_depth"] == admission.depth
         assert DELEGATION_CHILD_METADATA_KEY in child_session.metadata
+
+    first_as_parent = sessions.get_or_create(first_session_key)
+    grandchild = await _reserve(
+        tree,
+        first_as_parent,
+        assignment="grandchild assignment",
+        attempt_id="attempt-grandchild",
+    )
+    assert isinstance(grandchild, ChildRefusal)
+    assert grandchild.reason == "depth_limit"
+    assert grandchild.detail
+    assert list(tree.children_of(first.session_key)) == []
+    assert {child.child_id for child in tree.children_of(parent.key)} == {
+        first.child_id,
+        second.child_id,
+    }
 
 
 @pytest.mark.asyncio
@@ -266,7 +273,12 @@ async def test_prelaunch_release_and_uncertain_retention(tmp_path):
 
 @pytest.mark.asyncio
 async def test_stop_subtree_cancels_descendants_and_keeps_sibling(tmp_path):
-    sessions, tree = _new_tree(tmp_path)
+    # The default policy is depth one; opt into a deeper tree to exercise
+    # descendant cancellation without changing the production default.
+    sessions, tree = _new_tree(
+        tmp_path,
+        policy=DelegationTreePolicy(max_depth=2),
+    )
     parent = _new_parent(sessions)
 
     sibling_a = await _reserve(
@@ -440,16 +452,6 @@ async def test_stop_subtree_cancels_attached_task_and_keeps_sibling(tmp_path):
     assert isinstance(sibling_a, ChildAdmission)
     assert isinstance(sibling_b, ChildAdmission)
 
-    sibling_a_session_key = tree.child(sibling_a.child_id).session_key
-    sibling_a_as_parent = sessions.get_or_create(sibling_a_session_key)
-    nested = await _reserve(
-        tree,
-        sibling_a_as_parent,
-        assignment="nested under attached sibling A",
-        attempt_id="attempt-attached-nested",
-    )
-    assert isinstance(nested, ChildAdmission)
-
     task = asyncio.create_task(asyncio.sleep(60))
     await tree.attach_task(sibling_a.child_id, task)
 
@@ -460,15 +462,11 @@ async def test_stop_subtree_cancels_attached_task_and_keeps_sibling(tmp_path):
     assert task.cancelled() or task.done()
 
     stopped_a = tree.child(sibling_a.child_id)
-    stopped_nested = tree.child(nested.child_id)
     live_b = tree.child(sibling_b.child_id)
     assert stopped_a is not None
-    assert stopped_nested is not None
     assert live_b is not None
     assert stopped_a.state == "stopped"
-    assert stopped_nested.state == "stopped"
     assert stopped_a.live is False
-    assert stopped_nested.live is False
     assert live_b.state != "stopped"
     assert live_b.live is True
 

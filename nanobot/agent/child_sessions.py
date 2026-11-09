@@ -41,14 +41,14 @@ _TERMINAL_STATES = frozenset({
 
 @dataclass(frozen=True, slots=True)
 class DelegationTreePolicy:
-    """Finite tree limits derived from the current delegation capacity.
+    """Finite tree limits aligned with the accepted foreground delegation design.
 
-    ``max_concurrent_subagents`` already bounds the live tree at four. The A3-5
-    acceptance case needs two siblings and one nested child, so depth two and
-    two live children per parent fit inside that existing capacity.
+    Delegation is synchronous and non-recursive: a child cannot create another
+    delegated child. Two siblings are allowed under one parent, and the existing
+    ``max_concurrent_subagents`` capacity bounds the live tree at four.
     """
 
-    max_depth: int = 2
+    max_depth: int = 1
     max_live_children_per_parent: int = 2
     max_live_descendants: int = 4
 
