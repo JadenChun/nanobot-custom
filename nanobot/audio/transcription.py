@@ -8,7 +8,9 @@ HTTP details; those live in ``nanobot.providers.transcription``.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import shutil
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -186,6 +188,9 @@ async def transcribe_audio_data_url(
     if not audio_path:
         raise TranscriptionIngressError("decode")
 
+    measured = await measure_audio_duration(audio_path)
+    if measured is not None and measured > config.max_duration_sec + 1:
+        raise TranscriptionIngressError("duration")
     try:
         text = await transcribe_audio_file(audio_path, config)
     finally:
@@ -196,6 +201,47 @@ async def transcribe_audio_data_url(
     return text
 
 
+async def measure_audio_duration(
+    file_path: str | Path,
+    *,
+    timeout_seconds: float = 5.0,
+) -> float | None:
+    """Measure local audio duration with a bounded ffprobe process."""
+    executable = shutil.which("ffprobe")
+    if executable is None:
+        return None
+    process: asyncio.subprocess.Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            executable,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(file_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout_seconds,
+        )
+    except (OSError, asyncio.TimeoutError, ValueError):
+        if process is not None and process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+            with suppress(Exception):
+                await process.wait()
+        return None
+    try:
+        value = float(stdout.decode("utf-8", "ignore").strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 async def transcribe_audio_file(
     file_path: str | Path,
     config: EffectiveTranscriptionConfig,
@@ -203,6 +249,9 @@ async def transcribe_audio_file(
     """Transcribe *file_path* using the already-resolved transcription config."""
     if not config.enabled or not config.configured:
         return ""
+    measured = await measure_audio_duration(file_path)
+    if measured is not None and measured > config.max_duration_sec + 1:
+        raise TranscriptionIngressError("duration")
     spec = get_transcription_provider(config.provider)
     if spec is None:
         logger.warning("Unknown transcription provider: {}", config.provider)
