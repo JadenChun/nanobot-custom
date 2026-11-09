@@ -11,6 +11,7 @@ import pytest
 from nanobot.attachments.lifecycle import (
     migrate_legacy_media,
     prune_unreferenced,
+    reference_evidence,
     referenced_hashes,
 )
 from nanobot.attachments.store import AttachmentStore
@@ -159,3 +160,40 @@ def test_migrate_legacy_media_dry_run_does_not_write(
     assert report.events_migrated == 1
     assert session_file.read_text(encoding="utf-8") == original
     assert not list(sessions.glob("*.bak-*"))
+
+
+def test_unreadable_session_evidence_prevents_attachment_prune(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    record = store.commit(
+        store.stage_bytes(_PNG, mime="image/png", name="live.png", source="websocket")
+    )
+    blob = store.path_for(record)
+    _old(blob)
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_file = sessions / "session.jsonl"
+    session_file.write_text(
+        json.dumps({"role": "user", "content": "hi", "attachments": [record.to_dict()]}) + "\n",
+        encoding="utf-8",
+    )
+
+    original_open = Path.open
+
+    def _unreadable_open(self: Path, *args: object, **kwargs: object):
+        if self == session_file:
+            raise OSError("evidence unavailable")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _unreadable_open)
+
+    referenced, complete = reference_evidence([session_file])
+
+    assert complete is False
+    removed = prune_unreferenced(store, sessions, grace_seconds=0)
+
+    assert removed == []
+    assert blob.is_file()

@@ -41,9 +41,12 @@ def _media_hashes(value: object) -> Iterable[str]:
     return hashes
 
 
-def referenced_hashes(session_files: Iterable[Path]) -> set[str]:
-    """Collect hashes referenced by canonical session events."""
+def reference_evidence(
+    session_files: Iterable[Path],
+) -> tuple[set[str], bool]:
+    """Collect hashes and report whether every canonical source was readable."""
     referenced: set[str] = set()
+    complete = True
     for path in session_files:
         try:
             with path.open("r", encoding="utf-8") as handle:
@@ -60,8 +63,14 @@ def referenced_hashes(session_files: Iterable[Path]) -> set[str]:
                     referenced.update(_record_hashes(event.get("attachments")))
                     referenced.update(_media_hashes(event.get("media")))
         except OSError:
+            complete = False
             continue
-    return referenced
+    return referenced, complete
+
+
+def referenced_hashes(session_files: Iterable[Path]) -> set[str]:
+    """Collect hashes referenced by readable canonical session events."""
+    return reference_evidence(session_files)[0]
 
 
 def prune_unreferenced(
@@ -76,7 +85,10 @@ def prune_unreferenced(
     The grace period protects a blob between staging and the next session save.
     """
     session_files = list(Path(sessions_dir).rglob("*.jsonl"))
-    referenced = referenced_hashes(session_files)
+    referenced, evidence_complete = reference_evidence(session_files)
+    if not evidence_complete:
+        # A missing or unreadable session can hide a live reference.
+        return []
     now = time.time()
     removed: list[Path] = []
     for path in store.root.rglob("*"):
