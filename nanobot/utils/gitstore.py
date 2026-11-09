@@ -353,7 +353,13 @@ class GitStore:
                         if head_tree is not None:
                             prefix = raw_path.rstrip("/")
                             try:
-                                for entry in repo.object_store.iter_tree_contents(head_tree):
+                                from dulwich.object_store import (
+                                    iter_tree_contents,
+                                )
+
+                                for entry in iter_tree_contents(
+                                    repo.object_store, head_tree.id
+                                ):
                                     entry_path = entry.path.decode("utf-8")
                                     if (
                                         entry_path == prefix
