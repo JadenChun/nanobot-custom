@@ -663,29 +663,6 @@ class OwnerIPCServer:
             if enabled is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "enabled must be boolean"}}
             return {"ok": True, "result": self.store.set_enabled(enabled).enabled}
-        if method == "add_device":
-            installation_id = _string_param(params, "installation_id")
-            label = _string_param(params, "label")
-            scopes = _string_list_param(params, "scopes")
-            refresh_token = _string_param(params, "refresh_token")
-            if installation_id is None or label is None or refresh_token is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "device fields are required"}}
-            if scopes is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "scopes must be a string list"}}
-            device = self.store.add_device(
-                installation_id=installation_id,
-                label=label,
-                scopes=tuple(scopes),
-                refresh_token=refresh_token,
-            )
-            return {"ok": True, "result": {"installation_id": device.installation_id}}
-        if method == "rotate_refresh":
-            installation_id = _string_param(params, "installation_id")
-            refresh_token = _string_param(params, "refresh_token")
-            if installation_id is None or refresh_token is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "installation_id and refresh_token are required"}}
-            device = self.store.rotate_refresh(installation_id, refresh_token)
-            return {"ok": True, "result": {"installation_id": device.installation_id}}
         return {"ok": False, "error": {"code": "unknown_method", "message": "unknown owner method"}}
 
     def _dispatch_delegation(

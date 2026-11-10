@@ -52,7 +52,7 @@ from nanobot.agent.runner import (
     AgentRunResult,
     AgentRunSpec,
 )
-from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.subagent import RetiredSubagentAuthority, SubagentManager
 from nanobot.agent.tools.context import (
     ForkToolDependencies,
     RequestContext,
@@ -721,16 +721,12 @@ class AgentLoop:
         )
         self._artifact_reader_factory = artifact_reader_factory
         self.runner = AgentRunner(artifact_reader_factory=artifact_reader_factory)
-        self.subagents = SubagentManager(
-            workspace=workspace,
-            bus=bus,
-            tools_config=_tc,
-            max_tool_result_chars=self.max_tool_result_chars,
-            restrict_to_workspace=restrict_to_workspace,
-            disabled_skills=disabled_skills,
+        # Background subagents are retired. The durable delegated child owner
+        # (A3-5) is the only live child authority. Keep one inert compatibility
+        # surface for status, cancellation and shutdown callers.
+        self.subagents: SubagentManager | RetiredSubagentAuthority = RetiredSubagentAuthority(
             max_iterations=self.max_iterations,
-            max_concurrent_subagents=max_concurrent_subagents,
-            llm_wall_timeout_for_session=lambda sk: runner_wall_llm_timeout_s(self.sessions, sk),
+            disabled_skills=set(disabled_skills or ()),
         )
         self._unified_session = unified_session
         self._running = False

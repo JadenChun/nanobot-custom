@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nanobot.agent.delegation import ForegroundAgentManager
-    from nanobot.agent.subagent import SubagentManager
+    from nanobot.agent.subagent import RetiredSubagentAuthority, SubagentManager
     from nanobot.agent.tools.exec_session import ExecSessionManager
     from nanobot.agent.tools.file_state import FileStates
     from nanobot.agent.tools.runtime_control import RuntimeControl
@@ -97,7 +97,7 @@ class ToolContext:
     config: ToolsConfig
     workspace: str
     bus: MessageBus | None = None
-    subagent_manager: SubagentManager | None = None
+    subagent_manager: SubagentManager | RetiredSubagentAuthority | None = None
     cron_service: CronService | None = None
     exec_session_manager: ExecSessionManager | None = None
     sessions: SessionManager | None = None

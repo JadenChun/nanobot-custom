@@ -82,25 +82,7 @@ class RemoteAccessClient:
             "set_enabled", {"enabled": enabled}, role="admin", require_admin=True
         )
 
-    def add_device(
-        self,
-        installation_id: str,
-        label: str,
-        scopes: list[str],
-        refresh_token: str,
-    ) -> dict[str, Any]:
-        return self._call(
-            "add_device",
-            {
-                "installation_id": installation_id,
-                "label": label,
-                "scopes": scopes,
-                "refresh_token": refresh_token,
-            },
-            role="admin",
-            require_admin=True,
-        )
-
+        return {"ok": False, "error": {"code": "unknown_method", "message": "unknown owner method"}}
     def collect_pairing(
         self,
         *,
@@ -355,14 +337,6 @@ class RemoteAccessClient:
                 "actor_installation_id": actor_installation_id,
             },
             role="gateway",
-        )
-
-    def rotate_refresh(self, installation_id: str, refresh_token: str) -> dict[str, Any]:
-        return self._call(
-            "rotate_refresh",
-            {"installation_id": installation_id, "refresh_token": refresh_token},
-            role="admin",
-            require_admin=True,
         )
 
     def _call(

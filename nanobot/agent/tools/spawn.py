@@ -17,7 +17,7 @@ from nanobot.agent.tools.schema import (
 from nanobot.security.workspace_access import current_workspace_scope
 
 if TYPE_CHECKING:
-    from nanobot.agent.subagent import SubagentManager
+    from nanobot.agent.subagent import RetiredSubagentAuthority, SubagentManager
     from nanobot.agent.tools.context import ToolContext
 
 
@@ -48,7 +48,10 @@ if TYPE_CHECKING:
 class SpawnTool(Tool):
     """Tool to spawn a subagent for background task execution."""
 
-    def __init__(self, manager: "SubagentManager"):
+    def __init__(
+        self,
+        manager: "SubagentManager | RetiredSubagentAuthority",
+    ):
         self._manager = manager
 
     @classmethod

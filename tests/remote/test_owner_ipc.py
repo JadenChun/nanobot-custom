@@ -32,12 +32,12 @@ def test_owner_ipc_gateway_and_admin_boundaries(tmp_path) -> None:
         assert status["enabled"] is False
         assert client.set_enabled(True) is True
         assert client.list_devices() == []
-        assert client.add_device(
-            "install-0001",
-            "phone",
-            ["chat.read", "chat.write"],
-            "refresh-token-1",
-        )["installation_id"] == "install-0001"
+        owner.store.add_device(
+            installation_id="install-0001",
+            label="phone",
+            scopes=("chat.read", "chat.write"),
+            refresh_token="refresh-token-1",
+        )
         assert client.validate("install-0001", "refresh-token-1")["valid"] is True
         assert client.validate("install-0001", "wrong")["valid"] is False
         assert client.revoke("install-0001")["revoked"] is True
@@ -172,11 +172,11 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
 def test_owner_restart_recovers_durable_state(tmp_path) -> None:
     owner, client, token = start_owner(tmp_path)
     client.set_enabled(True)
-    client.add_device(
-        "install-0001",
-        "phone",
-        ["chat.read", "chat.write", "owner"],
-        "refresh-token-1",
+    owner.store.add_device(
+        installation_id="install-0001",
+        label="phone",
+        scopes=("chat.read", "chat.write", "owner"),
+        refresh_token="refresh-token-1",
     )
     owner.stop()
 
