@@ -96,3 +96,37 @@ func TestOwnerControlRoutesAreIndependentlyAllowlisted(t *testing.T) {
 		t.Fatal("expected a path escape to be rejected")
 	}
 }
+
+func TestMobilePairingProofHeadersAndRoutesAreAllowlisted(t *testing.T) {
+	headers, err := sanitizeHeaders(map[string]string{
+		"X-Nanobot-Device-Key":       "public-key",
+		"X-Nanobot-Device-Signature": "signature",
+		"X-Nanobot-Proof-Claims":     "claims",
+	})
+	if err != nil {
+		t.Fatalf("proof headers rejected: %v", err)
+	}
+	if headers.Get("X-Nanobot-Device-Key") != "public-key" {
+		t.Fatalf("device key header was not preserved: %#v", headers)
+	}
+
+	origin, _ := url.Parse("https://fedora.example.test")
+	cfg := &Config{}
+	cases := []struct {
+		operation string
+		path      string
+	}{
+		{"mobile_pair_prove", "/mobile/v1/pair/prove"},
+		{"mobile_pair_recover", "/mobile/v1/pair/recover"},
+		{"mobile_pair_recover_complete", "/mobile/v1/pair/recover/complete"},
+	}
+	for _, tc := range cases {
+		resolved, route, err := resolveRoute(cfg, origin, tc.operation, http.MethodGet, tc.path)
+		if err != nil {
+			t.Fatalf("%s rejected: %v", tc.operation, err)
+		}
+		if resolved == nil || resolved.Host != origin.Host || route.method != http.MethodGet {
+			t.Fatalf("%s resolved to %#v via %#v", tc.operation, resolved, route)
+		}
+	}
+}

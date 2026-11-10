@@ -110,6 +110,18 @@ var routes = map[string]route{
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/pair/code$`),
 	},
+	"mobile_pair_prove": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/pair/prove$`),
+	},
+	"mobile_pair_recover": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/pair/recover$`),
+	},
+	"mobile_pair_recover_complete": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/pair/recover/complete$`),
+	},
 	"mobile_refresh_get": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
@@ -166,20 +178,23 @@ var routes = map[string]route{
 }
 
 var allowedHeaders = map[string]bool{
-	"authorization":            true,
-	"content-type":             true,
-	"accept":                   true,
-	"range":                    true,
-	"if-none-match":            true,
-	"x-fixture-bootstrap":      true,
-	"x-nanobot-pairing-id":     true,
-	"x-nanobot-pairing-nonce":  true,
-	"x-nanobot-pairing-secret": true,
-	"x-nanobot-pairing-code":   true,
-	"x-nanobot-code":           true,
-	"x-nanobot-installation":   true,
-	"x-nanobot-label":          true,
-	"x-nanobot-refresh-token":  true,
+	"authorization":              true,
+	"content-type":               true,
+	"accept":                     true,
+	"range":                      true,
+	"if-none-match":              true,
+	"x-fixture-bootstrap":        true,
+	"x-nanobot-pairing-id":       true,
+	"x-nanobot-pairing-nonce":    true,
+	"x-nanobot-pairing-secret":   true,
+	"x-nanobot-pairing-code":     true,
+	"x-nanobot-code":             true,
+	"x-nanobot-installation":     true,
+	"x-nanobot-label":            true,
+	"x-nanobot-refresh-token":    true,
+	"x-nanobot-device-key":       true,
+	"x-nanobot-device-signature": true,
+	"x-nanobot-proof-claims":     true,
 }
 
 func resolveRoute(cfg *Config, origin *url.URL, operation, method, rawPath string) (*url.URL, route, error) {
