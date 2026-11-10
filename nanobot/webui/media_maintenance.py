@@ -100,13 +100,34 @@ def garbage_collect_generated_media(
         # Missing or unreadable reference evidence can hide a live file.
         to_delete = []
 
-    deleted_paths = {path for path, _size, _reason in to_delete}
-    deleted_count = len(to_delete)
-    deleted_bytes = sum(size for _path, size, _reason in to_delete)
-    if not dry_run:
-        for path, _size, _reason in to_delete:
+    deleted_paths: set[Path] = set()
+    deleted_count = 0
+    deleted_bytes = 0
+    failures: list[dict[str, str]] = []
+
+    def delete_owned(path: Path) -> bool:
+        nonlocal deleted_bytes, deleted_count
+        if dry_run:
+            deleted_paths.add(path)
+            deleted_count += 1
+            return True
+        try:
             path.unlink(missing_ok=True)
-            path.with_suffix(".json").unlink(missing_ok=True)
+        except OSError as exc:
+            failures.append({"path": str(path), "reason": type(exc).__name__})
+            return False
+        sidecar = path.with_suffix(".json")
+        try:
+            sidecar.unlink(missing_ok=True)
+        except OSError as exc:
+            failures.append({"path": str(sidecar), "reason": type(exc).__name__})
+        deleted_paths.add(path)
+        deleted_count += 1
+        return True
+
+    for path, size, _reason in to_delete:
+        if delete_owned(path):
+            deleted_bytes += size
 
     remaining = [
         (path, size)
@@ -127,12 +148,9 @@ def garbage_collect_generated_media(
                 continue
             if resolved in referenced:
                 continue
-            if not dry_run:
-                path.unlink(missing_ok=True)
-                path.with_suffix(".json").unlink(missing_ok=True)
-            kept_bytes -= size
-            deleted_bytes += size
-            deleted_count += 1
+            if delete_owned(path):
+                kept_bytes -= size
+                deleted_bytes += size
     quota_unmet = max(0, kept_bytes - max_bytes) if max_bytes > 0 else 0
 
     return {
@@ -144,6 +162,9 @@ def garbage_collect_generated_media(
         "quota_unmet_bytes": quota_unmet,
         "dry_run": dry_run,
         "evidence_complete": evidence_complete,
+        "partial": bool(failures),
+        "retry_required": bool(failures),
+        "failed": failures,
     }
 
 

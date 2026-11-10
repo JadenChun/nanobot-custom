@@ -66,6 +66,7 @@ class WebUITemporaryChats:
         self._logger = logger
         self._channel_name = channel_name
         self._owners: dict[str, object] = {}
+        self._cleanup_retries: dict[str, set[str]] = {}
         self._owner_chat_ids: dict[object, set[str]] = {}
         # Keep active sessions alive if the bounded manager cache evicts them
         # between WebUI turns. SessionPolicy remains the authority below.
@@ -87,6 +88,7 @@ class WebUITemporaryChats:
         return session is not None and not session.policy.persist
 
     def create(self, owner: object, *, trusted_webui: bool) -> str:
+        # A newly created chat id has no retained cleanup from an older chat.
         """Create a server-identified chat owned by one authenticated WebUI connection."""
         if not trusted_webui:
             raise TemporaryChatError("access_denied")
@@ -94,6 +96,7 @@ class WebUITemporaryChats:
             raise TemporaryChatError("temporary_chat_unavailable")
 
         chat_id = str(uuid.uuid4())
+        self._cleanup_retries.pop(chat_id, None)
         session = self._sessions.get_or_create_transient(
             self._session_key(chat_id),
             disabled_tools=_TEMPORARY_CHAT_DISABLED_TOOLS,
@@ -207,12 +210,37 @@ class WebUITemporaryChats:
             and chat_id not in self._known_transient_chat_ids
         )
 
-    def _discard_media(self, chat_id: str) -> None:
+    def _discard_media(self, chat_id: str) -> set[str]:
+        failed: set[str] = set()
         for raw_path in self._media_paths.pop(chat_id, set()):
             try:
                 Path(raw_path).unlink(missing_ok=True)
             except OSError:
+                failed.add(raw_path)
                 self._logger.warning("failed to remove a temporary WebUI attachment")
+        if failed:
+            self._cleanup_retries[chat_id] = failed
+        else:
+            self._cleanup_retries.pop(chat_id, None)
+        return failed
+
+    def pending_cleanup(self, chat_id: str) -> tuple[str, ...]:
+        """Return retained temporary-chat cleanup paths awaiting a retry."""
+        return tuple(sorted(self._cleanup_retries.get(chat_id, ())))
+
+    def retry_cleanup(self, chat_id: str) -> tuple[str, ...]:
+        """Retry owned temporary-chat cleanup; return any still-retained paths."""
+        failed: set[str] = set()
+        for raw_path in self._cleanup_retries.get(chat_id, set()):
+            try:
+                Path(raw_path).unlink(missing_ok=True)
+            except OSError:
+                failed.add(raw_path)
+        if failed:
+            self._cleanup_retries[chat_id] = failed
+        else:
+            self._cleanup_retries.pop(chat_id, None)
+        return tuple(sorted(failed))
 
     def _forget_owner(self, owner: object, chat_id: str) -> None:
         self._owners.pop(chat_id, None)
@@ -266,6 +294,14 @@ class WebUITemporaryChats:
             self._discard_media(chat_id)
             if self._sessions is not None:
                 self._sessions.invalidate(self._session_key(chat_id))
+        for chat_id in tuple(self._cleanup_retries):
+            remaining = self.retry_cleanup(chat_id)
+            if remaining:
+                self._logger.warning(
+                    "temporary cleanup retained {} path(s) for {}",
+                    len(remaining),
+                    chat_id,
+                )
         self._owners.clear()
         self._owner_chat_ids.clear()
         self._active_sessions.clear()

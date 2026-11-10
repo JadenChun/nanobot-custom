@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
-import os
+import queue
 import sqlite3
+import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,6 +50,57 @@ class ProcessRecord(BaseModel):
     reason: str | None = None
 
 
+class _PersistenceLane:
+    """One bounded ordered SQLite writer for one process owner."""
+
+    def __init__(self, path: Path, *, max_pending: int = 64) -> None:
+        self.path = path
+        self._queue: queue.Queue[tuple[Callable[[sqlite3.Connection], Any], concurrent.futures.Future[Any]] | None] = queue.Queue(maxsize=max_pending)
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run,
+            name="process-completion-journal",
+            daemon=True,
+        )
+        self._thread.start()
+        self.run(lambda db: db.execute("CREATE TABLE IF NOT EXISTS processes (id TEXT PRIMARY KEY, data TEXT NOT NULL)"))
+
+    def run(self, operation: Callable[[sqlite3.Connection], Any]) -> Any:
+        if self._closed:
+            raise RuntimeError("process completion journal is closed")
+        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        self._queue.put((operation, future))
+        return future.result()
+
+    def _run(self) -> None:
+        db = sqlite3.connect(self.path)
+        try:
+            db.execute("PRAGMA synchronous=FULL")
+            while True:
+                item = self._queue.get()
+                if item is None:
+                    return
+                operation, future = item
+                try:
+                    with db:
+                        result = operation(db)
+                except BaseException as exc:
+                    future.set_exception(exc)
+                else:
+                    future.set_result(result)
+        finally:
+            db.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._queue.put(None)
+        self._thread.join(timeout=5)
+        if self._thread.is_alive():
+            raise RuntimeError("process completion journal did not stop")
+
+
 class ProcessCompletionRuntime:
     """Journal first, then submit once through canonical assistant ownership.
 
@@ -63,48 +115,57 @@ class ProcessCompletionRuntime:
         self._started = False
         self._closed = False
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        with self._connect() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS processes (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+        self._lane = _PersistenceLane(self.path)
 
-    @contextmanager
-    def _connect(self) -> Generator[sqlite3.Connection, None, None]:
-        # Create privately before SQLite opens it; journal files inherit this mode.
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        os.close(fd)
-        db = sqlite3.connect(self.path)
+    def _read(self, operation: Callable[[sqlite3.Connection], Any]) -> Any:
         try:
-            db.execute("PRAGMA synchronous=FULL")
-            with db:
-                yield db
-        finally:
-            db.close()
+            return self._lane.run(operation)
+        except RuntimeError:
+            # Closed runtimes keep their durable read surface inspectable.
+            db = sqlite3.connect(self.path)
+            try:
+                return operation(db)
+            finally:
+                db.close()
 
     def records(self) -> list[ProcessRecord]:
-        with self._connect() as db:
-            return [ProcessRecord.model_validate_json(row[0]) for row in db.execute("SELECT data FROM processes")]
+        rows = self._read(lambda db: db.execute("SELECT data FROM processes").fetchall())
+        return [ProcessRecord.model_validate_json(row[0]) for row in rows]
 
     def get(self, identity: str) -> ProcessRecord:
-        with self._connect() as db:
-            row = db.execute("SELECT data FROM processes WHERE id=?", (identity,)).fetchone()
-            if row is None:
-                raise ValueError("unknown background process")
-            record = ProcessRecord.model_validate_json(row[0])
-            if record.id != identity:
-                raise ValueError("process journal identity mismatch")
-            return record
+        row = self._read(
+            lambda db: db.execute(
+                "SELECT data FROM processes WHERE id=?", (identity,)
+            ).fetchone()
+        )
+        if row is None:
+            raise ValueError("unknown background process")
+        record = ProcessRecord.model_validate_json(row[0])
+        if record.id != identity:
+            raise ValueError("process journal identity mismatch")
+        return record
 
     def _save(self, record: ProcessRecord, *, expected: str | None) -> None:
-        with self._connect() as db:
+        def operation(db: sqlite3.Connection) -> None:
             db.execute("BEGIN IMMEDIATE")
             if expected is None:
                 if db.execute("SELECT count(*) FROM processes").fetchone()[0] >= 4096:
-                    raise ValueError("process journal is full; review retained records before starting more work")
-                db.execute("INSERT INTO processes(id,data) VALUES (?,?)", (record.id, record.model_dump_json()))
+                    raise ValueError(
+                        "process journal is full; review retained records before starting more work"
+                    )
+                db.execute(
+                    "INSERT INTO processes(id,data) VALUES (?,?)",
+                    (record.id, record.model_dump_json()),
+                )
             else:
-                result = db.execute("UPDATE processes SET data=? WHERE id=? AND data=?",
-                                    (record.model_dump_json(), record.id, expected))
+                result = db.execute(
+                    "UPDATE processes SET data=? WHERE id=? AND data=?",
+                    (record.model_dump_json(), record.id, expected),
+                )
                 if result.rowcount != 1:
                     raise ValueError("process continuation state changed")
+
+        self._lane.run(operation)
 
     def _transition(self, record: ProcessRecord, state: Literal["waiting", "ready", "dispatching", "done", "cancelled", "unknown"], **updates: object) -> None:
         replacement = ProcessRecord.model_validate({**record.model_dump(), **updates, "state": state})
@@ -214,3 +275,4 @@ class ProcessCompletionRuntime:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        self._lane.close()
