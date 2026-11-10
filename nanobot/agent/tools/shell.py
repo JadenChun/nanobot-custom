@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
@@ -1134,10 +1135,43 @@ class ExecTool(Tool):
             _reap_pid(process.pid)
 
     @staticmethod
+    async def process_tree_quiescent(
+        process: asyncio.subprocess.Process | NativeProcessHandle,
+        *,
+        timeout: float = 0.0,
+    ) -> bool:
+        """Return whether the owned process tree has no live members."""
+        if isinstance(process, NativeProcessHandle):
+            return (
+                process.quiescence_proven()
+                if timeout <= 0
+                else await process.wait_quiescent(timeout)
+            )
+        owner = ExecTool._process_tree_owner(process)
+        if owner is not None or _IS_WINDOWS:
+            # Windows owns the tree through the Job Object. The root exit is the
+            # only portable observation available here; the job termination is
+            # the whole-tree action.
+            return process.returncode is not None
+        if process.returncode is None:
+            return False
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.01)
+
+    @staticmethod
     async def kill_process_tree(
         process: asyncio.subprocess.Process | NativeProcessHandle,
     ) -> None:
-        """Kill a session process and descendants, then reap the root process."""
+        """Kill a session process and descendants, then prove tree quiescence."""
         if isinstance(process, NativeProcessHandle):
             await process.kill_process_tree()
             return
@@ -1159,6 +1193,8 @@ class ExecTool(Tool):
                             timeout=5.0,
                         )
             else:
+                # Signal the group even after the root exits so adopted
+                # descendants cannot outlive an already-reaped root.
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):

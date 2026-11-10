@@ -1051,21 +1051,49 @@ class CliAppManager:
         }
 
     @staticmethod
-    def _terminate_owned_process(process: subprocess.Popen[str]) -> None:
-        if process.poll() is not None:
-            return
+    def _owned_group_alive(process: subprocess.Popen[str]) -> bool:
         if os.name == "nt":
-            with suppress(OSError, subprocess.SubprocessError):
-                subprocess.run(
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
+            return process.poll() is None
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @classmethod
+    def _settle_owned_group(cls, process: subprocess.Popen[str]) -> None:
+        """Kill any descendants left after the root exits and prove quiescence."""
+        if not cls._owned_group_alive(process):
+            return
+        cls._terminate_owned_process(process)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if not cls._owned_group_alive(process):
+                return
+            time.sleep(0.01)
+        raise CliAppError("CLI app process tree did not settle")
+
+    @staticmethod
+    def _terminate_owned_process(process: subprocess.Popen[str]) -> None:
+        if os.name == "nt":
+            if process.poll() is None:
+                with suppress(OSError, subprocess.SubprocessError):
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
         else:
+            # Signal the process group even when the root has already exited.
+            # A reaped root does not imply that its adopted children are gone.
             try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                os.killpg(process.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
+                pass
+            if process.poll() is None:
                 with suppress(ProcessLookupError, PermissionError):
                     process.kill()
         with suppress(subprocess.TimeoutExpired):
@@ -1168,8 +1196,11 @@ class CliAppManager:
                 output=self._decode_bounded(stdout_raw, stdout_truncated),
                 stderr=self._decode_bounded(stderr_raw, stderr_truncated),
             ) from None
-        for reader in readers.values():
-            reader.join(timeout=2)
+        try:
+            self._settle_owned_group(process)
+        finally:
+            for reader in readers.values():
+                reader.join(timeout=2)
         stdout_raw, stdout_truncated = outputs.get("stdout", (b"", False))
         stderr_raw, stderr_truncated = outputs.get("stderr", (b"", False))
         return subprocess.CompletedProcess(
