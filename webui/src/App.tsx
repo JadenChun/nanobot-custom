@@ -1386,6 +1386,7 @@ function Shell({
       return;
     }
     if (sessions.some((session) => session.key === activeKey)) return;
+    if (childSessionOverrides[activeKey]) return;
     // WebKit can commit the route before useSessions' optimistic insert.
     // Keep that just-created destination valid until the session list catches up.
     if (pendingCreatedKey === activeKey) return;
@@ -1398,7 +1399,7 @@ function Shell({
           },
       { replace: true },
     );
-  }, [activeKey, loading, navigate, sessions, temporarySessions]);
+  }, [activeKey, childSessionOverrides, loading, navigate, sessions, temporarySessions]);
 
   useEffect(() => {
     return client.onSessionUpdate((chatId, scope, workspaceScope) => {
