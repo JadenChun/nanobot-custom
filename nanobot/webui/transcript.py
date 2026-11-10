@@ -2595,14 +2595,15 @@ def replay_transcript_to_ui_messages(
             turn_id = rec.get("turn_id")
             if isinstance(turn_id, str) and turn_id:
                 child["turn_id"] = turn_id
-            existing_index = next(
-                (
-                    index
-                    for index, message in enumerate(messages)
-                    if (message.get("delegatedChild") or {}).get("child_id") == child_id
-                ),
-                None,
-            )
+            existing_index: int | None = None
+            for index, message in enumerate(messages):
+                candidate_child = message.get("delegatedChild")
+                if (
+                    isinstance(candidate_child, dict)
+                    and cast(dict[str, Any], candidate_child).get("child_id") == child_id
+                ):
+                    existing_index = index
+                    break
             if existing_index is None:
                 messages.append(
                     {
