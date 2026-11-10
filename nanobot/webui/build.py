@@ -37,6 +37,19 @@ class WebUIBuildError(RuntimeError):
     """Raised when the local WebUI bundle cannot be built."""
 
 
+def require_fresh_webui_bundle(status: WebUIBundleStatus) -> WebUIBundleStatus:
+    """Reject a missing or stale bundle for a release build."""
+    if not status.dist_available:
+        raise WebUIBuildError(
+            f"release requires a built WebUI bundle: {describe_webui_bundle_status(status)}"
+        )
+    if status.stale:
+        raise WebUIBuildError(
+            f"release requires a fresh WebUI bundle: {describe_webui_bundle_status(status)}"
+        )
+    return status
+
+
 @dataclass(frozen=True)
 class WebUIBundleStatus:
     """Freshness status for a source checkout's bundled WebUI assets."""
@@ -228,12 +241,17 @@ def ensure_webui_bundle(
 ) -> WebUIBundleStatus:
     """Ensure or warn about a stale WebUI bundle according to the selected mode."""
     env = environ or os.environ
+    require_fresh = env.get("NANOBOT_REQUIRE_FRESH_WEBUI") == "1"
     status = inspect_webui_bundle(source_dir=source_dir, dist_dir=dist_dir)
     if not status.needs_build:
-        return status
+        return require_fresh_webui_bundle(status) if require_fresh else status
 
     detail = describe_webui_bundle_status(status)
     if env.get("NANOBOT_SKIP_WEBUI_BUILD") == "1" or mode == "skip":
+        if require_fresh:
+            raise WebUIBuildError(
+                f"release requires a fresh WebUI bundle: {detail} (build skipping is disabled)"
+            )
         _emit(output, f"Warning: {detail} Skipping WebUI build.")
         return status
 
@@ -255,7 +273,7 @@ def ensure_webui_bundle(
             return status
 
     try:
-        return build_webui_bundle(
+        built = build_webui_bundle(
             source_dir=status.source_dir,
             dist_dir=status.dist_dir,
             runner=runner,
@@ -264,6 +282,7 @@ def ensure_webui_bundle(
         )
     except WebUIBuildError as exc:
         raise WebUIBuildError(f"{detail} {exc}") from exc
+    return require_fresh_webui_bundle(built) if require_fresh else built
 
 
 def pick_webui_build_runner() -> str | None:

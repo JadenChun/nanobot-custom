@@ -20,6 +20,20 @@ CONFIG="${NANOBOT_CONFIG:-}"
 say() { printf '\n===== %s =====\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Redact credential-bearing URLs, bearer values, and common key shapes from
+# free-form process/remote output.
+redact_stream() {
+  python3 -c '
+import re, sys
+text = sys.stdin.read()
+text = re.sub(r"(?i)(https?://)[^\s/@]+@", r"\1<redacted>@", text)
+text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1<redacted>", text)
+text = re.sub(r"\b(?:sk-|ghp_|gho_|glpat-|xox[baprs]-)[A-Za-z0-9_-]{8,}", "<redacted>", text)
+text = re.sub(r"(?i)(token|secret|password|api[_-]?key)=([^\s&]+)", r"\1=<redacted>", text)
+sys.stdout.write(text)
+'
+}
+
 say "host"
 hostname
 date -Is
@@ -29,7 +43,7 @@ echo "user=$(id -un) uid=$(id -u)"
 
 # --- locate the running code ------------------------------------------------
 say "process"
-ps -eo pid,etime,cmd 2>/dev/null | grep -E "[n]anobot" | head -5 || echo "no nanobot process visible"
+ps -eo pid,etime,cmd 2>/dev/null | grep -E "[n]anobot" | head -5 | redact_stream || echo "no nanobot process visible"
 
 say "service"
 if have systemctl; then
@@ -53,7 +67,7 @@ if [ -n "$REPO" ]; then
   git -C "$REPO" log -1 --format='%h %ad %s' --date=iso-strict 2>/dev/null
   echo "dirty_files=$(git -C "$REPO" status --porcelain=v1 2>/dev/null | wc -l)"
   echo "remotes:"
-  git -C "$REPO" remote -v 2>/dev/null | sed 's/^/  /'
+  git -C "$REPO" remote -v 2>/dev/null | redact_stream | sed 's/^/  /'
 else
   echo "no git checkout found under $ROOT"
   echo "python_package=$(python3 -c 'import nanobot,os;print(os.path.dirname(nanobot.__file__))' 2>/dev/null || echo unknown)"

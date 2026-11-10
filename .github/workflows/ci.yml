@@ -5,7 +5,6 @@ on:
   push:
     branches: [main, staging, "codex/upstream-migration", "codex/harness-migration-candidate"]
     paths-ignore:
-      - docs/**
       - .agent/**
       - .github/ISSUE_TEMPLATE/**
       - AGENTS.md
@@ -18,7 +17,6 @@ on:
   pull_request:
     branches: [main, staging, "codex/upstream-migration"]
     paths-ignore:
-      - docs/**
       - .agent/**
       - .github/ISSUE_TEMPLATE/**
       - AGENTS.md
@@ -113,8 +111,12 @@ jobs:
                 tui/*)
                   tui_required=true
                   ;;
+                docs/migration/*|docs/migration/**/*)
+                  # Executable migration helpers must exercise the suite.
+                  python_required=true
+                  ;;
                 docs/*|.agent/*|.github/ISSUE_TEMPLATE/*|AGENTS.md|CLAUDE.md|COMMUNICATION.md|CONTRIBUTING.md|README.md|SECURITY.md|webui/README.md|render.yaml)
-                  # Documentation-only changes are already filtered at the event level.
+                  # Documentation-only changes still trigger the cheap change job.
                   ;;
                 *)
                   # Keep new or unclassified paths covered until they are categorized.

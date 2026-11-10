@@ -75,7 +75,7 @@
       "id": "chat",
       "label": "Chat, history, sessions, temporary chats, media",
       "required": true,
-      "row_count": 21,
+      "row_count": 23,
       "rows": [
         {
           "id": "chat.sessions.list",
@@ -416,7 +416,7 @@
             "path": "/api/generated-assets"
           },
           "ui": {
-            "entry": "Session header generated-assets button → All sessions"
+            "entry": "Session header generated-assets button \u2192 All sessions"
           },
           "auth": {
             "owner": "read",
@@ -7314,7 +7314,7 @@
       "id": "lifecycle",
       "label": "Restart, start, service install, diagnostics",
       "required": true,
-      "row_count": 4,
+      "row_count": 5,
       "rows": [
         {
           "id": "lifecycle.restart",
@@ -7518,6 +7518,58 @@
             ]
           },
           "exception": "Desktop host-only capability; mobile reports can_open_logs=false.",
+          "notes": ""
+        },
+        {
+          "id": "lifecycle.desktop_notify",
+          "category": "lifecycle",
+          "feature": "Desktop notifications",
+          "action": "Send a local desktop notification",
+          "desktop": {
+            "source": [
+              "nanobot/webui/ws_http.py:_handle_desktop_notify"
+            ],
+            "tests": [
+              "webui/src/tests/task-notifications.test.ts"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/desktop/notify"
+          },
+          "ui": {
+            "entry": "Task completion notification"
+          },
+          "auth": {
+            "owner": "local_only",
+            "legacy": "none",
+            "local_only": true,
+            "current_local_only": true
+          },
+          "native": null,
+          "dependency": [
+            "M36"
+          ],
+          "checks": {
+            "positive": [
+              "loopback browser sends a bounded title/body notification"
+            ],
+            "negative": [
+              "non-loopback request denied",
+              "non-local browser origin denied",
+              "missing body rejected"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "absent",
+            "evidence": [
+              "mobile has no desktop notification surface"
+            ]
+          },
+          "exception": "desktop-host-capabilities",
           "notes": ""
         }
       ]
@@ -7761,7 +7813,8 @@
       "id": "desktop-host-capabilities",
       "kind": "adaptation",
       "rows": [
-        "lifecycle.diagnostics"
+        "lifecycle.diagnostics",
+        "lifecycle.desktop_notify"
       ],
       "statement": "Logs/export diagnostics and native folder picking are desktop-host capabilities."
     }

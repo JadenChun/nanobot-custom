@@ -45,5 +45,10 @@
     "typescript": "5.7.2",
     "node": ">=22",
     "bun": "1.4.2"
+  },
+  "gradle": {
+    "version": "8.14.3",
+    "url": "https://services.gradle.org/distributions/gradle-8.14.3-all.zip",
+    "sha256": "ed1a8d686605fd7c23bdf62c7fc7add1c5b23b2bbc3721e661934ef4a4911d7c"
   }
 }

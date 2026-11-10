@@ -41,6 +41,10 @@ fi
 export NANOBOT_MOBILE_KEYSTORE="${keystore}"
 export NANOBOT_MOBILE_WEB_DIR="www-shared"
 
+# Verify the pinned Gradle distribution before exposing signing inputs to the
+# Gradle signing phase.
+"${script_dir}/verify-gradle-archive.sh"
+
 "${script_dir}/build-native-network.sh"
 "${script_dir}/build-shared-webui.sh"
 

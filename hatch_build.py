@@ -58,7 +58,12 @@ class WebUIBuildHook(BuildHookInterface):
             )
             return
 
+        require_fresh = os.environ.get("NANOBOT_REQUIRE_FRESH_WEBUI") == "1"
         if os.environ.get("NANOBOT_SKIP_WEBUI_BUILD") == "1":
+            if require_fresh:
+                raise RuntimeError(
+                    "NANOBOT_REQUIRE_FRESH_WEBUI=1 forbids NANOBOT_SKIP_WEBUI_BUILD=1"
+                )
             self.app.display_info("[webui-build] skipped via NANOBOT_SKIP_WEBUI_BUILD=1")
             return
 
@@ -72,6 +77,8 @@ class WebUIBuildHook(BuildHookInterface):
         status = webui_build.inspect_webui_bundle(source_dir=webui_dir, dist_dir=dist_dir)
         force = os.environ.get("NANOBOT_FORCE_WEBUI_BUILD") == "1"
         if not status.needs_build and not force:
+            if require_fresh:
+                webui_build.require_fresh_webui_bundle(status)
             self.app.display_info(
                 f"[webui-build] reusing existing build at {dist_dir} "
                 "(already fresh; set NANOBOT_FORCE_WEBUI_BUILD=1 to rebuild)"
@@ -84,11 +91,13 @@ class WebUIBuildHook(BuildHookInterface):
             )
 
         try:
-            webui_build.build_webui_bundle(
+            built = webui_build.build_webui_bundle(
                 source_dir=webui_dir,
                 dist_dir=dist_dir,
                 output=self.app.display_info,
             )
+            if require_fresh:
+                webui_build.require_fresh_webui_bundle(built)
         except webui_build.WebUIBuildError as exc:
             raise RuntimeError(
                 "[webui-build] "

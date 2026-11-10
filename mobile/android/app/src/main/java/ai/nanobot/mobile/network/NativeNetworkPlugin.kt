@@ -161,9 +161,10 @@ class NativeNetworkPlugin : Plugin() {
             }
             val failure = error as? Exception ?: Exception(error)
             val message = failure.message ?: "token refresh failed"
-            if (isUnauthorized(failure) && message.contains("device_revoked")) {
-                // Only a confirmed owner revocation erases local custody. A
-                // transient/raced invalid_refresh must not orphan the tsnet state.
+            if (RefreshAuthority.requiresRepair(httpStatus(failure), message)) {
+                // A confirmed owner revocation and a v1 upgrade requirement both
+                // end local bearer authority. Transient failures keep custody so
+                // a raced invalid_refresh cannot orphan encrypted tsnet state.
                 try {
                     custody.logout(serverReachable = true)
                     custody.purgeMedia()
@@ -175,7 +176,13 @@ class NativeNetworkPlugin : Plugin() {
                     // Custody may already be gone; the reload still resets UI.
                 }
                 mainHandler.post {
-                    call.reject("pairing was revoked")
+                    call.reject(
+                        if (message.contains("upgrade_required")) {
+                            "pairing upgrade required"
+                        } else {
+                            "pairing was revoked"
+                        },
+                    )
                     (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
                 }
             } else {
@@ -1311,6 +1318,11 @@ class NativeNetworkPlugin : Plugin() {
 
     private fun isUnauthorized(exception: Exception): Boolean =
         (exception.message ?: "").contains("HTTP 401")
+
+    private fun httpStatus(exception: Exception): Int {
+        val match = Regex("HTTP (\\d{3})").find(exception.message ?: "") ?: return 0
+        return match.groupValues.getOrNull(1)?.toIntOrNull() ?: 0
+    }
 
     private fun startTransport(origin: String, installationId: String, hostname: String): CustodyRecord {
         stopInternal()
