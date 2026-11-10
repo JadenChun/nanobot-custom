@@ -1503,7 +1503,31 @@ class GatewayHTTPHandler:
                 not isinstance(parent_key, str)
                 or not _is_websocket_channel_session_key(parent_key)
                 or self.session_manager is None
-                or self.session_manager.read_session_metadata(parent_key) is None
+            ):
+                return _http_error(404, "session not found")
+            parent_snapshot = self.session_manager.read_session_snapshot(parent_key)
+            if parent_snapshot is None:
+                return _http_error(404, "session not found")
+            recorded_incarnation = (
+                child_payload.get("parent_incarnation")
+                if child_payload is not None else None
+            )
+            if (
+                isinstance(recorded_incarnation, str)
+                and recorded_incarnation
+                and recorded_incarnation != parent_snapshot.incarnation
+            ):
+                return _http_error(404, "session not found")
+            from nanobot.session.runtime_authority import read_runtime_session
+
+            runtime_state = read_runtime_session(self.session_manager, decoded_key)
+            # Keep malformed historical child data readable. A stale parent
+            # reference is different: the new parent must not acquire the old
+            # child's live route.
+            if (
+                runtime_state.present
+                and not runtime_state.executable
+                and runtime_state.issue == "stale_parent"
             ):
                 return _http_error(404, "session not found")
             scope_key = parent_key

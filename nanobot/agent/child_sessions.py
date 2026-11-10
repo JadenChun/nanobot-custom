@@ -27,6 +27,7 @@ from nanobot.session.manager import Session, SessionManager
 from nanobot.session.runtime_authority import (
     RUNTIME_SESSION_METADATA_KEY,
     RuntimeSessionMetadata,
+    read_runtime_session,
 )
 
 DELEGATION_CHILD_METADATA_KEY = "delegation_child"
@@ -147,7 +148,7 @@ class DelegationTree:
         self.policy = policy or DelegationTreePolicy()
         self._lock = asyncio.Lock()
         self._children: dict[str, ChildAdmission] = {}
-        self._attempts: dict[tuple[str, str, str], str] = {}
+        self._attempts: dict[tuple[str, str, str, str], str] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._restore()
 
@@ -218,6 +219,7 @@ class DelegationTree:
             self._attempts[
                 (
                     admission.parent_key,
+                    admission.parent_incarnation,
                     admission.profile,
                     f"{admission.attempt_id}:{admission.assignment_digest}",
                 )
@@ -226,16 +228,35 @@ class DelegationTree:
     def child(self, child_id: str) -> ChildAdmission | None:
         return self._children.get(child_id)
 
-    def children_of(self, parent_key: str) -> tuple[ChildAdmission, ...]:
+    def children_of(
+        self,
+        parent_key: str,
+        *,
+        parent_incarnation: str | None = None,
+    ) -> tuple[ChildAdmission, ...]:
         return tuple(
             child for child in self._children.values()
             if child.parent_key == parent_key
+            and (
+                parent_incarnation is None
+                or child.parent_incarnation == parent_incarnation
+            )
         )
 
-    def live_descendants(self, root_key: str) -> tuple[ChildAdmission, ...]:
+    def live_descendants(
+        self,
+        root_key: str,
+        *,
+        parent_incarnation: str | None = None,
+    ) -> tuple[ChildAdmission, ...]:
         return tuple(
             child for child in self._children.values()
-            if child.root_key == root_key and child.live
+            if child.root_key == root_key
+            and child.live
+            and (
+                parent_incarnation is None
+                or child.parent_incarnation == parent_incarnation
+            )
         )
 
     async def reserve(
@@ -261,15 +282,25 @@ class DelegationTree:
             assignment=assignment,
             policy_facts=facts,
         )
-        attempt_key = (parent_key, profile, f"{attempt_id}:{digest}")
+        parent_runtime = read_runtime_session(self.sessions, parent_key)
+        if parent_runtime.present and not parent_runtime.executable:
+            return ChildRefusal(
+                "session_unavailable",
+                "The parent runtime identity is stale or malformed",
+            )
+        attempt_key = (
+            parent_key,
+            parent.incarnation,
+            profile,
+            f"{attempt_id}:{digest}",
+        )
         async with self._lock:
             existing = self._attempts.get(attempt_key)
             if existing is not None:
                 child = self._children.get(existing)
                 if child is not None:
                     return child
-            parent_state = self._runtime_state(parent)
-            parent_depth = int(parent_state.get("delegation_depth", 0))
+            parent_depth = parent_runtime.metadata.delegation_depth
             depth = parent_depth + 1
             if depth > self.policy.max_depth:
                 return ChildRefusal(
@@ -414,12 +445,22 @@ class DelegationTree:
             pass
         return self._children.get(child_id)
 
-    async def stop_for_parent(self, parent_key: str) -> tuple[ChildAdmission, ...]:
-        """Stop every live child admitted under one parent session."""
+    async def stop_for_parent(
+        self,
+        parent_key: str,
+        *,
+        parent_incarnation: str | None = None,
+    ) -> tuple[ChildAdmission, ...]:
+        """Stop live children admitted under one exact parent incarnation."""
         async with self._lock:
             child_ids = [
                 child.child_id for child in self._children.values()
-                if child.parent_key == parent_key and child.live
+                if child.parent_key == parent_key
+                and child.live
+                and (
+                    parent_incarnation is None
+                    or child.parent_incarnation == parent_incarnation
+                )
             ]
         stopped: list[ChildAdmission] = []
         for child_id in child_ids:
@@ -483,13 +524,6 @@ class DelegationTree:
             self._children[child_id] = updated
         self._persist(updated)
         return updated
-
-    @staticmethod
-    def _runtime_state(session: Session) -> dict[str, Any]:
-        raw = session.metadata.get(RUNTIME_SESSION_METADATA_KEY)
-        if not isinstance(raw, Mapping):
-            return {}
-        return dict(cast(Mapping[str, Any], raw))
 
     def _persist(self, admission: ChildAdmission, *, parent: Session | None = None) -> bool:
         try:

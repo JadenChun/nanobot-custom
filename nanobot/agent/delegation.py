@@ -291,10 +291,16 @@ class ForegroundAgentManager:
         return {"ok": False, "reason": "unsupported_child_action"}
 
     async def stop_children(self, parent_key: str) -> int:
-        """Stop the admitted active child subtree for one parent turn."""
+        """Stop the admitted active child subtree for one parent incarnation."""
         if self._delegation_tree is None:
             return 0
-        stopped = await self._delegation_tree.stop_for_parent(parent_key)
+        parent = self._delegation_tree.sessions.read_session_snapshot(parent_key)
+        if parent is None:
+            return 0
+        stopped = await self._delegation_tree.stop_for_parent(
+            parent_key,
+            parent_incarnation=parent.incarnation,
+        )
         return len(stopped)
 
     @property
