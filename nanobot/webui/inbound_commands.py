@@ -107,6 +107,20 @@ _MESSAGE_LEVEL_CONTROL_FIELDS = frozenset({
 })
 
 
+def _is_stop_control(envelope: dict[str, Any]) -> bool:
+    """Return whether the envelope is the exact Stop control command."""
+    content = envelope.get("content")
+    return isinstance(content, str) and content.strip().lower() == "/stop"
+
+
+def _is_targeted_stop(envelope: dict[str, Any]) -> bool:
+    """Return whether the envelope addresses Stop to one admitted turn."""
+    if not _is_stop_control(envelope):
+        return False
+    target = envelope.get("target_turn_id")
+    return isinstance(target, str) and bool(target)
+
+
 def request_settings_error(
     envelope: dict[str, Any],
     *,
@@ -132,7 +146,12 @@ def request_settings_error(
         return "invalid_request_settings", "request_intent"
     target = envelope.get("target_turn_id")
     if intent == "new":
-        if target is not None:
+        # Stop is a turn control, not a new workspace request. Its target is
+        # the admitted turn that the owner must verify before settling.
+        if _is_stop_control(envelope):
+            if target is not None and (not isinstance(target, str) or not target):
+                return "invalid_request_settings", "target_turn_id"
+        elif target is not None:
             return "invalid_request_settings", "target_turn_id"
     else:
         if (
@@ -918,9 +937,13 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
-        if request_intent == "new" and (
-            websocket_turn_wall_started_at(chat_id) is not None
-            or websocket_turn_reserved(chat_id)
+        if (
+            request_intent == "new"
+            and not _is_targeted_stop(envelope)
+            and (
+                websocket_turn_wall_started_at(chat_id) is not None
+                or websocket_turn_reserved(chat_id)
+            )
         ):
             await self._transport.webui_send_event(
                 connection,

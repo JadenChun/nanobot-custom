@@ -673,6 +673,8 @@ describe("NanobotTui layout", () => {
       cliApps: [{ name: "github" }],
       mcpPresets: [],
       sessionMentions: [],
+      requestIntent: "steer",
+      targetTurnId: "turn",
     })
 
     ui.composer.setText("after this turn")
@@ -701,6 +703,9 @@ describe("NanobotTui layout", () => {
     app.accept({ event: "turn_end", chat_id: "chat", turn_id: "turn" })
     await waitUntil(() => sent.length === 3)
     expect(sent[2]).toBe("after this turn")
+    // The queued item stays visible until the owner admits the attempt.
+    expect(ui.queuePreview.root.visible).toBeTrue()
+    app.accept({ event: "message_admitted", chat_id: "chat", turn_id: "turn", starts_turn: true })
     expect(ui.queuePreview.root.visible).toBeFalse()
     app.accept({ event: "goal_status", chat_id: "chat", status: "idle", turn_id: "prior" })
     expect((app as unknown as { activeTurn: boolean }).activeTurn).toBeTrue()

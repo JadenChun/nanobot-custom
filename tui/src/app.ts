@@ -532,6 +532,11 @@ export class NanobotTui {
   private submitPending = false
   private submitGeneration = 0
   private unsentSubmit = false
+  private pendingFollowUp: {
+    chatId: string
+    turnId: string
+    prompt: QueuedPrompt
+  } | null = null
   private connectionMessage = "Getting ready…"
   private readonly promptHistory: string[] = []
   private historyCursor = 0
@@ -1105,13 +1110,24 @@ export class NanobotTui {
     this.transcript.notice("Usage: /child [list|open|wait|steer|stop] <id> [text]", true)
   }
 
-  private sendPrompt(prompt: QueuedPrompt, steering = false): boolean {
+  private sendPrompt(prompt: QueuedPrompt, steering = false): string | null {
+    if (steering && !this.activeTurnId) {
+      this.status.content = "The active turn is not ready · wait or press Ctrl+C"
+      return null
+    }
+    const options = steering
+      ? {
+          ...prompt.options,
+          requestIntent: "steer" as const,
+          targetTurnId: this.activeTurnId ?? undefined,
+        }
+      : prompt.options
     let turnId: string
     try {
-      turnId = this.client.send(prompt.content, prompt.options)
+      turnId = this.client.send(prompt.content, options)
     } catch {
       this.markSubmitUnsent(true)
-      return false
+      return null
     }
     this.unsentSubmit = false
     this.clearComposer()
@@ -1129,10 +1145,10 @@ export class NanobotTui {
     if (steering) {
       this.renderActiveStatus()
       this.updateMeta()
-      return true
+      return turnId
     }
     this.beginTurn(turnId)
-    return true
+    return turnId
   }
 
   private beginTurn(turnId: string | null, startedAt?: number): void {
@@ -1164,7 +1180,6 @@ export class NanobotTui {
 
   accept(event: InboundEvent): void {
     if (event.event === "attached") {
-      const switchedSession = Boolean(this.currentChatId && this.currentChatId !== event.chat_id)
       this.currentChatId = event.chat_id
       if (event.usage) this.lastUsage = event.usage
       if (event.model_preset !== undefined) {
@@ -1190,7 +1205,7 @@ export class NanobotTui {
         this.applyRecoveryState(event.recovery_state ?? null)
         this.flushPendingEvents()
         this.syncQueuePreview()
-        if (switchedSession) this.sendNextFollowUp()
+        this.sendNextFollowUp()
       })
       return
     }
@@ -1227,6 +1242,10 @@ export class NanobotTui {
       }
       case "message_accepted":
         this.reconcileTurnOwnership(event)
+        return
+      case "message_admitted":
+        this.reconcileTurnOwnership(event)
+        this.commitAdmittedFollowUp(event)
         return
       case "user_message": {
         if (this.transcript.user(
@@ -1390,6 +1409,9 @@ export class NanobotTui {
         }
         return
       case "error":
+        if (this.pendingFollowUp && event.turn_id === this.pendingFollowUp.turnId) {
+          this.pendingFollowUp = null
+        }
         const commandLifecycle = event.turn_id ? this.commandTurns.get(event.turn_id) : undefined
         if (event.turn_id) {
           this.commandTurns.delete(event.turn_id)
@@ -1683,10 +1705,37 @@ export class NanobotTui {
 
   private sendNextFollowUp(): void {
     if (!this.ready || this.activeTurn || this.quitting) return
-    const prompt = this.promptQueue.takeFollowUp()
+    // Peek now, commit only after the session owner confirms admission.
+    // A sent but unconfirmed item must not be submitted twice.
+    if (this.pendingFollowUp) return
+    const prompt = this.promptQueue.peekFollowUp()
     if (!prompt) return
+    const turnId = this.sendPrompt(prompt)
+    if (!turnId) return
+    this.pendingFollowUp = {
+      chatId: this.currentChatId || this.client.activeChatId,
+      turnId,
+      prompt,
+    }
     this.syncQueuePreview()
-    this.sendPrompt(prompt)
+  }
+
+  private commitAdmittedFollowUp(event: {
+    chat_id: string
+    turn_id?: string
+    attempt_id?: string
+    starts_turn: boolean
+  }): void {
+    const pending = this.pendingFollowUp
+    if (!pending || event.chat_id !== pending.chatId) return
+    const admittedId = event.turn_id ?? event.attempt_id
+    if (!admittedId || admittedId !== pending.turnId) return
+    if (!event.starts_turn) return
+    if (!this.promptQueue.commitFollowUp(pending.prompt)) return
+    this.pendingFollowUp = null
+    this.syncQueuePreview()
+    this.renderActiveStatus()
+    this.updateMeta()
   }
 
   private get promptQueue(): PromptQueue {
@@ -1730,6 +1779,7 @@ export class NanobotTui {
   }
 
   private restoreQueuedPrompts(): void {
+    this.pendingFollowUp = null
     const queued = this.promptQueue.restore()
     if (!queued.length) return
     this.syncQueuePreview()
@@ -1763,6 +1813,7 @@ export class NanobotTui {
   private editLastFollowUp(): boolean {
     const prompt = this.promptQueue.takeLast()
     if (!prompt) return false
+    if (this.pendingFollowUp?.prompt === prompt) this.pendingFollowUp = null
     const current = this.draft.expand(this.composer.plainText).trim()
     this.setComposer([prompt.content, current].filter(Boolean).join("\n\n"))
     this.syncQueuePreview()
@@ -1772,6 +1823,7 @@ export class NanobotTui {
   }
 
   private clearPromptQueue(): void {
+    this.pendingFollowUp = null
     this.promptQueue.clear()
     this.syncQueuePreview()
   }
@@ -1997,7 +2049,12 @@ export class NanobotTui {
       if (this.activeTurn) {
         this.restoreQueuedPrompts()
         try {
-          this.client.send("/stop")
+          // Bind Stop to the admitted turn so a late or repeated press cannot
+          // stop a later turn.
+          this.client.send(
+            "/stop",
+            this.activeTurnId ? { targetTurnId: this.activeTurnId } : {},
+          )
           this.status.content = "Stopping…"
         } catch {
           this.setActive(false)
@@ -2713,9 +2770,12 @@ export class NanobotTui {
       this.status.content = "A turn is already running · Ctrl+C to stop"
       return
     }
+    const sendOptions = lifecycle === "stop_active_turn" && this.activeTurnId
+      ? { ...options, targetTurnId: this.activeTurnId }
+      : options
     let turnId: string
     try {
-      turnId = this.client.send(content, options)
+      turnId = this.client.send(content, sendOptions)
     } catch {
       this.markSubmitUnsent(true)
       return

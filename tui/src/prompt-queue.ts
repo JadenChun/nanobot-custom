@@ -26,6 +26,17 @@ export class PromptQueue {
     return this.prompts.shift() ?? null
   }
 
+  peekFollowUp(): QueuedPrompt | null {
+    return this.prompts[0] ?? null
+  }
+
+  commitFollowUp(prompt: QueuedPrompt): boolean {
+    const index = this.prompts.indexOf(prompt)
+    if (index === -1) return false
+    this.prompts.splice(index, 1)
+    return true
+  }
+
   snapshot(): readonly QueuedPrompt[] {
     return this.prompts
   }

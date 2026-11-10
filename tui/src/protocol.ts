@@ -98,6 +98,16 @@ export type InboundEvent =
       started_at?: number
     }
   | {
+      event: "message_admitted"
+      chat_id: string
+      turn_id?: string
+      attempt_id?: string
+      session_key?: string
+      session_incarnation?: string
+      active_turn_id?: string
+      starts_turn: boolean
+    }
+  | {
       event: "delegated_child"
       chat_id: string
       child_session_key: string
@@ -313,6 +323,8 @@ export interface MessageOptions {
   mcpPresets?: Array<{ name: string }>
   sessionMentions?: SessionMention[]
   userShell?: boolean
+  requestIntent?: "new" | "steer"
+  targetTurnId?: string
 }
 
 export interface SlashCommand {
@@ -358,6 +370,7 @@ const SLASH_COMMAND_LIFECYCLES = new Set([
 const CHAT_EVENTS = new Set([
   "attached",
   "message_accepted",
+  "message_admitted",
   "user_message",
   "message",
   "file_edit",
@@ -519,6 +532,17 @@ function decodeInboundEvent(value: unknown): InboundEvent | null | undefined {
       || !optional(record.starts_turn, "boolean")
       || !optional(record.active_turn_id, "string")
       || !optional(record.started_at, "number")
+    )
+  ) return null
+  if (
+    name === "message_admitted"
+    && (
+      typeof record.starts_turn !== "boolean"
+      || !optional(record.turn_id, "string")
+      || !optional(record.attempt_id, "string")
+      || !optional(record.session_key, "string")
+      || !optional(record.session_incarnation, "string")
+      || !optional(record.active_turn_id, "string")
     )
   ) return null
   if (
@@ -1253,6 +1277,13 @@ export class NanobotClient {
       turn_id: turnId,
       webui: true,
       ...(this.workspaceScope ? { workspace_scope: this.workspaceScope } : {}),
+      ...(options.requestIntent || options.targetTurnId
+        ? {
+            request_settings_version: 1,
+            request_intent: options.requestIntent ?? "new",
+            ...(options.targetTurnId ? { target_turn_id: options.targetTurnId } : {}),
+          }
+        : {}),
       ...(options.userShell ? { user_shell: true } : {}),
       ...(options.media?.length ? { media: options.media } : {}),
       ...(options.cliApps?.length ? { cli_apps: options.cliApps } : {}),
