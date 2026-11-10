@@ -7,7 +7,6 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=mobile-env.sh
 source "${script_dir}/mobile-env.sh"
-mobile_require_toolchain
 
 SERIAL="${ANDROID_SERIAL:-${1:-}}"
 if [[ -z "${SERIAL}" ]]; then
@@ -47,6 +46,8 @@ if [[ "${seed_hash}" == "${candidate_hash}" ]]; then
   echo "seed and candidate APKs are identical; an update must cross distinct artifacts" >&2
   exit 2
 fi
+
+mobile_require_toolchain
 
 if "${ADB[@]}" shell pm list packages | grep -q "^package:${DEBUG_PACKAGE}$"; then
   if ! "${ADB[@]}" shell dumpsys package "${DEBUG_PACKAGE}" | grep -Eq 'debuggable=true|DEBUGGABLE'; then
