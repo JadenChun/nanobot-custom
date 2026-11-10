@@ -49,7 +49,7 @@ if [[ "${seed_hash}" == "${candidate_hash}" ]]; then
 fi
 
 if "${ADB[@]}" shell pm list packages | grep -q "^package:${DEBUG_PACKAGE}$"; then
-  if ! "${ADB[@]}" shell dumpsys package "${DEBUG_PACKAGE}" | grep -q 'debuggable=true'; then
+  if ! "${ADB[@]}" shell dumpsys package "${DEBUG_PACKAGE}" | grep -Eq 'debuggable=true|DEBUGGABLE'; then
     echo "unexpected non-debug package at ${DEBUG_PACKAGE}" >&2
     exit 2
   fi
