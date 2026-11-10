@@ -2387,7 +2387,11 @@ function Shell({
       .filter((session): session is ChatSummary => session !== undefined);
   }, [activeTabKey, activeTabState, orderedWorkbenchTabsByKey, sessions]);
   const paneChromeEnabled = Boolean(
-    activeKey && activeSession && !temporaryChatActive && activeTabState,
+    activeKey
+      && activeSession
+      && !temporaryChatActive
+      && activeTabState
+      && !childSessionOverrides[activeKey],
   );
   const activeTabVisible = Boolean(
     activeTabState
