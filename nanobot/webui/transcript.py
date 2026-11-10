@@ -175,22 +175,26 @@ def _legacy_transcript_segments_dir(session_key: str) -> Path:
     return get_webui_dir() / f"{_legacy_transcript_stem(session_key)}.segments"
 
 
-def _first_jsonl_chat_id(path: Path) -> str | None:
+def _jsonl_chat_ids(path: Path) -> set[str]:
+    ids: set[str] = set()
     try:
         with open(path, encoding="utf-8") as handle:
             for line in handle:
                 line = line.strip()
                 if not line:
                     continue
-                value = json.loads(line)
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 if isinstance(value, dict):
                     row = cast(dict[str, Any], value)
                     chat_id = row.get("chat_id")
-                    return chat_id if isinstance(chat_id, str) and chat_id else None
-                return None
-    except (OSError, json.JSONDecodeError):
-        return None
-    return None
+                    if isinstance(chat_id, str) and chat_id:
+                        ids.add(chat_id)
+    except OSError:
+        return set()
+    return ids
 
 
 def _legacy_owner(path: Path, session_key: str) -> str:
@@ -200,27 +204,33 @@ def _legacy_owner(path: Path, session_key: str) -> str:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         payload = None
+    expected = _transcript_chat_id(session_key)
     if isinstance(payload, dict):
         row = cast(dict[str, Any], payload)
         chat_id = row.get("chat_id")
         if isinstance(chat_id, str) and chat_id:
-            return "own" if chat_id == _transcript_chat_id(session_key) else "other"
+            return "own" if chat_id == expected else "other"
         return "ambiguous"
-    chat_id = _first_jsonl_chat_id(path)
-    if chat_id is None:
+    ids = _jsonl_chat_ids(path)
+    if not ids:
         return "ambiguous"
-    return "own" if chat_id == _transcript_chat_id(session_key) else "other"
+    if ids == {expected}:
+        return "own"
+    return "mixed" if expected in ids else "other"
 
 
 def _legacy_dir_owner(directory: Path, session_key: str) -> str:
     if not directory.is_dir():
         return "absent"
+    ids: set[str] = set()
     for path in sorted(directory.glob("*.jsonl")):
-        chat_id = _first_jsonl_chat_id(path)
-        if chat_id is None:
-            continue
-        return "own" if chat_id == _transcript_chat_id(session_key) else "other"
-    return "ambiguous"
+        ids.update(_jsonl_chat_ids(path))
+    if not ids:
+        return "ambiguous"
+    expected = _transcript_chat_id(session_key)
+    if ids == {expected}:
+        return "own"
+    return "mixed" if expected in ids else "other"
 
 
 def _write_manifest_json(path: Path, payload: dict[str, Any]) -> None:
@@ -273,7 +283,7 @@ def _migrate_legacy_transcript(session_key: str) -> None:
     old_dir = _legacy_transcript_segments_dir(session_key)
     root_owner = _legacy_owner(old_path, session_key)
     dir_owner = _legacy_dir_owner(old_dir, session_key)
-    if root_owner == "other" or dir_owner == "other":
+    if root_owner in {"other", "mixed"} or dir_owner in {"other", "mixed"}:
         logger.warning(
             "Quarantining colliding legacy transcript for {}",
             session_key,

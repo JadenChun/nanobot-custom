@@ -1126,6 +1126,7 @@ describe("gateway protocol", () => {
         hasMoreBefore: true,
         beforeCursor: "older-1",
         userMessageOffset: 0,
+        completedTurnIds: [],
       })
       expect(requested).toContain("before=newer-page")
     } finally {

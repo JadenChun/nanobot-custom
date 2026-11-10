@@ -5,20 +5,7 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=mobile-env.sh
-source "${script_dir}/mobile-env.sh"
-
-SERIAL="${ANDROID_SERIAL:-${1:-}}"
-if [[ -z "${SERIAL}" ]]; then
-  SERIAL="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
-fi
-if [[ -z "${SERIAL}" ]]; then
-  echo "no Android device serial" >&2
-  exit 2
-fi
-
-ADB=(adb -s "${SERIAL}")
-DEFAULT_APK_DIR="$(cd "${MOBILE_ROOT}/android" && pwd)/app/build/outputs/apk"
+DEFAULT_APK_DIR="$(cd -- "${script_dir}/../android" && pwd)/app/build/outputs/apk"
 SEED_APK="${NANOBOT_UPDATE_SEED_APK:-}"
 CANDIDATE_APK="${NANOBOT_UPDATE_CANDIDATE_APK:-${DEFAULT_APK_DIR}/debug/app-debug.apk}"
 TEST_APK="${NANOBOT_UPDATE_TEST_APK:-${DEFAULT_APK_DIR}/androidTest/debug/app-debug-androidTest.apk}"
@@ -35,11 +22,6 @@ if [[ ! -f "${CANDIDATE_APK}" ]]; then
   echo "candidate APK not found: ${CANDIDATE_APK}" >&2
   exit 2
 fi
-if [[ ! -f "${TEST_APK}" ]]; then
-  echo "instrumentation APK not found: ${TEST_APK}" >&2
-  exit 2
-fi
-
 seed_hash="$(sha256sum "${SEED_APK}" | awk '{print $1}')"
 candidate_hash="$(sha256sum "${CANDIDATE_APK}" | awk '{print $1}')"
 if [[ "${seed_hash}" == "${candidate_hash}" ]]; then
@@ -47,7 +29,25 @@ if [[ "${seed_hash}" == "${candidate_hash}" ]]; then
   exit 2
 fi
 
+if [[ ! -f "${TEST_APK}" ]]; then
+  echo "instrumentation APK not found: ${TEST_APK}" >&2
+  exit 2
+fi
+
+# shellcheck source=mobile-env.sh
+source "${script_dir}/mobile-env.sh"
 mobile_require_toolchain
+
+SERIAL="${ANDROID_SERIAL:-${1:-}}"
+if [[ -z "${SERIAL}" ]]; then
+  SERIAL="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
+fi
+if [[ -z "${SERIAL}" ]]; then
+  echo "no Android device serial" >&2
+  exit 2
+fi
+
+ADB=(adb -s "${SERIAL}")
 
 if "${ADB[@]}" shell pm list packages | grep -q "^package:${DEBUG_PACKAGE}$"; then
   if ! "${ADB[@]}" shell dumpsys package "${DEBUG_PACKAGE}" | grep -Eq 'debuggable=true|DEBUGGABLE'; then

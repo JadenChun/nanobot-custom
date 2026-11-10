@@ -275,8 +275,9 @@ def test_replace_detects_same_bytes_on_swapped_inode(tmp_path: Path) -> None:
 
     with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
         snapshot = authority.snapshot_target("MEMORY.md")
-        target.unlink()
-        _write_target(memory, "MEMORY.md", b"same bytes")
+        replacement = _write_target(memory, "MEMORY.md.next", b"same bytes")
+        assert replacement.stat().st_ino != original_inode
+        replacement.replace(target)
         assert target.stat().st_ino != original_inode
         with pytest.raises(storage.MemoryStorageError) as rejected:
             _replace(authority, snapshot, b"replacement")

@@ -57,6 +57,7 @@ class _PersistenceLane:
         self.path = path
         self._queue: queue.Queue[tuple[Callable[[sqlite3.Connection], Any], concurrent.futures.Future[Any]] | None] = queue.Queue(maxsize=max_pending)
         self._closed = False
+        self._startup_error: BaseException | None = None
         self._thread = threading.Thread(
             target=self._run,
             name="process-completion-journal",
@@ -66,14 +67,31 @@ class _PersistenceLane:
         self.run(lambda db: db.execute("CREATE TABLE IF NOT EXISTS processes (id TEXT PRIMARY KEY, data TEXT NOT NULL)"))
 
     def run(self, operation: Callable[[sqlite3.Connection], Any]) -> Any:
+        if self._startup_error is not None:
+            raise RuntimeError("process completion journal could not open") from self._startup_error
         if self._closed:
             raise RuntimeError("process completion journal is closed")
         future: concurrent.futures.Future[Any] = concurrent.futures.Future()
         self._queue.put((operation, future))
-        return future.result()
+        try:
+            return future.result(timeout=10)
+        except concurrent.futures.TimeoutError as exc:
+            raise RuntimeError("process completion journal did not settle") from exc
 
     def _run(self) -> None:
-        db = sqlite3.connect(self.path)
+        try:
+            db = sqlite3.connect(self.path)
+        except BaseException as exc:
+            self._startup_error = exc
+            self._closed = True
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    return
+                if item is not None:
+                    item[1].set_exception(exc)
+            return
         try:
             db.execute("PRAGMA synchronous=FULL")
             while True:
@@ -116,6 +134,11 @@ class ProcessCompletionRuntime:
         self._closed = False
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lane = _PersistenceLane(self.path)
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
+        self._loop_thread_id = threading.get_ident() if self._loop is not None else None
 
     def _read(self, operation: Callable[[sqlite3.Connection], Any]) -> Any:
         try:
@@ -218,6 +241,9 @@ class ProcessCompletionRuntime:
     def start(self) -> None:
         if self._closed or self._started:
             raise RuntimeError("process continuation runtime cannot start twice")
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+            self._loop_thread_id = threading.get_ident()
         for record in self.records():
             if record.state in ("waiting", "dispatching"):
                 self._transition(record, "unknown", reason="runtime_interrupted")
@@ -227,6 +253,18 @@ class ProcessCompletionRuntime:
                 self._schedule(record.id)
 
     def _schedule(self, identity: str) -> None:
+        loop = self._loop
+        if (
+            loop is not None
+            and loop.is_running()
+            and self._loop_thread_id is not None
+            and threading.get_ident() != self._loop_thread_id
+        ):
+            loop.call_soon_threadsafe(self._schedule_on_loop, identity)
+            return
+        self._schedule_on_loop(identity)
+
+    def _schedule_on_loop(self, identity: str) -> None:
         if identity not in self._tasks:
             task = asyncio.create_task(self._continue(identity))
             self._tasks[identity] = task
@@ -238,13 +276,18 @@ class ProcessCompletionRuntime:
             logger.error("Background continuation {} requires inspection: {}", identity, type(task.exception()).__name__)
 
     async def _continue(self, identity: str) -> None:
-        record = self.get(identity)
+        record = await asyncio.to_thread(self.get, identity)
         if record.state != "ready":
             return
         if self.assistant.sessions.read_session_snapshot(record.session_key) is None:
-            self._transition(record, "cancelled", reason="owner_session_missing")
+            await asyncio.to_thread(
+                self._transition,
+                record,
+                "cancelled",
+                reason="owner_session_missing",
+            )
             return
-        self._transition(record, "dispatching")
+        await asyncio.to_thread(self._transition, record, "dispatching")
         try:
             metadata = {**record.reply_metadata, LOCAL_TRIGGER_META: {
                 "trigger_id": f"process:{identity}", "trigger_name": "Background process completion",
@@ -260,11 +303,20 @@ class ProcessCompletionRuntime:
                          "another project. Inspect this result; do not rerun the completed command.\n" + json.dumps(details)),
             )
             await self.assistant.submit_local_trigger_turn(message)
-            self._transition(self.get(identity), "done")
+            await asyncio.to_thread(
+                self._transition,
+                await asyncio.to_thread(self.get, identity),
+                "done",
+            )
         except BaseException:
-            current = self.get(identity)
+            current = await asyncio.to_thread(self.get, identity)
             if current.state == "dispatching":
-                self._transition(current, "unknown", reason="continuation_interrupted")
+                await asyncio.to_thread(
+                    self._transition,
+                    current,
+                    "unknown",
+                    reason="continuation_interrupted",
+                )
             raise
 
     async def aclose(self) -> None:

@@ -2090,7 +2090,10 @@ class WebUICommandRouter:
         runtime_generation = payload.get("runtime_generation")
         if not (
             isinstance(parent_key, str)
-            and parent_key.startswith(WEBUI_SESSION_STORAGE_PREFIX)
+            and (
+                parent_key.startswith(WEBUI_SESSION_STORAGE_PREFIX)
+                or parent_key.startswith("delegated:")
+            )
             and isinstance(child_id, str) and child_id
             and control in {"wait", "steer", "stop"}
             and (content is None or isinstance(content, str))
@@ -2102,7 +2105,23 @@ class WebUICommandRouter:
                 message="invalid child control",
                 outcome="not_applied",
             )
-        chat_id = parent_key.split(":", 1)[1]
+        sessions = self.gateway.session_manager
+        if sessions is None:
+            return WebUIRequestResult(
+                status=503,
+                message="delegation_control_unavailable",
+                outcome="not_applied",
+            )
+        from nanobot.webui.ws_http import resolve_child_root_key
+
+        root_key = resolve_child_root_key(sessions, parent_key)
+        if root_key is None:
+            return WebUIRequestResult(
+                status=409,
+                message="child_parent_stale",
+                outcome="not_applied",
+            )
+        chat_id = root_key.split(":", 1)[1]
         if chat_id not in self._transport.webui_connection_chats(connection):
             return WebUIRequestResult(
                 status=403,

@@ -135,6 +135,29 @@ def assignment_digest(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+class ChildLaunchFence:
+    """Synchronous launch reservation that Stop can invalidate."""
+
+    def __init__(self, tree: "DelegationTree", child_id: str) -> None:
+        self._tree = tree
+        self.child_id = child_id
+        self._released = False
+
+    @property
+    def cancelled(self) -> bool:
+        return self._tree.launch_cancelled(self.child_id)
+
+    def attach(self, task: asyncio.Task[Any]) -> None:
+        """Attach the backend task or cancel it before it can run."""
+        self._tree.attach_launch_task(self.child_id, task)
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._tree.release_launch(self.child_id)
+
+
 class DelegationTree:
     """Reserve, admit, and settle durable child identities under one session owner."""
 
@@ -150,6 +173,8 @@ class DelegationTree:
         self._children: dict[str, ChildAdmission] = {}
         self._attempts: dict[tuple[str, str, str, str], str] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._launching: set[str] = set()
+        self._launch_cancelled: set[str] = set()
         self._stopping_sessions: set[str] = set()
         self._restore()
 
@@ -383,6 +408,32 @@ class DelegationTree:
         self._tasks.pop(child_id, None)
         return updated
 
+    def begin_launch(self, child_id: str) -> ChildLaunchFence:
+        """Reserve launch before any await that Stop could interleave."""
+        self._launching.add(child_id)
+        self._launch_cancelled.discard(child_id)
+        return ChildLaunchFence(self, child_id)
+
+    def launch_cancelled(self, child_id: str) -> bool:
+        return child_id in self._launch_cancelled
+
+    def attach_launch_task(self, child_id: str, task: asyncio.Task[Any]) -> None:
+        if self.launch_cancelled(child_id):
+            task.cancel()
+            return
+        self._tasks[child_id] = task
+        task.add_done_callback(
+            lambda done: self._forget_task(child_id, done)
+        )
+
+    def release_launch(self, child_id: str) -> None:
+        self._launching.discard(child_id)
+        self._launch_cancelled.discard(child_id)
+
+    def _forget_task(self, child_id: str, task: asyncio.Task[Any]) -> None:
+        if self._tasks.get(child_id) is task:
+            self._tasks.pop(child_id, None)
+
     async def attach_task(self, child_id: str, task: asyncio.Task[Any]) -> None:
         async with self._lock:
             self._tasks[child_id] = task
@@ -511,6 +562,8 @@ class DelegationTree:
         stopped: list[ChildAdmission] = []
         try:
             for victim in victims:
+                if victim.child_id in self._launching:
+                    self._launch_cancelled.add(victim.child_id)
                 task = self._tasks.get(victim.child_id)
                 settled = True
                 if task is not None and not task.done():

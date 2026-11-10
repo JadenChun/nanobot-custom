@@ -9,6 +9,7 @@ import html
 import json
 import os
 import re
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse
@@ -249,9 +250,11 @@ class _FetchTooLargeError(ValueError):
 
 async def _read_bounded_content(
     response: httpx.Response,
-    limit: int = MAX_FETCH_DOWNLOAD_BYTES,
+    limit: int | None = None,
 ) -> bytes:
     """Read a streamed response with a hard byte bound before decoding."""
+    if limit is None:
+        limit = MAX_FETCH_DOWNLOAD_BYTES
     declared = response.headers.get("content-length")
     declared_length: int | None = None
     if declared:
@@ -263,8 +266,46 @@ async def _read_bounded_content(
         raise _FetchTooLargeError(
             f"Response exceeds the {limit // (1024 * 1024)} MiB download limit"
         )
+    if getattr(response, "is_stream_consumed", False):
+        content = response.content
+        if len(content) > limit:
+            raise _FetchTooLargeError(
+                f"Response exceeds the {limit // (1024 * 1024)} MiB download limit"
+            )
+        return content
     chunks = bytearray()
-    async for chunk in response.aiter_bytes():
+    encoding = response.headers.get("content-encoding", "").strip().lower()
+    raw_iterator = (
+        response.aiter_raw()
+        if callable(getattr(response, "aiter_raw", None))
+        else response.aiter_bytes()
+    )
+    if encoding in {"gzip", "x-gzip", "deflate"}:
+        window = 16 + zlib.MAX_WBITS if encoding != "deflate" else zlib.MAX_WBITS
+        decoder = zlib.decompressobj(window)
+        try:
+            async for raw in raw_iterator:
+                remaining = limit + 1 - len(chunks)
+                if remaining <= 0:
+                    raise _FetchTooLargeError(
+                        f"Response exceeds the {limit // (1024 * 1024)} MiB download limit"
+                    )
+                decoded = decoder.decompress(raw, remaining)
+                chunks.extend(decoded)
+                if len(chunks) > limit or decoder.unconsumed_tail:
+                    raise _FetchTooLargeError(
+                        f"Response exceeds the {limit // (1024 * 1024)} MiB download limit"
+                    )
+            tail = decoder.flush()
+        except zlib.error as exc:
+            raise _FetchTooLargeError("Response compression is invalid") from exc
+        if len(chunks) + len(tail) > limit:
+            raise _FetchTooLargeError(
+                f"Response exceeds the {limit // (1024 * 1024)} MiB download limit"
+            )
+        chunks.extend(tail)
+        return bytes(chunks)
+    async for chunk in raw_iterator:
         if len(chunks) + len(chunk) > limit:
             raise _FetchTooLargeError(
                 f"Response exceeds the {limit // (1024 * 1024)} MiB download limit"
@@ -309,9 +350,28 @@ async def _get_with_safe_redirects(
             except _FetchTooLargeError as exc:
                 await streamed.__aexit__(None, None, None)
                 return None, str(exc)
+            headers_obj: object = response.headers
+            multi_items = getattr(headers_obj, "multi_items", None)
+            raw_items: list[tuple[str, str]]
+            if callable(multi_items):
+                raw_items = cast(
+                    Callable[[], list[tuple[str, str]]], multi_items
+                )()
+            else:
+                raw_items = [
+                    (str(name), str(value))
+                    for name, value in cast(
+                        Mapping[str, str], headers_obj
+                    ).items()
+                ]
+            buffered_headers = [
+                (name, value)
+                for name, value in raw_items
+                if name.lower() not in {"content-encoding", "content-length"}
+            ]
             buffered = httpx.Response(
                 response.status_code,
-                headers=response.headers,
+                headers=buffered_headers,
                 content=content,
                 request=response.request,
             )

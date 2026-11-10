@@ -1,0 +1,637 @@
+{
+  "version": "1.40.2",
+  "time": "1794218251547",
+  "generalDiagnostics": [
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/agent/loop.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 4768,
+          "character": 22
+        },
+        "end": {
+          "line": 4768,
+          "character": 31
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/agent/loop.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 4771,
+          "character": 16
+        },
+        "end": {
+          "line": 4771,
+          "character": 25
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/agent/loop.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 4772,
+          "character": 27
+        },
+        "end": {
+          "line": 4772,
+          "character": 36
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/agent/turn.py",
+      "severity": "error",
+      "message": "Unnecessary isinstance call; \"TurnSource\" is always an instance of \"TurnSource\"",
+      "range": {
+        "start": {
+          "line": 245,
+          "character": 22
+        },
+        "end": {
+          "line": 245,
+          "character": 52
+        }
+      },
+      "rule": "reportUnnecessaryIsInstance"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/agent/turn.py",
+      "severity": "error",
+      "message": "Unnecessary isinstance call; \"HistoryMode\" is always an instance of \"HistoryMode\"",
+      "range": {
+        "start": {
+          "line": 263,
+          "character": 28
+        },
+        "end": {
+          "line": 263,
+          "character": 65
+        }
+      },
+      "rule": "reportUnnecessaryIsInstance"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/agent/turn.py",
+      "severity": "error",
+      "message": "Unnecessary isinstance call; \"TraceMode\" is always an instance of \"TraceMode\"",
+      "range": {
+        "start": {
+          "line": 268,
+          "character": 26
+        },
+        "end": {
+          "line": 268,
+          "character": 59
+        }
+      },
+      "rule": "reportUnnecessaryIsInstance"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/adoption.py",
+      "severity": "error",
+      "message": "Unnecessary isinstance call; \"str\" is always an instance of \"str\"",
+      "range": {
+        "start": {
+          "line": 58,
+          "character": 15
+        },
+        "end": {
+          "line": 58,
+          "character": 40
+        }
+      },
+      "rule": "reportUnnecessaryIsInstance"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"item\" is unknown",
+      "range": {
+        "start": {
+          "line": 21,
+          "character": 8
+        },
+        "end": {
+          "line": 21,
+          "character": 12
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"sha256\" is partially unknown\n\u00a0\u00a0Type of \"sha256\" is \"Unknown | None\"",
+      "range": {
+        "start": {
+          "line": 24,
+          "character": 8
+        },
+        "end": {
+          "line": 24,
+          "character": 14
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 24,
+          "character": 17
+        },
+        "end": {
+          "line": 24,
+          "character": 25
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"item\" is unknown",
+      "range": {
+        "start": {
+          "line": 34,
+          "character": 8
+        },
+        "end": {
+          "line": 34,
+          "character": 12
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 59,
+          "character": 53
+        },
+        "end": {
+          "line": 59,
+          "character": 62
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Argument type is partially unknown\n\u00a0\u00a0Argument corresponds to parameter \"value\" in function \"_record_hashes\"\n\u00a0\u00a0Argument type is \"Unknown | None\"",
+      "range": {
+        "start": {
+          "line": 59,
+          "character": 53
+        },
+        "end": {
+          "line": 59,
+          "character": 77
+        }
+      },
+      "rule": "reportUnknownArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 60,
+          "character": 52
+        },
+        "end": {
+          "line": 60,
+          "character": 61
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Argument type is partially unknown\n\u00a0\u00a0Argument corresponds to parameter \"value\" in function \"_media_hashes\"\n\u00a0\u00a0Argument type is \"Unknown | None\"",
+      "range": {
+        "start": {
+          "line": 60,
+          "character": 52
+        },
+        "end": {
+          "line": 60,
+          "character": 70
+        }
+      },
+      "rule": "reportUnknownArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"raw_path\" is unknown",
+      "range": {
+        "start": {
+          "line": 135,
+          "character": 8
+        },
+        "end": {
+          "line": 135,
+          "character": 16
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 198,
+          "character": 46
+        },
+        "end": {
+          "line": 198,
+          "character": 55
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Argument type is partially unknown\n\u00a0\u00a0Argument corresponds to parameter \"event\" in function \"_migrate_event\"\n\u00a0\u00a0Argument type is \"dict[Unknown, Unknown]\"",
+      "range": {
+        "start": {
+          "line": 202,
+          "character": 16
+        },
+        "end": {
+          "line": 202,
+          "character": 21
+        }
+      },
+      "rule": "reportUnknownArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 208,
+          "character": 30
+        },
+        "end": {
+          "line": 208,
+          "character": 39
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/attachments/lifecycle.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 208,
+          "character": 60
+        },
+        "end": {
+          "line": 208,
+          "character": 69
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/attachment_ingress.py",
+      "severity": "error",
+      "message": "Unnecessary \"cast\" call; type is already \"list[Any]\"",
+      "range": {
+        "start": {
+          "line": 80,
+          "character": 34
+        },
+        "end": {
+          "line": 80,
+          "character": 56
+        }
+      },
+      "rule": "reportUnnecessaryCast"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/inbound_commands.py",
+      "severity": "error",
+      "message": "Type of \"get\" is partially unknown\n\u00a0\u00a0Type of \"get\" is \"Overload[(key: Unknown, default: None = None, /) -> (Unknown | None), (key: Unknown, default: Unknown, /) -> Unknown, (key: Unknown, default: _T@get, /) -> (Unknown | _T@get)]\"",
+      "range": {
+        "start": {
+          "line": 959,
+          "character": 61
+        },
+        "end": {
+          "line": 959,
+          "character": 69
+        }
+      },
+      "rule": "reportUnknownMemberType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Unnecessary isinstance call; \"Mapping[str, Any]\" is always an instance of \"Mapping[Unknown, Unknown]\"",
+      "range": {
+        "start": {
+          "line": 1105,
+          "character": 11
+        },
+        "end": {
+          "line": 1105,
+          "character": 42
+        }
+      },
+      "rule": "reportUnnecessaryIsInstance"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Argument type is partially unknown\n\u00a0\u00a0Argument corresponds to parameter \"map\" in function \"__init__\"\n\u00a0\u00a0Argument type is \"Mapping[Unknown, Unknown]\"",
+      "range": {
+        "start": {
+          "line": 1175,
+          "character": 18
+        },
+        "end": {
+          "line": 1175,
+          "character": 22
+        }
+      },
+      "rule": "reportUnknownArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Type of \"item\" is unknown",
+      "range": {
+        "start": {
+          "line": 1639,
+          "character": 47
+        },
+        "end": {
+          "line": 1639,
+          "character": 51
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Return type, \"list[Unknown] | list[Any]\", is partially unknown",
+      "range": {
+        "start": {
+          "line": 1640,
+          "character": 15
+        },
+        "end": {
+          "line": 1640,
+          "character": 84
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Type of \"old\" is unknown",
+      "range": {
+        "start": {
+          "line": 1640,
+          "character": 48
+        },
+        "end": {
+          "line": 1640,
+          "character": 51
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Argument type is partially unknown\n\u00a0\u00a0Argument corresponds to parameter \"iter2\" in function \"__new__\"\n\u00a0\u00a0Argument type is \"list[Unknown]\"",
+      "range": {
+        "start": {
+          "line": 1640,
+          "character": 66
+        },
+        "end": {
+          "line": 1640,
+          "character": 71
+        }
+      },
+      "rule": "reportUnknownArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Type of \"items\" is partially unknown\n\u00a0\u00a0Type of \"items\" is \"dict[Unknown, Any]\"",
+      "range": {
+        "start": {
+          "line": 1642,
+          "character": 8
+        },
+        "end": {
+          "line": 1642,
+          "character": 13
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Type of \"key\" is unknown",
+      "range": {
+        "start": {
+          "line": 1642,
+          "character": 52
+        },
+        "end": {
+          "line": 1642,
+          "character": 55
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Type of \"item\" is unknown",
+      "range": {
+        "start": {
+          "line": 1642,
+          "character": 57
+        },
+        "end": {
+          "line": 1642,
+          "character": 61
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Return type, \"dict[Unknown, Unknown] | dict[Unknown, Any]\", is partially unknown",
+      "range": {
+        "start": {
+          "line": 1643,
+          "character": 15
+        },
+        "end": {
+          "line": 1643,
+          "character": 81
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/transcript.py",
+      "severity": "error",
+      "message": "Type of \"key\" is unknown",
+      "range": {
+        "start": {
+          "line": 1643,
+          "character": 57
+        },
+        "end": {
+          "line": 1643,
+          "character": 60
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/ws_http.py",
+      "severity": "error",
+      "message": "Type of \"data\" is partially unknown\n\u00a0\u00a0Type of \"data\" is \"dict[str, int | str | bool | list[Unknown] | None]\"",
+      "range": {
+        "start": {
+          "line": 1576,
+          "character": 12
+        },
+        "end": {
+          "line": 1576,
+          "character": 16
+        }
+      },
+      "rule": "reportUnknownVariableType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/ws_http.py",
+      "severity": "error",
+      "message": "Argument of type \"dict[str, bool | int]\" cannot be assigned to parameter \"value\" of type \"int | str | bool | list[Unknown] | None\" in function \"__setitem__\"\n\u00a0\u00a0Type \"dict[str, bool | int]\" is not assignable to type \"int | str | bool | list[Unknown] | None\"\n\u00a0\u00a0\u00a0\u00a0\"dict[str, bool | int]\" is not assignable to \"int\"\n\u00a0\u00a0\u00a0\u00a0\"dict[str, bool | int]\" is not assignable to \"str\"\n\u00a0\u00a0\u00a0\u00a0\"dict[str, bool | int]\" is not assignable to \"bool\"\n\u00a0\u00a0\u00a0\u00a0\"dict[str, bool | int]\" is not assignable to \"None\"\n\u00a0\u00a0\u00a0\u00a0\"dict[str, bool | int]\" is not assignable to \"list[Unknown]\"",
+      "range": {
+        "start": {
+          "line": 1585,
+          "character": 16
+        },
+        "end": {
+          "line": 1585,
+          "character": 28
+        }
+      },
+      "rule": "reportArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/ws_http.py",
+      "severity": "error",
+      "message": "Argument of type \"WorkspaceScopePayload\" cannot be assigned to parameter \"value\" of type \"int | str | bool | list[Unknown] | None\" in function \"__setitem__\"\n\u00a0\u00a0Type \"WorkspaceScopePayload\" is not assignable to type \"int | str | bool | list[Unknown] | None\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"int\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"str\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"bool\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"None\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"list[Unknown]\"",
+      "range": {
+        "start": {
+          "line": 1591,
+          "character": 8
+        },
+        "end": {
+          "line": 1591,
+          "character": 31
+        }
+      },
+      "rule": "reportArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/ws_http.py",
+      "severity": "error",
+      "message": "Argument of type \"WorkspaceScopePayload\" cannot be assigned to parameter \"value\" of type \"int | str | bool | list[Unknown] | None\" in function \"__setitem__\"\n\u00a0\u00a0Type \"WorkspaceScopePayload\" is not assignable to type \"int | str | bool | list[Unknown] | None\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"int\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"str\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"bool\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"None\"\n\u00a0\u00a0\u00a0\u00a0\"WorkspaceScopePayload\" is not assignable to \"list[Unknown]\"",
+      "range": {
+        "start": {
+          "line": 1633,
+          "character": 20
+        },
+        "end": {
+          "line": 1633,
+          "character": 43
+        }
+      },
+      "rule": "reportArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/ws_http.py",
+      "severity": "error",
+      "message": "Argument of type \"FolderAccessRequest | None\" cannot be assigned to parameter \"value\" of type \"int | str | bool | list[Unknown] | None\" in function \"__setitem__\"\n\u00a0\u00a0Type \"FolderAccessRequest | None\" is not assignable to type \"int | str | bool | list[Unknown] | None\"\n\u00a0\u00a0\u00a0\u00a0Type \"FolderAccessRequest\" is not assignable to type \"int | str | bool | list[Unknown] | None\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"FolderAccessRequest\" is not assignable to \"int\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"FolderAccessRequest\" is not assignable to \"str\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"FolderAccessRequest\" is not assignable to \"bool\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"FolderAccessRequest\" is not assignable to \"None\"\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\"FolderAccessRequest\" is not assignable to \"list[Unknown]\"",
+      "range": {
+        "start": {
+          "line": 1641,
+          "character": 16
+        },
+        "end": {
+          "line": 1641,
+          "character": 48
+        }
+      },
+      "rule": "reportArgumentType"
+    },
+    {
+      "file": "/tmp/a3-0-baseline/nanobot/webui/ws_http.py",
+      "severity": "error",
+      "message": "Argument type is partially unknown\n\u00a0\u00a0Argument corresponds to parameter \"data\" in function \"http_json_response\"\n\u00a0\u00a0Argument type is \"dict[str, int | str | bool | list[Unknown] | None] | dict[str, Any]\"",
+      "range": {
+        "start": {
+          "line": 1643,
+          "character": 12
+        },
+        "end": {
+          "line": 1643,
+          "character": 16
+        }
+      },
+      "rule": "reportUnknownArgumentType"
+    }
+  ],
+  "summary": {
+    "filesAnalyzed": 538,
+    "errorCount": 39,
+    "warningCount": 0,
+    "informationCount": 0,
+    "timeInSec": 25.197
+  }
+}

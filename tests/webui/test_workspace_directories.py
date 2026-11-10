@@ -258,8 +258,9 @@ def test_expired_and_replaced_resolve_deny(tmp_path) -> None:
         policy_revision=service.roots()["policy_revision"],
         installation_id="install-owner",
     )
-    (root / "alpha").rmdir()
-    (root / "alpha").mkdir()
+    replacement = root / "alpha.next"
+    replacement.mkdir()
+    replacement.replace(root / "alpha")
     with pytest.raises(DirectoryBrowserError) as exc:
         service.consume_commit_token(
             resolved["commit_token"],

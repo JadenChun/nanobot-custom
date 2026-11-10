@@ -567,10 +567,23 @@ async def test_route_paginates_generated_assets(assets_client) -> None:
     assert second_payload["next"] is None
 
 
-async def test_global_generated_asset_library_aggregates_sessions(assets_client) -> None:
+async def test_global_generated_asset_library_pages_across_retained_sessions(
+    assets_client,
+) -> None:
     _project, instance, services, token = assets_client
-    for index, session in enumerate(("library-a", "library-b")):
-        path = _media_file(instance / "media", f"library-{index}.png")
+    asset_indices = {0, 100, 200}
+    expected_ids = set()
+    for index in range(201):
+        session = f"library-page-{index:03d}"
+        append_transcript_object(
+            f"websocket:{session}",
+            {"event": "user", "text": "hello", "turn_id": "turn-1"},
+        )
+        if index not in asset_indices:
+            continue
+        artifact_id = f"library-page-{index:03d}"
+        path = _media_file(instance / "media", f"{artifact_id}.png")
+        expected_ids.add(artifact_id)
         append_transcript_object(
             f"websocket:{session}",
             {
@@ -580,29 +593,55 @@ async def test_global_generated_asset_library_aggregates_sessions(assets_client)
                 "tool_events": [
                     _event(
                         call_id=f"call-{index}",
-                        result={
-                            "artifacts": [
-                                _artifact(path, artifact_id=f"library-{index}")
-                            ]
-                        },
+                        result={"artifacts": [_artifact(path, artifact_id=artifact_id)]},
                     )
                 ],
             },
         )
 
-    response = await services.endpoint.process_request(
+    first = await services.endpoint.process_request(
         None,
         Request("/api/generated-assets", Headers({"Authorization": f"Bearer {token}"})),
         is_allowed=lambda _client: True,
     )
-
-    assert response.status_code == 200, response.body
-    payload = json.loads(response.body)
-    assert payload["total"] == 2
-    assert {group["sessionKey"] for group in payload["groups"]} == {
-        "websocket:library-a",
-        "websocket:library-b",
+    assert first.status_code == 200, first.body
+    first_payload = json.loads(first.body)
+    assert first_payload["truncated"] is True
+    assert first_payload["nextSessionCursor"] == "200"
+    first_ids = {
+        artifact["id"]
+        for group in first_payload["groups"]
+        for artifact in group["artifacts"]
     }
+    assert first_ids == {"library-page-000", "library-page-100"}
+
+    second = await services.endpoint.process_request(
+        None,
+        Request(
+            f"/api/generated-assets?sessionCursor={first_payload['nextSessionCursor']}",
+            Headers({"Authorization": f"Bearer {token}"}),
+        ),
+        is_allowed=lambda _client: True,
+    )
+    assert second.status_code == 200, second.body
+    second_payload = json.loads(second.body)
+    assert second_payload["nextSessionCursor"] is None
+    assert second_payload["truncated"] is False
+    second_ids = {
+        artifact["id"]
+        for group in second_payload["groups"]
+        for artifact in group["artifacts"]
+    }
+    assert second_ids == {"library-page-200"}
+
+    keys = [
+        group["sessionKey"]
+        for payload in (first_payload, second_payload)
+        for group in payload["groups"]
+    ]
+    assert len(keys) == len(set(keys)) == 3
+    assert first_ids | second_ids == expected_ids
+    assert len(first_ids) + len(second_ids) == len(expected_ids)
 
 
 def test_forked_session_keeps_generated_asset_references(assets_client) -> None:

@@ -9,7 +9,7 @@ from nanobot.webui.inbound_commands import WebUICommandRouter, WebUIRequestResul
 def _router(callback):
     router = object.__new__(WebUICommandRouter)
     router._transport = SimpleNamespace(webui_connection_chats=lambda _conn: {"chat-a"})
-    router.gateway = SimpleNamespace(child_control=callback)
+    router.gateway = SimpleNamespace(child_control=callback, session_manager=object())
     return router
 
 

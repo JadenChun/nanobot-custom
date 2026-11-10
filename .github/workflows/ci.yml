@@ -134,9 +134,42 @@ jobs:
           echo "tui_required=$tui_required" >> "$GITHUB_OUTPUT"
           echo "docker_required=$docker_required" >> "$GITHUB_OUTPUT"
 
+  webui_bundle:
+    name: WebUI bundle for Python
+    needs: changes
+    if: needs.changes.outputs.python_required == 'true' || needs.changes.outputs.webui_required == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install WebUI dependencies
+        working-directory: webui
+        run: bun install --frozen-lockfile
+
+      - name: Build WebUI bundle
+        working-directory: webui
+        run: bun run build
+
+      - name: Verify bundle output
+        run: test -f nanobot/web/dist/index.html
+
+      - name: Upload WebUI bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-dist
+          path: nanobot/web/dist
+          if-no-files-found: error
+
   test:
     name: Python (${{ matrix.name }})
-    needs: changes
+    needs: [changes, webui_bundle]
     if: needs.changes.outputs.python_required == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -167,6 +200,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download WebUI bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: nanobot/web/dist
+
+      - name: Verify WebUI bundle
+        shell: bash
+        run: test -f nanobot/web/dist/index.html
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -191,45 +234,124 @@ jobs:
       - name: Verify dependency consistency
         run: uv pip check
 
+      - name: Record verification identity
+        shell: bash
+        env:
+          MATRIX_NAME: ${{ matrix.name }}
+          PYTEST_ARGS: ${{ matrix.pytest_args }}
+        run: |
+          mkdir -p artifacts
+          uv run --no-sync python - <<'PY' > artifacts/environment.txt
+          import hashlib
+          import os
+          import platform
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+
+          def digest_tree(path: Path) -> str:
+              digest = hashlib.sha256()
+              for item in sorted(path.rglob("*")):
+                  if item.is_file():
+                      digest.update(item.relative_to(root).as_posix().encode())
+                      digest.update(item.read_bytes())
+              return digest.hexdigest()
+
+          def command(*args: str) -> str:
+              return subprocess.check_output(args, text=True).strip()
+
+          print(f"source_sha={os.environ.get('GITHUB_SHA', command('git', 'rev-parse', 'HEAD'))}")
+          print(f"matrix_name={os.environ.get('MATRIX_NAME', '')}")
+          print(f"python={platform.python_version()}")
+          print(f"uv={command('uv', '--version')}")
+          print(f"uv_lock_sha256={hashlib.sha256((root / 'uv.lock').read_bytes()).hexdigest()}")
+          print(f"webui_bundle_sha256={digest_tree(root / 'nanobot/web/dist')}")
+          print(f"pytest_args={os.environ.get('PYTEST_ARGS', '')}")
+          PY
+          uv pip freeze > artifacts/pip-freeze.txt
+
       # Channel requirements live in manifests rather than uv.lock. Avoid a
       # later uv run sync pruning the packages installed by the previous step.
       - name: Lint with ruff
         if: matrix.coverage
         run: uv run --no-sync ruff check nanobot tests conftest.py
 
+      - name: Prepare the frozen type baseline
+        if: matrix.coverage
+        run: |
+          mkdir -p /tmp/a3-0-baseline
+          cp .github/baselines/a3-0/pyproject.toml /tmp/a3-0-baseline/pyproject.toml
+
       - name: Type check with BasedPyright (strict)
         if: matrix.coverage
-        run: uv run --no-sync basedpyright
+        run: >-
+          uv run --no-sync basedpyright --outputjson
+          > basedpyright.json
+
+      - name: Compare strict diagnostics with the frozen baseline
+        if: always() && matrix.coverage
+        run: >-
+          uv run --no-sync python scripts/check_type_regressions.py
+          .github/baselines/a3-0-basedpyright.json basedpyright.json
+          --baseline-root /tmp/a3-0-baseline
+          --current-root "${{ github.workspace }}"
 
       - name: Run tests with coverage
-        if: matrix.coverage
+        if: always() && matrix.coverage
+        env:
+          COLUMNS: "120"
+          LINES: "40"
         run: >-
           uv run --no-sync python -m pytest
           ${{ matrix.pytest_args }}
           --cov=nanobot --cov-report=term-missing:skip-covered
           --durations=25 --durations-min=1.0
+          --junitxml=artifacts/pytest.xml
 
       - name: Run serial CLI command tests with coverage
-        if: matrix.coverage
+        if: always() && matrix.coverage
+        env:
+          COLUMNS: "120"
+          LINES: "40"
         run: >-
           uv run --no-sync python -m pytest
           tests/cli/test_commands.py
           --cov=nanobot --cov-append --cov-report=term-missing:skip-covered
           --durations=25 --durations-min=1.0
+          --junitxml=artifacts/cli.xml
 
       - name: Run compatibility tests
-        if: ${{ !matrix.coverage }}
+        if: always() && !matrix.coverage
+        env:
+          COLUMNS: "120"
+          LINES: "40"
         run: >-
           uv run --no-sync python -m pytest
           ${{ matrix.pytest_args }}
           --durations=25 --durations-min=1.0
+          --junitxml=artifacts/pytest.xml
 
       - name: Run serial CLI command compatibility tests
-        if: ${{ !matrix.coverage }}
+        if: always() && !matrix.coverage
+        env:
+          COLUMNS: "120"
+          LINES: "40"
         run: >-
           uv run --no-sync python -m pytest
           tests/cli/test_commands.py
           --durations=25 --durations-min=1.0
+          --junitxml=artifacts/cli.xml
+
+      - name: Upload Python verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-verification-${{ matrix.name }}
+          path: |
+            basedpyright.json
+            artifacts/
+          if-no-files-found: warn
 
   windows_process:
     name: Python (Windows process compatibility)
@@ -240,6 +362,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download WebUI bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: webui-dist
+          path: nanobot/web/dist
+
+      - name: Verify WebUI bundle
+        shell: bash
+        run: test -f nanobot/web/dist/index.html
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
@@ -261,11 +393,57 @@ jobs:
       - name: Verify dependency consistency
         run: uv pip check
 
+      - name: Record verification identity
+        shell: bash
+        env:
+          MATRIX_NAME: windows_process
+          PYTEST_ARGS: tests/tools/test_exec_platform.py
+        run: |
+          mkdir -p artifacts
+          uv run --no-sync python - <<'PY' > artifacts/environment.txt
+          import hashlib
+          import os
+          import platform
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+
+          def digest_tree(path: Path) -> str:
+              digest = hashlib.sha256()
+              for item in sorted(path.rglob("*")):
+                  if item.is_file():
+                      digest.update(item.relative_to(root).as_posix().encode())
+                      digest.update(item.read_bytes())
+              return digest.hexdigest()
+
+          def command(*args: str) -> str:
+              return subprocess.check_output(args, text=True).strip()
+
+          print(f"source_sha={os.environ.get('GITHUB_SHA', command('git', 'rev-parse', 'HEAD'))}")
+          print(f"matrix_name={os.environ.get('MATRIX_NAME', '')}")
+          print(f"python={platform.python_version()}")
+          print(f"uv={command('uv', '--version')}")
+          print(f"uv_lock_sha256={hashlib.sha256((root / 'uv.lock').read_bytes()).hexdigest()}")
+          print(f"webui_bundle_sha256={digest_tree(root / 'nanobot/web/dist')}")
+          print(f"pytest_args={os.environ.get('PYTEST_ARGS', '')}")
+          PY
+          uv pip freeze > artifacts/pip-freeze.txt
+
       - name: Run Windows process compatibility tests
         run: >-
           uv run --no-sync python -m pytest
           tests/tools/test_exec_platform.py
           --durations=25 --durations-min=1.0
+          --junitxml=artifacts/pytest.xml
+
+      - name: Upload Windows verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-verification-windows-process
+          path: artifacts/
+          if-no-files-found: warn
 
   webui:
     needs: changes

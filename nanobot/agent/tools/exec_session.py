@@ -194,6 +194,9 @@ class _ExecSession:
         remaining = self.deadline - time.monotonic()
         if remaining > 0:
             await asyncio.sleep(remaining)
+        if await self._tree_quiescent():
+            self._cancel_deadline()
+            return
         self._timed_out = True
         try:
             await self.kill()
@@ -489,7 +492,13 @@ class ExecSessionManager:
                 if notify_on_exit:
                     if sink is None or origin is None or not owner_session_key or origin.session_key != owner_session_key:
                         raise ValueError("background continuation requires an enabled gateway and an owned request")
-                    sink.started(session_id, command, effective_logical_cwd, origin)
+                    await asyncio.to_thread(
+                        sink.started,
+                        session_id,
+                        command,
+                        effective_logical_cwd,
+                        origin,
+                    )
                 try:
                     process = await self._spawn(
                         command,
@@ -501,7 +510,7 @@ class ExecSessionManager:
                     )
                 except BaseException:
                     if sink is not None:
-                        sink.cancelled(session_id, "spawn_failed")
+                        await asyncio.to_thread(sink.cancelled, session_id, "spawn_failed")
                     raise
                 session = _ExecSession(
                     session_id=session_id,
@@ -529,13 +538,17 @@ class ExecSessionManager:
         except BaseException:
             if sink is not None:
                 await session.kill()
-                sink.cancelled(session_id, "initial_turn_interrupted")
+                await asyncio.to_thread(
+                    sink.cancelled,
+                    session_id,
+                    "initial_turn_interrupted",
+                )
             raise
         if poll.done:
             async with self._lock:
                 self._sessions.pop(session_id, None)
             if sink is not None:
-                sink.inline_completed(session_id)
+                await asyncio.to_thread(sink.inline_completed, session_id)
         elif sink is not None:
             task = asyncio.create_task(self._watch_completion(session, sink, poll.output))
             self._monitors[session_id] = task
@@ -562,10 +575,14 @@ class ExecSessionManager:
             raise RuntimeError("exec session tree did not settle")
         reason = self._cancel_reasons.pop(session.session_id, None)
         if reason is not None:
-            sink.cancelled(session.session_id, reason)
+            await asyncio.to_thread(sink.cancelled, session.session_id, reason)
         else:
             output, _omitted = _truncate_output("\n".join(part for part in (initial_output, poll.output) if part), MAX_OUTPUT_CHARS)
-            sink.finished(session.session_id, ExecCompletion(output, poll.exit_code, poll.timed_out))
+            await asyncio.to_thread(
+                sink.finished,
+                session.session_id,
+                ExecCompletion(output, poll.exit_code, poll.timed_out),
+            )
         async with self._lock:
             self._sessions.pop(session.session_id, None)
 

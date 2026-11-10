@@ -1468,6 +1468,7 @@ export class NanobotTui {
         if (hydrationId !== this.hydrationId) return
         this.historyBeforeCursor = history.beforeCursor
         this.historyHasMore = history.hasMoreBefore
+        this.reconcilePendingFollowUp(history)
         this.transcript.history(history.messages)
         this.restorePromptHistory(history.messages)
         const reversedHistory = [...history.messages].reverse()
@@ -1722,6 +1723,21 @@ export class NanobotTui {
     this.syncQueuePreview()
   }
 
+  private reconcilePendingFollowUp(history: {
+    activeTurnId?: string
+    completedTurnIds?: string[]
+  }): void {
+    const pending = this.pendingFollowUp
+    if (!pending) return
+    const admitted = pending.turnId === history.activeTurnId
+      || (history.completedTurnIds || []).includes(pending.turnId)
+    if (!admitted) return
+    if (this.promptQueue.commitFollowUp(pending.prompt)) {
+      this.pendingFollowUp = null
+      this.syncQueuePreview()
+    }
+  }
+
   private commitAdmittedFollowUp(event: {
     chat_id: string
     turn_id?: string
@@ -1792,15 +1808,15 @@ export class NanobotTui {
   private queueFollowUp(): void {
     if (!this.activeTurn || !this.ready) return
     const visibleContent = this.composer.plainText.trim()
-    if (this.draft.media(visibleContent).length) {
-      this.status.content = "Images cannot be queued · press Enter to send now"
-      return
-    }
+    const media = this.draft.media(visibleContent)
     const content = this.draft.expand(visibleContent).trim()
-    if (!content) return
+    if (!content && media.length === 0) return
     this.promptQueue.enqueue({
       content,
-      options: mentionOptions(content, this.availableMentions()),
+      options: {
+        ...mentionOptions(content, this.availableMentions()),
+        ...(media.length ? { media } : {}),
+      },
     })
     this.clearComposer()
     this.commandMenu.hide()

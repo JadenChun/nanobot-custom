@@ -86,16 +86,19 @@ func (c *Core) retainTerminal(id uint64, data []byte) bool {
 	}
 	c.terminalEvents[id] = data
 	c.terminalBytes += len(data)
-	for len(c.terminalEvents) > c.cfg.MaxRequests ||
-		c.terminalBytes > c.terminalByteLimit {
-		if len(c.terminalOrder) == 0 {
-			break
-		}
-		oldest := c.terminalOrder[0]
-		c.terminalOrder = c.terminalOrder[1:]
-		c.removeTerminalLocked(oldest)
+	// Admission reserves one terminal slot per request. Never evict an
+	// earlier admitted result to store a newer one.
+	if c.terminalBytes > c.terminalByteLimit {
+		c.removeTerminalLocked(id)
+		return false
 	}
 	return true
+}
+
+func (c *Core) hasTerminalCapacityLocked() bool {
+	c.terminalMu.Lock()
+	defer c.terminalMu.Unlock()
+	return len(c.requests)+len(c.terminalEvents) < c.maxTerminalResults
 }
 
 func (c *Core) removeTerminalLocked(id uint64) {

@@ -265,6 +265,8 @@ export interface HistorySnapshot {
   hasMoreBefore: boolean
   beforeCursor: string | null
   userMessageOffset: number
+  activeTurnId?: string
+  completedTurnIds?: string[]
 }
 
 export interface TokenUsage {
@@ -622,7 +624,13 @@ export async function fetchHistory(
   sessionKey?: string,
 ): Promise<HistorySnapshot> {
   if (!apiUrl || !apiToken) {
-    return { messages: [], hasMoreBefore: false, beforeCursor: null, userMessageOffset: 0 }
+    return {
+      messages: [],
+      hasMoreBefore: false,
+      beforeCursor: null,
+      userMessageOffset: 0,
+      completedTurnIds: [],
+    }
   }
   const key = encodeURIComponent(sessionKey ?? `websocket:${chatId}`)
   const params = new URLSearchParams({ limit: "120", direction: "latest" })
@@ -639,6 +647,8 @@ export async function fetchHistory(
   if (!response.ok) throw new Error(`history request failed: HTTP ${response.status}`)
   const payload = (await response.json()) as {
     messages?: Array<Record<string, unknown>>
+    active_turn_id?: string
+    completed_turn_ids?: string[]
     page?: { has_more_before?: boolean; before_cursor?: string; user_message_offset?: number }
   }
   let userIndex = typeof payload.page?.user_message_offset === "number"
@@ -711,6 +721,10 @@ export async function fetchHistory(
     userMessageOffset: typeof payload.page?.user_message_offset === "number"
       ? Math.max(0, payload.page.user_message_offset)
       : 0,
+    ...(typeof payload.active_turn_id === "string" ? { activeTurnId: payload.active_turn_id } : {}),
+    completedTurnIds: Array.isArray(payload.completed_turn_ids)
+      ? payload.completed_turn_ids.filter((value): value is string => typeof value === "string")
+      : [],
   }
 }
 

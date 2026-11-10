@@ -49,6 +49,7 @@ def _router(chats):
     )
     router.gateway = SimpleNamespace(
         child_control=AsyncMock(return_value={"ok": True, "state": "active"}),
+        session_manager=object(),
     )
     return router
 

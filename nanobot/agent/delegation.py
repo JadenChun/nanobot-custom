@@ -263,6 +263,15 @@ class ForegroundAgentManager:
         child = tree.child(child_id)
         if child is None or child.parent_key != parent_key:
             return {"ok": False, "reason": "child_not_found"}
+        parent = tree.sessions.read_session_snapshot(parent_key)
+        if (
+            parent is None
+            or (
+                child.parent_incarnation
+                and parent.incarnation != child.parent_incarnation
+            )
+        ):
+            return {"ok": False, "reason": "stale_parent"}
         if (
             runtime_generation is not None
             and runtime_generation != child.runtime_generation
@@ -609,6 +618,7 @@ class ForegroundAgentManager:
                 policy_metadata={"delegation_refused": True},
             )
         admission = None
+        launch_fence = None
         if (
             self._delegation_tree is not None
             and turn_context is not None
@@ -649,10 +659,21 @@ class ForegroundAgentManager:
                     role=role,
                     background=background,
                 )
+            launch_fence = tree.begin_launch(admission.child_id)
             activated = await tree.activate(admission.child_id)
             if activated is not None:
                 admission = activated
-            await self._emit_child(admission)
+            if launch_fence.cancelled:
+                launch_fence.release()
+                return AgentRunResult(
+                    final_content="Error: delegated child was stopped.",
+                    messages=[],
+                    stop_reason="cancelled",
+                    policy_metadata={"delegated_child": admission.metadata()},
+                )
+            await self._emit_child(
+                tree.child(admission.child_id) or admission
+            )
         if role in DELEGATED_READ_ONLY_ROLES:
             profile = role_capabilities(role)
             capability_prompt = (
@@ -801,6 +822,20 @@ class ForegroundAgentManager:
                 track = child_context.execution_owner.track_task
         try:
             if admission is not None and backend is not None:
+                fence = launch_fence
+                if fence is None or fence.cancelled:
+                    return AgentRunResult(
+                        final_content="Error: delegated child was stopped.",
+                        messages=[],
+                        stop_reason="cancelled",
+                        policy_metadata={"delegated_child": admission.metadata()},
+                    )
+
+                def attach_launch(task: asyncio.Task[Any]) -> None:
+                    fence.attach(task)
+                    if track is not None:
+                        track(task)
+
                 handle = await backend.start(
                     admission,
                     run_and_finalize,
@@ -808,12 +843,15 @@ class ForegroundAgentManager:
                         runtime_generation=admission.runtime_generation,
                         proof="native-runner",
                     ),
-                    track=track,
+                    track=attach_launch,
                 )
-                await self._delegation_tree.attach_task(  # type: ignore[union-attr]
-                    admission.child_id,
-                    handle.task,
-                )
+                if handle.task.cancelled() or fence.cancelled:
+                    return AgentRunResult(
+                        final_content="Error: delegated child was stopped.",
+                        messages=[],
+                        stop_reason="cancelled",
+                        policy_metadata={"delegated_child": admission.metadata()},
+                    )
                 if background:
                     handle.task.add_done_callback(self._consume_background_result)
                     logger.info(
@@ -875,6 +913,8 @@ class ForegroundAgentManager:
                 )
             raise
         finally:
+            if launch_fence is not None:
+                launch_fence.release()
             if (
                 admission is not None
                 and backend is not None

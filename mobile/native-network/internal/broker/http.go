@@ -68,7 +68,7 @@ func (c *Core) HTTP(input HTTPRequest) (uint64, error) {
 	ctx, cancel := context.WithTimeout(baseContext, timeout)
 	id := c.nextID()
 	c.mu.Lock()
-	if len(c.requests) >= c.cfg.MaxRequests {
+	if len(c.requests) >= c.cfg.MaxRequests || !c.hasTerminalCapacityLocked() {
 		c.mu.Unlock()
 		cancel()
 		return 0, ErrQueueFull

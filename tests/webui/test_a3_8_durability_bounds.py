@@ -4,8 +4,7 @@ These tests exercise only public interfaces:
 
 * distinct chat IDs get distinct transcripts, and legacy ambiguous transcripts
   stay un-migrated for a non-owner;
-* generated asset paging continues across sessions and new base64 stems are
-  discovered;
+* new base64 transcript stems are discovered;
 * PDF content streams are bounded before decode materialization;
 * unmeasurable audio is refused before the provider loads.
 """
@@ -84,44 +83,6 @@ def test_ambiguous_legacy_transcript_is_quarantined(tmp_path: Path) -> None:
             record.get("text")
             for record in transcript.read_transcript_lines("websocket:a_b")
         ] == ["other session history"]
-
-
-def test_generated_asset_pages_continue_across_sessions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Paging resumes at the cursor and reports the next page correctly."""
-    keys = ["websocket:s1", "websocket:s2", "websocket:s3"]
-    monkeypatch.setattr(generated_asset_index, "webui_session_keys", lambda _dir: keys)
-
-    def fake_index(session_key, *, signature, records_loader):
-        return [
-            {
-                "toolCallId": session_key,
-                "artifacts": [{"id": session_key}],
-            }
-        ]
-
-    monkeypatch.setattr(
-        generated_asset_index, "load_or_build_generated_asset_index", fake_index
-    )
-    monkeypatch.setattr(
-        generated_asset_index, "webui_transcript_signature", lambda _key: ()
-    )
-
-    first, next_cursor = generated_asset_index.load_all_generated_asset_page(
-        tmp_path, session_cursor=0, max_sessions=2
-    )
-    assert [item["sessionKey"] for item in first] == [
-        "websocket:s1",
-        "websocket:s2",
-    ]
-    assert next_cursor == 2
-
-    second, next_cursor2 = generated_asset_index.load_all_generated_asset_page(
-        tmp_path, session_cursor=2, max_sessions=2
-    )
-    assert [item["sessionKey"] for item in second] == ["websocket:s3"]
-    assert next_cursor2 is None
 
 
 def test_new_base64_transcript_stems_are_discovered(tmp_path: Path) -> None:

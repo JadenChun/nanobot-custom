@@ -190,6 +190,9 @@ class RiskyActionPolicy(ToolPolicy):
     _assessed_write_targets: dict[str, Path] = field(
         default_factory=dict, init=False, repr=False, compare=False,
     )
+    _denied_write_targets: set[str] = field(
+        default_factory=set, init=False, repr=False, compare=False,
+    )
 
     _RISKY_EXEC_PATTERNS = (
         (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
@@ -221,6 +224,7 @@ class RiskyActionPolicy(ToolPolicy):
             return ToolPolicyDecision()
 
         self._assessed_write_targets.clear()
+        self._denied_write_targets.clear()
         calls_to_assess: list[ToolCallRequest] = list(tool_calls)
         if self.approval_granted and self.approved_effect_ids:
             calls_to_assess = []
@@ -286,8 +290,9 @@ class RiskyActionPolicy(ToolPolicy):
             raw_path = str(tool_call.arguments.get("path") or "")
             resolved = self._resolve_write_target(tool_call.name, raw_path)
             if resolved is None:
-                # The owning tool denies this target. Let dispatch return the
-                # existing denial without reading the target for risk.
+                # The target could not be assessed. Never let a later hook
+                # change it into an unbound write.
+                self._denied_write_targets.add(tool_call.id)
                 return None
             self._assessed_write_targets[tool_call.id] = resolved
             if tool_call.name == "write_file":
@@ -435,8 +440,32 @@ class RiskyActionPolicy(ToolPolicy):
         params: Any = None,
     ) -> tuple[str | None, Path | None]:
         """Recheck and return the assessed target for the mutation boundary."""
+        if tool_call.id in self._denied_write_targets:
+            self._denied_write_targets.discard(tool_call.id)
+            raw_path = ""
+            if isinstance(params, dict):
+                raw_path = str(cast(dict[object, object], params).get("path") or "")
+            if not raw_path and isinstance(tool_call.arguments, dict):
+                raw_path = str(
+                    cast(dict[object, object], tool_call.arguments).get("path") or ""
+                )
+            resolver = getattr(tool, "resolve_write_path", None)
+            if raw_path and callable(resolver):
+                try:
+                    resolved_denied: object = cast(
+                        Callable[[str], object], resolver
+                    )(raw_path)
+                except Exception:
+                    # The owning tool still denies this target. Let dispatch
+                    # return its specific access-recovery outcome.
+                    return None, None
+                if resolved_denied is None:
+                    return None, None
+            return "write target was not assessable and remains unauthorized", None
         assessed = self._assessed_write_targets.pop(tool_call.id, None)
         if assessed is None:
+            if tool_call.name in {"write_file", "edit_file"}:
+                return "write target was not assessed", None
             return None, None
         raw_path = ""
         if isinstance(params, dict):

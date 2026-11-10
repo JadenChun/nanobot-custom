@@ -44,11 +44,12 @@ type Core struct {
 	pending []byte
 	eventMu sync.Mutex
 
-	terminalMu        sync.Mutex
-	terminalEvents    map[uint64][]byte
-	terminalOrder     []uint64
-	terminalBytes     int
-	terminalByteLimit int
+	terminalMu         sync.Mutex
+	terminalEvents     map[uint64][]byte
+	terminalOrder      []uint64
+	terminalBytes      int
+	terminalByteLimit  int
+	maxTerminalResults int
 
 	peerMu  sync.Mutex
 	peerIPs map[string]string
@@ -68,25 +69,33 @@ func NewCore(cfg Config) (*Core, error) {
 		return nil, fmt.Errorf("%w: origin cannot be parsed", ErrInvalid)
 	}
 	// A terminal event carries base64-encoded response bytes plus JSON
-	// overhead. Reserve enough for two maximum responses so a full event
-	// queue never evicts an earlier admitted result.
+	// overhead. Reserve one terminal slot for each of several maximum
+	// responses; admission refuses when all reserved slots are in use.
 	perResponse := base64.StdEncoding.EncodedLen(cfg.MaxResponseBytes) + 4096
-	terminalLimit := perResponse * 2
+	terminalLimit := perResponse * 4
 	if terminalLimit < 16<<20 {
 		terminalLimit = 16 << 20
 	}
 	if terminalLimit > 64<<20 {
 		terminalLimit = 64 << 20
 	}
+	maxTerminalResults := terminalLimit / perResponse
+	if maxTerminalResults < 2 {
+		maxTerminalResults = 2
+	}
+	if maxTerminalResults > cfg.MaxRequests {
+		maxTerminalResults = cfg.MaxRequests
+	}
 	return &Core{
-		cfg:               cfg,
-		origin:            origin,
-		state:             "new",
-		requests:          make(map[uint64]context.CancelFunc),
-		events:            make(chan []byte, cfg.QueueSize),
-		mediaStreams:      make(map[uint64]*mediaStream),
-		terminalEvents:    make(map[uint64][]byte),
-		terminalByteLimit: terminalLimit,
+		cfg:                cfg,
+		origin:             origin,
+		state:              "new",
+		requests:           make(map[uint64]context.CancelFunc),
+		events:             make(chan []byte, cfg.QueueSize),
+		mediaStreams:       make(map[uint64]*mediaStream),
+		terminalEvents:     make(map[uint64][]byte),
+		terminalByteLimit:  terminalLimit,
+		maxTerminalResults: maxTerminalResults,
 	}, nil
 }
 

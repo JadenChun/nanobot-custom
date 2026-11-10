@@ -1501,22 +1501,12 @@ class GatewayHTTPHandler:
             )
             if (
                 not isinstance(parent_key, str)
-                or not _is_websocket_channel_session_key(parent_key)
+                or not parent_key
                 or self.session_manager is None
             ):
                 return _http_error(404, "session not found")
-            parent_snapshot = self.session_manager.read_session_snapshot(parent_key)
-            if parent_snapshot is None:
-                return _http_error(404, "session not found")
-            recorded_incarnation = (
-                child_payload.get("parent_incarnation")
-                if child_payload is not None else None
-            )
-            if (
-                isinstance(recorded_incarnation, str)
-                and recorded_incarnation
-                and recorded_incarnation != parent_snapshot.incarnation
-            ):
+            root_key = resolve_child_root_key(self.session_manager, decoded_key)
+            if root_key is None:
                 return _http_error(404, "session not found")
             from nanobot.session.runtime_authority import read_runtime_session
 
@@ -1530,7 +1520,7 @@ class GatewayHTTPHandler:
                 and runtime_state.issue == "stale_parent"
             ):
                 return _http_error(404, "session not found")
-            scope_key = parent_key
+            scope_key = root_key
         else:
             scope_key = decoded_key
         try:
@@ -3324,6 +3314,39 @@ def _positive_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value if value > 0 else None
+
+
+def resolve_child_root_key(
+    session_manager: SessionManager,
+    child_key: str,
+) -> str | None:
+    """Resolve a child key to its direct WebSocket root with incarnation checks."""
+    current = child_key
+    seen: set[str] = set()
+    while current.startswith("delegated:"):
+        if current in seen:
+            return None
+        seen.add(current)
+        child_metadata = session_manager.read_session_metadata(current)
+        metadata_value = child_metadata.get("metadata") if isinstance(child_metadata, dict) else None
+        metadata = cast(dict[str, Any], metadata_value) if isinstance(metadata_value, dict) else None
+        payload_value = metadata.get("delegation_child") if metadata is not None else None
+        payload = cast(dict[str, Any], payload_value) if isinstance(payload_value, dict) else None
+        if payload is None:
+            return None
+        parent_key = payload.get("parent_key")
+        if not isinstance(parent_key, str) or not parent_key:
+            return None
+        parent_snapshot = session_manager.read_session_snapshot(parent_key)
+        if parent_snapshot is None:
+            return None
+        recorded = payload.get("parent_incarnation")
+        if isinstance(recorded, str) and recorded and recorded != parent_snapshot.incarnation:
+            return None
+        current = parent_key
+    if not _is_websocket_channel_session_key(current):
+        return None
+    return current
 
 
 def _is_websocket_channel_session_key(key: str) -> bool:

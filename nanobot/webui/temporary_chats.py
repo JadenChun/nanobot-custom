@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from nanobot.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
@@ -13,6 +15,7 @@ from nanobot.bus.events import (
     InboundMessage,
 )
 from nanobot.bus.queue import MessageBus
+from nanobot.config.paths import get_runtime_subdir
 from nanobot.security.desktop_permissions import PermissionSourceBinding
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import Session, SessionManager
@@ -66,7 +69,10 @@ class WebUITemporaryChats:
         self._logger = logger
         self._channel_name = channel_name
         self._owners: dict[str, object] = {}
-        self._cleanup_retries: dict[str, set[str]] = {}
+        self._cleanup_retry_store = (
+            get_runtime_subdir("temporary-chat-cleanup") / "retained.json"
+        )
+        self._cleanup_retries = self._load_cleanup_retries()
         self._owner_chat_ids: dict[object, set[str]] = {}
         # Keep active sessions alive if the bounded manager cache evicts them
         # between WebUI turns. SessionPolicy remains the authority below.
@@ -80,6 +86,43 @@ class WebUITemporaryChats:
 
     def _session_key(self, chat_id: str) -> str:
         return f"{self._channel_name}:{chat_id}"
+
+    def _load_cleanup_retries(self) -> dict[str, set[str]]:
+        try:
+            raw: object = json.loads(self._cleanup_retry_store.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        retained: dict[str, set[str]] = {}
+        for raw_chat_id, raw_paths in cast(dict[object, object], raw).items():
+            if not isinstance(raw_chat_id, str) or not isinstance(raw_paths, list):
+                continue
+            kept: set[str] = set()
+            for raw_item in cast(list[object], raw_paths):
+                if isinstance(raw_item, str) and raw_item:
+                    kept.add(raw_item)
+            if kept:
+                retained[raw_chat_id] = kept
+        return retained
+
+    def _save_cleanup_retries(self) -> None:
+        payload = {
+            chat_id: sorted(paths)
+            for chat_id, paths in self._cleanup_retries.items()
+            if paths
+        }
+        path = self._cleanup_retry_store
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+        except OSError:
+            self._logger.warning("failed to persist temporary WebUI cleanup custody")
 
     def _cached_session_is_transient(self, chat_id: str) -> bool:
         if self._sessions is None:
@@ -222,6 +265,7 @@ class WebUITemporaryChats:
             self._cleanup_retries[chat_id] = failed
         else:
             self._cleanup_retries.pop(chat_id, None)
+        self._save_cleanup_retries()
         return failed
 
     def pending_cleanup(self, chat_id: str) -> tuple[str, ...]:
@@ -240,6 +284,7 @@ class WebUITemporaryChats:
             self._cleanup_retries[chat_id] = failed
         else:
             self._cleanup_retries.pop(chat_id, None)
+        self._save_cleanup_retries()
         return tuple(sorted(failed))
 
     def _forget_owner(self, owner: object, chat_id: str) -> None:

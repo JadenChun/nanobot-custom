@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -51,8 +52,13 @@ func testServer(t *testing.T) *httptest.Server {
 		_, _ = w.Write([]byte(`{"fixture":true}`))
 	})
 	mux.HandleFunc("/fixture/v1/read", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("cursor") == "slow" {
+		switch r.URL.Query().Get("cursor") {
+		case "slow":
 			time.Sleep(3 * time.Second)
+		case "large":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(bytes.Repeat([]byte("x"), 8<<20))
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[]}`))
@@ -576,44 +582,47 @@ func TestQueueFullRetainsTerminalResult(t *testing.T) {
 	}
 }
 
-func TestTerminalBudgetHoldsTwoMaximumResponses(t *testing.T) {
+func TestTerminalBudgetHoldsEveryAdmittedResult(t *testing.T) {
 	server := testServer(t)
 	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
-	if err := core.emit(map[string]any{"type": "filler"}); err != nil {
-		t.Fatalf("filler: %v", err)
-	}
-	body := base64.StdEncoding.EncodeToString(make([]byte, 8<<20))
-	for id := uint64(1); id <= 2; id++ {
-		if err := core.emit(map[string]any{
-			"type":        "http_response",
-			"request_id":  id,
-			"status":      200,
-			"body_base64": body,
-		}); err != nil {
-			t.Fatalf("terminal emit %d: %v", id, err)
+	ids := make([]uint64, 0, 4)
+	for i := 0; i < 4; i++ {
+		id, err := core.HTTP(HTTPRequest{
+			Operation: "fixture_read",
+			Method:    http.MethodGet,
+			Path:      "/fixture/v1/read?cursor=large",
+		})
+		if err != nil {
+			t.Fatalf("admit %d: %v", i, err)
 		}
+		ids = append(ids, id)
 	}
 	buffer := make([]byte, 12<<20)
 	seen := map[uint64]bool{}
-	for i := 0; i < 2; i++ {
+	for len(seen) < len(ids) {
 		n, err := core.PollEvent(buffer)
-		if err != nil || n == 0 {
-			t.Fatalf("poll %d: n=%d err=%v", i, n, err)
+		if err != nil {
+			t.Fatalf("poll: %v", err)
+		}
+		if n == 0 {
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 		var event struct {
 			Type      string  `json:"type"`
 			RequestID float64 `json:"request_id"`
 		}
 		if err := json.Unmarshal(buffer[:n], &event); err != nil {
-			t.Fatalf("poll %d decode: %v", i, err)
+			t.Fatalf("decode: %v", err)
 		}
-		if event.Type != "http_response" {
-			continue
+		if event.Type == "http_response" {
+			seen[uint64(event.RequestID)] = true
 		}
-		seen[uint64(event.RequestID)] = true
 	}
-	if !seen[1] || !seen[2] {
-		t.Fatalf("terminal results evicted: %v", seen)
+	for _, id := range ids {
+		if !seen[id] {
+			t.Fatalf("missing terminal result for %d: %v", id, seen)
+		}
 	}
 }
 
