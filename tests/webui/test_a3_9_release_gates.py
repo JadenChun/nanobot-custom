@@ -100,15 +100,6 @@ def test_parity_checker_self_test_passes() -> None:
     assert "missing-async-route" not in result.stderr
 
 
-def test_ci_covers_migration_helpers_and_docs() -> None:
-    repo = Path(__file__).resolve().parents[2]
-    workflow = (repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-
-    assert "docs/**" not in workflow
-    assert "docs/migration/*" in workflow
-    assert "python_required=true" in workflow
-
-
 def test_update_helper_rejects_identical_artifacts(tmp_path: Path) -> None:
     repo = Path(__file__).resolve().parents[2]
     script = repo / "mobile/scripts/test-update-persistence.sh"

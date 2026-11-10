@@ -34,6 +34,7 @@ from typing import (
 )
 
 from nanobot.runtime_context import public_history_message
+from nanobot.session import mode_storage
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import JsonlSessionStore, Session, SessionStorageError
 from nanobot.session.mode_storage import (
@@ -1217,11 +1218,20 @@ class SessionModeResolver:
 
     def _journal_records(self, operation_id: str) -> list[dict[str, object]]:
         directory = f".session-mode/journals/{operation_id}"
-        entries = self.storage.list(directory, suffix=".json")
+        retained = f".session-mode/retained-journals/{operation_id}"
+        if self.storage.exists(directory):
+            base = directory
+            entries = self.storage.list(base, suffix=".json")
+        elif self.storage.exists(retained):
+            base = retained
+            entries = self.storage.list(base, suffix=".json")
+        else:
+            base = directory
+            entries = ()
         records: list[dict[str, object]] = []
         previous: str | None = None
         for sequence, name in enumerate(entries, 1):
-            value = _parse_json(self.storage.read(f"{directory}/{name}"))
+            value = _parse_json(self.storage.read(f"{base}/{name}"))
             if (
                 set(value) not in (_LEGACY_JOURNAL_FIELDS, _JOURNAL_FIELDS)
                 or name != f"{sequence:04d}-{value.get('phase')}.json"
@@ -1393,6 +1403,27 @@ class SessionModeResolver:
             raise _fail()
         return records
 
+    def _roll_completed_journals(self) -> None:
+        """Archive terminal journals before the live enumeration reaches its bound."""
+        live = ".session-mode/journals"
+        retained = ".session-mode/retained-journals"
+        if not self.storage.exists(live):
+            return
+        names = self.storage.list(
+            live,
+            maximum=mode_storage.MODE_JOURNAL_LIMIT * 2,
+        )
+        if len(names) < mode_storage.MODE_JOURNAL_LIMIT:
+            return
+        for name in names:
+            journal = self._journal_records(name)
+            if journal[-1]["phase"] not in {"complete", "aborted"}:
+                continue
+            self.storage.rename(f"{live}/{name}", f"{retained}/{name}")
+            if len(self.storage.list(live, maximum=mode_storage.MODE_JOURNAL_LIMIT * 2)) < mode_storage.MODE_JOURNAL_LIMIT:
+                return
+        raise _fail("session mode journal capacity exceeded")
+
     def _append_journal(
         self,
         operation_id: str,
@@ -1424,6 +1455,8 @@ class SessionModeResolver:
         archive_digest: str | None = None,
     ) -> None:
         directory = f".session-mode/journals/{operation_id}"
+        if not self.storage.exists(directory):
+            self._roll_completed_journals()
         existing = self._journal_records(operation_id) if self.storage.exists(directory) else []
         if existing:
             first = existing[0]

@@ -82,6 +82,34 @@ async def test_repeated_reconciliation_retains_every_edge_and_original_observati
     await graph.aclose()
 
 
+async def test_bridge_capacity_fails_closed_before_occurrence_mutation(tmp_path, monkeypatch):
+    import nanobot.cron.scheduler_store as scheduler_store
+    from nanobot.cron.occurrence_store import OccurrenceCorruptError
+    from nanobot.cron.runtime_inspection import inspect_scheduler
+
+    graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
+    original = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, original, successor="second")
+    before_state = inspect_scheduler(
+        graph.store.root, namespace="stage3", runtime_identity="copied-root"
+    )
+    before_records = graph.service.occurrence_store.inspect_records()
+    assert len(before_state["bridges"]) == 1
+
+    monkeypatch.setattr(scheduler_store, "MAX_BRIDGES", 1)
+    current = before_records[0]
+    with pytest.raises((SchedulerConflictError, OccurrenceCorruptError)):
+        reconcile(graph, current, successor="third")
+
+    after_state = inspect_scheduler(
+        graph.store.root, namespace="stage3", runtime_identity="copied-root"
+    )
+    assert after_state == before_state
+    assert graph.service.occurrence_store.inspect_records() == before_records
+    assert calls == [] and channels.calls == []
+    await graph.aclose()
+
+
 @pytest.mark.parametrize("attack", ["missing-middle", "owner", "skipped", "resolution", "digest", "identity", "bool", "fork", "unknown"])
 async def test_reconciliation_chain_attacks_fail_closed(tmp_path, monkeypatch, attack):
     from copy import deepcopy

@@ -65,7 +65,7 @@ def test_agent_and_gateway_help_accept_compatibility_log_file() -> None:
         )
 
         assert result.returncode == 0, result.stderr
-        assert "--log-file" in result.stdout
+        assert "--log-file" in "".join(result.stdout.split())
 
 
 def test_file_only_agent_runtime_logging_does_not_write_to_stderr(tmp_path: Path) -> None:

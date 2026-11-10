@@ -59,10 +59,11 @@ def test_every_phase_requires_explicit_authority_selectors() -> None:
     for arguments in invocations:
         result = runner.invoke(cron_delivery_app, arguments)
         assert result.exit_code == 2
-        assert "--outbox-root" in result.output
+        assert "--outbox-root" in "".join(result.output.split())
         help_result = runner.invoke(cron_delivery_app, [*arguments, "--help"])
-        assert "--namespace" in help_result.output
-        assert "--artifacts-root" in help_result.output
+        help_output = "".join(help_result.output.split())
+        assert "--namespace" in help_output
+        assert "--artifacts-root" in help_output
 
 
 def test_unsafe_selectors_are_content_free_exit_five(tmp_path: Path) -> None:

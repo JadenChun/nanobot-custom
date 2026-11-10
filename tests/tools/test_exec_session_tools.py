@@ -407,6 +407,26 @@ def test_exec_session_preserves_completed_session_output_until_polled(tmp_path):
     assert "Exit code: 0" in final
 
 
+def test_exec_session_poll_after_deadline_keeps_completed_success(tmp_path):
+    async def run() -> tuple[str, str]:
+        manager = ExecSessionManager()
+        exec_tool = ExecTool(working_dir=str(tmp_path), timeout=1, session_manager=manager)
+        session_tool = ExecSessionTool(manager=manager)
+
+        initial = await exec_tool.execute(command="echo hi", yield_time_ms=0)
+        sid = _session_id(initial)
+        await asyncio.sleep(1.3)
+        final = await session_tool.execute(session_id=sid, input="", timeout_ms=0)
+        return initial, final
+
+    initial, final = asyncio.run(run())
+
+    assert "Process running" in initial
+    assert "hi" in final
+    assert "Exit code: 0" in final
+    assert "timed out" not in final.lower()
+
+
 def test_exec_session_until_exit_waits_for_silent_process(tmp_path):
     async def run() -> tuple[str, str]:
         manager = ExecSessionManager()

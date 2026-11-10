@@ -63,7 +63,7 @@ def test_distinct_chat_ids_never_share_a_transcript(tmp_path: Path) -> None:
         ] == ["second history"]
 
 
-def test_ambiguous_legacy_transcript_is_quarantined(tmp_path: Path) -> None:
+def test_other_owner_legacy_transcript_is_quarantined(tmp_path: Path) -> None:
     """A legacy file that belongs to another chat ID is not migrated or deleted."""
     legacy = tmp_path / f"{SessionManager.safe_key('websocket:a:b')}.jsonl"
     legacy.write_text(
