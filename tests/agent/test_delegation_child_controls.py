@@ -57,6 +57,7 @@ def _stop_payload():
     return {
         "parent_key": "websocket:chat-a",
         "child_id": "child-a",
+        "runtime_generation": 0,
         "action": "stop",
     }
 

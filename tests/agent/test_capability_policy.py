@@ -58,6 +58,7 @@ def test_role_tool_profiles_are_exact_and_worker_has_no_shell(tmp_path) -> None:
         "list_dir",
         "write_file",
         "edit_file",
+        "explore",
     }
     assert all("exec" not in manager._tools_for_role(role).tool_names for role in (
         "planner", "reviewer", "explorer", "crawler"

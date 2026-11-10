@@ -2087,12 +2087,15 @@ class WebUICommandRouter:
         child_id = payload.get("child_id")
         control = payload.get("action")
         content = payload.get("content")
+        runtime_generation = payload.get("runtime_generation")
         if not (
             isinstance(parent_key, str)
             and parent_key.startswith(WEBUI_SESSION_STORAGE_PREFIX)
             and isinstance(child_id, str) and child_id
             and control in {"wait", "steer", "stop"}
             and (content is None or isinstance(content, str))
+            and type(runtime_generation) is int
+            and runtime_generation >= 0
         ):
             return WebUIRequestResult(
                 status=400,
@@ -2118,6 +2121,7 @@ class WebUICommandRouter:
             child_id,
             str(control),
             content,
+            runtime_generation,
         )
         if not result.get("ok"):
             return WebUIRequestResult(

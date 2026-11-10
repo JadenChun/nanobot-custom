@@ -2334,6 +2334,7 @@ export function ThreadShell({
 
   const handleChildControl = useCallback((
     childId: string,
+    runtimeGeneration: number,
     action: "wait" | "steer" | "stop",
     content?: string,
   ) => {
@@ -2341,6 +2342,7 @@ export function ThreadShell({
     void client.controlDelegatedChild(
       session.key,
       childId,
+      runtimeGeneration,
       action,
       content,
     ).catch(() => {});

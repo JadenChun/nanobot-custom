@@ -106,6 +106,14 @@ class DelegateTaskTool(_ForegroundTool):
                 "minItems": 1,
             },
             "artifact_references": _ARTIFACT_REFERENCES,
+            "background": {
+                "type": "boolean",
+                "description": (
+                    "Start the child and return immediately. The child continues after this "
+                    "turn under its admitted scope. Defaults to false to wait for the result."
+                ),
+                "default": False,
+            },
         },
         "required": ["contract", "write_scope"],
         "additionalProperties": False,
@@ -117,6 +125,7 @@ class DelegateTaskTool(_ForegroundTool):
         write_scope: list[str],
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
+        background: bool = False,
         **_: Any,
     ) -> str | ToolOutcome:
         return await self._manager.run_worker(
@@ -124,6 +133,7 @@ class DelegateTaskTool(_ForegroundTool):
             write_scope=write_scope,
             turn_context=turn_context,
             artifact_references=artifact_references,
+            background=background,
         )
 
     async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:

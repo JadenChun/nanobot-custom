@@ -61,6 +61,8 @@ class ChildBackend(Protocol):
         admission: ChildAdmission,
         run: RunCall,
         binding: ChildBackendBinding,
+        *,
+        track: Callable[[asyncio.Task[Any]], None] | None = None,
     ) -> ChildBackendHandle: ...
 
     async def resume(
@@ -94,6 +96,8 @@ class NativeChildBackend:
         admission: ChildAdmission,
         run: RunCall,
         binding: ChildBackendBinding,
+        *,
+        track: Callable[[asyncio.Task[Any]], None] | None = None,
     ) -> ChildBackendHandle:
         if binding.backend != self.backend_name:
             raise ChildBackendUnavailableError("child backend binding does not match")
@@ -104,6 +108,11 @@ class NativeChildBackend:
             raise ChildBackendUnavailableError("child already has a live execution")
         task = asyncio.create_task(run())
         self._tasks[admission.child_id] = task
+        task.add_done_callback(
+            lambda finished, child_id=admission.child_id: self._forget(child_id, finished)
+        )
+        if track is not None:
+            track(task)
         return ChildBackendHandle(
             child_id=admission.child_id,
             runtime_generation=admission.runtime_generation,
@@ -132,6 +141,10 @@ class NativeChildBackend:
 
     async def steer(self, child_id: str, content: str) -> None:
         raise ChildBackendUnavailableError("native child has no mid-run steering")
+
+    def _forget(self, child_id: str, task: asyncio.Task[Any]) -> None:
+        if self._tasks.get(child_id) is task:
+            self._tasks.pop(child_id, None)
 
     async def interrupt(self, child_id: str) -> bool:
         task = self._tasks.pop(child_id, None)

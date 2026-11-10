@@ -135,6 +135,7 @@ interface ChatClient {
   controlDelegatedChild?(
     parentKey: string,
     childId: string,
+    runtimeGeneration: number,
     action: "wait" | "steer" | "stop",
     content?: string,
   ): Promise<unknown>
@@ -1095,6 +1096,7 @@ export class NanobotTui {
           this.client,
           `websocket:${this.currentChatId}`,
           childId,
+          child.runtime_generation,
           sub,
           text || undefined,
         )

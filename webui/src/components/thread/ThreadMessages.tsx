@@ -26,6 +26,7 @@ interface ThreadMessagesProps {
   onOpenChildSession?: (sessionKey: string) => void;
   onChildControl?: (
     childId: string,
+    runtimeGeneration: number,
     action: "wait" | "steer" | "stop",
     content?: string,
   ) => void;
@@ -266,6 +267,7 @@ interface ThreadDisplayUnitProps {
   onOpenChildSession?: (sessionKey: string) => void;
   onChildControl?: (
     childId: string,
+    runtimeGeneration: number,
     action: "wait" | "steer" | "stop",
     content?: string,
   ) => void;

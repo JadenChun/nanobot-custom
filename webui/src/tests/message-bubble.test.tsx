@@ -1113,15 +1113,15 @@ describe("MessageBubble", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Wait" }));
-    expect(onControl).toHaveBeenCalledWith("child-a", "wait");
+    expect(onControl).toHaveBeenCalledWith("child-a", 0, "wait");
 
     await user.click(screen.getByRole("button", { name: "Stop" }));
-    expect(onControl).toHaveBeenCalledWith("child-a", "stop");
+    expect(onControl).toHaveBeenCalledWith("child-a", 0, "stop");
 
     await user.click(screen.getByRole("button", { name: "Steer" }));
     await user.type(screen.getByLabelText("Child guidance"), "focus");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(onControl).toHaveBeenCalledWith("child-a", "steer", "focus");
+    expect(onControl).toHaveBeenCalledWith("child-a", 0, "steer", "focus");
 
     rerender(
       <MessageBubble

@@ -1381,6 +1381,7 @@ export class NanobotClient {
   controlDelegatedChild(
     parentKey: string,
     childId: string,
+    runtimeGeneration: number,
     action: "wait" | "steer" | "stop",
     content?: string,
   ): Promise<Record<string, unknown>> {
@@ -1389,6 +1390,7 @@ export class NanobotClient {
       {
         parent_key: parentKey,
         child_id: childId,
+        runtime_generation: runtimeGeneration,
         action,
         ...(content !== undefined ? { content } : {}),
       },

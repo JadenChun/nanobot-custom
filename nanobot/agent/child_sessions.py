@@ -42,14 +42,14 @@ _TERMINAL_STATES = frozenset({
 
 @dataclass(frozen=True, slots=True)
 class DelegationTreePolicy:
-    """Finite tree limits aligned with the accepted foreground delegation design.
+    """Finite tree limits for durable delegated children.
 
-    Delegation is synchronous and non-recursive: a child cannot create another
-    delegated child. Two siblings are allowed under one parent, and the existing
-    ``max_concurrent_subagents`` capacity bounds the live tree at four.
+    A child may create one nested child. Two siblings are allowed under one
+    parent, and the live tree is bounded at four descendants. The depth and
+    capacity limits are finite and checked before a reservation is committed.
     """
 
-    max_depth: int = 1
+    max_depth: int = 2
     max_live_children_per_parent: int = 2
     max_live_descendants: int = 4
 
@@ -150,6 +150,7 @@ class DelegationTree:
         self._children: dict[str, ChildAdmission] = {}
         self._attempts: dict[tuple[str, str, str, str], str] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._stopping_sessions: set[str] = set()
         self._restore()
 
     def _restore(self) -> None:
@@ -295,6 +296,11 @@ class DelegationTree:
             f"{attempt_id}:{digest}",
         )
         async with self._lock:
+            if parent_key in self._stopping_sessions:
+                return ChildRefusal(
+                    "session_stopping",
+                    "The parent session is stopping its delegated subtree",
+                )
             existing = self._attempts.get(attempt_key)
             if existing is not None:
                 child = self._children.get(existing)
@@ -445,6 +451,21 @@ class DelegationTree:
             pass
         return self._children.get(child_id)
 
+    async def stop_all(
+        self,
+        *,
+        settle_timeout: float = 10.0,
+    ) -> tuple[ChildAdmission, ...]:
+        """Stop every live child under this owner, including background work."""
+        async with self._lock:
+            child_ids = [
+                child.child_id for child in self._children.values() if child.live
+            ]
+        stopped: list[ChildAdmission] = []
+        for child_id in child_ids:
+            stopped.extend(await self.stop_subtree(child_id, settle_timeout=settle_timeout))
+        return tuple(stopped)
+
     async def stop_for_parent(
         self,
         parent_key: str,
@@ -453,6 +474,7 @@ class DelegationTree:
     ) -> tuple[ChildAdmission, ...]:
         """Stop live children admitted under one exact parent incarnation."""
         async with self._lock:
+            self._stopping_sessions.add(parent_key)
             child_ids = [
                 child.child_id for child in self._children.values()
                 if child.parent_key == parent_key
@@ -463,27 +485,61 @@ class DelegationTree:
                 )
             ]
         stopped: list[ChildAdmission] = []
-        for child_id in child_ids:
-            stopped.extend(await self.stop_subtree(child_id))
+        try:
+            for child_id in child_ids:
+                stopped.extend(await self.stop_subtree(child_id))
+        finally:
+            async with self._lock:
+                self._stopping_sessions.discard(parent_key)
         return tuple(stopped)
 
-    async def stop_subtree(self, child_id: str) -> tuple[ChildAdmission, ...]:
-        """Cancel one child and its descendants; siblings remain independent."""
+    async def stop_subtree(
+        self,
+        child_id: str,
+        *,
+        settle_timeout: float = 10.0,
+    ) -> tuple[ChildAdmission, ...]:
+        """Cancel one child and its descendants; siblings remain independent.
+
+        The terminal state is committed only after the owned task settles. If a
+        runner ignores cancellation, the child stays visibly uncertain instead
+        of reporting a stopped state while work continues.
+        """
         async with self._lock:
             victims = self._subtree_locked(child_id)
-        cancelled: list[ChildAdmission] = []
-        for victim in victims:
-            task = self._tasks.get(victim.child_id)
-            if task is not None and not task.done():
-                task.cancel()
-            updated = await self.complete(
-                victim.child_id,
-                outcome="stopped_by_owner",
-                state="stopped",
-            )
-            if updated is not None:
-                cancelled.append(updated)
-        return tuple(cancelled)
+            self._stopping_sessions.update(victim.session_key for victim in victims)
+        stopped: list[ChildAdmission] = []
+        try:
+            for victim in victims:
+                task = self._tasks.get(victim.child_id)
+                settled = True
+                if task is not None and not task.done():
+                    task.cancel()
+                if task is not None:
+                    joined = asyncio.gather(task, return_exceptions=True)
+                    try:
+                        await asyncio.wait_for(joined, timeout=settle_timeout)
+                    except asyncio.TimeoutError:
+                        settled = False
+                    except asyncio.CancelledError:
+                        current = asyncio.current_task()
+                        if current is not None and current.cancelling() > 0:
+                            raise
+                        # The target task itself completed by cancellation.
+                        settled = task.done()
+                updated = await self.complete(
+                    victim.child_id,
+                    outcome=("stopped_by_owner" if settled else "stop_unsettled"),
+                    state=("stopped" if settled else "uncertain"),
+                )
+                if updated is not None:
+                    stopped.append(updated)
+        finally:
+            async with self._lock:
+                self._stopping_sessions.difference_update(
+                    victim.session_key for victim in victims
+                )
+        return tuple(stopped)
 
     def _subtree_locked(self, child_id: str) -> list[ChildAdmission]:
         root = self._children.get(child_id)

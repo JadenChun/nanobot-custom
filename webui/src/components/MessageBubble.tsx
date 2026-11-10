@@ -73,6 +73,7 @@ interface MessageBubbleProps {
   onOpenChildSession?: (sessionKey: string) => void;
   onChildControl?: (
     childId: string,
+    runtimeGeneration: number,
     action: "wait" | "steer" | "stop",
     content?: string,
   ) => void;
@@ -87,6 +88,7 @@ function DelegatedChildRow({
   onOpen?: (sessionKey: string) => void;
   onControl?: (
     childId: string,
+    runtimeGeneration: number,
     action: "wait" | "steer" | "stop",
     content?: string,
   ) => void;
@@ -119,7 +121,7 @@ function DelegatedChildRow({
             <button
               type="button"
               className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
-              onClick={() => onControl(child.child_id, "wait")}
+              onClick={() => onControl(child.child_id, child.runtime_generation, "wait")}
               disabled={terminal}
             >
               {t("thread.delegatedChild.wait", { defaultValue: "Wait" })}
@@ -135,7 +137,7 @@ function DelegatedChildRow({
             <button
               type="button"
               className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-destructive transition-colors hover:bg-background disabled:opacity-50"
-              onClick={() => onControl(child.child_id, "stop")}
+              onClick={() => onControl(child.child_id, child.runtime_generation, "stop")}
               disabled={terminal}
             >
               {t("thread.delegatedChild.stop", { defaultValue: "Stop" })}
@@ -170,7 +172,7 @@ function DelegatedChildRow({
             onClick={() => {
               const text = steerText.trim();
               if (!text) return;
-              onControl?.(child.child_id, "steer", text);
+              onControl?.(child.child_id, child.runtime_generation, "steer", text);
               setSteerText("");
               setSteering(false);
             }}

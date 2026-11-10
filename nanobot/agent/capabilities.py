@@ -24,6 +24,9 @@ WORKER_CAPABILITIES = frozenset({
     "list_dir",
     "write_file",
     "edit_file",
+    # A worker may start one read-only nested child. It cannot widen its
+    # file, approval, or network authority through that child.
+    "explore",
 })
 
 

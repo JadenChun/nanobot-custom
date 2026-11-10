@@ -3373,16 +3373,17 @@ describe("NanobotTui layout", () => {
       screenMode: "alternate-screen",
       consoleMode: "disabled",
     })
-    const calls: Array<[string, string, string, string | undefined]> = []
+    const calls: Array<[string, string, number, string, string | undefined]> = []
     const transport = {
       ...client(),
       controlDelegatedChild(
         parentKey: string,
         childId: string,
+        runtimeGeneration: number,
         action: string,
         content?: string,
       ) {
-        calls.push([parentKey, childId, action, content])
+        calls.push([parentKey, childId, runtimeGeneration, action, content])
         return Promise.resolve({ ok: true, state: "active" })
       },
     }
@@ -3422,9 +3423,9 @@ describe("NanobotTui layout", () => {
     await waitUntil(() => calls.length === 3)
 
     expect(calls).toEqual([
-      ["websocket:chat", "child-a", "wait", undefined],
-      ["websocket:chat", "child-a", "stop", undefined],
-      ["websocket:chat", "child-a", "steer", "focus"],
+      ["websocket:chat", "child-a", 0, "wait", undefined],
+      ["websocket:chat", "child-a", 0, "stop", undefined],
+      ["websocket:chat", "child-a", 0, "steer", "focus"],
     ])
   })
 })

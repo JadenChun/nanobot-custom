@@ -44,7 +44,7 @@ def _reserve(tree, parent, *, assignment, attempt_id, profile=DEFAULT_CHILD_PROF
 
 
 @pytest.mark.asyncio
-async def test_siblings_have_distinct_identities_and_grandchild_is_refused_by_depth(
+async def test_siblings_have_distinct_identities_and_grandchild_is_admitted(
     tmp_path,
 ):
     sessions, tree = _new_tree(tmp_path)
@@ -98,10 +98,26 @@ async def test_siblings_have_distinct_identities_and_grandchild_is_refused_by_de
         assignment="grandchild assignment",
         attempt_id="attempt-grandchild",
     )
-    assert isinstance(grandchild, ChildRefusal)
-    assert grandchild.reason == "depth_limit"
-    assert grandchild.detail
-    assert list(tree.children_of(first.session_key)) == []
+    assert isinstance(grandchild, ChildAdmission)
+    assert grandchild.depth == 2
+    assert grandchild.parent_key == first.session_key
+    assert grandchild.parent_incarnation == first_as_parent.incarnation
+    assert {child.child_id for child in tree.children_of(first.session_key)} == {
+        grandchild.child_id,
+    }
+    grandchild_session = sessions.get_or_create(grandchild.session_key)
+    assert grandchild_session.metadata["_runtime_session"]["delegation_depth"] == 2
+
+    great_grandchild = await _reserve(
+        tree,
+        grandchild_session,
+        assignment="great-grandchild assignment",
+        attempt_id="attempt-great-grandchild",
+    )
+    assert isinstance(great_grandchild, ChildRefusal)
+    assert great_grandchild.reason == "depth_limit"
+    assert great_grandchild.detail
+    assert list(tree.children_of(grandchild.session_key)) == []
     assert {child.child_id for child in tree.children_of(parent.key)} == {
         first.child_id,
         second.child_id,

@@ -1131,6 +1131,7 @@ class AgentLoop:
         child_id: str,
         action: str,
         content: str | None = None,
+        runtime_generation: int | None = None,
     ) -> dict[str, Any]:
         """Route one authenticated child control to the delegation owner."""
         return await self._fork_dependencies.foreground_manager.control_child(
@@ -1138,6 +1139,7 @@ class AgentLoop:
             child_id=child_id,
             action=action,
             content=content,
+            runtime_generation=runtime_generation,
         )
 
     async def _publish_delegated_child(self, child: Any) -> None:
