@@ -77,6 +77,26 @@ class FileToolsConfig(Base):
     enable: bool = True  # built-in file tools on by default
 
 
+_assessed_write_target_var: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "nanobot_assessed_write_target", default=None,
+)
+
+
+def set_assessed_write_target(target: Path | None) -> contextvars.Token[Path | None]:
+    """Bind the server-resolved write target for the current tool execution."""
+    return _assessed_write_target_var.set(target)
+
+
+def reset_assessed_write_target(token: contextvars.Token[Path | None]) -> None:
+    """Restore the previous write-target binding."""
+    _assessed_write_target_var.reset(token)
+
+
+def current_assessed_write_target() -> Path | None:
+    """Return the server-resolved target for the current tool execution."""
+    return _assessed_write_target_var.get()
+
+
 class _FsTool(Tool):
     """Shared base for filesystem tools — common init and path resolution."""
 
@@ -382,6 +402,12 @@ class _FsTool(Tool):
         scope_error = self._write_scope_error(resolved)
         if scope_error:
             raise PermissionError(scope_error)
+        assessed = current_assessed_write_target()
+        if assessed is not None and resolved != assessed:
+            raise PermissionError(
+                "write target changed before execution: "
+                f"{path}. Retry the request so the new target can be assessed."
+            )
         return resolved
 
     def _reclassify_workspace_boundary(

@@ -221,12 +221,22 @@ class RiskyActionPolicy(ToolPolicy):
             return ToolPolicyDecision()
 
         self._assessed_write_targets.clear()
-        calls_to_assess = tool_calls
+        calls_to_assess: list[ToolCallRequest] = list(tool_calls)
         if self.approval_granted and self.approved_effect_ids:
-            calls_to_assess = [
-                tool_call for tool_call in tool_calls
-                if self._effect_fingerprint(tool_call) not in self.approved_effect_ids
-            ]
+            calls_to_assess = []
+            for tool_call in tool_calls:
+                if self._effect_fingerprint(tool_call) in self.approved_effect_ids:
+                    if tool_call.name in {"write_file", "edit_file"}:
+                        arguments = tool_call.arguments
+                        raw_path = (
+                            str(cast(dict[object, object], arguments).get("path") or "")
+                            if isinstance(arguments, dict) else ""
+                        )
+                        resolved = self._resolve_write_target(tool_call.name, raw_path)
+                        if resolved is not None:
+                            self._assessed_write_targets[tool_call.id] = resolved
+                    continue
+                calls_to_assess.append(tool_call)
             if not calls_to_assess:
                 return ToolPolicyDecision()
 
@@ -415,29 +425,42 @@ class RiskyActionPolicy(ToolPolicy):
 
     def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
         """Recheck the assessed target through the tool immediately before dispatch."""
+        error, _target = self.validate_write_target_binding(tool_call, tool)
+        return error
+
+    def validate_write_target_binding(
+        self,
+        tool_call: ToolCallRequest,
+        tool: Any,
+        params: Any = None,
+    ) -> tuple[str | None, Path | None]:
+        """Recheck and return the assessed target for the mutation boundary."""
         assessed = self._assessed_write_targets.pop(tool_call.id, None)
         if assessed is None:
-            return None
-        arguments = tool_call.arguments
-        if not isinstance(arguments, dict):
-            return None
-        raw_path = str(cast(dict[object, object], arguments).get("path") or "")
+            return None, None
+        raw_path = ""
+        if isinstance(params, dict):
+            raw_path = str(cast(dict[object, object], params).get("path") or "")
         if not raw_path:
-            return None
+            arguments = tool_call.arguments
+            if isinstance(arguments, dict):
+                raw_path = str(cast(dict[object, object], arguments).get("path") or "")
+        if not raw_path:
+            return None, None
         resolver = getattr(tool, "resolve_write_path", None)
         if not callable(resolver):
-            return None
+            return None, None
         try:
             resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
             current = Path(resolved).expanduser().resolve(strict=False)
         except (OSError, PermissionError, ValueError):
-            return f"Error: write target is no longer accessible: {raw_path}"
+            return f"Error: write target is no longer accessible: {raw_path}", None
         if current != assessed:
             return (
                 f"Error: write target changed before dispatch: {raw_path}. "
                 "Retry the request so the new target can be assessed."
-            )
-        return None
+            ), None
+        return None, assessed
 
     def _changed_line_count(self, before: str, after: str) -> tuple[int, int]:
         before_lines = before.splitlines()

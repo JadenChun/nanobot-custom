@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
@@ -19,6 +20,10 @@ from nanobot.agent.tools.base import (
     ToolDenialResult,
     ToolPreparationError,
     ToolPreparationErrorKind,
+)
+from nanobot.agent.tools.filesystem import (
+    reset_assessed_write_target,
+    set_assessed_write_target,
 )
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.agent.turn import ToolOutcome, TurnContext
@@ -322,26 +327,37 @@ async def _execute_tool_call(
                              payload, event, dispatched=False)
         return payload, event
 
-    if tool_policy is not None:
-        validate_target = getattr(tool_policy, "validate_write_target", None)
-        if callable(validate_target):
-            validation_tool = tool if tool is not None else tools.get(tool_call.name)
-            target_error = cast(
-                Callable[[ToolCallRequest, Any], str | None],
-                validate_target,
-            )(tool_call, validation_tool)
-            if target_error:
-                payload = _with_retry_hint(target_error)
-                event: dict[str, Any] = {
-                    "name": tool_call.name,
-                    "status": "error",
-                    "detail": target_error[:120],
-                }
-                await _record_result(tool_result_callback, ordinal, tool_call,
-                                     target_error, payload, event, dispatched=False)
-                return payload, event
-
     await hook.before_execute_tool(context, tool_call, tool, params)
+
+    assessed_write_target: Path | None = None
+    if tool_policy is not None:
+        validation_tool = tool if tool is not None else tools.get(tool_call.name)
+        validate_binding = getattr(tool_policy, "validate_write_target_binding", None)
+        if callable(validate_binding):
+            target_error, assessed_write_target = cast(
+                Callable[[ToolCallRequest, Any, Any], tuple[str | None, Path | None]],
+                validate_binding,
+            )(tool_call, validation_tool, params)
+        else:
+            validate_target = getattr(tool_policy, "validate_write_target", None)
+            if callable(validate_target):
+                target_error = cast(
+                    Callable[[ToolCallRequest, Any], str | None],
+                    validate_target,
+                )(tool_call, validation_tool)
+            else:
+                target_error = None
+        if target_error:
+            payload = _with_retry_hint(target_error)
+            event: dict[str, Any] = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": target_error[:120],
+            }
+            await _record_result(tool_result_callback, ordinal, tool_call,
+                                 target_error, payload, event, dispatched=False)
+            await hook.on_execute_tool_error(context, tool_call, tool, params, target_error)
+            return payload, event
     with tools.dispatch_admission(tool_call.name) as dispatch_error:
         if dispatch_error is not None:
             payload = _with_retry_hint(dispatch_error)
@@ -361,10 +377,14 @@ async def _execute_tool_call(
         if turn_context is not None and turn_context.execution_owner is not None:
             turn_context.execution_owner.validate_dispatch()
         try:
-            if tool is not None:
-                result = await tools.execute_prepared(tool, params, turn_context)
-            else:
-                result = await tools.execute(tool_call.name, params)
+            binding_token = set_assessed_write_target(assessed_write_target)
+            try:
+                if tool is not None:
+                    result = await tools.execute_prepared(tool, params, turn_context)
+                else:
+                    result = await tools.execute(tool_call.name, params)
+            finally:
+                reset_assessed_write_target(binding_token)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
