@@ -355,7 +355,7 @@ jobs:
 
   windows_process:
     name: Python (Windows process compatibility)
-    needs: changes
+    needs: [changes, webui_bundle]
     if: needs.changes.outputs.python_required == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
