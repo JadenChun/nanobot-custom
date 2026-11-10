@@ -595,16 +595,20 @@ async def test_mcp_tool_reconnects_after_session_terminated(
     old_tool = registry.get("mcp_remote_quote")
     assert isinstance(old_tool, MCPToolWrapper)
 
-    output = await old_tool.execute(symbol="AAPL")
+    refused = await old_tool.execute(symbol="AAPL")
 
     await asyncio.wait_for(close_event.wait(), timeout=1)
+    assert "refused" in refused
+    assert sessions[0].call_count == 1
+    replacement = registry.get("mcp_remote_quote")
+    assert replacement is not old_tool
+    assert isinstance(replacement, MCPToolWrapper)
+    output = await replacement.execute(symbol="AAPL")
     assert output == "recovered"
     assert connect_count == 2
     assert closed == ["remote"]
-    assert sessions[0].call_count == 1
     assert sessions[1].call_count == 1
     assert provider.connected_server_names == {"remote"}
-    assert registry.get("mcp_remote_quote") is not old_tool
 
 
 @pytest.mark.asyncio
@@ -651,11 +655,14 @@ async def test_mcp_reconnect_handler_uses_sanitized_server_prefix(
     old_tool = registry.get("mcp_remote_quote")
     assert isinstance(old_tool, MCPToolWrapper)
 
-    output = await old_tool.execute()
+    refused = await old_tool.execute()
 
-    assert output == "recovered"
+    assert "refused" in refused
     assert connect_count == 2
-    assert registry.get("mcp_remote_quote") is not old_tool
+    replacement = registry.get("mcp_remote_quote")
+    assert replacement is not old_tool
+    assert isinstance(replacement, MCPToolWrapper)
+    assert await replacement.execute() == "recovered"
 
 
 @pytest.mark.asyncio
@@ -717,6 +724,13 @@ async def test_concurrent_mcp_reconnect_reuses_fresh_session(
 
     outputs = await asyncio.gather(old_alpha.execute(), old_beta.execute())
 
-    assert outputs == ["fresh:alpha", "fresh:beta"]
+    assert all("refused" in output for output in outputs)
     assert connect_count == 2
     assert closed == ["remote"]
+    new_alpha = registry.get("mcp_remote_resource_alpha")
+    new_beta = registry.get("mcp_remote_resource_beta")
+    assert new_alpha is not old_alpha
+    assert new_beta is not old_beta
+    fresh = await asyncio.gather(new_alpha.execute(), new_beta.execute())
+    assert fresh == ["fresh:alpha", "fresh:beta"]
+    assert connect_count == 2

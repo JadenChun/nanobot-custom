@@ -621,6 +621,10 @@ class BedrockProviderConfig(ProviderConfig):
 
     region: str | None = None  # AWS region, falls back to AWS_REGION/AWS_DEFAULT_REGION/profile
     profile: str | None = None  # Optional AWS shared config profile
+    # The installed SDK supports a configured bearer token only as process
+    # identity. The operator must opt in explicitly; nanobot never swaps a live
+    # process credential for another instance's key.
+    allow_process_bearer: bool = False
 
 
 class ProvidersConfig(Base):

@@ -58,12 +58,26 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
 
     class FakeJinaResponse:
         status_code = 200
+        headers: dict[str, str] = {}
 
         def raise_for_status(self):
             return None
 
-        def json(self):
-            return {"data": {"title": "Example", "content": "Hello", "url": "https://example.com/page"}}
+        async def aiter_bytes(self):
+            yield json.dumps({
+                "data": {
+                    "title": "Example",
+                    "content": "Hello",
+                    "url": "https://example.com/page",
+                }
+            }).encode("utf-8")
+
+    class FakeJinaStream:
+        async def __aenter__(self):
+            return FakeJinaResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
 
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -76,6 +90,8 @@ def _patch_web_fetch_fake_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
             return False
 
         def stream(self, method, url, headers=None, **kwargs):
+            if "r.jina.ai" in url:
+                return FakeJinaStream()
             return FakeStreamResponse()
 
         async def get(self, url, headers=None, **kwargs):

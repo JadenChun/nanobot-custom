@@ -273,18 +273,6 @@ async def _read_bounded_content(
     return bytes(chunks)
 
 
-def _bounded_json_payload(response: httpx.Response) -> Any:
-    """Decode a buffered JSON response only when it is within the fetch bound."""
-    content = getattr(response, "content", None)
-    if content is None:
-        return response.json()
-    if len(content) > MAX_FETCH_DOWNLOAD_BYTES:
-        raise _FetchTooLargeError(
-            f"Response exceeds the {MAX_FETCH_DOWNLOAD_BYTES // (1024 * 1024)} MiB download limit"
-        )
-    return json.loads(content.decode("utf-8"))
-
-
 async def _get_with_safe_redirects(
     client: httpx.AsyncClient,
     url: str,
@@ -805,21 +793,25 @@ class WebSearchTool(Tool):
             return await self._search_duckduckgo(query, n)
         try:
             async with httpx.AsyncClient(proxy=self.proxy) as client:
-                r = await client.get(
+                async with client.stream(
+                    "GET",
                     "https://api.search.tinyfish.ai",
                     params={"query": query},
                     headers={"X-API-Key": api_key, "User-Agent": self.user_agent},
                     timeout=15.0,
-                )
-                if r.status_code in {401, 403}:
-                    return ToolResult.error(
-                        f"Error: TinyFish rejected the API key (HTTP {r.status_code})"
-                    )
-                if r.status_code == 402:
-                    logger.warning("TinyFish daily allowance exhausted, falling back to DuckDuckGo")
-                    return await self._search_duckduckgo(query, n)
-                r.raise_for_status()
-            raw_payload: object = _bounded_json_payload(r)
+                ) as r:
+                    if r.status_code in {401, 403}:
+                        return ToolResult.error(
+                            f"Error: TinyFish rejected the API key (HTTP {r.status_code})"
+                        )
+                    if r.status_code == 402:
+                        logger.warning(
+                            "TinyFish daily allowance exhausted, falling back to DuckDuckGo"
+                        )
+                        return await self._search_duckduckgo(query, n)
+                    r.raise_for_status()
+                    content = await _read_bounded_content(r)
+            raw_payload: object = json.loads(content.decode("utf-8"))
             payload = _json_object(raw_payload)
             raw = _json_array(payload.get("results")) if payload is not None else None
         except Exception as e:
@@ -1475,7 +1467,8 @@ class WebFetchTool(Tool):
         forwarded_url = url.split("#", 1)[0]
         try:
             async with httpx.AsyncClient(proxy=self.proxy, timeout=30.0) as client:
-                r = await client.post(
+                async with client.stream(
+                    "POST",
                     "https://api.fetch.tinyfish.ai",
                     headers={
                         "X-API-Key": api_key,
@@ -1483,15 +1476,19 @@ class WebFetchTool(Tool):
                         "User-Agent": self.user_agent,
                     },
                     json={"urls": [forwarded_url], "format": "markdown"},
-                )
-                if r.status_code in {401, 403}:
-                    logger.warning("TinyFish fetch rejected the API key (HTTP %s)", r.status_code)
-                    return None
-                if r.status_code in {402, 429}:
-                    logger.debug("TinyFish fetch unavailable (HTTP %s)", r.status_code)
-                    return None
-                r.raise_for_status()
-            raw_payload: object = r.json()
+                ) as r:
+                    if r.status_code in {401, 403}:
+                        logger.warning(
+                            "TinyFish fetch rejected the API key (HTTP %s)",
+                            r.status_code,
+                        )
+                        return None
+                    if r.status_code in {402, 429}:
+                        logger.debug("TinyFish fetch unavailable (HTTP %s)", r.status_code)
+                        return None
+                    r.raise_for_status()
+                    content = await _read_bounded_content(r)
+            raw_payload: object = json.loads(content.decode("utf-8"))
             payload = _json_object(raw_payload)
             results = _json_array(payload.get("results")) if payload is not None else None
             if not results:
@@ -1547,13 +1544,19 @@ class WebFetchTool(Tool):
             if jina_key:
                 headers["Authorization"] = f"Bearer {jina_key}"
             async with httpx.AsyncClient(proxy=self.proxy, timeout=20.0) as client:
-                r = await client.get(f"https://r.jina.ai/{forwarded_url}", headers=headers)
-                if r.status_code == 429:
-                    logger.debug("Jina Reader rate limited, falling back to readability")
-                    return None
-                r.raise_for_status()
+                async with client.stream(
+                    "GET",
+                    f"https://r.jina.ai/{forwarded_url}",
+                    headers=headers,
+                ) as r:
+                    if r.status_code == 429:
+                        logger.debug("Jina Reader rate limited, falling back to readability")
+                        return None
+                    r.raise_for_status()
+                    content = await _read_bounded_content(r)
+                    status_code = r.status_code
 
-            data = _bounded_json_payload(r).get("data", {})
+            data = json.loads(content.decode("utf-8")).get("data", {})
             title = data.get("title", "")
             text = data.get("content", "")
             if not text:
@@ -1567,7 +1570,7 @@ class WebFetchTool(Tool):
             text = f"{_UNTRUSTED_BANNER}\n\n{text}"
 
             return json.dumps({
-                "url": url, "finalUrl": data.get("url", url), "status": r.status_code,
+                "url": url, "finalUrl": data.get("url", url), "status": status_code,
                 "extractor": "jina", "truncated": truncated, "length": len(text),
                 "untrusted": True, "text": text,
             }, ensure_ascii=False)

@@ -21,6 +21,17 @@ def _fake_resolve_public(hostname, port, family=0, type_=0):
     return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
 
 
+class _Stream:
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, *args):
+        return False
+
+
 class _RecordingJinaClient:
     """Fake httpx.AsyncClient that records every requested URL."""
 
@@ -35,19 +46,13 @@ class _RecordingJinaClient:
     async def __aexit__(self, *args):
         return False
 
-    async def get(self, url, **kwargs):
+    def stream(self, method, url, **kwargs):
         _RecordingJinaClient.requested.append(url)
-
-        class _Response:
-            status_code = 200
-
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"data": {"title": "T", "content": "body", "url": url}}
-
-        return _Response()
+        return _Stream(httpx.Response(
+            200,
+            json={"data": {"title": "T", "content": "body", "url": url}},
+            request=httpx.Request(method, url),
+        ))
 
 
 @pytest.fixture

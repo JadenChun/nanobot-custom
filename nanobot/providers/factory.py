@@ -246,6 +246,9 @@ def _make_provider_core(
             profile=getattr(p, "profile", None) if p else None,
             extra_body=p.extra_body if p else None,
             provider_name=provider_name,
+            allow_process_bearer=bool(
+                getattr(p, "allow_process_bearer", False) if p else False
+            ),
         )
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider

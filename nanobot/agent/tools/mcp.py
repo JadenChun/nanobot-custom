@@ -626,6 +626,7 @@ class _MCPWrapperBase(Tool):
     _server_name: str
     _name: str
     _generation_lease: _GenerationLease | None = None
+    _binding_ended: bool = False
 
     def _set_mcp_connection(self, session: ClientSession, server_name: str) -> None:
         self._session = session
@@ -638,6 +639,7 @@ class _MCPWrapperBase(Tool):
     def bind_generation(self, lease: _GenerationLease) -> None:
         """Bind this wrapper to its published connection generation."""
         self._generation_lease = lease
+        self._binding_ended = False
 
     async def _refresh_session_after_termination(
         self,
@@ -648,23 +650,22 @@ class _MCPWrapperBase(Tool):
         if already_refreshed or not _is_session_terminated(exc) or self._reconnect is None:
             return False
         logger.warning(
-            "MCP {} '{}' session terminated; reconnecting server '{}' before retry",
+            "MCP {} '{}' session terminated; reconnecting server '{}' for future calls",
             capability_kind,
             self._name,
             self._server_name,
         )
-        refreshed_tool = await self._reconnect(self._server_name, self._name, self)
-        refreshed_session = getattr(refreshed_tool, "_session", None)
-        if refreshed_session is None:
-            logger.warning(
-                "MCP {} '{}' could not refresh session for server '{}'",
-                capability_kind,
-                self._name,
-                self._server_name,
-            )
-            return False
-        self._session = refreshed_session
-        return True
+        # Publish a replacement generation for later model requests, but keep
+        # this admitted wrapper on its original binding. A call must not be
+        # retried by tool name against a different schema or session.
+        await self._reconnect(self._server_name, self._name, self)
+        self._binding_ended = True
+        logger.warning(
+            "MCP {} '{}' admitted generation ended; refusing retry on replacement",
+            capability_kind,
+            self._name,
+        )
+        return False
 
 
 def _image_block_data_url(block: Any, types: Any) -> str | None:
@@ -931,6 +932,10 @@ class MCPToolWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return ToolResult.error(
+                        "(MCP tool call refused: the bound connection generation ended)"
+                    )
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True
@@ -1167,6 +1172,8 @@ class MCPResourceWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return "(MCP resource read refused: the bound connection generation ended)"
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True
@@ -1287,6 +1294,8 @@ class MCPPromptWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return "(MCP prompt call refused: the bound connection generation ended)"
                 logger.exception(
                     "MCP prompt '{}' failed: code={} message={}",
                     self._name,
@@ -1302,6 +1311,8 @@ class MCPPromptWrapper(_MCPWrapperBase):
                 ):
                     refreshed_session = True
                     continue
+                if self._binding_ended:
+                    return "(MCP prompt call refused: the bound connection generation ended)"
                 if _is_transient(exc):
                     if not retried_transient:
                         retried_transient = True

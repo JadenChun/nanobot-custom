@@ -260,8 +260,11 @@ async def test_tool_reconnects_on_transient_failure():
     with patch("nanobot.agent.tools.mcp.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         output = await wrapper.execute(foo="bar")
 
-    assert output == "fresh"
+    assert "refused" in output
     assert old_session.call_tool.call_count == 1
+    assert new_session.call_tool.call_count == 0
+    assert wrapper._session is old_session
+    assert await replacement.execute(foo="bar") == "fresh"
     assert new_session.call_tool.call_count == 1
     mock_sleep.assert_not_called()
 
@@ -352,8 +355,11 @@ async def test_resource_reconnects_on_session_terminated():
 
     output = await wrapper.execute()
 
-    assert output == "fresh"
+    assert "refused" in output
     assert old_session.read_resource.call_count == 1
+    assert new_session.read_resource.call_count == 0
+    assert wrapper._session is old_session
+    assert await replacement.execute() == "fresh"
     assert new_session.read_resource.call_count == 1
 
 
@@ -462,8 +468,11 @@ async def test_prompt_reconnects_on_session_terminated():
 
     output = await wrapper.execute()
 
-    assert output == "fresh prompt"
+    assert "refused" in output
     assert old_session.get_prompt.call_count == 1
+    assert new_session.get_prompt.call_count == 0
+    assert wrapper._session is old_session
+    assert await replacement.execute() == "fresh prompt"
     assert new_session.get_prompt.call_count == 1
 
 
@@ -488,6 +497,9 @@ async def test_prompt_reconnects_on_connection_closed_exception():
 
     output = await wrapper.execute()
 
-    assert output == "fresh prompt"
+    assert "refused" in output
     assert old_session.get_prompt.call_count == 1
+    assert new_session.get_prompt.call_count == 0
+    assert wrapper._session is old_session
+    assert await replacement.execute() == "fresh prompt"
     assert new_session.get_prompt.call_count == 1
