@@ -15,6 +15,7 @@ from nanobot.cron.occurrence_store import (
 from nanobot.cron.schedule import ScheduleClock, is_fire, next_fire
 from nanobot.cron.scheduler_store import (
     ObservedOccurrence,
+    ReconciliationBridge,
     ScheduleCursor,
     SchedulerConflictError,
     SchedulerLease,
@@ -64,8 +65,15 @@ class Scheduler:
         return tuple(result)
 
     @staticmethod
-    def _prove_records(state: SchedulerState, records: list[OccurrenceRecord]) -> None:
-        verify_occurrence_evidence(state, records)
+    def _prove_records(
+        state: SchedulerState,
+        records: list[OccurrenceRecord],
+        *,
+        bridge_lookup: Callable[[SchedulerState, str], list[ReconciliationBridge]] | None = None,
+    ) -> None:
+        verify_occurrence_evidence(
+            state, records, bridge_lookup=bridge_lookup
+        )
 
     @staticmethod
     def _advance(state: SchedulerState, definition: CronDefinition, commit: ScheduleCommit, lower: int,
@@ -93,8 +101,11 @@ class Scheduler:
                 raise SchedulerConflictError("invalid acquisition clock")
             committed = self._committed()
             state = self.store.read_for_acquisition(self._lease)
+            state = self.store.rollover_epoch_if_needed(self._lease, state)
             records = self.occurrences.occurrence_store.inspect_records()
-            self._prove_records(state, records)
+            self._prove_records(
+                state, records, bridge_lookup=self.store.bridge_records
+            )
             successor = deepcopy(state)
             for definition, commit in committed:
                 current = next((item for item in state["cursors"] if item["key"] == _key(definition)), None)
@@ -136,7 +147,9 @@ class Scheduler:
         committed = self._committed()
         state = self.store.read()
         records = self.occurrences.occurrence_store.inspect_records()
-        self._prove_records(state, records)
+        self._prove_records(
+            state, records, bridge_lookup=self.store.bridge_records
+        )
         # New definitions committed while this lease is held begin at their
         # exact commit boundary. Existing cursors retain all pending due work.
         # Acquisition separately classifies downtime as missed; no old claim

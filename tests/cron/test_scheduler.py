@@ -60,7 +60,6 @@ async def test_prebegin_reconciliation_resumes_future_without_old_compute(tmp_pa
 
 
 async def test_repeated_reconciliation_retains_every_edge_and_original_observations(tmp_path, monkeypatch):
-    from nanobot.cron.runtime_inspection import inspect_scheduler
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
@@ -69,6 +68,8 @@ async def test_repeated_reconciliation_retains_every_edge_and_original_observati
     second = graph.service.occurrence_store.inspect_records()[0]
     reconcile(graph, second, successor="third")
     # Inspection does not refresh the dormant owner's pinned state or publish.
+    from nanobot.cron.runtime_inspection import inspect_scheduler
+
     inspected = inspect_scheduler(graph.store.root, namespace="stage3", runtime_identity="copied-root")
     assert inspected["classifications"] == before["classifications"]
     clock.now = 1500
@@ -82,31 +83,174 @@ async def test_repeated_reconciliation_retains_every_edge_and_original_observati
     await graph.aclose()
 
 
-async def test_bridge_capacity_fails_closed_before_occurrence_mutation(tmp_path, monkeypatch):
+async def test_bridge_capacity_rolls_epoch_and_resumes_timers(tmp_path, monkeypatch):
+    from copy import deepcopy
+
     import nanobot.cron.scheduler_store as scheduler_store
-    from nanobot.cron.occurrence_store import OccurrenceCorruptError
-    from nanobot.cron.runtime_inspection import inspect_scheduler
+    from nanobot.cron.scheduler_store import SchedulerStore
 
     graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
     original = graph.service.occurrence_store.inspect_records()[0]
     reconcile(graph, original, successor="second")
-    before_state = inspect_scheduler(
+    before = SchedulerStore(
         graph.store.root, namespace="stage3", runtime_identity="copied-root"
-    )
-    before_records = graph.service.occurrence_store.inspect_records()
-    assert len(before_state["bridges"]) == 1
+    ).read()
+    assert len(before["bridges"]) == 1
+    cursors = deepcopy(before["cursors"])
+    classifications = deepcopy(before["classifications"])
+    requests = deepcopy(before["requests"])
 
     monkeypatch.setattr(scheduler_store, "MAX_BRIDGES", 1)
-    current = before_records[0]
-    with pytest.raises((SchedulerConflictError, OccurrenceCorruptError)):
-        reconcile(graph, current, successor="third")
+    current = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, current, successor="third")
 
-    after_state = inspect_scheduler(
+    rolled = SchedulerStore(
+        graph.store.root, namespace="stage3", runtime_identity="copied-root"
+    ).read()
+    assert rolled["kind"] == "cron_scheduler_state_v3"
+    assert rolled["epoch"] == 1
+    assert rolled["predecessor"]["epoch"] == 0
+    assert rolled["predecessor"]["bridge_count"] == 1
+    assert rolled["predecessor"]["archive"] == "epoch-0.json"
+    assert (graph.store.root / ".epochs" / "epoch-0.json").is_file()
+    assert rolled["cursors"] == cursors
+    assert rolled["classifications"] == classifications
+    assert rolled["requests"] == requests
+    assert len(rolled["bridges"]) == 1
+    assert rolled["generation"] == before["generation"] + 2
+
+    fresh = SchedulerStore(
         graph.store.root, namespace="stage3", runtime_identity="copied-root"
     )
-    assert after_state == before_state
-    assert graph.service.occurrence_store.inspect_records() == before_records
+    assert fresh.read()["epoch"] == 1
+    graph.acquire()
+    resumed = graph.store.read()
+    assert resumed["epoch"] == 2
+    next_fire = next(
+        item["next_fire"] for item in resumed["cursors"] if item["next_fire"] is not None
+    )
+    clock.now = next_fire
+    await graph.scheduler.wake_once()
+    assert calls or channels.calls
+    await graph.aclose()
+
+
+async def test_epoch_archive_tamper_fails_closed(tmp_path, monkeypatch):
+    from nanobot.cron.occurrence_store import OccurrenceCorruptError
+    from nanobot.cron.scheduler_store import SchedulerStore
+
+    graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
+    original = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, original, successor="second")
+    import nanobot.cron.scheduler_store as scheduler_store
+
+    monkeypatch.setattr(scheduler_store, "MAX_BRIDGES", 1)
+    current = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, current, successor="third")
+    archive = graph.store.root / ".epochs" / "epoch-0.json"
+    assert archive.is_file()
+    archive.write_bytes(archive.read_bytes()[:-1])
+
+    with pytest.raises(OccurrenceCorruptError):
+        SchedulerStore(
+            graph.store.root, namespace="stage3", runtime_identity="copied-root"
+        ).read()
+    await graph.aclose()
+
+
+async def test_epoch_rollover_survives_crash_before_state_publication(
+    tmp_path, monkeypatch
+):
+    from nanobot.cron.scheduler_store import SchedulerStore
+
+    graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
+    original = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, original, successor="second")
+
+    store = SchedulerStore(
+        graph.store.root, namespace="stage3", runtime_identity="copied-root"
+    )
+    original_cas = SchedulerStore.compare_and_swap
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("injected after archive")
+
+    with store.stopped_writer() as lease:
+        monkeypatch.setattr(SchedulerStore, "compare_and_swap", crash)
+        with pytest.raises(RuntimeError, match="injected"):
+            store.rollover_epoch(lease)
+        archive = store.root / ".epochs" / "epoch-0.json"
+        assert archive.is_file()
+        before = SchedulerStore(
+            store.root, namespace="stage3", runtime_identity="copied-root"
+        ).read()
+        assert before["kind"] == "cron_scheduler_state_v2"
+        assert before["bridges"]
+
+        monkeypatch.setattr(SchedulerStore, "compare_and_swap", original_cas)
+        successor = store.rollover_epoch(lease)
+        assert successor["epoch"] == 1
+        assert successor["predecessor"]["archive"] == "epoch-0.json"
     assert calls == [] and channels.calls == []
+    await graph.aclose()
+
+
+async def test_epoch_missing_archive_fails_closed(tmp_path, monkeypatch):
+    import nanobot.cron.scheduler_store as scheduler_store
+    from nanobot.cron.occurrence_store import OccurrenceCorruptError
+    from nanobot.cron.scheduler_store import SchedulerStore
+
+    graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
+    original = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, original, successor="second")
+    monkeypatch.setattr(scheduler_store, "MAX_BRIDGES", 1)
+    current = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, current, successor="third")
+    archive = graph.store.root / ".epochs" / "epoch-0.json"
+    archive.unlink()
+
+    with pytest.raises(OccurrenceCorruptError):
+        SchedulerStore(
+            graph.store.root, namespace="stage3", runtime_identity="copied-root"
+        ).read()
+    await graph.aclose()
+
+
+async def test_epoch_skipped_predecessor_fails_closed(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    import nanobot.cron.scheduler_store as scheduler_store
+    from nanobot.cron.occurrence_store import OccurrenceCorruptError
+    from nanobot.cron.scheduler_store import SchedulerStore
+
+    graph, item, clock, calls, channels = await prebegin_crash(tmp_path, monkeypatch)
+    original = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, original, successor="second")
+    monkeypatch.setattr(scheduler_store, "MAX_BRIDGES", 1)
+    current = graph.service.occurrence_store.inspect_records()[0]
+    reconcile(graph, current, successor="third")
+
+    path = graph.store.root / "state.json"
+    wire = json.loads(path.read_text(encoding="utf-8"))
+    state = wire["state"]
+    state["predecessor"]["epoch"] = 5
+    state["epoch"] = 6
+    wire["integrity"] = hashlib.sha256(
+        json.dumps(
+            state,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    path.write_text(json.dumps(wire), encoding="utf-8")
+
+    with pytest.raises(OccurrenceCorruptError):
+        SchedulerStore(
+            graph.store.root, namespace="stage3", runtime_identity="copied-root"
+        ).read()
     await graph.aclose()
 
 

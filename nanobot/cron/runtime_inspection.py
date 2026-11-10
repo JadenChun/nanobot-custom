@@ -47,6 +47,7 @@ def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
     scheduler = SchedulerStore(scheduler_root, namespace=namespace, runtime_identity=runtime_identity)
     with scheduler.stopped_writer() as lease:
         state = scheduler.read_for_acquisition(lease)
+        state = scheduler.rollover_epoch_if_needed(lease, state)
         store = CronOccurrenceStore(root, namespace=namespace)
         records = store.inspect_records()
         record = next((item for item in records if item.occurrence_id == occurrence_id), None)
@@ -65,8 +66,8 @@ def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
             raise SchedulerConflictError("reconciliation exact successor conflict")
         if not retry and (record.owner, record.generation) != (expected_owner, expected_generation):
             raise SchedulerConflictError("reconciliation predecessor stale")
-        retained = next((item for item in state.get("bridges", []) if item["occurrence_id"] == occurrence_id
-                         and item["predecessor_generation"] == expected_generation), None)
+        retained = next((item for item in scheduler.bridge_records(state, occurrence_id)
+                         if item["predecessor_generation"] == expected_generation), None)
         if retained is not None:
             bridge["publication_generation"] = retained["publication_generation"]
             if not retry or retained != bridge:
@@ -77,13 +78,15 @@ def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
         if not retry:
             # A previous transition must be durably retained before its last
             # occurrence reconciliation attestation can be overwritten.
-            if record.reconciliation is not None and not any(item["occurrence_id"] == occurrence_id
-                    and item["successor_generation"] == record.generation for item in state.get("bridges", [])):
+            if record.reconciliation is not None and not any(
+                item["successor_generation"] == record.generation
+                for item in scheduler.bridge_records(state, occurrence_id)
+            ):
                 raise SchedulerConflictError("repair prior reconciliation bridge first")
-            verify_occurrence_evidence(state, records)
+            verify_occurrence_evidence(state, records, bridge_lookup=scheduler.bridge_records)
             anticipated = replace(record, owner=successor_owner, generation=expected_generation + 1,
                                   reconciliation=bridge_reconciliation(bridge))
-            verify_occurrence_evidence(successor, [anticipated if item is record else item for item in records])
+            verify_occurrence_evidence(successor, [anticipated if item is record else item for item in records], bridge_lookup=scheduler.bridge_records)
             lease.reprove()
             # No short scheduler lock spans this unchanged internally fenced CAS.
             store.reclaim_after_reconciliation(occurrence_id, owner=successor_owner,
@@ -95,11 +98,11 @@ def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
                 or not matches_bridge_reconciliation(verified, bridge)
                 or immutable_occurrence_digest(verified) != digest):
             raise SchedulerConflictError("reconciliation successor changed")
-        verify_occurrence_evidence(successor, records)
+        verify_occurrence_evidence(successor, records, bridge_lookup=scheduler.bridge_records)
         lease.reprove()
         scheduler.compare_and_swap(state, successor)
         published = scheduler.read()
-        verify_occurrence_evidence(published, store.inspect_records())
+        verify_occurrence_evidence(published, store.inspect_records(), bridge_lookup=scheduler.bridge_records)
         lease.reprove()
     return {"classification": "reconciled_claim", "occurrence_id": occurrence_id,
             "owner": successor_owner, "generation": expected_generation + 1}
