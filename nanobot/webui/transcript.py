@@ -2565,6 +2565,63 @@ def replay_transcript_to_ui_messages(
             messages.append(row)
             continue
 
+        if ev == "delegated_child":
+            child_id = rec.get("child_id")
+            child_session_key = rec.get("child_session_key")
+            profile = rec.get("profile")
+            state = rec.get("state")
+            if (
+                not isinstance(child_id, str)
+                or not child_id
+                or not isinstance(child_session_key, str)
+                or not child_session_key
+                or not isinstance(profile, str)
+                or not profile
+                or not isinstance(state, str)
+                or not state
+            ):
+                continue
+            generation = rec.get("runtime_generation")
+            child: dict[str, Any] = {
+                "child_session_key": child_session_key,
+                "child_id": child_id,
+                "profile": profile,
+                "state": state,
+                "runtime_generation": generation if isinstance(generation, int) else 0,
+            }
+            outcome = rec.get("outcome")
+            if isinstance(outcome, str) and outcome:
+                child["outcome"] = outcome
+            turn_id = rec.get("turn_id")
+            if isinstance(turn_id, str) and turn_id:
+                child["turn_id"] = turn_id
+            existing_index = next(
+                (
+                    index
+                    for index, message in enumerate(messages)
+                    if (message.get("delegatedChild") or {}).get("child_id") == child_id
+                ),
+                None,
+            )
+            if existing_index is None:
+                messages.append(
+                    {
+                        "id": f"delegated-child-{child_id}",
+                        "role": "assistant",
+                        "kind": "delegated_child",
+                        "content": "",
+                        "delegatedChild": child,
+                        "createdAt": _created_at_ms(rec, idx),
+                        **({"turnId": turn_id} if isinstance(turn_id, str) and turn_id else {}),
+                    }
+                )
+            else:
+                messages[existing_index] = {
+                    **messages[existing_index],
+                    "delegatedChild": child,
+                }
+            continue
+
         if ev == "file_edit":
             raw_edits = rec.get("edits")
             if isinstance(raw_edits, list):
