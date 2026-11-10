@@ -117,6 +117,7 @@ def build_generated_assets_payload_from_groups(
     sign_path: Callable[[Path], Mapping[str, str] | None],
     cursor: int = 0,
     limit: int | None = None,
+    next_session_cursor: int | None = None,
 ) -> dict[str, Any]:
     """Finalize indexed raw groups and return one page of signed asset groups."""
     root = media_root.resolve()
@@ -146,6 +147,10 @@ def build_generated_assets_payload_from_groups(
         "total": total,
         "groups": page,
         "next": str(next_cursor) if next_cursor < len(groups) else None,
+        "nextSessionCursor": (
+            str(next_session_cursor) if next_session_cursor is not None else None
+        ),
+        "truncated": next_session_cursor is not None,
     }
 
 

@@ -272,6 +272,8 @@ export interface SessionGeneratedAssetsPayload {
   total: number;
   groups: GeneratedAssetGroup[];
   next?: string | null;
+  nextSessionCursor?: string | null;
+  truncated?: boolean;
 }
 export interface AutomationUpdatePayload {
   name?: string;

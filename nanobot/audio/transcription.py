@@ -189,7 +189,9 @@ async def transcribe_audio_data_url(
         raise TranscriptionIngressError("decode")
 
     measured = await measure_audio_duration(audio_path)
-    if measured is not None and measured > config.max_duration_sec + 1:
+    if measured is None:
+        raise TranscriptionIngressError("duration")
+    if measured > config.max_duration_sec + 1:
         raise TranscriptionIngressError("duration")
     try:
         text = await transcribe_audio_file(audio_path, config)
@@ -250,7 +252,9 @@ async def transcribe_audio_file(
     if not config.enabled or not config.configured:
         return ""
     measured = await measure_audio_duration(file_path)
-    if measured is not None and measured > config.max_duration_sec + 1:
+    if measured is None:
+        raise TranscriptionIngressError("duration")
+    if measured > config.max_duration_sec + 1:
         raise TranscriptionIngressError("duration")
     spec = get_transcription_provider(config.provider)
     if spec is None:

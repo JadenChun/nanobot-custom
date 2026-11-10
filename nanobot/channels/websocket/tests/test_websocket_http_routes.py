@@ -2537,7 +2537,9 @@ async def test_session_delete_removes_file(
     try:
         path = sm._get_session_path("websocket:doomed")
         assert path.exists()
-        webui_path = tmp_path / "webui" / f"{SessionManager.safe_key('websocket:doomed')}.jsonl"
+        from nanobot.webui.transcript import webui_transcript_path
+
+        webui_path = webui_transcript_path("websocket:doomed")
         assert webui_path.is_file()
         resp = await _webui_mutate(
             channel,
@@ -2567,7 +2569,9 @@ async def test_session_delete_removes_transcript_without_canonical_file(
         {"event": "user", "chat_id": "transcript-only", "text": "recover me"},
     )
     assert not sm._get_session_path(key).exists()
-    webui_path = tmp_path / "webui" / f"{SessionManager.safe_key(key)}.jsonl"
+    from nanobot.webui.transcript import webui_transcript_path
+
+    webui_path = webui_transcript_path(key)
     assert webui_path.is_file()
 
     channel = _ch(bus, session_manager=sm, port=_next_in_process_port())

@@ -19,7 +19,7 @@ def test_delete_webui_thread_removes_legacy_json_and_transcript(tmp_path, monkey
     key = "websocket:k1"
     json_path = webui_thread_file_path(key)
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text('{"x":1}', encoding="utf-8")
+    json_path.write_text('{"chat_id":"k1","x":1}', encoding="utf-8")
     for idx in range(1, 5):
         append_transcript_object(
             key,

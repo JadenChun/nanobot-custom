@@ -63,7 +63,7 @@ from nanobot.webui.file_preview import (
 )
 from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
 from nanobot.webui.generated_asset_index import (
-    load_all_generated_asset_groups,
+    load_all_generated_asset_page,
     load_or_build_generated_asset_index,
 )
 from nanobot.webui.generated_assets import build_generated_assets_payload_from_groups
@@ -1861,8 +1861,17 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         raw_limit = _query_first(query, "limit")
         raw_cursor = _query_first(query, "cursor")
+        raw_session_cursor = _query_first(query, "sessionCursor")
         limit: int | None = None
         cursor = 0
+        session_cursor = 0
+        if raw_session_cursor is not None and raw_session_cursor.strip():
+            try:
+                session_cursor = int(raw_session_cursor)
+            except ValueError:
+                return _http_error(400, "invalid sessionCursor")
+            if session_cursor < 0:
+                return _http_error(400, "invalid sessionCursor")
         if raw_limit is not None and raw_limit.strip():
             try:
                 limit = int(raw_limit)
@@ -1878,9 +1887,10 @@ class GatewayHTTPHandler:
             if cursor < 0:
                 return _http_error(400, "invalid cursor")
         try:
-            groups = await asyncio.to_thread(
-                load_all_generated_asset_groups,
+            groups, next_session_cursor = await asyncio.to_thread(
+                load_all_generated_asset_page,
                 get_webui_dir(),
+                session_cursor=session_cursor,
             )
             payload = build_generated_assets_payload_from_groups(
                 groups,
@@ -1892,6 +1902,7 @@ class GatewayHTTPHandler:
                 ),
                 cursor=cursor,
                 limit=limit,
+                next_session_cursor=next_session_cursor,
             )
         except Exception:
             self._log.exception("generated asset library projection failed")

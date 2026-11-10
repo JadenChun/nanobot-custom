@@ -24,7 +24,7 @@ INDEX_VERSION = 1
 
 
 def generated_asset_index_path(session_key: str) -> Path:
-    return get_webui_dir() / f"{SessionManager.safe_key(session_key)}.generated-assets.json"
+    return get_webui_dir() / f"{SessionManager.storage_key(session_key)}.generated-assets.json"
 
 
 def read_generated_asset_index(session_key: str) -> dict[str, Any] | None:
@@ -109,7 +109,13 @@ def webui_session_keys(webui_dir: Path) -> list[str]:
             stem = path.stem
         elif path.is_dir() and path.name.endswith(".segments"):
             stem = path.name.removesuffix(".segments")
-        if stem is None or not stem.startswith(persisted_prefix):
+        if stem is None:
+            continue
+        decoded = SessionManager.decode_storage_key(stem)
+        if decoded is not None and decoded.startswith(WEBUI_SESSION_STORAGE_PREFIX):
+            keys.add(decoded)
+            continue
+        if not stem.startswith(persisted_prefix):
             continue
         chat_id = stem[len(persisted_prefix):]
         if chat_id:
@@ -117,14 +123,11 @@ def webui_session_keys(webui_dir: Path) -> list[str]:
     return sorted(keys)
 
 
-def load_all_generated_asset_groups(
-    webui_dir: Path,
-    *,
-    max_sessions: int = 200,
+def _load_generated_asset_groups(
+    session_keys: Sequence[str],
 ) -> list[dict[str, Any]]:
-    """Return indexed groups for every persisted WebUI session."""
     groups: list[dict[str, Any]] = []
-    for session_key in webui_session_keys(webui_dir)[:max_sessions]:
+    for session_key in session_keys:
         session_groups = load_or_build_generated_asset_index(
             session_key,
             signature=webui_transcript_signature(session_key),
@@ -134,4 +137,34 @@ def load_all_generated_asset_groups(
             item = dict(group)
             item["sessionKey"] = session_key
             groups.append(item)
+    return groups
+
+
+def load_all_generated_asset_page(
+    webui_dir: Path,
+    *,
+    session_cursor: int = 0,
+    max_sessions: int = 200,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Return one bounded session page and the next stable session cursor."""
+    keys = webui_session_keys(webui_dir)
+    start = max(0, session_cursor)
+    page_keys = keys[start:start + max(0, max_sessions)]
+    groups = _load_generated_asset_groups(page_keys)
+    next_cursor = start + len(page_keys)
+    return groups, (next_cursor if next_cursor < len(keys) else None)
+
+
+def load_all_generated_asset_groups(
+    webui_dir: Path,
+    *,
+    max_sessions: int = 200,
+    session_cursor: int = 0,
+) -> list[dict[str, Any]]:
+    """Return indexed groups for one bounded session page."""
+    groups, _next = load_all_generated_asset_page(
+        webui_dir,
+        session_cursor=session_cursor,
+        max_sessions=max_sessions,
+    )
     return groups

@@ -2911,6 +2911,11 @@ class SessionManager:
         return JsonlSessionStore.safe_key(key)
 
     @staticmethod
+    def storage_key(key: str) -> str:
+        """Public collision-resistant stem for display-storage owners."""
+        return JsonlSessionStore.storage_key(key)
+
+    @staticmethod
     def _storage_key(key: str) -> str:
         """Collision-resistant encoding for internal session storage filenames."""
         return JsonlSessionStore.storage_key(key)

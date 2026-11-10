@@ -13,6 +13,7 @@ export function useGeneratedAssetLibrary(
   const [groups, setGroups] = useState<GeneratedAssetGroup[]>([]);
   const [total, setTotal] = useState(0);
   const [next, setNext] = useState<string | null>(null);
+  const [nextSession, setNextSession] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -21,6 +22,8 @@ export function useGeneratedAssetLibrary(
   tokenRef.current = token;
   const nextRef = useRef(next);
   nextRef.current = next;
+  const nextSessionRef = useRef(nextSession);
+  nextSessionRef.current = nextSession;
   const loadingMoreRef = useRef(loadingMore);
   loadingMoreRef.current = loadingMore;
 
@@ -35,6 +38,7 @@ export function useGeneratedAssetLibrary(
         setGroups(payload.groups);
         setTotal(payload.total);
         setNext(payload.next ?? null);
+        setNextSession(payload.nextSessionCursor ?? null);
       })
       .catch(() => {
         if (!cancelled) setLoadFailed(true);
@@ -53,16 +57,18 @@ export function useGeneratedAssetLibrary(
 
   const loadMore = useCallback(() => {
     const cursor = nextRef.current;
-    if (!cursor || loadingMoreRef.current) return;
+    const sessionCursor = nextSessionRef.current;
+    if ((!cursor && !sessionCursor) || loadingMoreRef.current) return;
     setLoadingMore(true);
     void fetchAllGeneratedAssets(tokenRef.current, "", {
-      cursor,
+      ...(cursor ? { cursor } : { sessionCursor }),
       limit: PAGE_SIZE,
     })
       .then((payload) => {
         setGroups((current) => [...current, ...payload.groups]);
         setTotal(payload.total);
         setNext(payload.next ?? null);
+        setNextSession(payload.nextSessionCursor ?? null);
       })
       .catch(() => {
         // Keep the current page; the user can retry with the same cursor.
@@ -76,6 +82,7 @@ export function useGeneratedAssetLibrary(
     groups,
     total,
     next,
+    nextSession,
     loading,
     loadingMore,
     loadFailed,

@@ -858,6 +858,7 @@ export async function fetchSessionAutomations(
 export interface FetchSessionGeneratedAssetsOptions {
   cursor?: string | null;
   limit?: number;
+  sessionCursor?: string | null;
 }
 
 export async function fetchSessionGeneratedAssets(
@@ -886,6 +887,7 @@ export async function fetchAllGeneratedAssets(
   const query = new URLSearchParams();
   if (options.limit !== undefined) query.set("limit", String(options.limit));
   if (options.cursor) query.set("cursor", options.cursor);
+  if (options.sessionCursor) query.set("sessionCursor", options.sessionCursor);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<SessionGeneratedAssetsPayload>(
     `${base}/api/generated-assets${suffix}`,

@@ -154,8 +154,146 @@ def _media_kind_from_name(name: str) -> str:
     return "file"
 
 
+def _transcript_stem(session_key: str) -> str:
+    """Collision-resistant, reversible transcript filename stem."""
+    return SessionManager.storage_key(session_key)
+
+
+def _legacy_transcript_stem(session_key: str) -> str:
+    return SessionManager.safe_key(session_key)
+
+
+def _transcript_chat_id(session_key: str) -> str:
+    return session_key.split(":", 1)[1] if ":" in session_key else session_key
+
+
+def _legacy_transcript_path(session_key: str) -> Path:
+    return get_webui_dir() / f"{_legacy_transcript_stem(session_key)}.jsonl"
+
+
+def _legacy_transcript_segments_dir(session_key: str) -> Path:
+    return get_webui_dir() / f"{_legacy_transcript_stem(session_key)}.segments"
+
+
+def _first_jsonl_chat_id(path: Path) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                value = json.loads(line)
+                if isinstance(value, dict):
+                    row = cast(dict[str, Any], value)
+                    chat_id = row.get("chat_id")
+                    return chat_id if isinstance(chat_id, str) and chat_id else None
+                return None
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def _legacy_owner(path: Path, session_key: str) -> str:
+    if not path.is_file():
+        return "absent"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict):
+        row = cast(dict[str, Any], payload)
+        chat_id = row.get("chat_id")
+        if isinstance(chat_id, str) and chat_id:
+            return "own" if chat_id == _transcript_chat_id(session_key) else "other"
+        return "ambiguous"
+    chat_id = _first_jsonl_chat_id(path)
+    if chat_id is None:
+        return "ambiguous"
+    return "own" if chat_id == _transcript_chat_id(session_key) else "other"
+
+
+def _legacy_dir_owner(directory: Path, session_key: str) -> str:
+    if not directory.is_dir():
+        return "absent"
+    for path in sorted(directory.glob("*.jsonl")):
+        chat_id = _first_jsonl_chat_id(path)
+        if chat_id is None:
+            continue
+        return "own" if chat_id == _transcript_chat_id(session_key) else "other"
+    return "ambiguous"
+
+
+def _write_manifest_json(path: Path, payload: dict[str, Any]) -> None:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _rewrite_manifest_active_name(
+    directory: Path,
+    *,
+    old_stem: str,
+    new_stem: str,
+) -> None:
+    manifest_path = directory / "manifest.json"
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    data = cast(dict[str, Any], payload)
+    active_name = data.get("active_name")
+    if not isinstance(active_name, str) or not active_name.startswith(old_stem):
+        return
+    new_name = new_stem + active_name[len(old_stem):]
+    old_active = get_webui_dir() / active_name
+    new_active = get_webui_dir() / new_name
+    if old_active.is_file() and not new_active.exists():
+        os.replace(old_active, new_active)
+    data["active_name"] = new_name
+    _write_manifest_json(manifest_path, data)
+
+
+def _migrate_legacy_transcript(session_key: str) -> None:
+    """Move one unambiguous legacy transcript to its collision-free identity."""
+    new_path = webui_transcript_path(session_key)
+    new_dir = webui_transcript_segments_dir(session_key)
+    if new_path.exists() or new_dir.exists():
+        return
+    old_path = _legacy_transcript_path(session_key)
+    old_dir = _legacy_transcript_segments_dir(session_key)
+    root_owner = _legacy_owner(old_path, session_key)
+    dir_owner = _legacy_dir_owner(old_dir, session_key)
+    if root_owner == "other" or dir_owner == "other":
+        logger.warning(
+            "Quarantining colliding legacy transcript for {}",
+            session_key,
+        )
+    old_stem = _legacy_transcript_stem(session_key)
+    new_stem = _transcript_stem(session_key)
+    if dir_owner == "own" and old_dir.is_dir() and not new_dir.exists():
+        os.replace(old_dir, new_dir)
+        _rewrite_manifest_active_name(
+            new_dir,
+            old_stem=old_stem,
+            new_stem=new_stem,
+        )
+    if root_owner == "own" and old_path.is_file() and not new_path.exists():
+        os.replace(old_path, new_path)
+
+
 def active_transcript_path(session_key: str) -> Path:
     """Return the committed active transcript file for this session."""
+    _migrate_legacy_transcript(session_key)
     _entries, active_name = _read_segment_manifest_state(session_key)
     if active_name:
         return get_webui_dir() / active_name
@@ -163,12 +301,12 @@ def active_transcript_path(session_key: str) -> Path:
 
 
 def webui_transcript_path(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.jsonl"
 
 
 def webui_transcript_segments_dir(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.segments"
 
 
@@ -177,7 +315,7 @@ def _webui_transcript_manifest_path(session_key: str) -> Path:
 
 
 def _legacy_webui_thread_path(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _legacy_transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.json"
 
 
@@ -351,7 +489,7 @@ def _rebuild_segment_manifest(
 ) -> tuple[list[dict[str, Any]], str | None]:
     segment_ids = _segment_ids_on_disk(session_key)
     entries = [_segment_manifest_entry(session_key, segment_id) for segment_id in segment_ids]
-    stem = SessionManager.safe_key(session_key)
+    stem = _transcript_stem(session_key)
     active_names = sorted(
         path.name
         for path in get_webui_dir().glob(f"{stem}.active.*.jsonl")
@@ -370,6 +508,7 @@ def _rebuild_segment_manifest(
 def _read_segment_manifest_state(
     session_key: str,
 ) -> tuple[list[dict[str, Any]], str | None]:
+    _migrate_legacy_transcript(session_key)
     directory = webui_transcript_segments_dir(session_key)
     if not directory.is_dir():
         return [], None
@@ -491,7 +630,7 @@ def _rotate_active_transcript_if_needed(session_key: str) -> None:
     if not moved:
         return
     entries = _append_segment_turns(session_key, moved, write_manifest=False)
-    active_name = f"{SessionManager.safe_key(session_key)}.active.{secrets.token_hex(8)}.jsonl"
+    active_name = f"{_transcript_stem(session_key)}.active.{secrets.token_hex(8)}.jsonl"
     next_active = get_webui_dir() / active_name
     _write_records_to_path(next_active, _flatten_turns(kept))
     # The manifest commit is the rotation point. Before it, readers use the
@@ -704,6 +843,7 @@ def _select_transcript_page(
 
 
 def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
+    _migrate_legacy_transcript(session_key)
     lines: list[dict[str, Any]] = []
     for chunk_id in _chunk_ids(session_key):
         if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
@@ -715,6 +855,7 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
 
 def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], ...]:
     """Return a cheap content signature for a session's transcript chunks."""
+    _migrate_legacy_transcript(session_key)
     entries: list[tuple[str, int, int]] = []
     for chunk_id in _chunk_ids(session_key):
         path = (
@@ -1060,16 +1201,23 @@ def write_session_messages_as_transcript(
 
 
 def delete_webui_transcript(session_key: str) -> bool:
+    _migrate_legacy_transcript(session_key)
     removed = False
-    for path in (webui_transcript_path(session_key), _legacy_webui_thread_path(session_key)):
-        if not path.is_file():
-            continue
+    path = webui_transcript_path(session_key)
+    if path.is_file():
         try:
             path.unlink()
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript {}: {}", path, e)
-    active_glob = f"{SessionManager.safe_key(session_key)}.active.*.jsonl"
+    legacy_thread = _legacy_webui_thread_path(session_key)
+    if _legacy_owner(legacy_thread, session_key) == "own" and legacy_thread.is_file():
+        try:
+            legacy_thread.unlink()
+            removed = True
+        except OSError as e:
+            logger.warning("Failed to delete legacy webui transcript {}: {}", legacy_thread, e)
+    active_glob = f"{_transcript_stem(session_key)}.active.*.jsonl"
     for active_path in get_webui_dir().glob(active_glob):
         try:
             active_path.unlink()
@@ -2821,6 +2969,7 @@ def has_unfinished_transcript_tail(session_key: str) -> bool:
     every historical segment here would make restart cost grow with the full
     conversation history.
     """
+    _migrate_legacy_transcript(session_key)
     return has_pending_tool_calls(
         _read_transcript_file(webui_transcript_path(session_key))
     )
