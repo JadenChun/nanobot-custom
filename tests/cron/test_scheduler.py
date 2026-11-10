@@ -187,6 +187,7 @@ async def test_epoch_rollover_survives_crash_before_state_publication(
         assert before["kind"] == "cron_scheduler_state_v2"
         assert before["bridges"]
 
+        (archive.parent / ".epoch-0.json.dead.tmp").write_text("residue")
         monkeypatch.setattr(SchedulerStore, "compare_and_swap", original_cas)
         successor = store.rollover_epoch(lease)
         assert successor["epoch"] == 1

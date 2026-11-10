@@ -767,6 +767,8 @@ class SchedulerStore:
             total = 0
             existing_size = 0
             for entry_name in names:
+                if entry_name.startswith(".") and entry_name.endswith(".tmp"):
+                    continue
                 if re.fullmatch(r"epoch-[0-9]{1,10}\.json", entry_name) is None:
                     raise OccurrenceCorruptError("scheduler epoch name invalid")
                 entry = os.stat(entry_name, dir_fd=directory, follow_symlinks=False)
