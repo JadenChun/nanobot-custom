@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -59,9 +60,11 @@ def test_every_phase_requires_explicit_authority_selectors() -> None:
     for arguments in invocations:
         result = runner.invoke(cron_delivery_app, arguments)
         assert result.exit_code == 2
-        assert "--outbox-root" in "".join(result.output.split())
         help_result = runner.invoke(cron_delivery_app, [*arguments, "--help"])
-        help_output = "".join(help_result.output.split())
+        help_output = "".join(
+            re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", help_result.output).split()
+        )
+        assert "--outbox-root" in help_output
         assert "--namespace" in help_output
         assert "--artifacts-root" in help_output
 
