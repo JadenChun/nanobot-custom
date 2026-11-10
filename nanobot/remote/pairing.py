@@ -87,6 +87,10 @@ class PairingConsumedError(PairingError):
     pass
 
 
+class PairingUpgradeRequiredError(PairingRejectedError):
+    """A legacy client tried to pair without the device-key contract."""
+
+
 class PairingOwnerRequiredError(PairingRejectedError):
     """The new pairing API only accepts owner/full-control offers."""
 
@@ -420,19 +424,14 @@ class PairingService:
                 raise PairingRejectedError("approval cannot add scopes")
             if challenge.owner_only and OWNER_SCOPE not in approved_scopes:
                 raise PairingOwnerRequiredError("owner scope cannot be removed")
-            pair: IssuedPair | None = None
+            challenge.scopes = tuple(approved_scopes)
             if challenge.device_public_key_der is None:
-                try:
-                    pair = self.tokens.issue(
-                        challenge.pending_installation,
-                        approved_scopes,
-                        label=challenge.pending_label or challenge.offer.label,
-                    )
-                except (AuthConflictError, AuthRejectedError, AuthError) as exc:
-                    raise PairingRejectedError(str(exc)) from exc
+                raise PairingUpgradeRequiredError(
+                    "This server requires device-key pairing; upgrade the app and re-pair"
+                )
             challenge.approved = True
             challenge.state = "approved"
-            challenge.result = pair
+            challenge.result = None
             self._save_locked()
             return PairingApproved(
                 pairing_id=challenge.offer.pairing_id,
@@ -590,6 +589,10 @@ class PairingService:
     ) -> PairingPending:
         if challenge.pending_installation is not None or challenge.approved:
             raise PairingBusyError("challenge already has a pending request")
+        if device_public_key_der is None:
+            raise PairingUpgradeRequiredError(
+                "This server requires device-key pairing; upgrade the app and re-pair"
+            )
         try:
             validate_installation_id(installation_id)
         except ContractError as exc:
@@ -603,21 +606,20 @@ class PairingService:
         challenge.pending_method = method
         challenge.state = "pending_approval"
         challenge.requested_at = int(self.clock())
-        if device_public_key_der is not None:
-            try:
-                fingerprint = device_proof_fingerprint(device_public_key_der)
-            except DeviceProofError as exc:
-                raise PairingRejectedError(str(exc)) from exc
-            now = int(self.clock())
-            challenge.device_public_key_der = bytes(device_public_key_der)
-            challenge.device_fingerprint = fingerprint
-            challenge.device_generation = 1
-            challenge.proof_challenge_id = uuid.uuid4().hex
-            challenge.proof_nonce = secrets.token_urlsafe(32)
-            challenge.proof_expires_at = min(
-                challenge.offer.expires_at,
-                now + DEVICE_PROOF_TTL_SECONDS,
-            )
+        try:
+            fingerprint = device_proof_fingerprint(device_public_key_der)
+        except DeviceProofError as exc:
+            raise PairingRejectedError(str(exc)) from exc
+        now = int(self.clock())
+        challenge.device_public_key_der = bytes(device_public_key_der)
+        challenge.device_fingerprint = fingerprint
+        challenge.device_generation = 1
+        challenge.proof_challenge_id = uuid.uuid4().hex
+        challenge.proof_nonce = secrets.token_urlsafe(32)
+        challenge.proof_expires_at = min(
+            challenge.offer.expires_at,
+            now + DEVICE_PROOF_TTL_SECONDS,
+        )
         challenge.challenge = PairingChallenge(
             pairing_id=challenge.offer.pairing_id,
             origin=challenge.offer.origin,

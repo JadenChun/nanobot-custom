@@ -511,6 +511,8 @@ class MobileGatewayEdge:
         except OwnerUnavailableError:
             return http_json_response({"error": "owner_unavailable"}, status=503)
         except OwnerRequestError as exc:
+            if exc.code == "upgrade_required":
+                return http_json_response({"error": "upgrade_required"}, status=426)
             code = exc.code if exc.code in {"device_revoked", "invalid_refresh"} else "invalid_refresh"
             return http_json_response({"error": code}, status=401)
         return http_json_response(result)

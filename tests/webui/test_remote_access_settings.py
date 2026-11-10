@@ -10,6 +10,7 @@ from nanobot.config.schema import Config
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.webui.settings_remote import handle_remote_access
 from nanobot.webui.settings_services import WebUISettingsConfig
+from tests.remote.proof_helpers import new_device_key
 
 
 def _request(path: str, payload: dict | None = None) -> WsRequest:
@@ -20,7 +21,7 @@ def _request(path: str, payload: dict | None = None) -> WsRequest:
 
 
 def test_remote_access_settings_routes(tmp_path: Path) -> None:
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     config_path = tmp_path / "config.json"
     config = Config.model_validate(
@@ -74,7 +75,7 @@ def test_remote_access_settings_routes(tmp_path: Path) -> None:
 
 
 def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path) -> None:
-    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner = RemoteAccessOwner(tmp_path / "remote-access", serve_verifier=lambda _origin: True)
     owner.start()
     owner.store.set_enabled(True)
     config_path = tmp_path / "config.json"
@@ -128,6 +129,7 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
         assert pending.status_code == 200
         assert json.loads(pending.body)["pending"][0]["pairing_id"] == pairing["pairing_id"]
 
+        _key, public_der = new_device_key()
         owner.pairing.collect(
             pairing_id=pairing["pairing_id"],
             nonce=pairing["nonce"],
@@ -135,6 +137,7 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
             installation_id="settings-owner-1",
             label="Pixel 10",
             platform="Android 16",
+            device_public_key_der=public_der,
         )
         pending = handle_remote_access(
             settings,
@@ -171,11 +174,13 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
                 "/api/settings/remote-access/pairing/start",
             ).body
         )
+        _manual_key, manual_public = new_device_key()
         owner.pairing.collect_by_code(
             origin="https://fixture.example:8443",
             pairing_code=manual["pairing_code"],
             installation_id="settings-owner-2",
             label="Manual phone",
+            device_public_key_der=manual_public,
         )
         missing_code = handle_remote_access(
             settings,
@@ -213,12 +218,14 @@ def test_owner_pairing_start_requires_consent_and_exposes_pending(tmp_path: Path
                 "/api/settings/remote-access/pairing/start",
             ).body
         )
+        _deny_key, deny_public = new_device_key()
         owner.pairing.collect(
             pairing_id=denied["pairing_id"],
             nonce=denied["nonce"],
             collector_secret=denied["collector_secret"],
             installation_id="settings-owner-3",
             label="Denied phone",
+            device_public_key_der=deny_public,
         )
         denied_response = handle_remote_access(
             settings,

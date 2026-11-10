@@ -25,6 +25,7 @@ from nanobot.remote.edge import (
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.remote.protocol import MutationEnvelope, MutationMode, stable_operation_digest
 from nanobot.remote.replay import OperationReplayCache
+from tests.remote.proof_helpers import new_device_key, sign_claims
 
 
 def token_headers(token: str) -> Headers:
@@ -76,6 +77,26 @@ def edge_setup(tmp_path: Path):
     finally:
         owner.stop()
 
+
+
+
+def _proof_headers(owner: RemoteAccessOwner, pairing_id: str, key, public_der: bytes) -> list[tuple[str, str]]:
+    from nanobot.remote.device_proof import DeviceProofClaims
+
+    payload = owner.pairing.proof_challenge_claims(pairing_id)
+    assert payload is not None
+    claims = DeviceProofClaims.from_payload(payload)
+    return [
+        ("X-Nanobot-Pairing-Id", pairing_id),
+        (
+            "X-Nanobot-Device-Signature",
+            base64.b64encode(sign_claims(key, claims)).decode("ascii"),
+        ),
+        (
+            "X-Nanobot-Proof-Claims",
+            base64.b64encode(json.dumps(claims.payload()).encode("utf-8")).decode("ascii"),
+        ),
+    ]
 
 async def _read(identity: AccessIdentity, query: dict[str, list[str]]) -> dict[str, Any]:
     return {"items": [identity.installation_id], "cursor": query.get("cursor", [None])[0]}
@@ -375,6 +396,7 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
         chat_consent=True,
         media_consent=True,
     )
+    key, public_der = new_device_key()
     pairing_headers = [
         ("X-Nanobot-Pairing-Id", offer.pairing_id),
         ("X-Nanobot-Pairing-Nonce", offer.nonce),
@@ -385,7 +407,12 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
         request(
             "/mobile/v1/pair/collect",
             None,
-            [*pairing_headers, ("X-Nanobot-Installation", "install-pair-1"), ("X-Nanobot-Label", "phone")],
+            [
+                *pairing_headers,
+                ("X-Nanobot-Installation", "install-pair-1"),
+                ("X-Nanobot-Label", "phone"),
+                ("X-Nanobot-Device-Key", base64.b64encode(public_der).decode("ascii")),
+            ],
         ),
     )
     assert collect is not None and collect.status_code == 200
@@ -398,13 +425,22 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
     assert body(waiting)["status"] == "pending"
 
     owner.pairing.approve(pairing_id=offer.pairing_id, comparison_code=offer.comparison_code)
+    prove = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/pair/prove",
+            None,
+            _proof_headers(owner, offer.pairing_id, key, public_der),
+        ),
+    )
+    assert prove is not None and prove.status_code == 200
     approved = await edge.handle(None, request("/mobile/v1/pair/poll", None, pairing_headers))
     assert approved is not None and approved.status_code == 200
     result = body(approved)
     assert result["status"] == "approved"
     assert result["installation_id"] == "install-pair-1"
     assert result["access_token"].startswith("nbm_at_")
-    assert result["refresh_token"].startswith("nbm_rt_")
+    assert result["refresh_token"] == ""
 
     consumed = await edge.handle(None, request("/mobile/v1/pair/poll", None, pairing_headers))
     assert consumed is not None and consumed.status_code == 410
@@ -456,6 +492,7 @@ async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> No
     assert wrong is not None and wrong.status_code == 403
     assert body(wrong)["error"] == "pairing_code_invalid"
 
+    key, public_der = new_device_key()
     collected = await edge.handle(
         None,
         request(
@@ -468,6 +505,7 @@ async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> No
                 ("X-Nanobot-Label", "Pixel 10"),
                 ("X-Nanobot-Platform", "Android 16"),
                 ("X-Nanobot-Model", "Pixel 10"),
+                ("X-Nanobot-Device-Key", base64.b64encode(public_der).decode("ascii")),
             ],
         ),
     )
@@ -484,6 +522,15 @@ async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> No
         pairing_id=offer.pairing_id,
         pairing_code=offer.pairing_code,
     )
+    prove = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/pair/prove",
+            None,
+            _proof_headers(owner, offer.pairing_id, key, public_der),
+        ),
+    )
+    assert prove is not None and prove.status_code == 200
     approved = await edge.handle(
         None,
         request(
@@ -502,38 +549,18 @@ async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> No
 
 
 @pytest.mark.asyncio
-async def test_edge_refresh_rotates_access_without_bearer(edge_setup) -> None:
+async def test_edge_refresh_rejects_legacy_bearer(edge_setup) -> None:
     owner, edge, pair = edge_setup
+    owner.store.revoke_legacy_bearer_devices()
     headers = [
         ("X-Nanobot-Installation", "install-0001"),
         ("X-Nanobot-Refresh-Token", pair.refresh_token),
     ]
     response = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
-    assert response is not None and response.status_code == 200
-    payload = json.loads(response.body)
-    assert payload["access_token"].startswith("nbm_at_")
-    assert payload["refresh_token"].startswith("nbm_rt_")
-    assert payload["expires_in"] > 0
-    replay = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
-    assert replay is not None and replay.status_code == 401
-    assert body(replay)["error"] == "invalid_refresh"
+    assert response is not None and response.status_code == 426
+    assert body(response)["error"] == "upgrade_required"
     missing = await edge.handle(None, request("/mobile/v1/refresh", None))
     assert missing is not None and missing.status_code == 400
-
-    owner.tokens.revoke("install-0001")
-    revoked = await edge.handle(
-        None,
-        request(
-            "/mobile/v1/refresh",
-            None,
-            [
-                ("X-Nanobot-Installation", "install-0001"),
-                ("X-Nanobot-Refresh-Token", payload["refresh_token"]),
-            ],
-        ),
-    )
-    assert revoked is not None and revoked.status_code == 401
-    assert body(revoked)["error"] == "device_revoked"
 
 
 @pytest.mark.asyncio

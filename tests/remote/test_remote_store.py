@@ -117,7 +117,7 @@ def test_store_rejects_symlinked_state_file(tmp_path) -> None:
         store.load()
 
 
-def test_owner_device_has_no_idle_expiry_and_legacy_helper_preserves_owner(tmp_path) -> None:
+def test_owner_device_has_no_idle_expiry_and_legacy_helper_revokes_v1_bearer(tmp_path) -> None:
     class Clock:
         now = 1000.0
 
@@ -147,9 +147,9 @@ def test_owner_device_has_no_idle_expiry_and_legacy_helper_preserves_owner(tmp_p
     assert store.validate_refresh("install-owner", "owner-refresh") is not None
     assert store.validate_refresh("install-legacy", "legacy-refresh") is None
 
-    assert store.revoke_legacy_chat_only_devices() == ["install-legacy"]
+    assert set(store.revoke_legacy_chat_only_devices()) == {"install-owner", "install-legacy"}
     owner_device = store.get_device("install-owner")
     legacy_device = store.get_device("install-legacy")
-    assert owner_device is not None and not owner_device.revoked
+    assert owner_device is not None and owner_device.revoked
     assert legacy_device is not None and legacy_device.revoked
     assert store.revoke_legacy_chat_only_devices() == []

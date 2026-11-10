@@ -31,6 +31,10 @@ class AuthConflictError(AuthError):
     """A device already exists or the owner refused a duplicate operation."""
 
 
+class AuthUpgradeRequiredError(AuthRejectedError):
+    """A legacy v1 bearer device must re-pair with the device-key contract."""
+
+
 @dataclass(frozen=True)
 class AccessGrant:
     installation_id: str
@@ -195,6 +199,15 @@ class TokenService:
 
     def refresh(self, installation_id: str, refresh_token: str) -> IssuedPair:
         with self._lock:
+            existing = self.store.get_device(installation_id)
+            if (
+                existing is not None
+                and existing.revoked
+                and self.store.get_device_proof(installation_id) is None
+            ):
+                raise AuthUpgradeRequiredError(
+                    "v1 bearer authority is revoked; re-pair with the device-key app"
+                )
             device = self.store.validate_refresh(installation_id, refresh_token)
             if device is None:
                 raise AuthRejectedError("refresh credential is not current")

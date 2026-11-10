@@ -14,6 +14,10 @@ from nanobot.remote.pairing import (
     PairingService,
 )
 from nanobot.remote.store import RemoteAccessStore
+from tests.remote.proof_helpers import (
+    approve_and_prove,
+    collect_with_key,
+)
 
 ORIGIN = "https://fixture.example:8443"
 
@@ -51,7 +55,7 @@ def test_pending_collection_survives_restart_and_cancel_clears_it(
 ) -> None:
     store, tokens, pairing, clock = setup(tmp_path)
     created = offer(pairing)
-    pairing.collect(
+    collect_with_key(pairing,
         pairing_id=created.pairing_id,
         nonce=created.nonce,
         collector_secret=created.collector_secret,
@@ -81,14 +85,14 @@ def test_pending_collection_survives_restart_and_cancel_clears_it(
 def test_approved_result_is_not_replayed_after_restart(tmp_path: Path) -> None:
     store, tokens, pairing, clock = setup(tmp_path)
     created = offer(pairing)
-    pairing.collect(
+    collect_with_key(pairing,
         pairing_id=created.pairing_id,
         nonce=created.nonce,
         collector_secret=created.collector_secret,
         installation_id="install-0001",
         label="Jaden's phone",
     )
-    pairing.approve(
+    approve_and_prove(pairing,
         pairing_id=created.pairing_id,
         comparison_code=created.comparison_code,
     )

@@ -371,11 +371,11 @@ class RemoteAccessStore:
             self._save_locked(state)
             return updated
 
-    def revoke_legacy_chat_only_devices(self) -> list[str]:
-        """Revoke active devices that predate owner-only pairing.
+    def revoke_legacy_bearer_devices(self) -> list[str]:
+        """Revoke every active device that has no device-proof binding.
 
-        Owner-scoped devices are left untouched. This is an explicit migration
-        helper; it is not run implicitly so legacy internal flows keep working.
+        This includes legacy owner-scoped bearer devices. The v2 device-key
+        contract is the only supported credential path after cutover.
         """
 
         with self._locked():
@@ -383,7 +383,7 @@ class RemoteAccessStore:
             revoked: list[str] = []
             now = self.clock()
             for installation_id, device in list(state.devices.items()):
-                if device.revoked or OWNER_SCOPE in device.scopes:
+                if device.revoked or installation_id in state.device_proofs:
                     continue
                 state.devices[installation_id] = RemoteDevice(
                     installation_id=device.installation_id,
@@ -401,10 +401,15 @@ class RemoteAccessStore:
                 self._save_locked(state)
             return revoked
 
-    def migrate_legacy_chat_only_devices(self) -> list[str]:
-        """Alias for the explicit owner-only pairing migration."""
+    def revoke_legacy_chat_only_devices(self) -> list[str]:
+        """Compatibility alias for the v1 bearer revocation migration."""
 
-        return self.revoke_legacy_chat_only_devices()
+        return self.revoke_legacy_bearer_devices()
+
+    def migrate_legacy_chat_only_devices(self) -> list[str]:
+        """Alias for the explicit v1 bearer revocation migration."""
+
+        return self.revoke_legacy_bearer_devices()
 
     def validate_refresh(self, installation_id: str, refresh_token: str) -> RemoteDevice | None:
         state = self.load()

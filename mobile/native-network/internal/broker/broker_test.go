@@ -576,6 +576,47 @@ func TestQueueFullRetainsTerminalResult(t *testing.T) {
 	}
 }
 
+func TestTerminalBudgetHoldsTwoMaximumResponses(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
+	if err := core.emit(map[string]any{"type": "filler"}); err != nil {
+		t.Fatalf("filler: %v", err)
+	}
+	body := base64.StdEncoding.EncodeToString(make([]byte, 8<<20))
+	for id := uint64(1); id <= 2; id++ {
+		if err := core.emit(map[string]any{
+			"type":        "http_response",
+			"request_id":  id,
+			"status":      200,
+			"body_base64": body,
+		}); err != nil {
+			t.Fatalf("terminal emit %d: %v", id, err)
+		}
+	}
+	buffer := make([]byte, 12<<20)
+	seen := map[uint64]bool{}
+	for i := 0; i < 2; i++ {
+		n, err := core.PollEvent(buffer)
+		if err != nil || n == 0 {
+			t.Fatalf("poll %d: n=%d err=%v", i, n, err)
+		}
+		var event struct {
+			Type      string  `json:"type"`
+			RequestID float64 `json:"request_id"`
+		}
+		if err := json.Unmarshal(buffer[:n], &event); err != nil {
+			t.Fatalf("poll %d decode: %v", i, err)
+		}
+		if event.Type != "http_response" {
+			continue
+		}
+		seen[uint64(event.RequestID)] = true
+	}
+	if !seen[1] || !seen[2] {
+		t.Fatalf("terminal results evicted: %v", seen)
+	}
+}
+
 func TestHTTPRequestCountIsBounded(t *testing.T) {
 	server := testServer(t)
 	core := testCore(t, server, func(cfg *Config) { cfg.MaxRequests = 1 })

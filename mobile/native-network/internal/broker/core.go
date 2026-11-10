@@ -67,6 +67,17 @@ func NewCore(cfg Config) (*Core, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: origin cannot be parsed", ErrInvalid)
 	}
+	// A terminal event carries base64-encoded response bytes plus JSON
+	// overhead. Reserve enough for two maximum responses so a full event
+	// queue never evicts an earlier admitted result.
+	perResponse := base64.StdEncoding.EncodedLen(cfg.MaxResponseBytes) + 4096
+	terminalLimit := perResponse * 2
+	if terminalLimit < 16<<20 {
+		terminalLimit = 16 << 20
+	}
+	if terminalLimit > 64<<20 {
+		terminalLimit = 64 << 20
+	}
 	return &Core{
 		cfg:               cfg,
 		origin:            origin,
@@ -75,7 +86,7 @@ func NewCore(cfg Config) (*Core, error) {
 		events:            make(chan []byte, cfg.QueueSize),
 		mediaStreams:      make(map[uint64]*mediaStream),
 		terminalEvents:    make(map[uint64][]byte),
-		terminalByteLimit: 16 << 20,
+		terminalByteLimit: terminalLimit,
 	}, nil
 }
 

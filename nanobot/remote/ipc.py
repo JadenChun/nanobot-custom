@@ -9,10 +9,11 @@ import socket
 import struct
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from nanobot.remote.auth import AuthRejectedError, TokenService
+from nanobot.remote.auth import AuthRejectedError, AuthUpgradeRequiredError, TokenService
 from nanobot.remote.delegation import (
     DelegatedAdminOperation,
     DelegationError,
@@ -34,6 +35,7 @@ from nanobot.remote.pairing import (
     PairingRejectedError,
     PairingResult,
     PairingService,
+    PairingUpgradeRequiredError,
 )
 from nanobot.remote.store import RemoteAccessStore, StoreError
 
@@ -55,11 +57,13 @@ class OwnerIPCServer:
         pairing: PairingService | None = None,
         tokens: TokenService | None = None,
         delegation: OwnerDelegationService | None = None,
+        serve_verifier: Callable[[str], bool] | None = None,
     ) -> None:
         self.store = store
         self.pairing = pairing
         self.tokens = tokens
         self.delegation = delegation
+        self.serve_verifier = serve_verifier
         self.socket_path = Path(socket_path) if socket_path else store.root / IPC_SOCKET_NAME
         self._socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -388,6 +392,8 @@ class OwnerIPCServer:
                 return {"ok": False, "error": {"code": "bad_request", "message": "installation_id and refresh_token are required"}}
             try:
                 pair = self.tokens.refresh(installation_id, refresh_token)
+            except AuthUpgradeRequiredError as exc:
+                return {"ok": False, "error": {"code": "upgrade_required", "message": str(exc)}}
             except AuthRejectedError as exc:
                 device = self.store.get_device(installation_id)
                 code = "device_revoked" if device is None or device.revoked else "invalid_refresh"
@@ -537,6 +543,14 @@ class OwnerIPCServer:
                     "error": {
                         "code": "owner_required",
                         "message": "owner pairing requires full-control consent",
+                    },
+                }
+            if self.serve_verifier is not None and not self.serve_verifier(origin):
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "serve_unverified",
+                        "message": "Tailscale Serve target is not verified for this origin",
                     },
                 }
             try:
@@ -936,6 +950,8 @@ def _pairing_code(exc: PairingError) -> str:
         return "pairing_not_found"
     if isinstance(exc, PairingExpiredError):
         return "pairing_expired"
+    if isinstance(exc, PairingUpgradeRequiredError):
+        return "upgrade_required"
     if isinstance(exc, PairingConsumedError):
         return "pairing_consumed"
     if isinstance(exc, PairingBusyError):
