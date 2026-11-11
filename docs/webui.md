@@ -371,10 +371,10 @@ your agent.
 
 ## Automations
 
-Automations are agent turns that run later in a linked topic. Create them from
-the topic or channel where they are supposed to run so nanobot keeps the
-correct target context. When an automation runs, it normally delivers the
-result back to that topic.
+Automations are agent turns that run later. The current gateway supports
+explicitly enabled fresh-turn scheduling with qualified Telegram receipt
+delivery, plus opt-in local triggers bound to chat sessions. Session-bound
+scheduled execution and WebSocket scheduled delivery are unavailable.
 
 For the full automation model, creation flow, trigger CLI usage, and delivery
 semantics, see [`automations.md`](./automations.md).
@@ -382,20 +382,21 @@ semantics, see [`automations.md`](./automations.md).
 There are two user-facing automation types:
 
 - Scheduled automations, created by the agent's cron tool, run at a time,
-  interval, or cron expression.
+  interval, or cron expression when `gateway.cron.enabled` is true.
 - Local triggers, created with `/trigger <name>`, run when you call a local
-  command such as `nanobot trigger trg_8K4P2Q9X "Review PR #4502"`.
+  command such as `nanobot trigger trg_8K4P2Q9X "Review PR #4502"` and the
+  gateway has `localTriggers: true`.
 
-For recurring background checks that should stay quiet unless there is something
-useful to report, use the protected heartbeat job by editing `HEARTBEAT.md`
-instead of creating a chat automation.
+Periodic Heartbeat and Dream are inactive in the normal gateway. Editing
+`HEARTBEAT.md` does not start background execution; use `/dream` for manual
+memory consolidation.
 
 Use the Automations view to:
 
 - Filter by all, active, paused, needs-attention, or system jobs.
 - Search by task name, message, trigger command, linked topic, schedule, or status.
 - Sort by next run, last run, updated time, or name.
-- Run scheduled automations now.
+- Run supported scheduled automations now; unavailable actions show a reason.
 - Pause or resume, rename, or delete user-created automations.
 - Copy the CLI command for local triggers.
 - Inspect protected system automations without changing them.

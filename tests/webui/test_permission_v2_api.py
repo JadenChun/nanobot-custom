@@ -13,6 +13,8 @@ import pytest
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
+from nanobot.agent.tools import native_process
+from nanobot.security import native_admission
 from nanobot.security.desktop_permissions import WorkspacePermissionConflictError
 from nanobot.security.folder_grants import FolderGrantStore
 from nanobot.security.workspace_access import default_workspace_scope
@@ -357,7 +359,14 @@ def test_real_ordinary_owning_thread_read_projects_permissions_without_request(
 
 def test_old_generation_once_residual_projects_without_current_request(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Policy-only reservation: keep host identity deterministic without /proc.
+    monkeypatch.setattr(
+        native_admission,
+        "current_host_identity",
+        lambda: native_admission.HostIdentity("host-a", "boot-a", 101),
+    )
     home = tmp_path / "agent"
     project = tmp_path / "project"
     instance = tmp_path / "instance"
@@ -616,7 +625,14 @@ def test_allow_once_expands_home_input_and_preserves_receipt_spelling(
 
 def test_allow_once_does_not_reauthorize_while_prior_once_tree_is_active(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # No process is launched; the reservation represents an active policy owner.
+    monkeypatch.setattr(
+        native_admission,
+        "current_host_identity",
+        lambda: native_admission.HostIdentity("host-a", "boot-a", 101),
+    )
     home = tmp_path / "agent"
     old_project = tmp_path / "old-project"
     selected_project = tmp_path / "selected-project"
@@ -751,7 +767,15 @@ def test_allow_once_does_not_reauthorize_while_prior_once_tree_is_active(
 @pytest.mark.asyncio
 async def test_real_mode_conflict_is_serialized_and_cached_as_typed_websocket_frame(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Exercise wire serialization and permission state without a native child.
+    monkeypatch.setattr(native_process, "native_supervisor_available", lambda: True)
+    monkeypatch.setattr(
+        native_admission,
+        "current_host_identity",
+        lambda: native_admission.HostIdentity("host-a", "boot-a", 101),
+    )
     home = tmp_path / "agent"
     project = tmp_path / "project"
     instance = tmp_path / "instance"

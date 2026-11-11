@@ -2287,37 +2287,24 @@ nanobot agent -m "/pairing approve ABCD-EFGH"
 
 ## Gateway Heartbeat
 
-The gateway can run a protected heartbeat cron job that periodically checks `HEARTBEAT.md` in the active workspace. This is enabled by default when you run `nanobot gateway`.
-
-```json
-{
-  "gateway": {
-    "heartbeat": {
-      "enabled": true,
-      "intervalS": 1800,
-      "keepRecentMessages": 8
-    }
-  }
-}
-```
-
-If `HEARTBEAT.md` has tasks under `## Active Tasks`, the agent executes them and sends only useful/actionable results to the most recently active chat target. If the file has no active tasks, or the result is routine with nothing useful to report, the heartbeat is skipped silently.
-
-This is intentionally different from user-created cron jobs. A cron job created with the `cron` tool runs as a scheduled turn in its origin chat/session and normally delivers the result back to that channel. Use `HEARTBEAT.md` for recurring background checks that should not notify the user on every run.
-
-The heartbeat job is backed by the same cron service as user-created reminders. It is stored under the active workspace (`<workspace>/cron/jobs.json`) and shows up in `cron(action="list")` as `heartbeat`, but it is system-managed and cannot be removed with the `cron` tool. Disable it through config and restart the gateway if you do not want periodic heartbeat checks.
+Periodic Heartbeat is inactive in the normal gateway. These fields are retained
+for configuration compatibility; setting `enabled` to `true` does not install
+an executor. Editing `HEARTBEAT.md` or `prompts/evaluator.md` does not start
+background work. The WebUI Runtime page reports configured intent separately
+from effective support.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `gateway.heartbeat.enabled` | `true` | Register the built-in heartbeat cron job on gateway startup. |
-| `gateway.heartbeat.intervalS` | `1800` | Seconds between heartbeat checks. |
-| `gateway.heartbeat.keepRecentMessages` | `8` | Number of recent heartbeat-session messages to retain after each run. |
-| `gateway.restartMode` | `auto` | Restart strategy for `/restart`: `auto` uses `spawn` on Windows foreground runs and `exec` elsewhere. Use `exit` with Windows service wrappers such as WinSW or nssm so the service manager owns the restart. |
+| `gateway.heartbeat.enabled` | `false` | Retained intent; periodic execution is unavailable. |
+| `gateway.heartbeat.intervalS` | `1800` | Intended seconds between checks. |
+| `gateway.heartbeat.keepRecentMessages` | `8` | Retained history preference. |
+| `gateway.cron.enabled` | `false` | Opt into qualified fresh-turn scheduling and manual runs with Telegram receipt delivery. |
+| `gateway.localTriggers` | `false` | Install one gateway consumer for the workspace's local trigger queue. |
+| `gateway.restartMode` | `auto` | Restart strategy for `/restart`: `auto` uses `spawn` on Windows foreground runs and `exec` elsewhere. Use `exit` with service wrappers that own restarts. |
 
-### Custom heartbeat evaluator prompt
-
-The notification gate runs on a built-in system prompt. Advanced users can override it, but you rarely need to — it's strongly advised to first read the evaluator code and the default `evaluator.md`. To override, drop your prompt at `<workspace>/prompts/evaluator.md`. It must still instruct the model to call the `evaluate_notification` tool; otherwise the gate fails closed and stays silent.
-
+See [Automations](./automations.md) for supported execution modes, activation,
+and delivery semantics. Enabling cron does not activate Heartbeat or periodic
+Dream; run `/dream` manually for memory consolidation.
 
 ## Subagent Concurrency
 

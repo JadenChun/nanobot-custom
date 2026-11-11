@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from filelock import FileLock
 from loguru import logger
 
 from nanobot.agent.automation_turns import AutomationTurnError
@@ -15,6 +16,28 @@ from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
 from nanobot.triggers.local_store import LocalTriggerStore
 from nanobot.triggers.local_types import LocalTrigger, TriggerDelivery
 from nanobot.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN_METADATA_KEY
+
+
+async def run_gateway_local_triggers(
+    *,
+    store: LocalTriggerStore,
+    submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]],
+    is_channel_enabled: Callable[[str], bool],
+) -> None:
+    """Own one consumer lease across recovery, delivery and cancellation."""
+    store.root.mkdir(parents=True, exist_ok=True)
+    # A second gateway must not recover the first gateway's in-flight claims.
+    with FileLock(str(store.root / ".consumer.lock"), timeout=0):
+        store.delivery_active = True
+        try:
+            await run_local_trigger_queue(
+                store=store,
+                submit_turn=submit_turn,
+                is_channel_enabled=is_channel_enabled,
+                batch_size=1,
+            )
+        finally:
+            store.delivery_active = False
 
 
 async def run_local_trigger_queue(

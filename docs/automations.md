@@ -1,15 +1,18 @@
 # Automations
 
-<!-- Meta description: Create, run, and manage nanobot scheduled automations, local triggers, and heartbeat-backed background checks. -->
+<!-- Meta description: Create, run, and manage supported scheduled automations and local triggers, and inspect inactive periodic features. -->
 
-Automations are agent turns that run later in a linked topic. Use them
+Automations are agent turns that run later. Use them
 when nanobot should do work without someone actively typing: reminders,
 recurring checks, nightly summaries, CI follow-ups, local script reports, or
 webhook-driven events.
 
-Create automations from the chat channel or WebUI topic where the
-result should appear. That lets nanobot keep the right session history,
-workspace, and reply target.
+The gateway currently supports two explicitly enabled execution paths:
+`gateway.cron.enabled: true` admits fresh scheduled turns with Telegram
+receipt delivery; `gateway.localTriggers: true` delivers queued local messages
+to their bound chat sessions. Both default to off. Session-bound scheduled jobs,
+WebSocket scheduled delivery, periodic Heartbeat, and periodic Dream are not
+installed by the normal gateway.
 
 ## Choose an Automation Type
 
@@ -17,30 +20,42 @@ workspace, and reply target.
 |---|---|---|---|
 | Scheduled automation | Time, interval, or cron expression | Recurring reminders, scheduled summaries, one-time future tasks | Ask nanobot in the target topic to schedule it with the `cron` tool |
 | Local trigger | A local `nanobot trigger ...` command | CI jobs, webhooks, shell scripts, generated reports | `/trigger <name>` in the target topic |
-| Heartbeat | Protected system schedule | Quiet recurring checks that should only report useful results | Edit `<workspace>/HEARTBEAT.md` |
+| Heartbeat | Unavailable in the normal gateway | Retained configuration and workspace task file | Periodic execution is inactive |
 
 The two user-created automation types are scheduled automations and local
-triggers. Heartbeat uses the same background service but is system-managed and
-protected from normal automation edits.
+triggers. Retained system definitions remain protected from normal automation
+edits; their presence does not mean a background worker is installed.
 
 ## Before You Create One
 
-Keep `nanobot gateway` running. The gateway owns background delivery for chat
-apps, WebUI topics, scheduled automations, local triggers, heartbeat, and
-Dream jobs.
+Enable the execution path you need, then keep `nanobot gateway` running:
+
+```json
+{
+  "gateway": {
+    "cron": { "enabled": true },
+    "localTriggers": true
+  }
+}
+```
+
+Only enable cron after migrating existing enabled jobs to its fresh-turn
+contract. Unsupported enabled definitions stop activation with an explicit
+error. Enabling cron does not activate Heartbeat or Dream.
 
 Use the same workspace and config for the gateway and any process that sends
 local trigger messages. If you run multiple nanobot instances, pass the matching
 `--config` or `--workspace` option to `nanobot trigger`.
 
-Create each automation from the target topic. An automation without a linked
-topic cannot be enabled or run from the WebUI because nanobot would not know
-where to deliver the turn.
+Create a local trigger from the target chat or WebUI topic. For scheduled
+execution, use a supported Telegram chat. Other scheduled origins can retain
+definitions while execution remains unavailable. An automation without a linked
+origin cannot be enabled or run from the WebUI.
 
 ## Scheduled Automations
 
-Scheduled automations are created by the agent's `cron` tool. In practice, ask
-nanobot from the target chat or WebUI topic:
+Scheduled automations are created by the agent's `cron` tool. For the installed
+scheduler, ask nanobot from the target Telegram chat:
 
 ```text
 Every weekday at 9am, check open pull requests and summarize blockers here.
@@ -56,17 +71,20 @@ The cron tool supports interval schedules, cron expressions, and one-time
 scheduled tasks. Cron expressions can include an IANA timezone such as
 `America/Vancouver`; otherwise nanobot uses the runtime default timezone.
 
-Scheduled automations normally deliver the result back to the session where they
-were created. Use them for work that should run on a predictable schedule and
-report each run.
-
-For background checks that should stay quiet unless there is something useful to
-report, use heartbeat instead of a user-created scheduled automation.
+The installed scheduler executes each run with fresh context and a dedicated
+`cron:<job-id>` session. Supported Telegram destinations receive a durable
+receipt-backed result. It does not resume the history of the chat that created
+the job. Existing session-bound jobs require explicit migration before execution.
+Other delivery transports are unsupported by this scheduler.
 
 ## Local Triggers
 
 Local triggers let a local script or external service send a message into a
 specific nanobot session later.
+
+Set `gateway.localTriggers` to `true` and restart the gateway to activate
+delivery. Creation and CLI enqueue remain available while delivery is inactive;
+messages stay in the queue, and the command reports the activation requirement.
 
 Create the trigger from the chat or WebUI topic where future messages should
 arrive:
@@ -103,16 +121,10 @@ final message.
 
 ## Heartbeat
 
-Heartbeat is for recurring workspace checks that should usually stay quiet. It
-reads `<workspace>/HEARTBEAT.md`, executes active tasks, and sends only useful or
-actionable results to the most recently active chat target.
-
-Use heartbeat for checks such as "watch this repo for important failures" or
-"periodically inspect this workspace and only tell me when action is needed." Use
-a scheduled automation instead when every run should produce a visible reminder
-or report.
-
-Heartbeat is enabled by default when `nanobot gateway` starts. Configure it in
+Periodic Heartbeat is inactive in the normal gateway, including when the
+compatibility `gateway.heartbeat.enabled` flag is true. Editing `HEARTBEAT.md`
+does not schedule execution. Settings report configured intent separately from
+effective support. See
 [`configuration.md#gateway-heartbeat`](./configuration.md#gateway-heartbeat).
 
 ## Manage Automations
@@ -123,7 +135,7 @@ Use the WebUI Automations view to:
 - search by task name, message, trigger command, linked topic, schedule, or
   status;
 - sort by next run, last run, updated time, or name;
-- run scheduled automations now;
+- run supported scheduled automations now when the gateway advertises admission;
 - pause or resume, rename, or delete user-created automations;
 - copy the CLI command for local triggers;
 - inspect protected system automations without changing them.
@@ -131,6 +143,10 @@ Use the WebUI Automations view to:
 Local triggers do not have a WebUI "Run now" action because each run needs a
 message. Copy the `nanobot trigger ...` command from the WebUI and replace
 `"message"` with the content that should be delivered.
+
+Unsupported or inactive execution paths display a reason. The UI reads
+next-run, latest occurrence outcome, and delivery status from the installed
+runtime; definition-only storage cannot supply that state.
 
 ## Delivery and Reliability
 
@@ -154,7 +170,7 @@ queue is not a distributed multi-consumer queue.
 
 ## Common Patterns
 
-For a nightly report, ask from the target topic:
+For a nightly scheduled report, ask from the target Telegram chat:
 
 ```text
 Every night at 9pm, review today's workspace changes and summarize anything I should handle tomorrow.
@@ -180,11 +196,12 @@ generate-report | nanobot trigger <trigger-id>
 
 ## Troubleshooting
 
-If an automation does not run, check that `nanobot gateway` is running, the
-automation is enabled, and it was created from a linked topic.
+If an automation does not run, check its execution reason in Automations, the
+gateway's activation flags, and whether its execution mode and delivery
+transport are supported.
 
 If a local trigger waits forever, confirm the command uses the same workspace or
-config as the gateway.
+config as the gateway and that `gateway.localTriggers` is enabled.
 
 If a trigger message appears twice after a restart, treat it as expected
 at-least-once delivery and make the external message idempotent.

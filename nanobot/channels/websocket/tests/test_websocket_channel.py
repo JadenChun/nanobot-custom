@@ -6160,15 +6160,15 @@ def test_handle_file_preview_probe_reports_binary_file_as_unavailable(tmp_path) 
     from websockets.http11 import Request
 
     workspace = tmp_path / "workspace"
-    source = workspace / "image.png"
+    source = workspace / "binary.bin"
     workspace.mkdir()
-    source.write_bytes(b"\x89PNG\r\n\0binary")
+    source.write_bytes(b"\0binary")
     gateway = _basic_handler(MagicMock(), workspace_path=workspace)
     gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
     key = "websocket:file-preview"
     enc = quote(key, safe="")
     req = Request(
-        f"/api/sessions/{enc}/file-preview?path=image.png&probe=1",
+        f"/api/sessions/{enc}/file-preview?path=binary.bin&probe=1",
         Headers([("Authorization", "Bearer tok")]),
     )
 
@@ -6220,12 +6220,19 @@ def test_handle_file_preview_rejects_paths_outside_workspace(tmp_path) -> None:
     assert resp.status_code == 403
 
 
-def test_handle_file_preview_allows_paths_outside_workspace_in_full_access(tmp_path) -> None:
+def test_handle_file_preview_allows_paths_outside_workspace_in_full_access(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from urllib.parse import quote
 
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
+    from nanobot.agent.tools import native_process
+
+    # This tests preview authorization, without launching a native process.
+    monkeypatch.setattr(native_process, "native_supervisor_available", lambda: True)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside_root = tmp_path.parent / f"{tmp_path.name}-outside"
@@ -6991,8 +6998,11 @@ async def test_remote_owner_full_message_requires_own_device_consent(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from nanobot.agent.tools import native_process
     from nanobot.remote.edge import AccessIdentity
 
+    # Exercise device consent independently of the host's process backend.
+    monkeypatch.setattr(native_process, "native_supervisor_available", lambda: True)
     default_workspace = tmp_path / "default"
     project = tmp_path / "project"
     default_workspace.mkdir()

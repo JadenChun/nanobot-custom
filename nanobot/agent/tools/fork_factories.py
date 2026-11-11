@@ -15,8 +15,10 @@ from nanobot.agent.tools.exec_session import ExecSessionTool, ListExecSessionsTo
 from nanobot.agent.tools.explore import ExploreTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.image_generation import ImageGenerationTool
+from nanobot.agent.tools.long_task import CreateGoalTool, UpdateGoalTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.repositories import RepositoryCatalogTool, SaveKnowledgeTool
+from nanobot.agent.tools.self import MyTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.extensions.optional_tools import construct_optional_tools
@@ -47,6 +49,8 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                       ("list_exec_sessions", ListExecSessionsTool), ("web_search", WebSearchTool),
                       ("web_fetch", WebFetchTool), ("message", MessageTool),
                       ("cron", CronTool), ("generate_image", ImageGenerationTool),
+                      ("create_goal", CreateGoalTool), ("update_goal", UpdateGoalTool),
+                      ("my", MyTool),
                       ("repository_catalog", RepositoryCatalogTool), ("save_knowledge", SaveKnowledgeTool)):
         upstream(name, cls)
     browser = ctx.config.agent_browser

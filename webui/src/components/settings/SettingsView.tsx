@@ -17,6 +17,9 @@ interface SettingsViewProps {
   skills?: SkillSummary[];
   skillsCatalogComplete?: boolean;
   skillsCatalogNotice?: string;
+  skillsCatalogLoading?: boolean;
+  skillsCatalogError?: string | null;
+  onRetrySkillsCatalog?: () => void;
   onSectionChange?: (section: SettingsSectionKey) => void;
   onLogout?: () => void;
   onRestart?: () => void;
@@ -40,6 +43,9 @@ export function SettingsView({
   skills = [],
   skillsCatalogComplete = true,
   skillsCatalogNotice,
+  skillsCatalogLoading,
+  skillsCatalogError,
+  onRetrySkillsCatalog,
   onSectionChange,
   onLogout,
   onRestart,
@@ -70,6 +76,9 @@ export function SettingsView({
       skills={skills}
       skillsCatalogComplete={skillsCatalogComplete}
       skillsCatalogNotice={skillsCatalogNotice}
+      skillsCatalogLoading={skillsCatalogLoading}
+      skillsCatalogError={skillsCatalogError}
+      onRetrySkillsCatalog={onRetrySkillsCatalog}
       onLogout={onLogout}
       isRestarting={isRestarting}
       hostChromeInset={hostChromeInset}

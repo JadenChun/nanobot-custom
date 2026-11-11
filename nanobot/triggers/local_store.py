@@ -50,6 +50,7 @@ class LocalTriggerStore:
         self.failed_dir = self.root / "failed"
         self.runs_dir = self.root / "runs"
         self._lock = FileLock(str(self.root / ".lock"))
+        self.delivery_active = False  # Process-local capability, owned by the gateway consumer.
 
     def create(
         self,

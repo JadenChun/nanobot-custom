@@ -1,8 +1,14 @@
 # Code quality audit — 2026-11-04
 
-Status: audit charter and internal size baseline. This is **not** a code-quality
-verdict, a refactor plan, or a release record. No production code was changed and
-no full analysis has been run yet.
+Status: audit charter and internal size baseline, with an initial
+[feature implementation audit](./feature-implementation-audit-2026-11-05.md)
+recorded on 2026-11-05 and authorized
+[repair batches 1–3](./audits/feature-implementation-2026-11-05/repair-results.md)
+and the [macOS reliability follow-up](./audits/feature-implementation-2026-11-05/macos-repair-results.md)
+implemented afterward. The follow-up repaired kernel peer authentication and
+passed the default full backend suite, with a separately verified final test
+fixture adjustment. The module/architecture phases and **1,001 existing strict
+errors** remain open. This is **not** a clean-code verdict or release record.
 
 Scope: this fork's codebase, not upstream parity. The previous
 `docs/upstream-divergence-audit-2026-11-04.md` was removed because "how far are we
@@ -15,6 +21,7 @@ Only its internal size measurements are retained in Appendix A.
 |---|---|
 | Code baseline | `staging` at `90a6e2fc` (2026-11-04) |
 | Previous doc baseline | `ea4d6a65` / `d7217cb0` |
+| First feature implementation pass | `364259daed2c11700d4064e7ca58743fd037b0b0` (2026-11-05) |
 | Upstream | Not used as a quality criterion |
 
 ## Why this audit exists
@@ -71,6 +78,7 @@ A module is in good shape when all of these are true:
 
 | Dimension | What must be established |
 |---|---|
+| **Feature contracts** | Advertised workflows reach installed runtime capabilities; default composition, failure states, recovery, and unsupported modes are tested. |
 | **Boundaries** | Intended import direction, no cycles, no domain-to-delivery dependencies, adapters isolated at edges. |
 | **Ownership** | One source of truth per invariant; no parallel stores, caches, or recovery ledgers. |
 | **Complexity** | Function and module complexity is justified by requirements; large files are cohesive, not mixed responsibilities. |
@@ -87,22 +95,53 @@ A module is in good shape when all of these are true:
 
 | Severity | Meaning |
 |---|---|
-| **P0** | Correctness, security, data-loss, or recovery defect. Fix before other cleanup. |
-| **P1** | Duplicated invariant, unsafe ownership boundary, or complexity hotspot that will cause defects or block change. |
-| **P2** | Cleanup: dead code, naming, small duplication, stale config/docs. Batch these. |
+| **P0** | Critical safety, security, data-loss, or recovery defect. Fix before other cleanup. |
+| **P1** | Broken or materially misrepresented feature workflow, unsafe ownership boundary, duplicated invariant, or complexity that causes defects or blocks change. |
+| **P2** | Bounded usability/completeness issue or cleanup: dead code, naming, small duplication, stale config/docs. |
+
+Priority reflects impact, not the size of a fix. Intentional migration fences
+are not defects by themselves; exposing a fenced workflow as operational is a
+feature-contract finding.
 
 Each finding gets one disposition:
 
 - **Keep** — justified as-is; record why.
+- **Repair** — restore an observable feature contract with the smallest change.
 - **Simplify** — same behavior, less code or fewer concepts.
 - **Merge** — two owners/layers become one.
 - **Delete** — no current caller or requirement.
 - **Split** — cohesive pieces separated, without adding indirection.
 - **Rewrite** — last resort; requires a behavioral contract and tests first.
 
+## First stage — Feature implementation contracts (read-only)
+
+Audit what a user can accomplish before choosing cleanup targets by module
+size. The [2026-11-05 first pass](./feature-implementation-audit-2026-11-05.md)
+contains confirmed findings, local validation, and remaining qualification gaps;
+it does not mark the whole feature inventory accepted.
+
+The authorized first repair batches now cover media, skills/clipboard, and
+supported runtime integration. Their bounded acceptance is recorded separately;
+the follow-up repairs macOS remote IPC and records **17,001 backend passes,
+75 skips** with independent review. Native platform/live integration
+qualification, existing strict-type debt and the module phases remain open.
+
+For each exposed feature:
+
+- identify its promise in docs, commands, configuration, and UI;
+- follow it through normal registration and runtime composition to its owner;
+- check success, unavailable/disabled, failure, cancellation, and restart paths;
+- distinguish configured intent from effective capability and actual execution;
+- reproduce gaps with minimal behavioral probes and record environment limits;
+- assign a disposition and acceptance criteria before changing implementation.
+
+Retain deliberate admission/security fences. A safe availability correction and
+activation of a background service are separate changes. Use the resulting
+feature risks to guide the module phases below.
+
 ## Phase 0 — Inventory and heatmap (read-only)
 
-Produce a module inventory before judging anything:
+Produce a module inventory before proposing structural cleanup:
 
 - LOC and file count per package, including test/production split;
 - fan-in and fan-out per module;
@@ -241,10 +280,12 @@ Each finding should be recorded as:
 ```text
 ID: F-001
 Severity: P0 | P1 | P2
-Disposition: Keep | Simplify | Merge | Delete | Split | Rewrite
+Disposition: Keep | Repair | Simplify | Merge | Delete | Split | Rewrite
+Feature contract: promised behavior and effective runtime capability
 Location: path:line
 Invariant: what state/behavior is owned here
-Evidence: complexity, duplication, import graph, test gap, or profile
+Trigger and actual result: reproducible user action and observed outcome
+Evidence: behavioral probe, source trace, test gap, import graph, or profile
 Risk: what can go wrong if unchanged
 Minimal fix: the smallest change that restores one owner/boundary
 Tests: behavior tests that must pass
@@ -253,17 +294,20 @@ Rollback: how to revert the change safely
 
 ## Deliverables
 
-1. **Module heatmap** — production/test LOC, files, fan-in/out, complexity,
+1. **Feature assessment** — exposed workflows, actual capability, findings,
+   acceptance criteria, and unqualified environments/integrations.
+2. **Module heatmap** — production/test LOC, files, fan-in/out, complexity,
    coverage, churn, risk score.
-2. **Findings register** — P0/P1/P2 with evidence and minimal fixes.
-3. **Delete/merge list** — dead code, duplicate abstractions, unnecessary layers.
-4. **Target architecture note** — dependency direction, ownership map, public
+3. **Findings register** — P0/P1/P2 with evidence and minimal fixes.
+4. **Delete/merge list** — dead code, duplicate abstractions, unnecessary layers.
+5. **Target architecture note** — dependency direction, ownership map, public
    boundaries. Short; not a diagram exercise.
-5. **Guardrails** — automated checks that prevent regression.
-6. **Phased remediation plan** — small batches, each with tests and a rollback.
+6. **Guardrails** — automated checks that prevent regression.
+7. **Phased remediation plan** — small batches, each with tests and a rollback.
 
-The audit is complete when every module has a disposition and the guardrails are
-in place. A list of findings alone is not completion.
+The audit is complete when exposed features and modules have dispositions,
+supported workflows have acceptance evidence, and the guardrails are in place.
+A list of findings alone is not completion.
 
 ## Guardrails
 

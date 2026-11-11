@@ -21,7 +21,7 @@ from nanobot.cron.runtime import (
 )
 from nanobot.cron.schedule import ScheduleClock
 from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJob, cron_thread_id
+from nanobot.cron.types import CronJob, CronJobState, CronRuntimeStatus, cron_thread_id
 from nanobot.runtime_errors import RuntimeOwnedWorkError
 from nanobot.session.manager import SessionManager
 
@@ -65,12 +65,70 @@ class GatewayCron:
         root = runtime_root / "cron-runtime" / identity
         clock = clock or SystemScheduleClock()
         self.runtime = CronRuntime(service, agent, sessions, channels, root, identity,
-            GatewayCronOptions(clock, config.drain_timeout_s, config.poll_interval_s),
+            GatewayCronOptions(clock, config.drain_timeout_s, config.poll_interval_s,
+                               self._manual_authorized),
             job_hooks=CronJobHooks(root / "job-hooks", default_cwd=cwd),
             quota_recovery=CronQuotaRecovery(root / "quota-recovery", clock, is_codex=is_codex)
                 if config.codex_quota_retry else None)
-        service.configure_gateway_execution(validate_gateway_job, self.status)
+        service.configure_gateway_execution(self._validate_manual_job, self.status,
+                                            manual_run=self._submit_manual, job_status=self.job_status)
         self._state = "waiting_for_channels"
+
+    def _manual_authorized(self, job_id: str, instance: str, revision: str) -> bool:
+        if self._state != "running":
+            return False
+        job = self.service.get_job(job_id)
+        if job is None or not job.enabled or (job.job_instance_id, job.definition_revision) != (instance, revision):
+            return False
+        self._validate_manual_job(job)
+        return True
+
+    def _validate_manual_job(self, job: CronJob) -> None:
+        validate_gateway_job(job)
+        reason = self.runtime.recovery_diagnostic(job.id)
+        if reason is not None:
+            raise ValueError(f"Automation requires recovery: {reason}")
+
+    def _submit_manual(self, job: CronJob, request_id: str) -> bool:
+        validate_gateway_job(job)
+        if job.job_instance_id is None or job.definition_revision is None:
+            raise ValueError("Automation definition identity is unavailable.")
+        capability = self.runtime.authorize_manual(request_id, job.id,
+            job.job_instance_id, job.definition_revision)
+        self.runtime.submit_now(capability)
+        return True
+
+    def job_status(self, job: CronJob) -> CronRuntimeStatus:
+        """Join detached scheduler, occurrence and receipt evidence for the UI."""
+        if self._state not in {"running", "stopping", "closed"}:
+            return CronRuntimeStatus()
+        if job.job_instance_id is None or job.definition_revision is None:
+            return CronRuntimeStatus()
+        state = CronJobState()
+        key = job.job_instance_id + ":" + job.definition_revision
+        cursor = next((item for item in self.runtime.store.read()["cursors"] if item["key"] == key), None)
+        if job.enabled and cursor is not None:
+            state.next_run_at_ms = cursor["next_fire"]
+        occurrences = self.service.occurrence_store
+        assert occurrences is not None
+        records = [record for record in occurrences.inspect_records()
+                   if record.identity.job_id == job.id
+                   and record.identity.job_revision == job.definition_revision
+                   and record.job_snapshot.get("jobInstanceId") == job.job_instance_id]
+        pending = any(record.state == "claimed" for record in records)
+        if not records:
+            return CronRuntimeStatus(state, pending)
+        latest = max(records, key=lambda record: record.identity.scheduled_fire_time_ms)
+        state.last_run_at_ms = latest.identity.scheduled_fire_time_ms
+        completion = latest.completion or {}
+        status = completion.get("status")
+        if status in ("ok", "error", "skipped"):
+            state.last_status = status
+        error = completion.get("error")
+        state.last_error = error if isinstance(error, str) else None
+        receipt = next((item for item in self.service.list_deliveries()
+                        if item.occurrence_id == latest.occurrence_id), None)
+        return CronRuntimeStatus(state, pending, receipt.status if receipt else None)
 
     def _import_retry_budget(self) -> None:
         quota = self.runtime.quota_recovery

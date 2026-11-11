@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Any, Protocol, cast
 
-from nanobot.cron.types import CronJob
+from nanobot.cron.types import CronJob, CronRuntimeStatus
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import _message_preview_text  # pyright: ignore[reportPrivateUsage]
 from nanobot.triggers.local_types import LocalTrigger
@@ -14,6 +14,10 @@ AutomationJob = CronJob | LocalTrigger
 
 
 class _CronServiceLike(Protocol):
+    def admission_diagnostic(self, job: CronJob) -> str: ...
+
+    def job_runtime_status(self, job: CronJob) -> CronRuntimeStatus: ...
+
     def list_jobs(self, include_disabled: bool = False) -> list[CronJob]: ...
 
     def list_bound_cron_jobs_for_session(
@@ -25,6 +29,8 @@ class _CronServiceLike(Protocol):
 
 
 class _LocalTriggerStoreLike(Protocol):
+    delivery_active: bool
+
     def list_triggers(self, *, include_disabled: bool = False) -> list[LocalTrigger]: ...
 
     def list_for_session(
@@ -80,6 +86,8 @@ def session_automations_payload(
                 local_trigger_store=local_trigger_store,
             ),
             pending_job_ids=pending_job_ids,
+            cron_service=cron_service,
+            trigger_delivery_active=local_trigger_store.delivery_active if local_trigger_store else False,
         )
     }
 
@@ -103,6 +111,8 @@ def all_automations_payload(
             pending_job_ids=pending_job_ids,
             include_details=True,
             session_manager=session_manager,
+            cron_service=cron_service,
+            trigger_delivery_active=local_trigger_store.delivery_active if local_trigger_store else False,
         )
     }
 
@@ -113,6 +123,8 @@ def serialize_automation_jobs(
     pending_job_ids: Collection[str] | None = None,
     include_details: bool = False,
     session_manager: _SessionManagerLike | None = None,
+    cron_service: _CronServiceLike | None = None,
+    trigger_delivery_active: bool = False,
 ) -> list[dict[str, Any]]:
     return [
         _serialize_job(
@@ -120,6 +132,8 @@ def serialize_automation_jobs(
             pending=job.id in (pending_job_ids or ()),
             include_details=include_details,
             session_manager=session_manager,
+            cron_service=cron_service,
+            trigger_delivery_active=trigger_delivery_active,
         )
         for job in jobs
     ]
@@ -131,19 +145,37 @@ def _serialize_job(
     pending: bool = False,
     include_details: bool = False,
     session_manager: _SessionManagerLike | None = None,
+    cron_service: _CronServiceLike | None = None,
+    trigger_delivery_active: bool = False,
 ) -> dict[str, Any]:
     if isinstance(job, LocalTrigger):
-        return _serialize_trigger(
+        payload = _serialize_trigger(
             job,
             pending=pending,
             include_details=include_details,
             session_manager=session_manager,
         )
+        payload["execution"] = {
+            "manual_run_supported": False,
+            "active": trigger_delivery_active,
+            "unavailable_reason": None if trigger_delivery_active else
+                "Local trigger delivery is inactive. Enable gateway.localTriggers and start the gateway.",
+        }
+        return payload
+
+    runtime = cron_service.job_runtime_status(job) if cron_service is not None else CronRuntimeStatus()
+    state = runtime.state if cron_service is not None else job.state
+    diagnostic = cron_service.admission_diagnostic(job) if cron_service is not None else "Automation runtime is unavailable."
 
     payload: dict[str, Any] = {
         "id": job.id,
         "name": job.name,
         "enabled": job.enabled,
+        "execution": {
+            "manual_run_supported": not diagnostic,
+            "unavailable_reason": diagnostic or None,
+            "delivery_status": runtime.delivery_status,
+        },
         "schedule": {
             "kind": job.schedule.kind,
             "at_ms": job.schedule.at_ms,
@@ -155,9 +187,9 @@ def _serialize_job(
             "message": job.payload.message,
         },
         "state": {
-            "next_run_at_ms": job.state.next_run_at_ms,
-            "last_status": job.state.last_status,
-            "pending": pending,
+            "next_run_at_ms": state.next_run_at_ms,
+            "last_status": state.last_status,
+            "pending": pending or runtime.pending,
         },
     }
     if not include_details:
@@ -170,8 +202,8 @@ def _serialize_job(
     payload["payload"].update({"kind": job.payload.kind})
     payload["state"].update(
         {
-            "last_run_at_ms": job.state.last_run_at_ms,
-            "last_error": job.state.last_error,
+            "last_run_at_ms": state.last_run_at_ms,
+            "last_error": state.last_error,
             "run_history": [
                 {
                     "run_at_ms": record.run_at_ms,
@@ -179,7 +211,7 @@ def _serialize_job(
                     "duration_ms": record.duration_ms,
                     "error": record.error,
                 }
-                for record in job.state.run_history[-5:]
+                for record in state.run_history[-5:]
             ],
         }
     )
