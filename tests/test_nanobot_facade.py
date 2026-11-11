@@ -1634,6 +1634,105 @@ async def test_aclose_without_acquired_runtime_still_closes_mcp_once():
     mcp.aclose.assert_awaited_once()
 
 
+async def test_aclose_concurrent_callers_join_the_same_cleanup_attempt():
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class Composition:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def aclose(self) -> None:
+            self.calls += 1
+            entered.set()
+            await release.wait()
+
+    composition = Composition()
+    bot = Nanobot(None, composition=composition)
+    first = asyncio.create_task(bot.aclose())
+    await entered.wait()
+    second = asyncio.create_task(bot.aclose())
+    await asyncio.sleep(0)
+
+    assert not second.done()
+    assert composition.calls == 1
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not bot._closed
+    assert bot._closing
+    assert not second.done()
+    release.set()
+    await second
+    assert bot._closed
+    assert composition.calls == 1
+
+
+async def test_aclose_failure_keeps_admission_fenced_and_allows_retry():
+    class Composition:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def aclose(self) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("synthetic close failure")
+
+    composition = Composition()
+    bot = Nanobot(None, composition=composition)
+
+    with pytest.raises(OSError, match="synthetic close failure"):
+        await bot.aclose()
+    assert not bot._closed
+    with pytest.raises(RuntimeError, match="closed|closing"):
+        await bot._ensure_runtime()
+
+    await bot.aclose()
+    assert bot._closed
+    assert composition.calls == 2
+
+
+async def test_direct_aclose_retry_skips_resources_that_already_settled():
+    loop = MagicMock()
+    loop.aclose = AsyncMock(side_effect=[OSError("synthetic close failure"), None])
+    mcp = MagicMock()
+    mcp.aclose = AsyncMock()
+    bot = Nanobot(loop, mcp_provider=mcp)
+
+    with pytest.raises(OSError, match="synthetic close failure"):
+        await bot.aclose()
+    assert loop.aclose.await_count == 1
+    mcp.aclose.assert_awaited_once()
+    assert not bot._closed
+
+    await bot.aclose()
+    assert loop.aclose.await_count == 2
+    mcp.aclose.assert_awaited_once()
+    assert bot._closed
+
+
+async def test_direct_aclose_preserves_each_cleanup_failure_for_retry():
+    loop_error = OSError("loop close failed")
+    mcp_error = OSError("MCP close failed")
+    loop = MagicMock()
+    loop.aclose = AsyncMock(side_effect=[loop_error, None])
+    mcp = MagicMock()
+    mcp.aclose = AsyncMock(side_effect=[mcp_error, None])
+    bot = Nanobot(loop, mcp_provider=mcp)
+
+    with pytest.raises(ExceptionGroup) as caught:
+        await bot.aclose()
+    assert caught.value.exceptions == (loop_error, mcp_error)
+    assert loop.aclose.await_count == 1
+    assert mcp.aclose.await_count == 1
+    assert not bot._closed
+
+    await bot.aclose()
+    assert loop.aclose.await_count == 2
+    assert mcp.aclose.await_count == 2
+    assert bot._closed
+
+
 async def test_aclose_releases_loop_and_mcp_provider(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
     bot = await sdk_bot_factory(config_path, workspace=tmp_path)

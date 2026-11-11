@@ -90,13 +90,17 @@ class Nanobot:
         self._mcp_provider = mcp_provider
         self._composition = composition
         self._closed = False
+        self._closing = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._loop_close_settled = loop is None
+        self._mcp_close_settled = mcp_provider is None
         resolver = self._require_loop
         self.sessions = SessionClient(resolver)
         self.memory = MemoryClient(resolver)
         self.runtime = RuntimeClient(resolver)
 
     def _require_loop(self) -> AgentLoop:
-        if getattr(self, "_closed", False):
+        if getattr(self, "_closed", False) or getattr(self, "_closing", False):
             raise RuntimeError("Nanobot is closed")
         if self._loop is not None:
             return self._loop
@@ -105,7 +109,7 @@ class Nanobot:
         return self._composition.require_ready().agent
 
     async def _ensure_runtime(self) -> AgentLoop:
-        if getattr(self, "_closed", False):
+        if getattr(self, "_closed", False) or getattr(self, "_closing", False):
             raise RuntimeError("Nanobot is closed")
         if self._loop is None:
             if self._composition is None:
@@ -391,16 +395,43 @@ class Nanobot:
         """Release resources held by this instance."""
         if getattr(self, "_closed", False):
             return
-        self._closed = True
+        task = getattr(self, "_close_task", None)
+        if task is None or task.done():
+            self._closing = True
+            task = asyncio.create_task(self._finish_close())
+            task.add_done_callback(
+                lambda completed: (
+                    completed.exception() if not completed.cancelled() else None
+                )
+            )
+            self._close_task = task
+        await asyncio.shield(task)
+
+    async def _finish_close(self) -> None:
         if self._composition is not None:
             await self._composition.aclose()
-            return
-        try:
-            if self._loop is not None:
-                await self._loop.aclose()
-        finally:
-            if self._mcp_provider is not None:
-                await self._mcp_provider.aclose()
+        else:
+            errors: list[BaseException] = []
+            if self._loop is not None and not self._loop_close_settled:
+                try:
+                    await self._loop.aclose()
+                except BaseException as exc:
+                    errors.append(exc)
+                else:
+                    self._loop_close_settled = True
+            if self._mcp_provider is not None and not self._mcp_close_settled:
+                try:
+                    await self._mcp_provider.aclose()
+                except BaseException as exc:
+                    errors.append(exc)
+                else:
+                    self._mcp_close_settled = True
+            if len(errors) == 1:
+                raise errors[0]
+            if errors:
+                raise BaseExceptionGroup("Nanobot resource cleanup failed", errors)
+        self._closed = True
+        self._closing = False
 
     async def __aenter__(self) -> Nanobot:
         await self._ensure_runtime()
