@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "stream_id": "<STREAM_ID>",
+  "report": "reports/<STREAM_ID>.md",
+  "publication_state": "report-written",
+  "evidence_origin": {
+    "analyst": null,
+    "handoff": null,
+    "published_by": null
+  },
+  "source_pins": {
+    "nanobot": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    }
+  },
+  "assigned_primary_paths": [],
+  "bounded_body_reads": [],
+  "caller_context_reads": [],
+  "search_only": [],
+  "test_source_reads": [],
+  "support_reads": [],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [],
+  "prior_change_evidence": [],
+  "findings": [],
+  "final_discussion_questions": [],
+  "cross_module_dependencies_and_conflicts": [],
+  "coordinator_check": null,
+  "integrated_review": null,
+  "git_checkpoint": null,
+  "limits": [],
+  "entry_rules": {
+    "bounded_body_reads": "Each entry needs repository, commit, tree, path, Git blob, SHA256, exact inclusive line ranges or bounded symbols, purpose and evidence origin. Empty files need an explicit empty marker. Only supplied body evidence receives body credit; no all-branch certification.",
+    "caller_context_reads": "Record exact bodies/ranges actually read for caller tracing; keep context distinct from the assigned primary review disposition.",
+    "search_only": "Record actual search operands, roots and resulting paths; unconfirmed operands and mere symbol hits receive no body-read credit.",
+    "test_source_reads": "Record source ranges read as text and relevance; no test execution or automatic primary-body credit.",
+    "support_reads": "Record config, documentation, assets, dependency or history material with its own pin/path/ranges and purpose; no primary-body credit.",
+    "justified_exclusions": "Identify each path or bounded branch, reason, compatibility consequence and accepting authority; absence is not silently excluded.",
+    "material_unread_gaps": "Account for each assigned target without sufficient supplied body evidence and each material unread branch/caller; retain next action and impact on provisional judgement.",
+    "reference_mechanisms_or_nonapplicability": "Use pinned DSH/Codex implementation evidence or an explicit module-specific reason for nonapplicability; no parity assumption.",
+    "findings": "Retain ID, requirement, source/call chain, trigger, impact, confidence/uncertainty, smallest alternative, consequences and dependencies.",
+    "counts": "Report unique primary assignments separately from body paths/ranges, context/search/test/support counts, exclusions and gaps. Shared reads and P01 add no denominator.",
+    "acceptance": "Only supplied coordinator evidence may populate coordinator_check, integrated_review or git_checkpoint. Template nulls convey no acceptance."
+  }
+}

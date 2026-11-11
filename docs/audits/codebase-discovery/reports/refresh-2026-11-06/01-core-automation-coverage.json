@@ -1,0 +1,31 @@
+{
+  "source_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+  "source_tree": "d49aca97c9a34a2d17eae53d672fa591652457f1",
+  "origin_agent": "/root/refresh_core_automation",
+  "inspected_paths": [
+    "AGENTS.md", ".agent/design.md", ".agent/security.md", ".agent/gotchas.md",
+    "nanobot/agent/runner.py", "nanobot/agent/tools/fork_factories.py", "nanobot/agent/tools/long_task.py",
+    "nanobot/cli/commands.py", "nanobot/cli/gateway_runtime.py", "nanobot/command/builtin.py", "nanobot/config/schema.py",
+    "nanobot/cron/gateway.py", "nanobot/cron/runtime.py", "nanobot/cron/service.py", "nanobot/cron/types.py",
+    "nanobot/triggers/local_runner.py", "nanobot/triggers/local_store.py", "nanobot/agent/tools/loader.py",
+    "nanobot/extensions/optional_tools.py", "nanobot/agent/loop.py", "nanobot/agent/delegation.py",
+    "nanobot/process_completion.py", "nanobot/agent/tools/execution.py", "nanobot/agent/tools/registry.py",
+    "nanobot/runtime_composition.py", "nanobot/webui/ws_http.py", "nanobot/channels/manager.py",
+    "nanobot/config_base.py", "nanobot/webui/gateway_services.py", "nanobot/cron/composition.py",
+    "nanobot/cron/canonical_result.py", "nanobot/cron/channel_sender.py", "nanobot/cron/canonical_execution.py",
+    "nanobot/cron/delivery_runtime.py", "nanobot/webui/session_automations.py", "nanobot/cron/scheduler.py",
+    "nanobot/agent/tools/exec_session.py", "nanobot/agent/tools/shell.py", "nanobot/triggers/local_turns.py",
+    "nanobot/agent/automation_turns.py", "nanobot/agent/tools/self.py"
+  ],
+  "deleted_paths_accounted": ["tests/cli/test_gateway_local_triggers.py"],
+  "mapped_only": [
+    "tests/agent/test_loop_runner_integration.py", "tests/agent/test_loop_save_turn.py",
+    "tests/agent/test_pre_dispatch_recovery.py", "tests/agent/test_runner_errors.py",
+    "tests/agent/tools/test_long_task.py", "tests/agent/tools/test_runtime_control.py",
+    "tests/agent/tools/test_self_tool_runtime_sync.py", "tests/cli/test_gateway_scheduled_execution.py",
+    "tests/tools/test_tool_loader.py", "tests/triggers/test_local_triggers.py", "tests/utils/test_webui_transcript.py"
+  ],
+  "commands_run": ["git status --short", "git rev-parse HEAD HEAD^{tree}", "git diff --stat/--name-status/--unified between old and current pins", "git show historical deleted test", "cat/rg/nl/sed source and contract reads"],
+  "runtime_tests_builds_run": false,
+  "report_retention": "Coordinator-faithful condensed final report; exact inspected path list retained from analyst JSON."
+}

@@ -1,0 +1,298 @@
+{
+  "checkpoint": "REF-COMPARE-2026-11-06",
+  "structural_status": "PASS",
+  "coordinator_acceptance": "PASS for the targeted source-comparison checkpoint, following independent semantic narrow recheck PASS. Product decisions remain PENDING; no runtime or full semantic-audit acceptance.",
+  "scope": "Source/Git/document processing only. No runtime stability, semantic completeness, measured performance, deployed-version or operational confinement claim.",
+  "test_first_substitute": "Before edits the new package was absent and protected tracked/frozen evidence bytes were hashed. After edits required documents, rows, exact read/search inventories, links/anchors, output ownership and unchanged bytes were checked deterministically. Product tests are inapplicable to this documentation-only contract and were not run.",
+  "environment": {
+    "python": "3.9.21 (main, Jul 10 2025, 14:25:10) \n[Clang 16.0.0 (clang-1600.0.26.6)]",
+    "python_executable": "/Users/jaden/.pyenv/versions/3.9.21/bin/python3",
+    "git": "git version 2.53.0",
+    "head": "ae64bbec612a1a1af0a799dbfcdbdec423928f5e",
+    "branch": "codex/staging-discovery-20261106",
+    "new_document_trailing_whitespace": []
+  },
+  "commands": [
+    {
+      "id": "V0-before",
+      "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib, json, subprocess\nowned = {'docs/audits/project-audit-plan.md','docs/audits/codebase-discovery/README.md','docs/audits/codebase-discovery/continuation-plan.md'}\npaths = subprocess.check_output(['git','ls-files','-z']).decode().split('\\0')[:-1]\nprotected = [(p,hashlib.sha256(Path(p).read_bytes()).hexdigest()) for p in paths if p not in owned]\nfrozen = [(p,h) for p,h in protected if p.startswith('docs/audits/codebase-discovery/')]\nroot = lambda rows: hashlib.sha256(''.join(p+'\\0'+h+'\\n' for p,h in sorted(rows)).encode()).hexdigest()\nprint(json.dumps({'head':subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),'protected_tracked_count':len(protected),'protected_tracked_sha256':root(protected),'frozen_discovery_count':len(frozen),'frozen_discovery_sha256':root(frozen),'source_pin_non_audit_differences':subprocess.check_output(['git','diff','--name-only','27adced0aacd55d61791bb88a7240d7ad7bd5b75','HEAD','--','.',':(exclude)docs/audits/**']).decode().splitlines(),'new_review_exists':Path('docs/audits/architecture-review-2026-11-06').exists()}))\nPY",
+      "exit_code": 0,
+      "result": {
+        "head": "ae64bbec612a1a1af0a799dbfcdbdec423928f5e",
+        "protected_tracked_count": 2499,
+        "protected_tracked_sha256": "687d1ce6549076dba16a7bd1317e26a0ff129292f83611e07a49e0d5c41965bb",
+        "frozen_discovery_count": 43,
+        "frozen_discovery_sha256": "445f3c586e41fca239a9d2fa53cce9d8d9ece2d24f1fc002201f961eba049c3f",
+        "source_pin_non_audit_differences": [],
+        "new_review_exists": false
+      }
+    },
+    {
+      "id": "V1-integrity",
+      "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,re,subprocess,urllib.parse,urllib.request\nroot=Path.cwd()\nreview=root/'docs/audits/architecture-review-2026-11-06'\np=json.loads((review/'provenance.json').read_text())\nnav=['docs/audits/project-audit-plan.md','docs/audits/codebase-discovery/README.md','docs/audits/codebase-discovery/continuation-plan.md']\nexpected={str(Path('docs/audits/architecture-review-2026-11-06')/n) for n in ['README.md','admission-requests.md','persistence-lifecycle.md','authority-sandbox.md','delegation-context.md','decisions.md','audit-backlog.md','provenance.json','validation.json']}|set(nav)\nrepos={'nanobot':root,'dsh':Path('/tmp/nanobot-harness-audit-20261105.EdrBP6/deepseek-harness'),'codex':Path('/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-codex-reference-20261105.czjcx5c9/codex')}\ndef git(repo,*args): return subprocess.check_output(['git','-C',str(repo),*args])\ndef digest(data): return hashlib.sha256(data).hexdigest()\ncache={}\ndef blob(name,path):\n key=(name,path)\n if key not in cache: cache[key]=git(repos[name],'show',p['source_pins'][name]['commit']+':'+path)\n return cache[key]\nerrors=[]\nfor name,identity in p['source_pins'].items():\n actual=git(repos[name],'rev-parse',identity['commit']+'^{tree}').decode().strip()\n if actual!=identity['tree']: errors.append('tree:'+name)\nfor name in ['dsh','codex']:\n if git(repos[name],'status','--porcelain'): errors.append('dirty-reference:'+name)\nbody=set();search=set();tests=set()\nfor package in p['read_sets'].values():\n for name,paths in package['targeted_body_paths'].items():\n  for path in paths: blob(name,path);body.add((name,path))\n for path in package['test_source_excerpts']: blob('nanobot',path);tests.add(path)\n for name,paths in package['search_only_paths'].items():\n  for path in paths: blob(name,path);search.add((name,path))\nrefmap=json.loads((root/'docs/audits/codebase-discovery/provenance/source-reference-map.json').read_text())\nfor item in refmap['files'].values():\n if digest(blob(item['repository'],item['path']))!=item['source_sha256']: errors.append('reference-hash:'+item['path'])\ndulwich={}\nfor item in p['supplemental_dulwich']['verified_blobs']:\n url='https://raw.githubusercontent.com/jelmer/dulwich/'+p['supplemental_dulwich']['commit']+'/'+item['path']\n request=urllib.request.Request(url,headers={'User-Agent':'nanobot-source-document-validation'})\n data=urllib.request.urlopen(request,timeout=30).read()\n if digest(data)!=item['sha256'] or len(data.splitlines())!=item['lines']: errors.append('dulwich:'+item['path'])\n dulwich[item['path']]=data\nfor path,want in p['frozen_input_sha256'].items():\n if digest((root/path).read_bytes())!=want: errors.append('frozen-input:'+path)\ntracked=git(root,'ls-files','-z').decode().split('\\0')[:-1]\nprotected=[(path,digest((root/path).read_bytes())) for path in tracked if path not in nav]\nmanifest=lambda rows:digest(''.join(path+'\\0'+sha+'\\n' for path,sha in sorted(rows)).encode())\nfrozen=[x for x in protected if x[0].startswith('docs/audits/codebase-discovery/')]\nb=p['integrity_baseline']\nif len(protected)!=b['protected_tracked_count'] or manifest(protected)!=b['protected_tracked_sha256']: errors.append('protected-byte-change')\nif len(frozen)!=b['frozen_discovery_count'] or manifest(frozen)!=b['frozen_discovery_sha256']: errors.append('frozen-discovery-byte-change')\nif git(root,'diff','--name-only',p['source_pins']['nanobot']['commit'],'--','.',':(exclude)docs/audits/**'): errors.append('non-audit-source-change')\nchanged=set(git(root,'diff','--name-only').decode().splitlines())|set(git(root,'ls-files','--others','--exclude-standard').decode().splitlines())\nif changed!=expected: errors.append('write-set:'+repr(sorted(changed^expected)))\nreport_manifest=json.loads((root/'docs/audits/codebase-discovery/provenance/report-manifest.json').read_text())\nfor entry in report_manifest['reports']:\n if digest((root/'docs/audits/codebase-discovery'/entry['path']).read_bytes())!=entry['published_sha256']: errors.append('discovery-report:'+entry['path'])\nhistorical=(root/'docs/audits/harness-architecture-2026-11-05.md').read_bytes()\nheading=b'## Decision'\nposition=historical.index(heading)\nif digest(historical[position:])!='75a8b177693f48d8c2cd97c58600f7c473e4a3208b1ca722c9fd619f497ce96e': errors.append('historical-decision-payload')\ndocs=sorted(review.glob('*.md'))+[root/n for n in nav]\ndef anchors(path):\n text=path.read_text();result=set(re.findall(r'<a\\s+id=\"([^\"]+)\"',text));seen={}\n for title in re.findall(r'^#{1,6}\\s+(.+?)\\s*$',text,re.M):\n  title=re.sub(r'\\[([^]]+)\\]\\([^)]*\\)',r'\\1',title).lower()\n  slug=re.sub(r'[^\\w\\- ]','',title).replace(' ','-')\n  n=seen.get(slug,0);seen[slug]=n+1;result.add(slug+(('-'+str(n)) if n else ''))\n return result\nlocal_links=0;source_links=0;source_anchors=0\nrepo_names={v['repository'].removeprefix('https://github.com/'):k for k,v in p['source_pins'].items()}\nsource_pattern=r'https://github\\.com/([^/]+/[^/]+)/blob/([0-9a-f]{40})/([^#\\s)]+)(?:#L(\\d+)(?:-L(\\d+))?)?'\nfor doc in docs:\n text=doc.read_text()\n targets=re.findall(r'(?<!!)\\[[^\\]]*\\]\\(([^)]+)\\)',text)+re.findall(r'^\\[[^\\]]+\\]:\\s+(\\S+)',text,re.M)\n for target in targets:\n  if re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:',target): continue\n  path,_,fragment=urllib.parse.unquote(target).partition('#');dest=(doc.parent/path).resolve() if path else doc\n  if not dest.exists(): errors.append('missing-link:'+str(doc.relative_to(root))+':'+target)\n  elif fragment and dest.suffix=='.md' and fragment not in anchors(dest): errors.append('missing-fragment:'+str(doc.relative_to(root))+':'+target)\n  local_links+=1\n for repo,pin,path,start,end in re.findall(source_pattern,text):\n  if repo=='jelmer/dulwich':\n   if pin!=p['supplemental_dulwich']['commit'] or path not in dulwich: errors.append('dependency-source:'+path);continue\n   data=dulwich[path]\n  else:\n   name=repo_names.get(repo)\n   if not name or pin!=p['source_pins'][name]['commit']: errors.append('source-pin:'+repo);continue\n   data=blob(name,path)\n  if start and not 1<=int(start)<=int(end or start)<=len(data.splitlines()): errors.append('anchor:'+path+':'+start)\n  source_links+=1;source_anchors+=bool(start)\nrows=[]\nfor name in ['admission-requests.md','persistence-lifecycle.md','authority-sandbox.md','delegation-context.md']:\n rows+=re.findall(r'^## ([APSG]\\d+) \u2014 ',(review/name).read_text(),re.M)\nif len(rows)!=33 or len(set(rows))!=33: errors.append('comparison-row-count')\nstreams=set(re.findall(r'^\\| (C00|H01|H02|H03|S01|S02|T01|A01|K01|E01|E02|U01|M01|R01|D01|X01|Q01|P01) \\|',(review/'audit-backlog.md').read_text(),re.M))\nif len(streams)!=18: errors.append('stream-count')\nfor file in review.glob('*.json'): json.loads(file.read_text())\nresult={'status':'PASS' if not errors else 'FAIL','errors':errors,'source_trees':{k:v['tree'] for k,v in p['source_pins'].items()},'protected_tracked_count':len(protected),'protected_tracked_sha256':manifest(protected),'frozen_discovery_count':len(frozen),'frozen_discovery_sha256':manifest(frozen),'retained_reference_hashes_matched':len(refmap['files']),'retained_report_manifest_entries_matched':len(report_manifest['reports']),'supplemental_dependency_blobs_matched':len(dulwich),'unique_targeted_body_paths':len(body),'unique_test_excerpt_paths':len(tests),'unique_search_only_path_mentions':len(search),'markdown_documents_checked':len(docs),'relative_links_checked':local_links,'pinned_source_links_checked':source_links,'pinned_source_anchors_checked':source_anchors,'comparison_rows':len(rows),'streams_recorded':len(streams),'changed_files':sorted(changed),'document_sha256':{str(f.relative_to(root)):digest(f.read_bytes()) for f in docs+[review/'provenance.json']}}\nprint(json.dumps(result,indent=2))\nraise SystemExit(bool(errors))\nPY",
+      "runs": [
+        {
+          "attempt": 1,
+          "exit_code": 1,
+          "result": "Stopped on absent codex-rs/core/src/agent/control/host/spawn.rs from analyst search-only shorthand; no body claim failed.",
+          "disposition": "Initial prefix unsupported."
+        },
+        {
+          "attempt": 2,
+          "exit_code": 0,
+          "result": "Structural PASS after mechanical path correction; superseded when analyst could not confirm original search operands.",
+          "disposition": "Neither host path set credited as original read/search coverage."
+        },
+        {
+          "attempt": 3,
+          "exit_code": 0,
+          "result": "PASS with all three unconfirmed search paths removed and provenance uncertainty retained."
+        },
+        {
+          "attempt": 4,
+          "correction_round": 1,
+          "exit_code": 0,
+          "result": "Structural PASS after the bundled report corrections and initial correction-event record; reviewer recheck remains pending."
+        },
+        {
+          "attempt": 5,
+          "correction_round": 1,
+          "exit_code": 0,
+          "result": "Structural PASS with finalized writer-correction status and refreshed affected hashes; no fresh-review acceptance inferred."
+        }
+      ]
+    },
+    {
+      "id": "V2-diff",
+      "command": "git diff --check",
+      "exit_code": 0,
+      "output": "",
+      "correction_round_runs": [
+        {
+          "round": 1,
+          "exit_code": 0,
+          "output": ""
+        }
+      ]
+    },
+    {
+      "id": "V3-environment-whitespace",
+      "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport json,subprocess,sys\npaths=list(Path('docs/audits/architecture-review-2026-11-06').glob('*'))\nissues=[str(p)+':'+str(i) for p in paths for i,line in enumerate(p.read_bytes().splitlines(),1) if line.rstrip()!=line]\nprint(json.dumps({'python':sys.version,'python_executable':sys.executable,'git':subprocess.check_output(['git','--version']).decode().strip(),'head':subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),'branch':subprocess.check_output(['git','branch','--show-current']).decode().strip(),'new_document_trailing_whitespace':issues}))\nraise SystemExit(bool(issues))\nPY",
+      "exit_code": 0,
+      "result": {
+        "python": "3.9.21 (main, Jul 10 2025, 14:25:10) \n[Clang 16.0.0 (clang-1600.0.26.6)]",
+        "python_executable": "/Users/jaden/.pyenv/versions/3.9.21/bin/python3",
+        "git": "git version 2.53.0",
+        "head": "ae64bbec612a1a1af0a799dbfcdbdec423928f5e",
+        "branch": "codex/staging-discovery-20261106",
+        "new_document_trailing_whitespace": []
+      }
+    },
+    {
+      "id": "V4-final-metadata",
+      "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,subprocess\nfolder=Path('docs/audits/architecture-review-2026-11-06')\npath=folder/'validation.json'\ndata=json.loads(path.read_text())\nfor name,want in data['structural_results']['document_sha256'].items():\n assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==want,name\nfor name in ['provenance.json','validation.json']: json.loads((folder/name).read_text())\nfor name in data['structural_results']['changed_files']:\n assert all(line.rstrip()==line for line in Path(name).read_bytes().splitlines()),name\nsubprocess.run(['git','diff','--check'],check=True)\nresult={'status':'PASS','document_hashes_checked':len(data['structural_results']['document_sha256']),'json_files_parsed':2,'owned_files_whitespace_checked':len(data['structural_results']['changed_files']),'git_diff_check_exit':0}\ndata['final_metadata_check']=result\npath.write_text(json.dumps(data,indent=2)+'\\n')\nprint(json.dumps(result))\nPY",
+      "result_field": "final_metadata_check"
+    },
+    {
+      "id": "V5-acceptance-bookkeeping",
+      "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json\nfolder=Path('docs/audits/architecture-review-2026-11-06')\np=json.loads((folder/'provenance.json').read_text())\nv=json.loads((folder/'validation.json').read_text())\nacceptance={\n 'scope':'Targeted REF1-REF6 source-comparison checkpoint only; product decisions remain PENDING and no runtime or full semantic-audit acceptance is inferred.',\n 'evidence_origin':'Actual independent reviewer and coordinator outcomes supplied by the coordinator.',\n 'independent_semantic_review':{'correction_round':1,'initial_verdict':'CORRECT','narrow_recheck':'PASS','findings_resolved':3,'criteria_closed':['AC1','AC2','AC5'],'prior_criteria_unchanged':['AC3','AC4','AC6']},\n 'coordinator_content_acceptance':'PASS',\n 'coordinator_independent_structural_verification':{'command':'V1-integrity','exit_code':0,'relative_links':131,'pinned_source_links':126,'pinned_source_anchors':107,'retained_reference_hashes_matched':17,'retained_report_manifest_entries_matched':30,'supplemental_dependency_blobs_matched':2,'protected_tracked_files':2499,'frozen_discovery_files':43,'protected_and_frozen_digests':'unchanged','document_hashes_checked':11,'json_files_parsed':2,'owned_files_whitespace_checked':12,'git_diff_check_exit':0,'stage':'Corrected package before acceptance bookkeeping; affected metadata hashes are refreshed separately by the writer.'}\n}\np['publication_status']='Accepted targeted source-comparison checkpoint: independent correction recheck PASS and coordinator content acceptance PASS; product decisions remain PENDING.'\np['fresh_review_events'][0]['narrow_reviewer_recheck']='PASS'\np['fresh_review_events'][0]['coordinator_reacceptance']='PASS'\np['fresh_review_events'][0]['recheck_result']={'findings_resolved':3,'criteria_closed':['AC1','AC2','AC5'],'prior_criteria_unchanged':['AC3','AC4','AC6']}\np['acceptance']=acceptance\n(folder/'provenance.json').write_text(json.dumps(p,indent=2)+'\\n')\nv['coordinator_acceptance']='PASS for the targeted source-comparison checkpoint, following independent semantic narrow recheck PASS. Product decisions remain PENDING; no runtime or full semantic-audit acceptance.'\nv['fresh_review_status']['narrow_reviewer_recheck']='PASS'\nv['fresh_review_status']['coordinator_reacceptance']='PASS'\nv['fresh_review_status']['findings_resolved']=3\nv['fresh_review_status']['criteria_closed']=['AC1','AC2','AC5']\nv['fresh_review_status']['prior_criteria_unchanged']=['AC3','AC4','AC6']\nv['acceptance']=acceptance\nv['acceptance_evidence']['requirements_conditions_uncertainty']='Four reports preserve nanobot-specific obligations, active callers/config, conditional triggers, rejected hypotheses, reference differences, confidence and smallest next steps. Independent correction recheck and coordinator content acceptance passed for the targeted source-comparison checkpoint only.'\nallowed={'docs/audits/architecture-review-2026-11-06/README.md','docs/audits/architecture-review-2026-11-06/provenance.json'}\nrefreshed=[]\nfor name,want in v['structural_results']['document_sha256'].items():\n actual=hashlib.sha256(Path(name).read_bytes()).hexdigest()\n if name in allowed:\n  v['structural_results']['document_sha256'][name]=actual\n  refreshed.append(name)\n else:\n  assert actual==want,name\nv['acceptance_bookkeeping_hash_refresh']={'status':'PASS','refreshed_files':refreshed,'unchanged_other_document_hashes':len(v['structural_results']['document_sha256'])-len(refreshed),'validation_self_hash':'excluded to avoid self-reference'}\nv['final_metadata_check']={'status':'pending acceptance-bookkeeping final metadata check'}\n(folder/'validation.json').write_text(json.dumps(v,indent=2)+'\\n')\nprint(json.dumps(v['acceptance_bookkeeping_hash_refresh']))\nPY",
+      "exit_code": 0,
+      "result": {
+        "status": "PASS",
+        "refreshed_files": [
+          "docs/audits/architecture-review-2026-11-06/README.md",
+          "docs/audits/architecture-review-2026-11-06/provenance.json"
+        ],
+        "unchanged_other_document_hashes": 9,
+        "validation_self_hash": "excluded to avoid self-reference"
+      }
+    }
+  ],
+  "structural_results": {
+    "status": "PASS",
+    "errors": [],
+    "source_trees": {
+      "nanobot": "d49aca97c9a34a2d17eae53d672fa591652457f1",
+      "dsh": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "codex": "03f3b46689faf274f126dc78508ed238564da8ba"
+    },
+    "protected_tracked_count": 2499,
+    "protected_tracked_sha256": "687d1ce6549076dba16a7bd1317e26a0ff129292f83611e07a49e0d5c41965bb",
+    "frozen_discovery_count": 43,
+    "frozen_discovery_sha256": "445f3c586e41fca239a9d2fa53cce9d8d9ece2d24f1fc002201f961eba049c3f",
+    "retained_reference_hashes_matched": 17,
+    "retained_report_manifest_entries_matched": 30,
+    "supplemental_dependency_blobs_matched": 2,
+    "unique_targeted_body_paths": 159,
+    "unique_test_excerpt_paths": 8,
+    "unique_search_only_path_mentions": 22,
+    "markdown_documents_checked": 10,
+    "relative_links_checked": 131,
+    "pinned_source_links_checked": 126,
+    "pinned_source_anchors_checked": 107,
+    "comparison_rows": 33,
+    "streams_recorded": 18,
+    "changed_files": [
+      "docs/audits/architecture-review-2026-11-06/README.md",
+      "docs/audits/architecture-review-2026-11-06/admission-requests.md",
+      "docs/audits/architecture-review-2026-11-06/audit-backlog.md",
+      "docs/audits/architecture-review-2026-11-06/authority-sandbox.md",
+      "docs/audits/architecture-review-2026-11-06/decisions.md",
+      "docs/audits/architecture-review-2026-11-06/delegation-context.md",
+      "docs/audits/architecture-review-2026-11-06/persistence-lifecycle.md",
+      "docs/audits/architecture-review-2026-11-06/provenance.json",
+      "docs/audits/architecture-review-2026-11-06/validation.json",
+      "docs/audits/codebase-discovery/README.md",
+      "docs/audits/codebase-discovery/continuation-plan.md",
+      "docs/audits/project-audit-plan.md"
+    ],
+    "document_sha256": {
+      "docs/audits/architecture-review-2026-11-06/README.md": "7401ba34875a14a9d7447ac64dce268f3d705672235d65e6d33ad04f4f92a6b9",
+      "docs/audits/architecture-review-2026-11-06/admission-requests.md": "6622eb7c9fd8437ada6679a521b53b657b764cc919233cc337b5769797e66578",
+      "docs/audits/architecture-review-2026-11-06/audit-backlog.md": "5d45c475c18a570eac9e1503c966242026ec14bde908ab68ca1b60887f84f3d0",
+      "docs/audits/architecture-review-2026-11-06/authority-sandbox.md": "cd9f44ebca1b786c191500dc0d1415369fa22f15ec4404d78e4e19e17b29e696",
+      "docs/audits/architecture-review-2026-11-06/decisions.md": "bfee8eb7ac1640849f3d7133641cb4bf97e428dd5023eec3e88453efdb8bacee",
+      "docs/audits/architecture-review-2026-11-06/delegation-context.md": "5840cf529949ff41a7272072fcb72c74343fae8c271855578e3fd9eed5222a5f",
+      "docs/audits/architecture-review-2026-11-06/persistence-lifecycle.md": "0281ead21b110d17938f041f76859a9a150ad88b10f2a58cd776cb2f6716d0f2",
+      "docs/audits/project-audit-plan.md": "bc5f410c7f99b71202c68396fef1cba06f9d017d8a3f8bdab371c5da38069d23",
+      "docs/audits/codebase-discovery/README.md": "9bf029013cd4dcc24bdefdfe29b97de492bcd8c512baacefb67f219a5a0c0381",
+      "docs/audits/codebase-discovery/continuation-plan.md": "b37a2ca38de1caee69c8c739e5da01a5092262134d7db5eca7cee698f9e4f375",
+      "docs/audits/architecture-review-2026-11-06/provenance.json": "6f52667e25851839e596aab4e61c9f596f1cea7bc4d0f75831b4782fe15e9088"
+    }
+  },
+  "acceptance_evidence": {
+    "baseline_and_immutable_inputs": "All three source trees match; 2,499 protected tracked files and 43 frozen discovery files retain aggregate SHA256; 30 published report-manifest entries and all 17 retained reference hashes match; historical harness Decision payload matches its frozen digest; no non-audit source delta.",
+    "reference_comparison": "33 targeted rows across REF1-REF6; the original package inventories retain 159 unique targeted implementation body paths, 8 unique test-excerpt paths and 22 unique per-package search-only path mentions. Five correction source rechecks, including the additional DSH model-selection body, are recorded separately in provenance.fresh_review_events; no discovery counts or full-file coverage are expanded.",
+    "requirements_conditions_uncertainty": "Four reports preserve nanobot-specific obligations, active callers/config, conditional triggers, rejected hypotheses, reference differences, confidence and smallest next steps. Independent correction recheck and coordinator content acceptance passed for the targeted source-comparison checkpoint only.",
+    "decision_separation": "README/decisions distinguish user-accepted method/reference policy, retain-core recommendation and PENDING consequential choices; no product selection from reference presence.",
+    "continuation": "Backlog accounts for all 18 streams, names source-only report owners/inputs/acceptance/dependencies and keeps AUDIT-S02-01 first; code repairs require separate contracts/branches.",
+    "portable_links_and_write_scope": "131 relative links and 126 pinned source links, including 107 line anchors, resolve against pinned blobs; two Dulwich blobs match published hashes; exactly the same 12 permitted documents changed."
+  },
+  "final_metadata_check": {
+    "status": "PASS",
+    "document_hashes_checked": 11,
+    "json_files_parsed": 2,
+    "owned_files_whitespace_checked": 12,
+    "git_diff_check_exit": 0
+  },
+  "application_execution": {
+    "repository_imports": false,
+    "repository_scripts": false,
+    "tests": false,
+    "builds": false,
+    "linters_or_type_checkers": false,
+    "dependency_operations": false,
+    "applications_services_or_provider_calls": false,
+    "runtime_process_exercises_or_benchmarks": false
+  },
+  "limits": [
+    "Line-anchor validation proves existence/bounds, not semantic support or exhaustive coverage.",
+    "Pinned source examples do not certify runtime reliability or reference operational parity.",
+    "Installed configuration/plugins/credentials/dependencies, OS enforcement, crashes and delivery were not observed.",
+    "Unconfirmed REF6 host search operands receive no coverage credit; no finding depends on them.",
+    "Documentation metadata excludes validation.json from its own hash manifest to avoid a self-referential digest."
+  ],
+  "fresh_review_status": {
+    "round": 1,
+    "initial_verdict": "CORRECT",
+    "failed_criteria": [
+      "AC1",
+      "AC2"
+    ],
+    "writer_corrections": "Applied to the five bundled statements; source pins and product decisions unchanged.",
+    "narrow_reviewer_recheck": "PASS",
+    "coordinator_reacceptance": "PASS",
+    "sections": [
+      "admission-requests.md A3: originating-step/request model consistency and registry execution citation",
+      "authority-sandbox.md S3: Windows writable-root/mode condition",
+      "persistence-lifecycle.md P7: Telegram process-local receipt lock limits",
+      "authority-sandbox.md introduction and provenance REF-AUTHORITY limits: reported sandbox issue, no incident OS/cause inference"
+    ],
+    "source_recheck_commands": [
+      {
+        "workdir": "/tmp/nanobot-harness-audit-20261105.EdrBP6/deepseek-harness",
+        "command": "git show fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159:packages/core/agent-loop/src/agent.ts | sed -n '626,644p'",
+        "exit_code": 0
+      },
+      {
+        "workdir": "/tmp/nanobot-harness-audit-20261105.EdrBP6/deepseek-harness",
+        "command": "git show fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159:packages/core/agent/src/model-selection.ts | sed -n '104,121p'",
+        "exit_code": 0
+      },
+      {
+        "workdir": "/tmp/nanobot-harness-audit-20261105.EdrBP6/deepseek-harness",
+        "command": "git show fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159:packages/sandbox/sandbox-local/src/index.ts | sed -n '360,378p'",
+        "exit_code": 0
+      },
+      {
+        "workdir": "/Users/jaden/.codex/worktrees/staging-harness-audit/nanobot",
+        "command": "git show 27adced0aacd55d61791bb88a7240d7ad7bd5b75:nanobot/agent/tools/registry.py | sed -n '277,292p;331,347p;425,457p'",
+        "exit_code": 0
+      },
+      {
+        "workdir": "/Users/jaden/.codex/worktrees/staging-harness-audit/nanobot",
+        "command": "git show 27adced0aacd55d61791bb88a7240d7ad7bd5b75:nanobot/channels/telegram/runtime.py | sed -n '1218,1230p'",
+        "exit_code": 0
+      }
+    ],
+    "findings_resolved": 3,
+    "criteria_closed": [
+      "AC1",
+      "AC2",
+      "AC5"
+    ],
+    "prior_criteria_unchanged": [
+      "AC3",
+      "AC4",
+      "AC6"
+    ]
+  },
+  "acceptance": {
+    "scope": "Targeted REF1-REF6 source-comparison checkpoint only; product decisions remain PENDING and no runtime or full semantic-audit acceptance is inferred.",
+    "evidence_origin": "Actual independent reviewer and coordinator outcomes supplied by the coordinator.",
+    "independent_semantic_review": {
+      "correction_round": 1,
+      "initial_verdict": "CORRECT",
+      "narrow_recheck": "PASS",
+      "findings_resolved": 3,
+      "criteria_closed": [
+        "AC1",
+        "AC2",
+        "AC5"
+      ],
+      "prior_criteria_unchanged": [
+        "AC3",
+        "AC4",
+        "AC6"
+      ]
+    },
+    "coordinator_content_acceptance": "PASS",
+    "coordinator_independent_structural_verification": {
+      "command": "V1-integrity",
+      "exit_code": 0,
+      "relative_links": 131,
+      "pinned_source_links": 126,
+      "pinned_source_anchors": 107,
+      "retained_reference_hashes_matched": 17,
+      "retained_report_manifest_entries_matched": 30,
+      "supplemental_dependency_blobs_matched": 2,
+      "protected_tracked_files": 2499,
+      "frozen_discovery_files": 43,
+      "protected_and_frozen_digests": "unchanged",
+      "document_hashes_checked": 11,
+      "json_files_parsed": 2,
+      "owned_files_whitespace_checked": 12,
+      "git_diff_check_exit": 0,
+      "stage": "Corrected package before acceptance bookkeeping; affected metadata hashes are refreshed separately by the writer."
+    }
+  },
+  "acceptance_bookkeeping_hash_refresh": {
+    "status": "PASS",
+    "refreshed_files": [
+      "docs/audits/architecture-review-2026-11-06/README.md",
+      "docs/audits/architecture-review-2026-11-06/provenance.json"
+    ],
+    "unchanged_other_document_hashes": 9,
+    "validation_self_hash": "excluded to avoid self-reference"
+  }
+}

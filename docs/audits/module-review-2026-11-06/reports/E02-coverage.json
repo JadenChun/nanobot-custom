@@ -1,0 +1,2007 @@
+{
+  "schema_version": 1,
+  "stream_id": "E02",
+  "report": "reports/E02.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "ChatGPT web continuation coordinator",
+    "handoff": "handoffs/E02.md E02-A through E02-M source-complete checkpoint",
+    "published_by": "ChatGPT web continuation coordinator",
+    "note": "Continuation completed all 68 E02 primary bodies source-only at F68/P0/R0, reconciled twenty-three findings and nine final discussion questions, and records coordinator semantic acceptance PASS."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/api/__init__.py",
+    "nanobot/api/runtime.py",
+    "nanobot/api/server.py",
+    "nanobot/channels/websocket/__init__.py",
+    "nanobot/channels/websocket/manifest.py",
+    "nanobot/channels/websocket/runtime.py",
+    "nanobot/channels/websocket/validation.py",
+    "nanobot/channels/websocket/webui/index.ts",
+    "nanobot/sdk/__init__.py",
+    "nanobot/sdk/clients.py",
+    "nanobot/sdk/runtime.py",
+    "nanobot/sdk/streaming.py",
+    "nanobot/sdk/types.py",
+    "nanobot/webui/__init__.py",
+    "nanobot/webui/attachment_ingress.py",
+    "nanobot/webui/build.py",
+    "nanobot/webui/cli_apps_api.py",
+    "nanobot/webui/dev.py",
+    "nanobot/webui/file_preview.py",
+    "nanobot/webui/forking.py",
+    "nanobot/webui/gateway_endpoint.py",
+    "nanobot/webui/gateway_services.py",
+    "nanobot/webui/gateway_tokens.py",
+    "nanobot/webui/generated_asset_index.py",
+    "nanobot/webui/generated_assets.py",
+    "nanobot/webui/http_utils.py",
+    "nanobot/webui/inbound_commands.py",
+    "nanobot/webui/ingress_policy.py",
+    "nanobot/webui/mcp_oauth_api.py",
+    "nanobot/webui/mcp_presets_api.py",
+    "nanobot/webui/mcp_presets_runtime.py",
+    "nanobot/webui/media_api.py",
+    "nanobot/webui/media_gateway.py",
+    "nanobot/webui/media_maintenance.py",
+    "nanobot/webui/metadata.py",
+    "nanobot/webui/nanobot_features_api.py",
+    "nanobot/webui/native_folder_picker.py",
+    "nanobot/webui/outbound_projection.py",
+    "nanobot/webui/outbound_wire.py",
+    "nanobot/webui/replay_store.py",
+    "nanobot/webui/session_access.py",
+    "nanobot/webui/session_automations.py",
+    "nanobot/webui/session_context.py",
+    "nanobot/webui/session_identity.py",
+    "nanobot/webui/session_list_index.py",
+    "nanobot/webui/session_projection.py",
+    "nanobot/webui/settings_api.py",
+    "nanobot/webui/settings_capabilities.py",
+    "nanobot/webui/settings_contracts.py",
+    "nanobot/webui/settings_models.py",
+    "nanobot/webui/settings_remote.py",
+    "nanobot/webui/settings_routes.py",
+    "nanobot/webui/settings_services.py",
+    "nanobot/webui/settings_system.py",
+    "nanobot/webui/sidebar_state.py",
+    "nanobot/webui/skills_api.py",
+    "nanobot/webui/skills_marketplace.py",
+    "nanobot/webui/state_sync.py",
+    "nanobot/webui/temporary_chats.py",
+    "nanobot/webui/thread_disk.py",
+    "nanobot/webui/transcript.py",
+    "nanobot/webui/transcription_ws.py",
+    "nanobot/webui/version_check.py",
+    "nanobot/webui/websocket_logging.py",
+    "nanobot/webui/workspace_directories.py",
+    "nanobot/webui/workspaces.py",
+    "nanobot/webui/ws_http.py",
+    "packages/client-events/notifications.ts"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/api/__init__.py",
+      "git_blob": "f0c504cc13e40a6b8f7ce5202eed751368c5d25d",
+      "sha256": "4bdbea818e02669828bb0ef5f1c9196d690880f937e05894eb79371ffdf4d5f2",
+      "bytes": 46,
+      "ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/api/runtime.py",
+      "git_blob": "97fa3af90ee1a058a15dbf2f41657c34f0207d28",
+      "sha256": "ca04f18a9ac8b2c36b78fe93fc5196a742a879082a863a322fe0c49b46de754a",
+      "bytes": 1782,
+      "ranges": [
+        [
+          1,
+          60
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/api/server.py",
+      "git_blob": "1e7ad916f0b36774288d979bcb856208db4e3686",
+      "sha256": "cab458ec894fa9f7be03f9738031b58aaa671c3ef4576acb42b42fcda415bc99",
+      "bytes": 20062,
+      "ranges": [
+        [
+          1,
+          551
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/channels/websocket/__init__.py",
+      "git_blob": "328e5ae2464c352f7d90e75cead0860583157aa6",
+      "sha256": "440037ddc480fb2771aaa04dda0eebd8c6cb436d32fc91c73fb82bf1fd39225d",
+      "bytes": 33,
+      "ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/channels/websocket/manifest.py",
+      "git_blob": "c45233436bb68a82539b61f54a3d34ef05682b14",
+      "sha256": "1006579664b0dd3095a159ecb31c49ab6d1de93acd5e0559d82c8c30d9dcae14",
+      "bytes": 576,
+      "ranges": [
+        [
+          1,
+          21
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/channels/websocket/runtime.py",
+      "git_blob": "011f7c6a6649e474045acda5b0bdab3b7701b9b7",
+      "sha256": "73de43ba6f49eecac245cbc67f0edf8534f5b830ce9241e0832b7896a478996e",
+      "bytes": 64811,
+      "ranges": [
+        [
+          1,
+          1665
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/channels/websocket/validation.py",
+      "git_blob": "e80c2e5b5b80c30901897192cd2f7cadee424ba4",
+      "sha256": "2f07490954b05b0ef358d4b480d4de0153ab98b26c4b9df0fafa1a7fe17aaa81",
+      "bytes": 728,
+      "ranges": [
+        [
+          1,
+          23
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/channels/websocket/webui/index.ts",
+      "git_blob": "94f9509c2c841e48551a116e61a98ce8ab1a5af7",
+      "sha256": "6a7fd960553ee6ca7c82d924edd06bd0ddc64e423c53ff3829dd605d7f21fe52",
+      "bytes": 438,
+      "ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/sdk/__init__.py",
+      "git_blob": "7c6fa32c6adefa43860bb4fe1a09ec581e2a70af",
+      "sha256": "85c4b3a7a49d95957c936c88b6425ea151069d535e0021b188008c457731541e",
+      "bytes": 62,
+      "ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/sdk/clients.py",
+      "git_blob": "5f2fca9aba8383da39fee3f2ad40c2f9e685e0c3",
+      "sha256": "a004565edf5c27d65f1371ca9195b0367bd49e1882750f910efd7bd4b268e822",
+      "bytes": 10061,
+      "ranges": [
+        [
+          1,
+          255
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/sdk/runtime.py",
+      "git_blob": "1312875428b69a872b2b5facf9f91562651ef151",
+      "sha256": "79beacdf792d2ad6a59d771bdc44dec17f317c10e58e1ab7c33a26cfbb558a9f",
+      "bytes": 1482,
+      "ranges": [
+        [
+          1,
+          49
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/sdk/streaming.py",
+      "git_blob": "b8036bd67fabea736d200157fef855937924cd89",
+      "sha256": "264004c9381e90ec2b79040b37cec3ac90366c8266a610329a180e39f953799a",
+      "bytes": 7313,
+      "ranges": [
+        [
+          1,
+          220
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/sdk/types.py",
+      "git_blob": "351c6256315d2e518a639490113369c9ebf6c27c",
+      "sha256": "dda6eaadfc0dbbe373c378be014a1c21fd5af68dff7d1e7da96c9c6c45999b29",
+      "bytes": 6248,
+      "ranges": [
+        [
+          1,
+          194
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/__init__.py",
+      "git_blob": "1ee95c7b6d7b253bfd7515056b2916e24c747329",
+      "sha256": "fdc5bdabc80a24ee7a1428ef089558868ab4ebc67b583757153c1233ade8cc11",
+      "bytes": 54,
+      "ranges": [
+        [
+          1,
+          2
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/attachment_ingress.py",
+      "git_blob": "f7e5146732389153f23ebcad6b17c8dbf1b4166f",
+      "sha256": "b832da37f9a4aa11d40e42d38b338b21f0d695ad81b00ebd422e412429574a1a",
+      "bytes": 2724,
+      "ranges": [
+        [
+          1,
+          85
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/build.py",
+      "git_blob": "6129aa42533cef16d1236a687db453037facb254",
+      "sha256": "e2c7f040e923d5f8091775bd4a388cfd640c7bf4effbc87e0a19b3786c4aea17",
+      "bytes": 10099,
+      "ranges": [
+        [
+          1,
+          303
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/cli_apps_api.py",
+      "git_blob": "0d7e81b089563cb036961dbcc4b5f9bb06700888",
+      "sha256": "05180d0be88505734ba197d9402a03851211ecf6dbb4b14556d63a6e3f5e2392",
+      "bytes": 4481,
+      "ranges": [
+        [
+          1,
+          144
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/dev.py",
+      "git_blob": "1baf40e92fcf6a03ba6f3c5e8847be50488e7475",
+      "sha256": "337f9e540cb19be510b91cbf77d2d35f3dd26ee3800fe0f54ccc9f113989aa12",
+      "bytes": 7279,
+      "ranges": [
+        [
+          1,
+          211
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/file_preview.py",
+      "git_blob": "144d7ad158ec382436ccc7972744a6706a37973f",
+      "sha256": "143fb0384cb57777c4231ac71449e64917ebd589908b80005007e9ce899e4ee7",
+      "bytes": 15736,
+      "ranges": [
+        [
+          1,
+          435
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/forking.py",
+      "git_blob": "a3539a4e7a3ede815709426de93b52bcaa0a47d0",
+      "sha256": "bf864f612c645918b7f20a0db5d02d280ae9f90c98f5e550b00927d9436ad0eb",
+      "bytes": 4560,
+      "ranges": [
+        [
+          1,
+          143
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/gateway_endpoint.py",
+      "git_blob": "ad74d84df5a23bc70a8bbd288a425aa0616eb610",
+      "sha256": "48afbd699518e2e37fe12fc6f72f47aadd855430a363728e48cf944e738e42e7",
+      "bytes": 6453,
+      "ranges": [
+        [
+          1,
+          158
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/gateway_services.py",
+      "git_blob": "6e796275cb0512a7e7d15b79c4d1394cb1e51462",
+      "sha256": "22fe13f5a17f81014146905c83d1829efc71500a7ef3d6887fae3d923cd7e571",
+      "bytes": 8916,
+      "ranges": [
+        [
+          1,
+          211
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/gateway_tokens.py",
+      "git_blob": "9e9948187d883aa3a99aa29348b490d31851acf4",
+      "sha256": "73a9ce40f942f6044c6098d4ea9aaeda4526a94970c7a4b0a211cf01efc5907a",
+      "bytes": 3612,
+      "ranges": [
+        [
+          1,
+          104
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/generated_asset_index.py",
+      "git_blob": "5e91d69dd846d672ed04745824f65c118a8efd09",
+      "sha256": "a2860c503a6413d71ac1462089cde7bd646314b8d3980faba280665645153fb0",
+      "bytes": 4614,
+      "ranges": [
+        [
+          1,
+          137
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/generated_assets.py",
+      "git_blob": "a7a84d98b834d538e0effc9d4b50e1095d88bf69",
+      "sha256": "bd6c9d86028e41e3157a3baca0109c9f995837eecd1d86fd81720c2141fb4691",
+      "bytes": 11307,
+      "ranges": [
+        [
+          1,
+          330
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/http_utils.py",
+      "git_blob": "f2c9ecbd25db98653cc02bd1f60231f613c71052",
+      "sha256": "776eda59c978b37b3492cd1fd34cb439602dfa6cbbb95c20ebb12fb78a211b45",
+      "bytes": 10034,
+      "ranges": [
+        [
+          1,
+          300
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/inbound_commands.py",
+      "git_blob": "5ff43718c9bf5582eb72adb852905b459e3bd37f",
+      "sha256": "39accdc0abd5bc6a5afc55b5d79a4e7233fcaa50750125c2d094e81fb91bcba5",
+      "bytes": 74998,
+      "ranges": [
+        [
+          1,
+          1916
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/ingress_policy.py",
+      "git_blob": "946f09007fa177b56bc121d4fa49bc18d682de26",
+      "sha256": "aae0af3a29fa8952f2ad2d91cd26038e054e0007ce173acde8469fa8b146cbd2",
+      "bytes": 2353,
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/mcp_oauth_api.py",
+      "git_blob": "9a64023a17d8c17bc144a1a5c8e6e24c60b1807e",
+      "sha256": "aba6eeca0ad515611d34e103d1f0900b8427cd836f49515dd3fabb55d578785c",
+      "bytes": 15657,
+      "ranges": [
+        [
+          1,
+          415
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/mcp_presets_api.py",
+      "git_blob": "4a20b76d25cc5bc94b810d6880cae07df2e4bc52",
+      "sha256": "d28951b431ce1ce20a16253851c85659599d37408e440f47cff6d394751a69d9",
+      "bytes": 60803,
+      "ranges": [
+        [
+          1,
+          1692
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/mcp_presets_runtime.py",
+      "git_blob": "0ebffd1f7993e9434dc8b7cc608a9ae9f58e0f3c",
+      "sha256": "cd7f4efb7f79aa9457870388bc64a508d94c25bbe9039d09d40c8bdf66efdcca",
+      "bytes": 148,
+      "ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/media_api.py",
+      "git_blob": "ccab9657fda6a78c80f09f4636ce81e713e6ffbb",
+      "sha256": "da9e00643bc8a9645404694938f6b16c73274554b12ae164d78200b106c2edc5",
+      "bytes": 9205,
+      "ranges": [
+        [
+          1,
+          275
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/media_gateway.py",
+      "git_blob": "2785507a339f8ead1f8c9f4061104d52cd0ea55a",
+      "sha256": "338619d95f0d4d60c16ff08dc42b6364237de7e5b5cc57afa3f228f99b7fbf7d",
+      "bytes": 6384,
+      "ranges": [
+        [
+          1,
+          184
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/media_maintenance.py",
+      "git_blob": "3f4b7080e0faa5450d24751fb92ec6d6b85059e5",
+      "sha256": "1955a3c694ba6d015f89e76c2e69935431ec486be2d0f796a8a3992d658247fc",
+      "bytes": 5331,
+      "ranges": [
+        [
+          1,
+          156
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/metadata.py",
+      "git_blob": "bd7c59833960b115648953d76d1828b8f8d56c55",
+      "sha256": "36ec54ab483795fb396975f2818aadfcf0539ab275afe57dbb6d813f0c0bec73",
+      "bytes": 477,
+      "ranges": [
+        [
+          1,
+          11
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/nanobot_features_api.py",
+      "git_blob": "3dc430b9dd5263011ee1a3f956df601a8f21a38a",
+      "sha256": "4f2cb4ea1699260dc1a636c77b0bad9ef00d4ccc7d15611f4fc086811ee8fe4f",
+      "bytes": 2294,
+      "ranges": [
+        [
+          1,
+          70
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/native_folder_picker.py",
+      "git_blob": "37a91dbcced1baa062f127e1632e86e7badd2e14",
+      "sha256": "7f74c83b116ade20e02542e05b4c05b15efea7ec2dc114e4f3ccc6fd0fe1718f",
+      "bytes": 6406,
+      "ranges": [
+        [
+          1,
+          211
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/outbound_projection.py",
+      "git_blob": "4231f5ffcd552af0f230d671497d9b47882d5a95",
+      "sha256": "26cd9cb91595b22d197384971cdcb0c50f5e637f7e98b9a9e99e2725d569c402",
+      "bytes": 10176,
+      "ranges": [
+        [
+          1,
+          292
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/outbound_wire.py",
+      "git_blob": "3ceafa67775c6ae1d5e726c8b1c4ab77b8eb0f1f",
+      "sha256": "1c5ce6f96dc3c0b97e229523874b56e28d7795f954630b264b583e310e8e369c",
+      "bytes": 6279,
+      "ranges": [
+        [
+          1,
+          188
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/replay_store.py",
+      "git_blob": "e985931aea78da3cc747930224f484d43cd3030c",
+      "sha256": "92e56fbfc362abd71ae6bd989679e2dc80c14ac709d88029e54033f07ac0449c",
+      "bytes": 8412,
+      "ranges": [
+        [
+          1,
+          234
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/session_access.py",
+      "git_blob": "868b12092c8ca2c0484d97624aeaffbbf3d8288a",
+      "sha256": "400f11367e4a9c64aac2d387ce4e10ebebf90c401c3abcdae339c65f66ac8835",
+      "bytes": 9240,
+      "ranges": [
+        [
+          1,
+          276
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/session_automations.py",
+      "git_blob": "93bdb8c2169a05297d1e83c27b337d948af2e9de",
+      "sha256": "2c3c25f4b146d18a5025632793b63411f870cb7c2be2468afd5d383778776b40",
+      "bytes": 9934,
+      "ranges": [
+        [
+          1,
+          341
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/session_context.py",
+      "git_blob": "0b289c2e98993a6d2f5c128f37c3cc3d40dfb3e7",
+      "sha256": "17435b66a6fec59dea0d446fb16a3031ffe6f6ca4fc93f1afb15c7fdb54c01b4",
+      "bytes": 2270,
+      "ranges": [
+        [
+          1,
+          55
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/session_identity.py",
+      "git_blob": "5f9bea6ef324afaa584886ce40cbd92a7b4d0f8f",
+      "sha256": "a3b074275e0047c5595490a013c10076d4f383d14f041cd773221b86fd0c95fb",
+      "bytes": 1139,
+      "ranges": [
+        [
+          1,
+          32
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/session_list_index.py",
+      "git_blob": "4a2f1ed865367306a8443ebdd2d9d554adf92d0d",
+      "sha256": "5af1947d436c04735e484670add49b72b6dd2d558129e093c34b0e49485adc2f",
+      "bytes": 26984,
+      "ranges": [
+        [
+          1,
+          720
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/session_projection.py",
+      "git_blob": "d132d43945827097a18363275d225bc6fe729cb0",
+      "sha256": "a34a67f23e39b5f18b174347af8510d8a21f20161c8ef1aeb05119312eb9463b",
+      "bytes": 4147,
+      "ranges": [
+        [
+          1,
+          103
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_api.py",
+      "git_blob": "315c7e2f3bc35021709cf52776f435ff741ac22d",
+      "sha256": "74d6159c535929a4fb69e5c3b59cbd217118e50782c336f2be0437ffa3ed15dd",
+      "bytes": 14184,
+      "ranges": [
+        [
+          1,
+          462
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_capabilities.py",
+      "git_blob": "8e4c9221beed4c11fde3b38de555672472be3d9a",
+      "sha256": "5856805f812217814f3bc47478437927a302977b1ca51b0fc9cb1c0262fce7c3",
+      "bytes": 34585,
+      "ranges": [
+        [
+          1,
+          927
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_contracts.py",
+      "git_blob": "df99507c50dd52a6c8bec68074ce9667e44bf53c",
+      "sha256": "20b81e7a8716dc8bd9bd6f050b38c1eba09bc7e37fb734f0f554b6262c781ab2",
+      "bytes": 2461,
+      "ranges": [
+        [
+          1,
+          83
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_models.py",
+      "git_blob": "8423a9b5bec439051d913688e895d0d6380b3130",
+      "sha256": "40578dca518845ddbffd071dc54855fb28d669f79a1f10d328abc0c34f8d6e11",
+      "bytes": 68409,
+      "ranges": [
+        [
+          1,
+          1900
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_remote.py",
+      "git_blob": "19e0e9d1822dbd92d9de8c8a0df9e769856de13d",
+      "sha256": "7754b502e5150711a3ac7c2e3b0ea601bcb942159329f136db15bdb87122901b",
+      "bytes": 7570,
+      "ranges": [
+        [
+          1,
+          189
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_routes.py",
+      "git_blob": "c0d3d4a770ac35bf61b6b9c77b306ac06bf0fb03",
+      "sha256": "9b7d9b24969fcbb2d494bf421ac6cb8b1b5ceae5600504f053bc6ed7a1da0516",
+      "bytes": 30640,
+      "ranges": [
+        [
+          1,
+          768
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_services.py",
+      "git_blob": "3146a6fbf76704af0442681927e18dc96a6cdad5",
+      "sha256": "7ba55c451e32e5dd748e5474560d274b22409d8e687b9d3fac583ba7b898cc5e",
+      "bytes": 5553,
+      "ranges": [
+        [
+          1,
+          165
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/settings_system.py",
+      "git_blob": "262c2868163eb5c3360fa0f093f7f919c27d3519",
+      "sha256": "1a9a4c8af1fd89571e8d9b3ac2e2d474ff8789d752551adf670d7cdd56e7cfb2",
+      "bytes": 33528,
+      "ranges": [
+        [
+          1,
+          961
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/sidebar_state.py",
+      "git_blob": "c28b95610185f20fbed75491c2cc5ed38d780be6",
+      "sha256": "ae230f9cad36476ab5297cd8229ea91195fa977e9b0b42ce7c6c3062faa66617",
+      "bytes": 9483,
+      "ranges": [
+        [
+          1,
+          274
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/skills_api.py",
+      "git_blob": "d28146e25af183009bc498d0999ff640c9c4af2c",
+      "sha256": "7e6a7cc486e954ac7b5e2a1bb34bad1a833109276528ac3030bfc2abef768328",
+      "bytes": 28620,
+      "ranges": [
+        [
+          1,
+          784
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/skills_marketplace.py",
+      "git_blob": "d41e2f7821f153379aae3fa6bd979c505d43fa98",
+      "sha256": "c2d77d08be0fc023a90b7f68dcfad07be29d7ed0e96724d3d318eae06115ad98",
+      "bytes": 36734,
+      "ranges": [
+        [
+          1,
+          1042
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/state_sync.py",
+      "git_blob": "6ecc71ba396539a7724a6bd5989950edc5e2f286",
+      "sha256": "1321ce1c8e0d33c7912c52cea58cc516d8f61506737d48b1c84c05f17ac3d7c1",
+      "bytes": 2954,
+      "ranges": [
+        [
+          1,
+          82
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/temporary_chats.py",
+      "git_blob": "09dc3205e7563dc520a4e46481da728b2ce07702",
+      "sha256": "80159b3ff69ebff0c239ff6d9709dc77995e8303dc6a89cc607f28299862026f",
+      "bytes": 10766,
+      "ranges": [
+        [
+          1,
+          272
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/thread_disk.py",
+      "git_blob": "03438f8af04127b35ea2b924bdca5d5fe8069b8d",
+      "sha256": "58fe53df0938e9b193a76b52180efbf15e1a666f674112fadb8f770efeb3b5fa",
+      "bytes": 980,
+      "ranges": [
+        [
+          1,
+          31
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/transcript.py",
+      "git_blob": "8d57d0ffefec77ef56dc9bb20edcf87e14a34aff",
+      "sha256": "efb61721db21f9cfa9bbaee700945dd8fb7e45ab7cad0adf45c6ace0b2e0ff90",
+      "bytes": 104473,
+      "ranges": [
+        [
+          1,
+          2868
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/transcription_ws.py",
+      "git_blob": "a01a5303a1167d9a0fd2947532627d474eeefd50",
+      "sha256": "5fad69a2ecc08950971ac1977ff3c8e33867211b0236bf1493e245a2ca21aebe",
+      "bytes": 1620,
+      "ranges": [
+        [
+          1,
+          51
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/version_check.py",
+      "git_blob": "f1a00535cb6caee7c2a4fce9b0515082dc6d1762",
+      "sha256": "792d5ec8c0e08ddd1a3e15e5d211a245bfc695bc2462db454a45f65ab9b7bafa",
+      "bytes": 1776,
+      "ranges": [
+        [
+          1,
+          58
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/websocket_logging.py",
+      "git_blob": "8c99f823e89940a02c913de4bc92fffadb2f5e4b",
+      "sha256": "c60839824bd32d5f3b929d9d605dc924629dd18c9fc79050561ea3716ac91e7b",
+      "bytes": 2441,
+      "ranges": [
+        [
+          1,
+          66
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/workspace_directories.py",
+      "git_blob": "6a3cbc029858779c0d8ca35f1c6d008523828bd7",
+      "sha256": "17e7e1afada178f6fe62520069a991a87d2878f38b7375bc023041f6428e3020",
+      "bytes": 19880,
+      "ranges": [
+        [
+          1,
+          525
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/workspaces.py",
+      "git_blob": "41b956b1ee80de0d90648a4b3eabb865420e4f9d",
+      "sha256": "f10759e486a4bf01258232be5b8deaa0cacd0d607fc038cef9ae96b2a63b623e",
+      "bytes": 67371,
+      "ranges": [
+        [
+          1,
+          1658
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/webui/ws_http.py",
+      "git_blob": "fe34ce6bf74dbbc57553ebcf56cc8966d8683cd4",
+      "sha256": "07079748bd87744be9867f33dcb5c6123621bc00586e984e89f5e338cf0a66e6",
+      "bytes": 138333,
+      "ranges": [
+        [
+          1,
+          3226
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "packages/client-events/notifications.ts",
+      "git_blob": "2800e6c05dc1f0373598f75ecbd282692836df99",
+      "sha256": "bfff39c4326a9fc36bb57ac2a081d39a3b4b8b14ba76752a61ae9eea0ec3d111",
+      "bytes": 3694,
+      "ranges": [
+        [
+          1,
+          97
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh E02 source-only primary body read preserved from staged E02-A through E02-M checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    }
+  ],
+  "promoted_findings": [
+    {
+      "id": "E02-F01",
+      "priority": "P2",
+      "title": "Failed SDK transcript ingestion can leave a partial live-session mutation",
+      "conditional": true,
+      "qualification": "Conditional on unmanaged persistent ingest (default save=True) plus metadata or a valid message prefix before a later validation failure; managed persistent ingest is rejected before mutation and save=False is detached.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F02",
+      "priority": "P1",
+      "title": "Non-loopback WebSocket configurations can admit unauthenticated agent clients",
+      "conditional": true,
+      "qualification": "Conditional on a network-reachable listener whose effective client authentication is disabled or publicly self-serviceable. Defaults are loopback plus token-required; static-token and properly protected token/trusted-proxy deployments are excluded.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F03",
+      "priority": "P2",
+      "title": "Windows media GC can delete generated assets that are still referenced",
+      "conditional": true,
+      "qualification": "Conditional on Windows-style absolute paths plus execution of the media GC path. Default orphan grace is seven days; quota eviction can act earlier when enabled. POSIX reference discovery is unaffected.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F04",
+      "priority": "P2",
+      "title": "Global generated-assets library silently omits sessions after the first 200",
+      "conditional": true,
+      "qualification": "Conditional on more than 200 persisted WebUI sessions. Per-session asset routes are unaffected; the global endpoint truncates session discovery before group pagination and exposes no continuation.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F05",
+      "priority": "P2",
+      "title": "Lossy WebUI transcript filenames collapse distinct valid chat IDs",
+      "conditional": true,
+      "qualification": "Conditional on caller-supplied/imported/legacy chat IDs that differ only through characters collapsed by safe_key(), especially colon versus underscore. UUID-created chats do not naturally trigger it.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F06",
+      "priority": "P2",
+      "title": "Session deletion can report success while readable WebUI transcript residue remains",
+      "conditional": true,
+      "qualification": "Conditional on a filesystem deletion failure. Normal deletion removes both canonical and transcript state; transcript-only history is intentionally still listable/readable when canonical state is absent.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F07",
+      "priority": "P2",
+      "title": "Transcript rotation can duplicate completed turns after a mid-rotation write failure",
+      "conditional": true,
+      "qualification": "Conditional on a multi-turn transcript above the rotation threshold and a write/replace/manifest failure after segment commit but before active-tail replacement.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F08",
+      "priority": "P2",
+      "title": "Session search can return transcript-only results that read_session rejects",
+      "conditional": true,
+      "qualification": "Conditional on a WebUI transcript without canonical session metadata and a content query that matches it. Canonical and ordinary cross-channel persisted sessions are unaffected.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F09",
+      "priority": "P2",
+      "title": "Failed Temporary Chat attachment deletion is forgotten instead of retried",
+      "conditional": true,
+      "qualification": "Conditional on an unlink/filesystem failure during Temporary Chat cleanup. Normal disposal removes tracked media.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F10",
+      "priority": "P2",
+      "title": "Discarded Temporary Chat tombstones grow without bound until gateway shutdown",
+      "conditional": true,
+      "qualification": "Conditional on a large number of Temporary Chats during one long-lived gateway process. Restart clears the tombstones; ordinary low-volume use has small impact.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F11",
+      "priority": "P2",
+      "title": "CLI-app WebUI state is not scoped to the gateway's explicit config path",
+      "conditional": true,
+      "qualification": "Conditional on multiple explicit gateway/config instances in one process or embedding with a config path different from the process-global path. Common single-instance CLI startup normally aligns the paths.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F12",
+      "priority": "P2",
+      "title": "Successful WebUI build commands can leave a stale/missing bundle without failing startup",
+      "conditional": true,
+      "qualification": "Conditional on the frontend command returning zero while failing to refresh the expected bundle. The shipped Vite path normally writes the expected dist and ordinary write failures should usually return nonzero.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F13",
+      "priority": "P2",
+      "title": "MCP WebUI credential/runtime state is not scoped to the gateway's explicit config path",
+      "conditional": true,
+      "qualification": "Conditional on an explicit gateway/config path differing from the process-global config path. Normal single-instance CLI startup generally aligns those paths; OAuth store locking/generations and managed-path exact-match cleanup do not fix cross-instance root selection.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F14",
+      "priority": "P2",
+      "title": "Cancelled skills.sh installs can outlive their WebUI owner",
+      "conditional": true,
+      "qualification": "Conditional on cancellation after npx launch or timeout with surviving descendants. Normal successful installs are awaited; the SkillHub path does not create this child process, and remote installs remain separately package-policy gated.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F15",
+      "priority": "P1",
+      "title": "WebUI folder-grant authority is not scoped to the gateway's explicit config path",
+      "conditional": true,
+      "qualification": "Conditional on an explicit/multi-instance gateway whose config path differs from the process-global path. Normal single-instance CLI startup generally aligns those paths; conflicting live writers may fail closed, but stale/shared grants and private-root selection can cross instance authority.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F16",
+      "priority": "P1",
+      "title": "Provider OAuth credential authority is shared across explicit gateway configs",
+      "conditional": true,
+      "qualification": "Conditional on explicit gateway config paths being independent instance/security boundaries. Single-instance CLI use is not claimed broken; current Codex/Copilot compatibility intentionally uses user-home auth paths and xAI uses the process-global data root.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F17",
+      "priority": "P1",
+      "title": "Remote-access owner authority defaults to the process-global instance root",
+      "conditional": true,
+      "qualification": "Conditional on divergent explicit/global config paths with default remote-access state/socket paths. Explicit distinct state_dir/socket_path avoids the collision.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F18",
+      "priority": "P2",
+      "title": "Settings usage accounting is not scoped to the explicit gateway config",
+      "conditional": true,
+      "qualification": "Conditional on multiple logical instances sharing the process-global data root. If usage is intentionally user-global, this becomes a product-contract/documentation question.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F19",
+      "priority": "P2",
+      "title": "Truthy non-boolean remote-access disable values enable remote access",
+      "conditional": true,
+      "qualification": "Conditional on a non-boolean payload such as the string \"false\". The shipped UI is expected to send a JSON boolean and the enable route is local-browser-only.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F20",
+      "priority": "P2",
+      "title": "Post-effect mutation failures are replayed as completed failures and suppress shared-state invalidation",
+      "conditional": true,
+      "qualification": "Conditional on a failure after the underlying mutation has committed. Pre-effect validation failures remain correctly cached as failures; timeout/cancellation are already uncertain.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F21",
+      "priority": "P2",
+      "title": "Remote-access pairing renewal is implemented and called by the WebUI but omitted from settings routing",
+      "conditional": false,
+      "qualification": "Deterministic for the local WebUI renewal helper. The remote owner operation registry does not expose renewal, so this is a local product-route defect rather than missing owner permission.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F22",
+      "priority": "P2",
+      "title": "Desktop notification GET has a tokenless cross-origin loopback side-effect surface",
+      "conditional": true,
+      "qualification": "Conditional on a browser/request form that sends the cross-origin loopback GET despite private-network/mixed-content protections. The fixed argv command prevents shell injection.",
+      "state": "promoted-report"
+    },
+    {
+      "id": "E02-F23",
+      "priority": "P2",
+      "title": "Legacy unpaginated WebUI thread reads bypass the response projection budget",
+      "conditional": true,
+      "qualification": "Conditional on using the no-query compatibility path with a large transcript. The paginated client path is bounded; remote post-build size checks do not prevent full projection allocation.",
+      "state": "promoted-report"
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "E02-Q1",
+      "tags": [
+        "D2",
+        "D4"
+      ],
+      "question": "What is the intended authority boundary among local browser, generic authenticated WebSocket clients, trusted-proxy clients and paired owner devices, and what effective authentication must every non-loopback listener enforce?"
+    },
+    {
+      "id": "E02-Q2",
+      "tags": [
+        "D4",
+        "D7",
+        "P01"
+      ],
+      "question": "Should every persisted WebUI/session artifact use one collision-resistant canonical session identity, and should transcript-only history be a first-class readable session state or UI-only recovery state?"
+    },
+    {
+      "id": "E02-Q3",
+      "tags": [
+        "D5",
+        "D6",
+        "R01"
+      ],
+      "question": "What common mutation/effect receipt should distinguish not-applied, applied-with-follow-up-failure and unknown outcomes across settings, workspace, deletion, automation and recovery flows?"
+    },
+    {
+      "id": "E02-Q4",
+      "tags": [
+        "D2",
+        "D4"
+      ],
+      "question": "Should every gateway-scoped authority/state store derive from one explicit instance root, with shared credential/usage profiles available only through an explicit product-level sharing choice?"
+    },
+    {
+      "id": "E02-Q5",
+      "tags": [
+        "D5",
+        "D6",
+        "Q01"
+      ],
+      "question": "What terminal lifetime owner should cover Temporary Chat media, tombstones, installer descendants and other cleanup work so cancellation/failure cannot silently abandon resources?"
+    },
+    {
+      "id": "E02-Q6",
+      "tags": [
+        "D6",
+        "Q01"
+      ],
+      "question": "What repository-wide response/scan budget should govern thread history, generated assets, file-preview transcript scans and settings endpoint probes while preserving pageable access to all valid data?"
+    },
+    {
+      "id": "E02-Q7",
+      "tags": [
+        "D2",
+        "D4"
+      ],
+      "question": "Should every local host side effect, including desktop notification delivery, use authenticated mutation semantics plus same-origin/Fetch-Metadata checks rather than loopback identity alone?"
+    },
+    {
+      "id": "E02-Q8",
+      "tags": [
+        "D4",
+        "P01"
+      ],
+      "question": "Should client mutation names, HTTP paths, settings routes and owner-operation registration be generated/validated from one contract so product features such as pairing renewal cannot drift independently?"
+    },
+    {
+      "id": "E02-Q9",
+      "tags": [
+        "D2",
+        "Q01"
+      ],
+      "question": "What trust/environment policy should package/build/install subprocesses inherit, including mutable package versions and provider/API secrets visible in the parent environment?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    {
+      "stream": "C00",
+      "dependency": "Listener composition, explicit config-path ownership and trusted-proxy activation determine F02 and final instance-root ownership."
+    },
+    {
+      "stream": "H02",
+      "dependency": "Canonical session/source authority and recovery semantics intersect transcript-only state, deletion/rotation failure and mutation outcome handling."
+    },
+    {
+      "stream": "H03",
+      "dependency": "Provider OAuth and usage/accounting ownership overlap F16/F18; E02 owns the explicit-gateway settings/control-plane consequence."
+    },
+    {
+      "stream": "S01",
+      "dependency": "Folder-grant/private-path authority overlaps F15; E02 owns gateway composition and root selection."
+    },
+    {
+      "stream": "T01",
+      "dependency": "MCP process/cancellation and remote-tool authority are adjacent to F13/F14 and remote-owner host-process policy."
+    },
+    {
+      "stream": "A01/R01",
+      "dependency": "Automation partial effects and unknown/replay policy should converge on the same effect-outcome model as F20."
+    },
+    {
+      "stream": "D01/U01",
+      "dependency": "Desktop/recovery/client pagination supplies consumer identity fencing; E02 owns server mutation/routing/projection contracts."
+    },
+    {
+      "stream": "M01",
+      "dependency": "Transcription duration validation remains M01-owned."
+    },
+    {
+      "stream": "X01",
+      "dependency": "Package-registry mutation and install bookkeeping remain X01-owned."
+    },
+    {
+      "stream": "Q01",
+      "dependency": "Build/package environment, output/response ceilings, filesystem portability and endpoint-probe efficiency remain Q01-owned."
+    },
+    {
+      "stream": "P01",
+      "dependency": "Contract generation, compatibility retirement and final simplification decisions remain deferred."
+    }
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "E02 source-review publication only; no repair/product/design acceptance.",
+    "staging_check": {
+      "status": "PASS",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "named_delta_reconciled": true,
+      "note": "All 68 E02 primaries were freshly read at the frozen pin. Eight inventory-marked modified primaries were not inherited without a fresh current-pin read."
+    },
+    "ledger_reconciliation": {
+      "status": "PASS",
+      "assigned_paths": 68,
+      "final_full_paths": 68,
+      "inventory_assignment_matches": 68,
+      "tree_blob_matches": 68,
+      "source_pin_sha256_records": 68,
+      "inventory_lineage_sha_matches": 64,
+      "intermediate_pin_sha256_recomputed": 4,
+      "intermediate_pin_paths": [
+        "nanobot/webui/file_preview.py",
+        "nanobot/webui/generated_asset_index.py",
+        "nanobot/webui/session_automations.py",
+        "nanobot/webui/transcript.py"
+      ],
+      "physical_lines": 29351,
+      "bytes": 1092203,
+      "material_primary_gaps": 0,
+      "note": "The four intermediate pinned bodies sit between the inventory's current/previous refresh hashes; their SHA-256 values were recomputed from the pinned GitHub bodies and match the staged E02 handoff ledger."
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "promoted_findings": [
+        "E02-F01",
+        "E02-F02",
+        "E02-F03",
+        "E02-F04",
+        "E02-F05",
+        "E02-F06",
+        "E02-F07",
+        "E02-F08",
+        "E02-F09",
+        "E02-F10",
+        "E02-F11",
+        "E02-F12",
+        "E02-F13",
+        "E02-F14",
+        "E02-F15",
+        "E02-F16",
+        "E02-F17",
+        "E02-F18",
+        "E02-F19",
+        "E02-F20",
+        "E02-F21",
+        "E02-F22",
+        "E02-F23"
+      ],
+      "additional_observations": [
+        "E02-O1",
+        "E02-O2",
+        "E02-O3",
+        "E02-O4",
+        "E02-O5",
+        "E02-O6",
+        "E02-O7",
+        "E02-O8",
+        "E02-O9",
+        "E02-O10",
+        "E02-O11",
+        "E02-O12"
+      ],
+      "conditional_findings": [
+        "E02-F01",
+        "E02-F02",
+        "E02-F03",
+        "E02-F04",
+        "E02-F05",
+        "E02-F06",
+        "E02-F07",
+        "E02-F08",
+        "E02-F09",
+        "E02-F10",
+        "E02-F11",
+        "E02-F12",
+        "E02-F13",
+        "E02-F14",
+        "E02-F15",
+        "E02-F16",
+        "E02-F17",
+        "E02-F18",
+        "E02-F19",
+        "E02-F20",
+        "E02-F22",
+        "E02-F23"
+      ],
+      "unconditional_findings": [
+        "E02-F21"
+      ],
+      "note": "All twenty-three provisional findings were reconciled against E02-A through E02-M and neighboring published streams. None were demoted; M01/X01/Q01 candidates remain unpromoted under their owning streams.",
+      "qualifications": [
+        "F02 is conditional on explicit network-reachable configuration with ineffective authentication; default loopback/tokened startup is excluded.",
+        "F11/F13/F15/F16/F17/F18 are primarily explicit/multi-instance scope findings; common single-instance CLI startup generally aligns paths.",
+        "F15/F16/F17 remain P1 because they can cross filesystem, credential or remote-owner authority between logical instances.",
+        "F21 is deterministic/unconditional in the pinned source; all other findings retain their documented conditional trigger.",
+        "F22 does not claim command injection; the issue is tokenless local side-effect admission."
+      ]
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "Source-only continuation; repository tests/builds/checkers/imports and external process execution were prohibited."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "8b082ffd8272a42516a37893e40852b87e5ebd81",
+    "decisions": "D1-D7 remain deferred."
+  },
+  "integrated_review": {
+    "status": "pending",
+    "evidence": null
+  },
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "8b082ffd8272a42516a37893e40852b87e5ebd81",
+    "pushed": true,
+    "evidence": "E02 F68/P0/R0 report publication checkpoint; coverage/status acceptance follows in the same bounded stage."
+  },
+  "limits": [
+    "No repository tests/builds/checkers/imports were executed.",
+    "No application/service/tool/plugin/MCP launch, external CLI/process execution, provider/network call or benchmark was performed.",
+    "Source review does not quantify deployed topology, Windows GC frequency, filesystem failure rate, large-session memory pressure, browser private-network behavior or multi-instance prevalence."
+  ],
+  "entry_rules": {
+    "primary_denominator": "E02 + implementation-or-tooling-source in frozen path-inventory.tsv",
+    "supplementary_credit": "Caller/test/client/search/support reads add no primary coverage credit.",
+    "source_only": true
+  },
+  "current_staging_delta": {
+    "status": "reconciled",
+    "note": "All eight inventory-marked modified E02 primaries were fully reread at the pinned source. Four source-pin bodies are intermediate to the inventory current/previous hash pair and were independently hashed from the pinned GitHub content."
+  },
+  "history_limits": "No runtime/deployment claim is inferred beyond pinned source contracts; historical/default-branch evidence is supplementary only.",
+  "additional_observations": [
+    {
+      "id": "E02-O1",
+      "text": "Trusted-proxy assertion semantics rely on the configured proxy stripping client-supplied assertion headers and injecting a trusted non-empty value."
+    },
+    {
+      "id": "E02-O2",
+      "text": "Query-string WebSocket/API tokens have different logging/referrer exposure than Authorization headers; some query capability use is intentional for browser transport."
+    },
+    {
+      "id": "E02-O3",
+      "text": "Shared-runtime multi-process races remain out-of-contract; supported cross-instance root-selection defects are already captured in F11/F13/F15-F18."
+    },
+    {
+      "id": "E02-O4",
+      "text": "Model-authored absolute file references can intentionally enable exact owner preview; whether display text should mint that capability remains D2/D7."
+    },
+    {
+      "id": "E02-O5",
+      "text": "Global automation origin titles are blank for normal canonical sessions, but preview/session identity remains usable."
+    },
+    {
+      "id": "E02-O6",
+      "text": "Transcription duration bypass belongs to M01 because enforcement lives in shared audio ingress."
+    },
+    {
+      "id": "E02-O7",
+      "text": "Mutable CLI-app registry lifecycle and install-bookkeeping questions belong to X01."
+    },
+    {
+      "id": "E02-O8",
+      "text": "Build/package subprocess environment inheritance and mutable skills@latest policy remain Q01/D2 supply-chain questions."
+    },
+    {
+      "id": "E02-O9",
+      "text": "Remote-owner custom MCP configuration intentionally has strong host-process authority under the current owner contract; policy remains D2/D4."
+    },
+    {
+      "id": "E02-O10",
+      "text": "Settings endpoint probing and diagnostic error surfaces remain D6/Q01 efficiency/error-hygiene questions."
+    },
+    {
+      "id": "E02-O11",
+      "text": "Relative file-preview resolution can scan the full transcript; F23 owns the concrete unpaginated thread response-budget defect."
+    },
+    {
+      "id": "E02-O12",
+      "text": "Recovery notification schema could tighten non-empty IDs and integer attempts, but no harmful consumer path was established."
+    }
+  ],
+  "finding_count_convention": {
+    "total": 23,
+    "p1": 4,
+    "p2": 19,
+    "conditional": [
+      "E02-F01",
+      "E02-F02",
+      "E02-F03",
+      "E02-F04",
+      "E02-F05",
+      "E02-F06",
+      "E02-F07",
+      "E02-F08",
+      "E02-F09",
+      "E02-F10",
+      "E02-F11",
+      "E02-F12",
+      "E02-F13",
+      "E02-F14",
+      "E02-F15",
+      "E02-F16",
+      "E02-F17",
+      "E02-F18",
+      "E02-F19",
+      "E02-F20",
+      "E02-F22",
+      "E02-F23"
+    ],
+    "unconditional": [
+      "E02-F21"
+    ],
+    "note": "Conditional findings count as promoted findings with explicit activation/platform/failure/trust qualifications."
+  },
+  "coverage_counts": {
+    "full": 68,
+    "partial": 0,
+    "unread": 0,
+    "total": 68
+  },
+  "raw_failures_and_limits": {
+    "read_failures": 0,
+    "primary_mismatches": 0,
+    "tests_executed": 0,
+    "builds_executed": 0,
+    "runtime_probes": 0,
+    "network_probes": 0,
+    "benchmarks": 0
+  },
+  "counts": {
+    "assigned_primary_paths": 68,
+    "full": 68,
+    "partial": 0,
+    "unread": 0,
+    "findings": 23,
+    "discussion_questions": 9
+  }
+}

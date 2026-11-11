@@ -1,0 +1,1245 @@
+{
+  "schema_version": 1,
+  "review": "whole-project-module-source-review-2026-11-06",
+  "date": "2026-11-06",
+  "publication_stage": "INTEGRATED SOURCE REVIEW COMPLETE. Frozen evidence: 824/824 deep-required bodies, 136 original findings, 105 original questions; E01 remains 95-file limited-depth exception with its retained limited-depth findings outside the 136 denominator. I01–I05 reconcile all 136 into 22 canonical repair packages, with zero whole-finding merges and one partial subfact overlap (T01-F10/K01-F11). K01-STG-F01 remains separate staging-only conditional P2. No runtime/product validation or D1–D7 decision; no fixes authorized.",
+  "source_pin": {
+    "repository": "https://github.com/JadenChun/nanobot-custom",
+    "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+  },
+  "scope": "scope.json",
+  "synthesis": "synthesis.md",
+  "status_definitions": {
+    "queued": "Assigned scope; not dispatched in this graph.",
+    "in-progress": "Coordinator dispatch supplied; report/acceptance remain pending.",
+    "report-written": "Supplied report and coverage published with exact evidence and limitations.",
+    "coordinator-checked": "Explicit coordinator check evidence recorded by coordinator authority.",
+    "integrated-review-complete": "Coordinator records cross-module reconciliation, material gap/disposition accounting and checkpoint evidence.",
+    "limited-depth-closed": "Explicit scope exception: non-priority stream closed after documented sanity screening. Preserves prior findings and reviewed bodies but does not claim deep semantic coverage or coordinator PASS."
+  },
+  "status_authority": "Publisher records supplied evidence; coordinator alone awards coordinator/integrated acceptance and owns Git checkpoints.",
+  "dispatch_evidence": "I05 final reconciliation published and mechanically validated: 136/136 original IDs partition exactly once into 22 repair packages; zero missing/extra, no whole-finding collapse, one partial apply_patch fact overlap; integrated source review now complete by status definition. Next D1–D7 discussion only.",
+  "counts": {
+    "streams": 18,
+    "primary_streams": 17,
+    "primary_targets": 919,
+    "crosscutting_target_addition": 0,
+    "queued": 0,
+    "in_progress": 0,
+    "report_written": 0,
+    "coordinator_checked": 17,
+    "integrated_review_complete": 1,
+    "published_findings": 136,
+    "published_discussion_questions": 105,
+    "supplied_primary_body_paths": 824,
+    "primary_targets_without_new_body_evidence": 95,
+    "reports_published": 18,
+    "limited_depth_closed": 1,
+    "deep_review_required_targets": 824,
+    "limited_depth_exception_targets": 95,
+    "deep_review_required_targets_without_coordinator_checked_evidence": 0,
+    "retained_limited_depth_findings": 26,
+    "coordinator_checked_reports": 17
+  },
+  "count_meaning": "Frozen inventory: 919 primary source targets, 95 E01 limited-depth exception, 824 deep-review-required all already checked across 16 primary streams. P01 is the seventeenth coordinator-checked REPORT but is crosscutting with 0 primary bodies, 0 promoted findings, 0 counted questions. Module-level findings remain 136, questions 105; integration pending.",
+  "discussion": {
+    "sequence": "All modules and shared contracts first, consolidated discussion afterward.",
+    "D1_D7": "Explicitly deferred for review sequencing; no implementation accepted.",
+    "open_decision_blocks_source_inspection": false
+  },
+  "streams": [
+    {
+      "id": "C00",
+      "scope": "Entrypoints, CLI, commands, config, gateway composition and shared utilities",
+      "kind": "primary",
+      "primary_target_count": 70,
+      "inventory_all_roles_count": 165,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/C00.md",
+      "coverage": "reports/C00-coverage.json",
+      "planned_report": "reports/C00.md",
+      "planned_coverage": "reports/C00-coverage.json",
+      "findings_count": 7,
+      "discussion_questions_count": 7,
+      "published_findings_count": 7,
+      "published_discussion_questions_count": 7,
+      "supplied_primary_body_paths": 70,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: retain one RuntimeComposition/canonical owners and edge activation; repair only bounded cleanup/config/readiness seams, with D1–D7 deferred.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Fresh continuation coordinator verification recorded at reports/C00-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "85c59330c91e7982574d79f92602cc7e605acb4c",
+        "pushed": true,
+        "evidence": "C00 source-review publication/PASS audit-doc checkpoint."
+      },
+      "dispatch_owner": "review_startup_c00",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/C00.md",
+      "handoff_disposition": "published-coordinator-checked"
+    },
+    {
+      "id": "H01",
+      "scope": "Agent loop, runner, bus, hooks, turn admission and delivery",
+      "kind": "primary",
+      "primary_target_count": 29,
+      "inventory_all_roles_count": 167,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/H01.md",
+      "coverage": "reports/H01-coverage.json",
+      "planned_report": "reports/H01.md",
+      "planned_coverage": "reports/H01-coverage.json",
+      "findings_count": 8,
+      "discussion_questions_count": 6,
+      "published_findings_count": 8,
+      "published_discussion_questions_count": 6,
+      "supplied_primary_body_paths": 29,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify/Split: bounded correctness first, adapter normalization and terminal authority; preserve canonical owners, Loop/Runner and edge capabilities.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Fresh continuation coordinator semantic/source verification recorded at reports/H01-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "f6a41b840c7e50c8f757e8889a880bc3ce77d47d",
+        "pushed": true,
+        "evidence": "Continuation coordinator H01 source-review PASS acceptance publication; audit documentation only."
+      }
+    },
+    {
+      "id": "H02",
+      "scope": "Sessions, source events, ledgers, history, memory, compaction and recovery",
+      "kind": "primary",
+      "primary_target_count": 74,
+      "inventory_all_roles_count": 228,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/H02.md",
+      "coverage": "reports/H02-coverage.json",
+      "planned_report": "reports/H02.md",
+      "planned_coverage": "reports/H02-coverage.json",
+      "findings_count": 6,
+      "discussion_questions_count": 7,
+      "published_findings_count": 6,
+      "published_discussion_questions_count": 7,
+      "supplied_primary_body_paths": 74,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: retain separate session/source/execution/recovery authorities; add coherent capacity contracts and only simplify indexing/artifact/legacy/idle machinery after their durability, grant and compatibility obligations are preserved.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Fresh continuation coordinator verification recorded at reports/H02-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4",
+        "pushed": true,
+        "evidence": "H02 source-review publication/PASS audit-doc checkpoint."
+      },
+      "dispatch_owner": "deep_session_state",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/H02.md",
+      "handoff_disposition": "published-coordinator-checked"
+    },
+    {
+      "id": "H03",
+      "scope": "Providers, models, budgets, key pools, usage and accounting",
+      "kind": "primary",
+      "primary_target_count": 45,
+      "inventory_all_roles_count": 141,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/H03.md",
+      "coverage": "reports/H03-coverage.json",
+      "planned_report": "reports/H03.md",
+      "planned_coverage": "reports/H03-coverage.json",
+      "findings_count": 7,
+      "discussion_questions_count": 7,
+      "published_findings_count": 7,
+      "published_discussion_questions_count": 7,
+      "supplied_primary_body_paths": 45,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: retain provider-specific wire/auth adapters, immutable route/capability/budget facts and bound replay; make terminal, credential-publication, candidate-attempt and physical-accounting ownership explicit.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Continuation closed F45/P0/R0 and recorded semantic/source verification at reports/H03-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "b3614b6d6cdd8abd032c750aa4f2535643466537",
+        "pushed": true,
+        "evidence": "H03 F45/P0/R0 source-review publication/PASS audit-doc checkpoint."
+      },
+      "dispatch_owner": "review_providers_h03",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/H03.md",
+      "handoff_disposition": "published-coordinator-checked"
+    },
+    {
+      "id": "S01",
+      "scope": "Filesystem tools, folder grants, workspace/private-state policy and security",
+      "kind": "primary",
+      "primary_target_count": 15,
+      "inventory_all_roles_count": 31,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/S01.md",
+      "coverage": "reports/S01-coverage.json",
+      "planned_report": "reports/S01.md",
+      "planned_coverage": "reports/S01-coverage.json",
+      "findings_count": 3,
+      "discussion_questions_count": 3,
+      "published_findings_count": 3,
+      "published_discussion_questions_count": 3,
+      "supplied_primary_body_paths": 15,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional: retain separate authority/lifetime/durable-proof owners; simplify the specific documented projections/branches/accounting.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Supplied root verdict; exact joint semantic/metadata/command evidence retained at validation.json:acceptance_phases[0].coordinator_acceptance."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "0972617c0e056b0214a9b9037f0ca43b1e5d1e4e",
+        "pushed": true,
+        "evidence": "Direct root followup: S01/S02 PASS committed and pushed; exact AP1 rerun PASS before checkpoint."
+      }
+    },
+    {
+      "id": "S02",
+      "scope": "Shell, sandbox backends, native admission, exec sessions and supervision",
+      "kind": "primary",
+      "primary_target_count": 6,
+      "inventory_all_roles_count": 15,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/S02.md",
+      "coverage": "reports/S02-coverage.json",
+      "planned_report": "reports/S02.md",
+      "planned_coverage": "reports/S02-coverage.json",
+      "findings_count": 3,
+      "discussion_questions_count": 3,
+      "published_findings_count": 3,
+      "published_discussion_questions_count": 3,
+      "supplied_primary_body_paths": 6,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional: retain distinct admission/confinement/process/proof owners; correct conditional deadline/reservation ownership and assess lock change separately.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Supplied root verdict; exact joint semantic/metadata/command evidence retained at validation.json:acceptance_phases[0].coordinator_acceptance."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "0972617c0e056b0214a9b9037f0ca43b1e5d1e4e",
+        "pushed": true,
+        "evidence": "Direct root followup: S01/S02 PASS committed and pushed; exact AP1 rerun PASS before checkpoint."
+      }
+    },
+    {
+      "id": "T01",
+      "scope": "Tool construction, plugins, MCP, roles, delegation and compatibility adapters",
+      "kind": "primary",
+      "primary_target_count": 44,
+      "inventory_all_roles_count": 109,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/T01.md",
+      "coverage": "reports/T01-coverage.json",
+      "planned_report": "reports/T01.md",
+      "planned_coverage": "reports/T01-coverage.json",
+      "findings_count": 12,
+      "discussion_questions_count": 8,
+      "published_findings_count": 12,
+      "published_discussion_questions_count": 8,
+      "supplied_primary_body_paths": 44,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Keep + Simplify",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "reports/T01.md coordinator semantic check"
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "complete",
+      "saved_handoff": "handoffs/T01.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "T01 source review complete at F44/P0/R0; 12 findings promoted, 8 final-discussion questions retained, and coordinator semantic check passed. Integrated review and D1-D7 decisions remain pending.",
+      "active_source_review_coverage": {
+        "full": 44,
+        "partial": 0,
+        "unread": 0
+      },
+      "active_provisional_findings_count": 0,
+      "active_substage_checkpoint": {
+        "stage": "T01-G",
+        "commit": "97dc7d038b164a0449c58eeddd45601a9bf971a5",
+        "coverage": {
+          "full": 44,
+          "partial": 0,
+          "unread": 0
+        },
+        "publication_credit_added": 44
+      },
+      "final_coverage": {
+        "full": 44,
+        "partial": 0,
+        "unread": 0
+      }
+    },
+    {
+      "id": "A01",
+      "scope": "Cron, local triggers, process completions and retained goals",
+      "kind": "primary",
+      "primary_target_count": 47,
+      "inventory_all_roles_count": 103,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/A01.md",
+      "coverage": "reports/A01-coverage.json",
+      "planned_report": "reports/A01.md",
+      "planned_coverage": "reports/A01-coverage.json",
+      "findings_count": 9,
+      "discussion_questions_count": 7,
+      "published_findings_count": 9,
+      "published_discussion_questions_count": 7,
+      "supplied_primary_body_paths": 47,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: preserve conservative cron/process/goal durability and explicit reconciliation; move blocking persistence off shared async owners, add evidence rollover, scope cron management, align shipped feature activation, and require durable/idempotent trigger settlement plus trusted approval provenance.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "F47/P0/R0 ledger and semantic reconciliation recorded in reports/A01-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "9bdcc59a5938084e843b61509e64bfb745b984a7",
+        "pushed": true,
+        "evidence": "A01 F47/P0/R0 report/coverage publication and coordinator PASS checkpoint."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/A01.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "A01 coordinator PASS at F47/P0/R0 with nine promoted findings and seven retained questions. F06/F08/F09 remain explicitly conditional. Integrated review, cross-stream reconciliation and D1–D7 remain pending."
+    },
+    {
+      "id": "K01",
+      "scope": "Context repositories, knowledge, runtime skills, prompts and templates",
+      "kind": "primary",
+      "primary_target_count": 56,
+      "inventory_all_roles_count": 62,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/K01.md",
+      "coverage": "reports/K01-coverage.json",
+      "planned_report": "reports/K01.md",
+      "planned_coverage": "reports/K01-coverage.json",
+      "findings_count": 13,
+      "discussion_questions_count": 8,
+      "published_findings_count": 13,
+      "published_discussion_questions_count": 8,
+      "supplied_primary_body_paths": 56,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep + Simplify",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "F56/P0/R0 frozen inventory/body ledger, 13 finding qualifications, 8 final questions and cross-stream deduplication are recorded in reports/K01-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "complete",
+      "saved_handoff": "handoffs/K01.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "K01 coordinator PASS at F56/P0/R0 with thirteen promoted findings and eight retained questions. K01-F01/F02/F06/F08/F10/F12/F13 remain conditional as recorded; K01-F11/T01-F10 and goal_runtime/A01-F02 ownership is deduplicated. Integrated review, D1–D7 decisions, repairs and Git checkpoint remain pending.",
+      "active_source_review_coverage": {
+        "full": 56,
+        "partial": 0,
+        "unread": 0
+      },
+      "active_provisional_findings_count": 0,
+      "active_substage_checkpoint": {
+        "stage": "K01-E",
+        "commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
+        "coverage": {
+          "full": 56,
+          "partial": 0,
+          "unread": 0
+        },
+        "publication_credit_added": 0
+      },
+      "current_origin_refresh": {
+        "status": "PASS source-only, integrated disposition pending",
+        "base_source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+        "current_staging_pin": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "changed_paths": [
+          "nanobot/agent/skills.py",
+          "tests/agent/test_skills_loader.py"
+        ],
+        "finding_effect": "K01-F03 unresolved; 12 other frozen K01 findings not individually revalidated by changed-line inspection.",
+        "new_staging_only_finding": {
+          "id": "K01-STG-F01",
+          "priority": "P2 conditional",
+          "description": "Bundled skill shown as relative skills/name/SKILL.md can resolve to same-named selected-project file before built-in fallback.",
+          "included_in_frozen_136": false
+        },
+        "evidence": "reports/K01.md section '2026-11-07 current-origin staging refresh' and reports/K01-coverage.json:current_origin_refresh",
+        "checks": "Two full versions of each changed file, 4 independent SHA256 computations matching frozen inventory where applicable; bounded caller/path-policy reads; same-assistant semantic check. No tests or product changes.",
+        "documentation_commits": [
+          "14d45c7f6233ca058be9d096fce8e2aedacc142d",
+          "a4ef9642a518d445923b0cc27d3d60eee123b41c"
+        ]
+      }
+    },
+    {
+      "id": "E01",
+      "scope": "Channel framework and sixteen platform adapters, excluding WebSocket",
+      "kind": "primary",
+      "primary_target_count": 95,
+      "inventory_all_roles_count": 321,
+      "status": "limited-depth-closed",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/E01.md",
+      "coverage": "reports/E01-coverage.json",
+      "planned_report": "reports/E01.md",
+      "planned_coverage": "reports/E01-coverage.json",
+      "findings_count": 26,
+      "discussion_questions_count": 0,
+      "published_findings_count": 26,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Deferred / leave functionally untouched for current audit phase. Chat adapters are non-priority; preserve existing findings and revisit only if channel work becomes a product priority.",
+      "coordinator_check": {
+        "status": "scope-exception",
+        "evidence": "2026-11-07 explicit user scope decision: quick channel sanity pass only; do not spend deep-audit time on every adapter and do not change channel functionality."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": "E01 scope exception must be carried into final synthesis; unresolved channel-specific semantics remain intentionally outside the current deep-review objective."
+      },
+      "git_checkpoint": {
+        "status": "pending",
+        "commit": null,
+        "evidence": null
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "limited-depth-closed",
+      "saved_handoff": "handoffs/E01.md",
+      "handoff_disposition": "scope-exception-limited-depth",
+      "coordinator_observation": "E01 is intentionally not a deep-review PASS. Prior E01-A..F evidence covers 40 primaries deeply; the remaining 55 were only high-signal screened. Existing 26 findings are retained, no new finding is promoted from the shallow pass, and Weixin pathless load_config() corroborates E01-F02. No channel repair is authorized.",
+      "active_source_review_coverage": {
+        "full": 40,
+        "partial": 0,
+        "unread": 55
+      },
+      "active_provisional_findings_count": 26,
+      "active_substage_checkpoint": {
+        "stage": "E01-F",
+        "commit": "93706841e16999f47b25ebfde4f8d8dd9796ee3a",
+        "coverage": {
+          "full": 40,
+          "partial": 0,
+          "unread": 55
+        },
+        "publication_credit_added": 0
+      },
+      "quick_sanity_screen": {
+        "screened": 55,
+        "deep_credit_added": 0,
+        "new_findings_promoted": 0,
+        "corroborated_findings": [
+          "E01-F02"
+        ],
+        "limits": "High-signal static screen only: command execution, auth/admission, media/file/network handling, lifecycle/readiness, delivery/retry and config-path patterns. No exhaustive branch/caller/history/reference tracing."
+      },
+      "final_coverage": {
+        "deep_full": 40,
+        "deep_partial": 0,
+        "not_deeply_reviewed": 55,
+        "quick_sanity_screened": 55
+      }
+    },
+    {
+      "id": "E02",
+      "scope": "HTTP API, SDK, WebSocket, backend WebUI and shared client contracts",
+      "kind": "primary",
+      "primary_target_count": 68,
+      "inventory_all_roles_count": 144,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/E02.md",
+      "coverage": "reports/E02-coverage.json",
+      "planned_report": "reports/E02.md",
+      "planned_coverage": "reports/E02-coverage.json",
+      "findings_count": 23,
+      "discussion_questions_count": 9,
+      "published_findings_count": 23,
+      "published_discussion_questions_count": 9,
+      "supplied_primary_body_paths": 68,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: preserve typed WebSocket admission, source-bound workspace authority, bounded durable replay and path-scoped settings; converge instance roots, mutation effect receipts, route contracts, session artifact identity, projection bounds and process lifetimes.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Fresh E02 F68/P0/R0 inventory/tree/hash and semantic reconciliation recorded at reports/E02-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "a50f804b4645cffea0005f479c6b26ba8a923a97",
+        "pushed": true,
+        "evidence": "E02 source-review report/coverage publication and coordinator PASS checkpoint."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/E02.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "E02 source review is published and coordinator-checked PASS at F68/P0/R0 with twenty-three promoted findings and nine final discussion questions. All primary gaps are closed; D1-D7, repair and integrated review remain pending."
+    },
+    {
+      "id": "U01",
+      "scope": "React WebUI and browser assets",
+      "kind": "primary",
+      "primary_target_count": 203,
+      "inventory_all_roles_count": 328,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/U01.md",
+      "coverage": "reports/U01-coverage.json",
+      "planned_report": "reports/U01.md",
+      "planned_coverage": "reports/U01-coverage.json",
+      "findings_count": 6,
+      "discussion_questions_count": 6,
+      "published_findings_count": 6,
+      "published_discussion_questions_count": 6,
+      "supplied_primary_body_paths": 203,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: retain authenticated/turn-correlated transport and explicit pane/session ownership; simplify repeated async completion identity, queue sendability, optimistic persistence and turn-local completion projection.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "F203/P0/R0 ledger, semantic qualifications and source/reference verification are recorded at reports/U01-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "b53644a2e20086a5d6a48e237e571d1720151270",
+        "pushed": true,
+        "evidence": "U01 F203/P0/R0 source-review publication/PASS audit-doc checkpoint."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/U01.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "U01 coordinator PASS at F203/P0/R0 with six qualified P2 findings and six retained questions. Integrated review, cross-stream reconciliation and D1–D7 remain pending."
+    },
+    {
+      "id": "M01",
+      "scope": "Attachments, audio/images and media ingress/adoption",
+      "kind": "primary",
+      "primary_target_count": 14,
+      "inventory_all_roles_count": 19,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/M01.md",
+      "coverage": "reports/M01-coverage.json",
+      "planned_report": "reports/M01.md",
+      "planned_coverage": "reports/M01-coverage.json",
+      "findings_count": 6,
+      "discussion_questions_count": 6,
+      "published_findings_count": 6,
+      "published_discussion_questions_count": 6,
+      "supplied_primary_body_paths": 14,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep + targeted simplification. Preserve canonical ingress, scoped upload binding, content-addressed records, separate audio/doc/image owners; prioritize fail-closed prune, zero-write migration preview, bounding image-reference reads and PDF decompression, sidecar hygiene and a duration policy decision.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "2026-11-07 second-pass source evidence check at reports/M01-coverage.json:coordinator_check: fresh 14/14 SHA256/blob/bytes/lines, six qualified findings and six questions. Same assistant rereview; no independent peer or runtime qualification."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "58a2817a112b5b076a0d890ec81a76c111b25968",
+        "pushed": true,
+        "evidence": "Second-pass M01 report  fb471515, coverage 58a2817a published on audit branch; status and synthesis follow."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/M01-A.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "Higher-depth second pass rechecked all 14 M01 primaries using independently recomputed hashes; prior F01–F03 retained and added qualified F04 (fail-open prune with incomplete references), F05 (unbounded image-edit reference reads), F06 (PDF post-decode size guard). Six qualified P2 findings, six questions; integrated review and D1–D7 still pending.",
+      "final_coverage": {
+        "full": 14,
+        "partial": 0,
+        "unread": 0
+      }
+    },
+    {
+      "id": "R01",
+      "scope": "Remote IPC/auth/pairing and Android/native clients",
+      "kind": "primary",
+      "primary_target_count": 70,
+      "inventory_all_roles_count": 189,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/R01.md",
+      "coverage": "reports/R01-coverage.json",
+      "planned_report": "reports/R01.md",
+      "planned_coverage": "reports/R01-coverage.json",
+      "findings_count": 20,
+      "discussion_questions_count": 10,
+      "published_findings_count": 20,
+      "published_discussion_questions_count": 10,
+      "supplied_primary_body_paths": 70,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: preserve the independent remote-owner authority, durable device/scopes/revocation store, one-use delegation, same-UID IPC, typed native broker, Keystore custody, encrypted tsnet state, streaming media and shared-WebUI composition; converge WS scope policy, custody acknowledgement, completion/event semantics, frame budgets, pairing lifecycle, generated route contracts and release-build trust.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "Fresh R01 F70/P0/R0 inventory/hash/semantic reconciliation recorded at reports/R01-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "a3ed5506040e5d9d09cd340bc844c0061a2369e2",
+        "pushed": true,
+        "evidence": "R01 report/coverage publication and coordinator PASS checkpoint."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/R01.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "active_source_review_coverage": {
+        "full": 70,
+        "partial": 0,
+        "unread": 0
+      },
+      "active_provisional_findings_count": 0,
+      "provisional_findings": [
+        {
+          "id": "R01-F01",
+          "priority": "P2",
+          "title": "Pairing can durably commit a device before credential custody is established",
+          "state": "promoted-report",
+          "qualification": "Conditional on delivery/restart failure after durable approval but before client custody; local revoke/re-pair recovers."
+        },
+        {
+          "id": "R01-F02",
+          "priority": "P1",
+          "title": "Mobile WebSocket commands bypass granted chat/media scopes",
+          "state": "promoted-report",
+          "qualification": "Conditional on a valid owner credential whose durable scopes are narrower than the command; default owner pairing grants broad scopes."
+        },
+        {
+          "id": "R01-F03",
+          "priority": "P2",
+          "title": "Refresh rotation can strand a paired device on ambiguous delivery",
+          "state": "promoted-report",
+          "qualification": "Conditional on replacement-response loss after rotation invalidates old refresh/access state."
+        },
+        {
+          "id": "R01-F04",
+          "priority": "P2",
+          "title": "Versioned mobile route contract contradicts the production edge",
+          "state": "promoted-report",
+          "qualification": "Deterministic contract drift: declared HTTP bootstrap/mutation/attachment/logout routes are not served by the production edge."
+        },
+        {
+          "id": "R01-F05",
+          "priority": "P2",
+          "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
+          "state": "promoted-report",
+          "qualification": "Deterministic qualification mismatch; bounded to staging/fixture fidelity rather than an ordinary product caller."
+        },
+        {
+          "id": "R01-F06",
+          "priority": "P2",
+          "title": "Systemd supervision reports applied success without checking command success",
+          "state": "promoted-report",
+          "qualification": "Conditional on nonzero systemctl results in the explicit opt-in supervision CLI."
+        },
+        {
+          "id": "R01-F07",
+          "priority": "P2",
+          "title": "Pairing can proceed without a verified Tailscale Serve mapping",
+          "state": "promoted-report",
+          "qualification": "Conditional on negative/incorrect Serve readiness plus UI fallback; owner approval/token authorization remain required."
+        },
+        {
+          "id": "R01-F08",
+          "priority": "P2",
+          "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
+          "state": "promoted-report",
+          "qualification": "Conditional on process/plugin recreation while manual approval is pending."
+        },
+        {
+          "id": "R01-F09",
+          "priority": "P2",
+          "title": "Mobile HTTP completions can arrive before request correlation is armed",
+          "state": "promoted-report",
+          "qualification": "Conditional timing race between native completion and request-ID waiter installation."
+        },
+        {
+          "id": "R01-F10",
+          "priority": "P2",
+          "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
+          "state": "promoted-report",
+          "qualification": "Conditional on an accepted frame whose encoded event exceeds JNI retrieval capacity."
+        },
+        {
+          "id": "R01-F11",
+          "priority": "P2",
+          "title": "Android logcat receives replayable signed-media bearer capabilities",
+          "state": "promoted-report",
+          "qualification": "Conditional on log access plus network reachability; signed URL has no embedded expiry/separate API token."
+        },
+        {
+          "id": "R01-F12",
+          "priority": "P2",
+          "title": "Global native last_error storage is unsafe under concurrent Android calls",
+          "state": "promoted-report",
+          "qualification": "Conditional on overlapping failing native/JNI calls."
+        },
+        {
+          "id": "R01-F13",
+          "priority": "P2",
+          "title": "Bounded broker event pressure can silently drop admitted operation completions",
+          "state": "promoted-report",
+          "qualification": "Conditional on post-admission event-queue saturation."
+        },
+        {
+          "id": "R01-F14",
+          "priority": "P2",
+          "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
+          "state": "promoted-report",
+          "qualification": "Conditional on sufficiently large/concurrent full media streams; completed entries are trimmed later."
+        },
+        {
+          "id": "R01-F15",
+          "priority": "P2",
+          "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
+          "state": "promoted-report",
+          "qualification": "Conditional on persisted QR/link pending pairing plus Cancel/restart and later owner approval."
+        },
+        {
+          "id": "R01-F16",
+          "priority": "P2",
+          "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
+          "state": "promoted-report",
+          "qualification": "Conditional on compromised build-time dependency/process; exposure to unrelated pre-sign child processes is deterministic."
+        },
+        {
+          "id": "R01-F17",
+          "priority": "P2",
+          "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
+          "state": "promoted-report",
+          "qualification": "Deterministic qualification gap: cached tool existence and ambient Bun can bypass the recorded lock."
+        },
+        {
+          "id": "R01-F18",
+          "priority": "P2",
+          "title": "Gradle wrapper distribution is not cryptographically pinned",
+          "state": "promoted-report",
+          "qualification": "Deterministic build-integrity gap: distributionSha256Sum is absent."
+        },
+        {
+          "id": "R01-F19",
+          "priority": "P2",
+          "title": "Desktop-parity checker silently skips async inbound-command and misc-route source coverage",
+          "state": "promoted-report",
+          "qualification": "Deterministic checker blind spot: AsyncFunctionDef production surfaces are not extracted."
+        },
+        {
+          "id": "R01-F20",
+          "priority": "P2",
+          "title": "Update-persistence qualification reinstalls the same APK instead of exercising an actual upgrade",
+          "state": "promoted-report",
+          "qualification": "Deterministic test-design gap: baseline and candidate are the same artifact."
+        }
+      ],
+      "active_substage_checkpoint": {
+        "stage": "R01-K",
+        "commit": "d158766b9606b9f22dffcfaf61806edc7e2ee38e",
+        "coverage": {
+          "full": 70,
+          "partial": 0,
+          "unread": 0
+        },
+        "publication_credit_added": 0
+      },
+      "coordinator_observation": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings (one conditional P1, nineteen P2) and ten final discussion questions. Source review/report acceptance only; integrated review, D1–D7, repairs and runtime qualification remain pending."
+    },
+    {
+      "id": "D01",
+      "scope": "Python desktop adapter, Tauri shell and terminal UI",
+      "kind": "primary",
+      "primary_target_count": 47,
+      "inventory_all_roles_count": 101,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/D01.md",
+      "coverage": "reports/D01-coverage.json",
+      "planned_report": "reports/D01.md",
+      "planned_coverage": "reports/D01-coverage.json",
+      "findings_count": 2,
+      "discussion_questions_count": 5,
+      "published_findings_count": 2,
+      "published_discussion_questions_count": 5,
+      "supplied_primary_body_paths": 47,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep+Simplify: preserve Desktop identity/private IPC/uncertain lifecycle and TUI per-session ownership; make queue dequeue transactional with send admission and unify async session identity fencing.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "F47/P0/R0 ledger, semantic qualifications and source/reference verification are recorded at reports/D01-coverage.json:coordinator_check."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "9db80a30be08be3428ca33fda1532031dabd6a7f",
+        "pushed": true,
+        "evidence": "D01 F47/P0/R0 source-review publication/PASS audit-doc checkpoint."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "saved_handoff": "handoffs/D01.md",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "D01 coordinator PASS at F47/P0/R0 with two qualified P2 findings and five retained questions. Integrated review, cross-stream reconciliation and D1–D7 remain pending."
+    },
+    {
+      "id": "X01",
+      "scope": "Optional apps, crawler and extensions",
+      "kind": "primary",
+      "primary_target_count": 11,
+      "inventory_all_roles_count": 15,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/X01.md",
+      "coverage": "reports/X01-coverage.json",
+      "planned_report": "reports/X01.md",
+      "planned_coverage": "reports/X01-coverage.json",
+      "findings_count": 4,
+      "discussion_questions_count": 6,
+      "published_findings_count": 4,
+      "published_discussion_questions_count": 6,
+      "supplied_primary_body_paths": 11,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep with targeted authority repair: reuse native execution admission for CLI apps, enforce non-state-changing crawler DOM actions, bound subprocess streams, and prevent registry-provenance shadowing.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "2026-11-07 X01 coverage reports/X01-coverage.json — same-assistant source check with 11/11 full bodies, independent SHA256/bytes/blob verification, actual callers and tests. Conditional P1 not a measured exploit."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "a2062c30cbbb291eee878c44b497f947ead14191",
+        "pushed": true,
+        "evidence": "X01 report and 11-body coverage ledger on codex/staging-audit; aggregate status/synthesis follow."
+      },
+      "dispatch_owner": "web-continuation-coordinator",
+      "execution_state": "completed-source-review",
+      "handoff_disposition": "published-coordinator-checked",
+      "coordinator_observation": "X01 source PASS F11/P0/R0, two conditional P1 and two P2 findings, six final questions. Core concerns: CLI app subprocess file/network authority, crawler expand literal click, capture_output memory, remote app-catalog trust collisions. Same-reviewer self-check only; integration and runtime still pending.",
+      "final_coverage": {
+        "full": 11,
+        "partial": 0,
+        "unread": 0
+      }
+    },
+    {
+      "id": "Q01",
+      "scope": "Builds/dependencies/CI/deployment, migration tools, stubs, support and docs",
+      "kind": "primary",
+      "primary_target_count": 25,
+      "inventory_all_roles_count": 317,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/Q01.md",
+      "coverage": "reports/Q01-coverage.json",
+      "planned_report": "reports/Q01.md",
+      "planned_coverage": "reports/Q01-coverage.json",
+      "findings_count": 7,
+      "discussion_questions_count": 7,
+      "published_findings_count": 7,
+      "published_discussion_questions_count": 7,
+      "supplied_primary_body_paths": 25,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep with targeted corrections to Windows authenticated worker local transport, audit redaction, pipx installed-executable verification, frozen frontend build, staged deploy rollback, P0 verifier provenance and migration CI triggers.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "2026-11-07 same-assistant source review: reports/Q01-coverage.json verifies all 25 pinned primary bodies with independently recomputed SHA256, Git blobs and bytes; seven qualified findings and seven questions. No independent peer, runtime or cross-module acceptance."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "2d03fbb55ef372d6d237e6a5a6622c5885544385",
+        "pushed": true,
+        "evidence": "Q01 source report published in 873e6a6 and 25-body evidence ledger in 2d03fbb; aggregate status and synthesis follow."
+      },
+      "coordinator_observation": "Q01 source PASS F25/P0/R0. One conditional P1 (Windows authenticated worker loopback caller auth), six P2 source findings (redaction, pipx run, nonfrozen Hatch, non-atomic deploy, P0 mutable verifier, docs migration CI exclusion); seven deferred questions. Source-only same-assistant check."
+    },
+    {
+      "id": "P01",
+      "scope": "Efficiency and simplification across all primary streams",
+      "kind": "crosscutting",
+      "primary_target_count": 0,
+      "inventory_all_roles_count": null,
+      "status": "coordinator-checked",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "report": "reports/P01.md",
+      "coverage": "reports/P01-coverage.json",
+      "planned_report": "reports/P01.md",
+      "planned_coverage": "reports/P01-coverage.json",
+      "findings_count": 0,
+      "discussion_questions_count": 0,
+      "published_findings_count": 0,
+      "published_discussion_questions_count": 0,
+      "supplied_primary_body_paths": 0,
+      "material_primary_gaps_pending_evidence": 0,
+      "architecture_judgement": "Provisional Keep + Simplify through 10 existing-owner cross-stream proposals. No new primary bodies, findings, questions or accepted D1–D7 product choices; preserve different authority, durability, recovery and platform contracts.",
+      "coordinator_check": {
+        "status": "PASS",
+        "evidence": "2026-11-07 same-assistant P01 source synthesis: 16 previously checked stream reports and ledgers compared, ten proposed simplification packages and seven explicit non-merges, frozen pinned DSH/Codex direct reference snippets. Zero extra primary bodies, zero new findings or counted questions; prior 824/824 coverage and 136/105 counts unchanged. Not integrated acceptance/peer/runtime validation."
+      },
+      "integrated_review": {
+        "status": "pending",
+        "evidence": null
+      },
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "1795b505f6c2867c642fe28573813a1ed4ba4a8f",
+        "pushed": true,
+        "evidence": "P01 report published d32cebae8f1587b04463d0716841b070c2877380, coverage 1795b505f6c2867c642fe28573813a1ed4ba4a8f; later status/readme/synthesis updates in this stage."
+      }
+    }
+  ],
+  "foundation": {
+    "status": "coordinator-accepted foundation",
+    "coordinator": "/root",
+    "independent_verification": "PASS",
+    "checkpoint_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+    "pushed": true,
+    "evidence": "Direct root continuation checkpoint: foundation independently verified PASS and committed/pushed; no module acceptance inferred."
+  },
+  "pending_publication_packets": [
+    {
+      "stream": "H02",
+      "producer": "/root/deep_session_state",
+      "received_packets": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5A",
+        "5B"
+      ],
+      "state": "saved unpublished at user pause; publication/acceptance pending; stream pipeline state remains in-progress",
+      "initial_coverage_disposition": {
+        "full": 33,
+        "targeted": 4,
+        "unreconstructable_prior_range_ledger": 37
+      },
+      "supplemental_claim": {
+        "full": 74,
+        "targeted": 0,
+        "unreconstructable_prior_range_ledger": 0,
+        "physical_splitlines": 47094,
+        "meaning": "5A/5B supply attributable closure of initial traceability gaps; retained for later mechanical/coordinator checks."
+      },
+      "published_body_credit_in_this_package": 0,
+      "limit": "No H02 report or acceptance awarded in H01 package.",
+      "saved_handoff": "handoffs/H02.md"
+    },
+    {
+      "stream": "C00",
+      "producer": "/root/review_startup_c00",
+      "received_packets": 3,
+      "expected_packets": 3,
+      "state": "saved unpublished at user pause; publication/acceptance pending; stream pipeline state remains in-progress",
+      "supplied_primary_body_claim": 70,
+      "published_body_credit_in_this_package": 0,
+      "limit": "No C00 report or acceptance awarded in H01 package.",
+      "saved_handoff": "handoffs/C00.md"
+    },
+    {
+      "stream": "H03",
+      "producer": "/root/review_providers_h03",
+      "saved_handoff": "handoffs/H03.md",
+      "state": "paused incomplete; unvalidated candidates not promoted",
+      "supplied_coverage": {
+        "full": 23,
+        "partial": 19,
+        "unread": 3
+      },
+      "published_body_credit_in_this_package": 0
+    }
+  ],
+  "coordinator_observations": {
+    "evidence_origin": "Direct root message during S01/S02 publication",
+    "corroborated_finding_mechanics": [
+      "S01-F01",
+      "S01-F02",
+      "S01-F03",
+      "S02-F01",
+      "S02-F02"
+    ],
+    "artifact_acceptance": "PASS supplied by root; source-review publication only. Integrated review and module checkpoint pending.",
+    "H01": "Continuation coordinator fresh-verified F1–F7 at their stated classifications, retained F8 as open contract, rechecked cited DSH/Codex/history mechanisms, and confirmed staging is unchanged at 9562e57/bbe2f237. Source-review PASS only; integrated review and decisions remain pending.",
+    "C00": "Continuation coordinator reconciled all 70 supplied full primary bodies with frozen inventory/tree and fresh-verified C00-F01–F07 plus bounded DSH/Codex/history mechanisms. Source-review PASS only; D1–D7 and integrated review remain pending.",
+    "H02": "Continuation coordinator accepted final 5A/5B F74/P0/R0 ledger, fresh-verified six promoted findings and retained H02-TITLE-EDGE as unpromoted pending U01. Source-review PASS only; integrated review and D1–D7 remain pending.",
+    "H03": "Continuation refilled all 19 partial + 3 unread primaries to final F45/P0/R0, reconciled the named staging delta, fresh-verified seven promoted findings plus bounded tests/history/DSH/Codex references. Source-review PASS only; integrated review and D1–D7 remain pending.",
+    "U01": "U01 coordinator PASS at F203/P0/R0 with six qualified P2 findings and six retained questions. Integrated review and D1–D7 remain pending.",
+    "D01": "D01 coordinator PASS at F47/P0/R0 with two qualified P2 findings and five retained questions. Integrated review and D1–D7 remain pending.",
+    "T01": "T01-A+B+C+D+E+F source inspection is saved at F36/P0/R8 with twelve provisional findings (three conditional P1, nine P2 including two conditional). No T01 report/coordinator acceptance or published body credit is awarded. Next: T01-G final eight-file wrapper stage.",
+    "R01": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings (one conditional P1, nineteen P2) and ten retained questions. Exact 70-path/hash/byte reconciliation matches the immutable inventory; current staging changes no R01 primary. Integrated review, D1–D7, repairs and runtime qualification remain pending.",
+    "M01": "Higher-depth second pass rechecked all 14 M01 primaries using independently recomputed hashes; prior F01–F03 retained and added qualified F04 (fail-open prune with incomplete references), F05 (unbounded image-edit reference reads), F06 (PDF post-decode size guard). Six qualified P2 findings, six questions; integrated review and D1–D7 still pending.",
+    "X01": "X01 source PASS F11/P0/R0, two conditional P1 and two P2 findings, six final questions. Core concerns: CLI app subprocess file/network authority, crawler expand literal click, capture_output memory, remote app-catalog trust collisions. Same-reviewer self-check only; integration and runtime still pending.",
+    "Q01": "Q01 source PASS F25/P0/R0. One conditional P1 (Windows authenticated worker loopback caller auth), six P2 source findings (redaction, pipx run, nonfrozen Hatch, non-atomic deploy, P0 mutable verifier, docs migration CI exclusion); seven deferred questions. Source-only same-assistant check.",
+    "P01": "P01 same-assistant source synthesis PASS; 16 reports/coverage compared; 10 concrete simplification packages and 7 false-merger boundaries; 0 added source paths/findings/questions; 824/824 non-E01 deep source coverage unchanged; implementation and integration pending.",
+    "K01_staging_refresh": "2026-11-07 same-assistant source PASS at current staging 29612c3: only skill summary and paired tests changed; path provenance regression for selected project (K01-STG-F01 conditional P2), no K01-F03 fix. Two complete source and two complete test versions read, SHA256 independently recalculated; no tests executed. Integrated review pending.",
+    "I01": "2026-11-07 I01 same-assistant source integration checkpoint, not full integrated acceptance: eight authority clusters, 28 distinct original IDs and one staging-only K01 overlay; zero primary/finding/question additions, 824/824 deep requirement unchanged. Explicit false mergers and source ranges in integrated/I01-authority.md/ledger. Next I02.",
+    "I02": "2026-11-07 I02 source semantic checkpoint (same assistant): 9 durable/outcome groups, 53 distinct previous ledger IDs, 1 cross-stage overlap S02-F02, 3 H02 optional candidates; no extra body/finding/question credit or D1–D7 decisions. Reports integrated/I02-durability.md and I02-durability-evidence.json. Next I03.",
+    "I03": "2026-11-07 source-only I03 checkpoint: 8 groups, 32 existing original finding references, original IDs validated against 8 coverage ledgers; known overlaps K01-F03 with I01, A01-F07 with I02; K01-STG-F01 separately cross-referenced, not counted. Same-assistant source/readback acceptance, not final integrated review. Next I04.",
+    "I04": "2026-11-07 I04 source-only checkpoint: exact 26 findings left after I01–I03, seven groups, no prior overlap; I01–I04 union now covers all 136 original findings. This is mapping completion only. Report/ledger integrated/I04-release-residuals*. Next I05 final dedup/non-merge/priority ownership reconciliation.",
+    "I05": "2026-11-07 final source integration: exact 136-ID partition into 22 canonical repair packages; zero whole-finding merges, one partial T01-F10/K01-F11 apply_patch overlap, expected cross-stage repeated refs only. Material gaps/E01/runtime limits recorded. integrated_review_complete=1; D1–D7 decisions=0."
+  },
+  "coordinator_acceptance_ref": "validation.json:acceptance_phases[0].coordinator_acceptance",
+  "execution_state": {
+    "state": "ACTIVE",
+    "reason": "Source-based integrated review complete after I05; only user D1–D7 decisions remain before implementation planning.",
+    "analysts": "This continuation is the active coordinator/source-review context; historical analyst identities remain provenance only.",
+    "resume_order": [
+      "D1–D7 discussion only: decide platform scope, authority/private boundaries, managed session/delegation, compatibility/retirement, registration/lifetime, recovery semantics and completion/resource policy. Do not implement fixes until decisions are explicit."
+    ],
+    "handoff_index": "handoffs/index.json",
+    "git_preservation": "Coordinator owns documentation-only module checkpoints; product source remains untouched."
+  },
+  "resume_order": [
+    "D1–D7 discussion only: decide platform scope, authority/private boundaries, managed session/delegation, compatibility/retirement, registration/lifetime, recovery semantics and completion/resource policy. Do not implement fixes until decisions are explicit."
+  ],
+  "latest_staging_observation": {
+    "checked_at": "2026-11-07",
+    "frozen_audit_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "current_staging": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+    "ahead_by": 2,
+    "changed_paths": [
+      "nanobot/agent/skills.py",
+      "tests/agent/test_skills_loader.py"
+    ],
+    "r01_impact": "No R01 primary path changed. The production delta changes built-in skill display paths only; retain K01 current-origin refresh as a later obligation."
+  },
+  "integrated_review_progress": {
+    "status": "COMPLETE source-based integrated review: I01–I05 reconcile all 136 original findings; D1–D7 and implementation remain pending",
+    "completed_substages": [
+      {
+        "id": "I01",
+        "name": "Authority/capability boundary reconciliation",
+        "status": "source-checkpoint PASS same assistant; integrated product acceptance pending",
+        "report": "integrated/I01-authority.md",
+        "ledger": "integrated/I01-authority-evidence.json",
+        "original_finding_refs_reconciled": 28,
+        "staging_only_overlay_refs_reconciled": 1,
+        "groups": 8,
+        "new_original_findings": 0,
+        "new_questions": 0,
+        "new_primary_bodies": 0,
+        "decisions_accepted": 0,
+        "commit_report": "20c6b0fe47b78802dea71f01cb75e2145b081c6a",
+        "commit_ledger": "96a74e39ccd0dc8452a5b266836458f0cf19dd95",
+        "scope_limit": "9 related primary reports and frozen/current supplementary source excerpts, not all 16 streams and not all 136 findings"
+      },
+      {
+        "id": "I02",
+        "name": "Durable effects, recovery and completion/lifetime ownership",
+        "status": "source checkpoint PASS same-assistant; not product/runtime/independent acceptance",
+        "report": "integrated/I02-durability.md",
+        "ledger": "integrated/I02-durability-evidence.json",
+        "original_ledger_entry_refs_reconciled": 53,
+        "previously_reconciled_I01_overlap": [
+          "S02-F02"
+        ],
+        "individually_counted_project_finding_credit_added": 0,
+        "groups": 9,
+        "three_optional_source_candidates": [
+          "H02-ART-SOURCE",
+          "H02-LEGACY-ISOLATE",
+          "H02-IDLE-DORMANT"
+        ],
+        "new_promoted_findings": 0,
+        "new_questions": 0,
+        "new_primary_source_credit": 0,
+        "decisions_accepted": 0,
+        "commit_report": "11e73ce30f50d003ae1815b3eb76c54631179540",
+        "commit_ledger": "1b23d0287c50060fa7f0e5ff7e2af86ada192067",
+        "scope_limit": "Nine durability/recovery streams; 53 source-ledger entries not 53 new defects; selected pinned snippets. Later UI/capability/release integration and all D1–D7 decisions pending."
+      },
+      {
+        "id": "I03",
+        "name": "Client UI, tool/route capabilities, feature exposure and compatibility",
+        "status": "source-evidence checkpoint PASS (same assistant; not full integration or runtime acceptance)",
+        "report": "integrated/I03-client-capabilities.md",
+        "ledger": "integrated/I03-client-capabilities-evidence.json",
+        "distinct_frozen_finding_references": 32,
+        "groups": 8,
+        "staging_only_overlay_cross_reference": [
+          "K01-STG-F01"
+        ],
+        "previous_overlap_I01": [
+          "K01-F03"
+        ],
+        "previous_overlap_I02": [
+          "A01-F07"
+        ],
+        "new_promoted_findings": 0,
+        "new_questions": 0,
+        "new_primary_body_credit": 0,
+        "decisions_accepted": 0,
+        "scope_limit": "8 published streams plus pinned client/tool/route excerpts; no release/performance pass or D1–D7 decisions",
+        "commit_report": "e6a6f8851b99907caa03879ad2b890b84cc5904d",
+        "commit_ledger": "15d365d6cef8e788b055e2efca22b197d691ec8c"
+      },
+      {
+        "id": "I04",
+        "name": "Release/toolchain/deployment qualification, resource bounds and residual integration",
+        "status": "source checkpoint PASS; completes finding-to-integration mapping only, not final dedup/acceptance",
+        "report": "integrated/I04-release-residuals.md",
+        "ledger": "integrated/I04-release-residuals-evidence.json",
+        "unique_original_finding_refs": 26,
+        "groups": 7,
+        "prior_unique_mapped": 110,
+        "post_unique_mapped": 136,
+        "new_promoted_findings": 0,
+        "new_questions": 0,
+        "new_primary_body_credit": 0,
+        "decisions_accepted": 0,
+        "commit_report": "35f000a554ad284b8235bb603268d60697902eee",
+        "commit_ledger": "b668d26105eedc030e898e38da87ce2a5c4357d7",
+        "scope_limit": "Exact residual 26 original IDs only; no final duplicate collapse, repair backlog acceptance or D1–D7 decisions."
+      },
+      {
+        "id": "I05",
+        "name": "Final whole-project finding reconciliation and repair ownership",
+        "status": "integrated source review COMPLETE; no runtime/product acceptance and no D1–D7 choice",
+        "report": "integrated/I05-final-reconciliation.md",
+        "ledger": "integrated/I05-final-reconciliation-evidence.json",
+        "original_findings_reconciled": 136,
+        "canonical_repair_packages": 22,
+        "whole_finding_merges": 0,
+        "partial_factual_overlaps": 1,
+        "staging_only_overlay": [
+          "K01-STG-F01"
+        ],
+        "new_promoted_findings": 0,
+        "new_questions": 0,
+        "new_primary_body_credit": 0,
+        "decisions_accepted": 0,
+        "commit_report": "e1e662bb465bcf9f1a5a187ba26c1ed01e026e77",
+        "commit_ledger": "f9be4e6e9773afee625f376eef9676b5ad838cc2",
+        "scope_limit": "Static source-based reconciliation only; E01 limited-depth exception retained; runtime/build/test/deploy proof and user decisions remain pending."
+      }
+    ],
+    "remaining_substages": [
+      "D1–D7 consolidated user discussion/decisions only; implementation planning follows explicit decisions."
+    ],
+    "full_integrated_review_complete": true,
+    "source_hashes_reused_from_published_streams": true,
+    "original_finding_and_question_count_unchanged": true,
+    "user_product_repairs_authorized": false,
+    "mapping_status": {
+      "original_findings_total": 136,
+      "unique_original_findings_with_at_least_one_integrated_home": 136,
+      "mapping_complete": true,
+      "final_reconciliation_complete": true,
+      "note": "All 136 original findings have one canonical repair-package assignment; no whole-finding collapse justified. This does not mean repaired or runtime validated."
+    },
+    "final_reconciliation": {
+      "original_findings": 136,
+      "original_questions": 105,
+      "canonical_repair_packages": 22,
+      "whole_finding_merges": 0,
+      "partial_factual_overlap": {
+        "ids": [
+          "T01-F10",
+          "K01-F11"
+        ],
+        "fact": "apply_patch registration omission is a subset of K01-F11's broader guidance mismatch"
+      },
+      "repeated_integration_refs_not_duplicates": [
+        "S02-F02",
+        "K01-F03",
+        "A01-F07"
+      ],
+      "staging_overlay": "K01-STG-F01",
+      "E01_limited_depth_bodies": 95,
+      "runtime_validation": false,
+      "product_repairs_authorized": false,
+      "D1_D7_decisions_accepted": 0
+    }
+  }
+}

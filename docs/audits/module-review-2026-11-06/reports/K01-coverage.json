@@ -1,0 +1,1609 @@
+{
+  "schema_version": 1,
+  "stream_id": "K01",
+  "report": "reports/K01.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "ChatGPT web continuation coordinator",
+    "handoff": "handoffs/K01.md source-complete checkpoint",
+    "published_by": "ChatGPT web continuation coordinator",
+    "note": "Continuation completed K01-A through K01-E source-only review and reconciled thirteen findings at F56/P0/R0; coordinator semantic acceptance is now PASS."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/agent/context.py",
+    "nanobot/agent/skills.py",
+    "nanobot/agent/tools/repositories.py",
+    "nanobot/context_repo/__init__.py",
+    "nanobot/context_repo/catalog.py",
+    "nanobot/context_repo/discovery.py",
+    "nanobot/context_repo/manager.py",
+    "nanobot/skills/README.md",
+    "nanobot/skills/skill-creator/SKILL.md",
+    "nanobot/skills/skill-creator/scripts/init_skill.py",
+    "nanobot/skills/skill-creator/scripts/package_skill.py",
+    "nanobot/skills/skill-creator/scripts/quick_validate.py",
+    "nanobot/skills/my/SKILL.md",
+    "nanobot/skills/my/references/examples.md",
+    "nanobot/skills/clawhub/SKILL.md",
+    "nanobot/skills/cron/SKILL.md",
+    "nanobot/skills/desktop-use/SKILL.md",
+    "nanobot/skills/github/SKILL.md",
+    "nanobot/skills/image-generation/SKILL.md",
+    "nanobot/skills/memory/SKILL.md",
+    "nanobot/skills/summarize/SKILL.md",
+    "nanobot/skills/tmux/SKILL.md",
+    "nanobot/skills/tmux/scripts/find-sessions.sh",
+    "nanobot/skills/tmux/scripts/wait-for-text.sh",
+    "nanobot/skills/update-setup/SKILL.md",
+    "nanobot/skills/weather/SKILL.md",
+    "nanobot/skills/mobile-app-testing/SKILL.md",
+    "nanobot/skills/mobile-dogfood/SKILL.md",
+    "nanobot/skills/video-understanding/SKILL.md",
+    "nanobot/skills/video-understanding/references/frame-selection.md",
+    "nanobot/skills/video-understanding/scripts/extract_keyframes.py",
+    "nanobot/skills/webapp-testing/SKILL.md",
+    "nanobot/templates/AGENTS.md",
+    "nanobot/templates/HEARTBEAT.md",
+    "nanobot/templates/IDENTITY.md",
+    "nanobot/templates/SOUL.md",
+    "nanobot/templates/TOOLS.md",
+    "nanobot/templates/USER.md",
+    "nanobot/templates/__init__.py",
+    "nanobot/templates/agent/_snippets/untrusted_content.md",
+    "nanobot/templates/agent/consolidator_archive.md",
+    "nanobot/templates/agent/cron_reminder.md",
+    "nanobot/templates/agent/dream.md",
+    "nanobot/templates/agent/evaluator.md",
+    "nanobot/templates/agent/goal_runtime.md",
+    "nanobot/templates/agent/identity.md",
+    "nanobot/templates/agent/max_iterations_message.md",
+    "nanobot/templates/agent/platform_policy.md",
+    "nanobot/templates/agent/skills_section.md",
+    "nanobot/templates/agent/subagent_announce.md",
+    "nanobot/templates/agent/subagent_system.md",
+    "nanobot/templates/agent/tool_contract.md",
+    "nanobot/templates/legacy/SOUL.md",
+    "nanobot/templates/memory/MEMORY.md",
+    "nanobot/templates/memory/__init__.py",
+    "nanobot/templates/prompts/README.md"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/context.py",
+      "git_blob": "c6bdd0ab459659f50ffee16df1d096325c03edbb",
+      "sha256": "498502a382926dd9f695728bb62da5c1a327ea5cbfc1b09e662d91d79e51a939",
+      "bytes": 26085,
+      "ranges": [
+        [
+          1,
+          598
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/skills.py",
+      "git_blob": "f4519cdbfa5ca3dc63661c91d6364a3653739825",
+      "sha256": "24a4daccff64dec31fcab4c3acfd0c68c9f38a2b539c75b5ccd05cce21a4ee42",
+      "bytes": 16522,
+      "ranges": [
+        [
+          1,
+          413
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/tools/repositories.py",
+      "git_blob": "e0e78b8fa02c013edca48242903fcc1e4dc6cb06",
+      "sha256": "93d37f97571c123d2dcecf100a9a44c1d862a14b89454244c0170822056d9e8c",
+      "bytes": 13637,
+      "ranges": [
+        [
+          1,
+          265
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/context_repo/__init__.py",
+      "git_blob": "2c9ba06fea5dfd5b1336903d7c37777762d1a98e",
+      "sha256": "fbe92069af76a98b80707d4c2df6ed2708dca02a3a3b6c1f706697e0ec5305c7",
+      "bytes": 402,
+      "ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/context_repo/catalog.py",
+      "git_blob": "707fff9a91fd95926274d3540780c2a2d553990b",
+      "sha256": "cff63de493d221ea59073e0d1ee4c86a7b7214b925b90605c361206dacc9a73f",
+      "bytes": 8823,
+      "ranges": [
+        [
+          1,
+          179
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/context_repo/discovery.py",
+      "git_blob": "ba77765610bd40a4b9256221d7525de70567e458",
+      "sha256": "3f835912f651e078fb65c2d17189da7487da746e37217c5a1c9834ca848310aa",
+      "bytes": 5899,
+      "ranges": [
+        [
+          1,
+          197
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/context_repo/manager.py",
+      "git_blob": "b48d19bb26698d00740810b626cbeaa3bcc19b2b",
+      "sha256": "c336bf230ab077e77397172a03a03b18d4acf762d5fb5e3c67571262fba47bc3",
+      "bytes": 27201,
+      "ranges": [
+        [
+          1,
+          696
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/README.md",
+      "git_blob": "694c7431febe24fb9c026c108c4c092b59d6b403",
+      "sha256": "a36ac754e03b339dbe221944aba4c08bc2133b3317ac8c3e1a080564b11d5749",
+      "bytes": 1599,
+      "ranges": [
+        [
+          1,
+          35
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/skill-creator/SKILL.md",
+      "git_blob": "c9c71d4e0625e4bc43a3562115c1975150399f54",
+      "sha256": "0efd563abf220edabe046734a0cf30be72409b443e255619471c4073bd483268",
+      "bytes": 19109,
+      "ranges": [
+        [
+          1,
+          374
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/skill-creator/scripts/init_skill.py",
+      "git_blob": "e44addbf71207144e552e8ea4ce932b0de5448b8",
+      "sha256": "51ca06582b00737a647245796a2f4d9895ac3d9b81d20d00d8fbbbed5cd6b793",
+      "bytes": 13956,
+      "ranges": [
+        [
+          1,
+          389
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/skill-creator/scripts/package_skill.py",
+      "git_blob": "67b898362453a5f52e16a0f2eb006d3f4f069e3e",
+      "sha256": "6bb0d4390e5d7dc2bc12206b26180acea52f554c6655395568b58698a228e2ec",
+      "bytes": 4800,
+      "ranges": [
+        [
+          1,
+          152
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/skill-creator/scripts/quick_validate.py",
+      "git_blob": "e7953762fca6d8b4e3404ffdf2f85a9cf12b1524",
+      "sha256": "99dd4b6972274d65d115aa332d038d9122009d4282c3f485e508ec983f3a3277",
+      "bytes": 6988,
+      "ranges": [
+        [
+          1,
+          213
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/my/SKILL.md",
+      "git_blob": "87293caea446435b0e88ac8ad0037492997cbf6c",
+      "sha256": "9352352e37f8e93ab367c30eb5bb092f9bff6da91bf163c9664c2555de1a3a23",
+      "bytes": 2677,
+      "ranges": [
+        [
+          1,
+          72
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/my/references/examples.md",
+      "git_blob": "0cd71a691937f03cfa26f45ce375c9e7531a8cbc",
+      "sha256": "66b57ccf703480a635f8ccade2f5bcd237d2c20db30d5e4b3d38a2d7b31c05e9",
+      "bytes": 1796,
+      "ranges": [
+        [
+          1,
+          66
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/clawhub/SKILL.md",
+      "git_blob": "7409bf470c7f808e6c7a39d90cca0ef8e7f41204",
+      "sha256": "623a6e31e97abb358854f08908263709a4a36ff7e643472ccb90ee6a7cc352e7",
+      "bytes": 1384,
+      "ranges": [
+        [
+          1,
+          53
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/cron/SKILL.md",
+      "git_blob": "c4e6f4fc59308fa84214a7fb2fc28204bc714688",
+      "sha256": "5f050ee98a943a918f8030536677d773fd783c6909a62ae76b463466bd24231a",
+      "bytes": 1827,
+      "ranges": [
+        [
+          1,
+          59
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/desktop-use/SKILL.md",
+      "git_blob": "710fd0d57b4c861e1737061a32f6c9aab087ae3e",
+      "sha256": "e050bba79babd1e1bc4fce16201d8d6d8392250a57b22884d9aa44cc7863da64",
+      "bytes": 2976,
+      "ranges": [
+        [
+          1,
+          79
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/github/SKILL.md",
+      "git_blob": "57d81278d88455480f88a34d04d1a8a84ca3b247",
+      "sha256": "bd1c4b4acec5fa7af31c2e26d1d26e5854fd74e53071c9d782edfc011cdcc145",
+      "bytes": 1374,
+      "ranges": [
+        [
+          1,
+          48
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/image-generation/SKILL.md",
+      "git_blob": "d50fb064806ce4db4c55841d8cfd8d6a4a6b4128",
+      "sha256": "6b93425db72019649365cce0f1edeab95adbde0610939bf48418a13b9532cec0",
+      "bytes": 2925,
+      "ranges": [
+        [
+          1,
+          66
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/memory/SKILL.md",
+      "git_blob": "cf40fdad9f43a526eece3711a2ee23680f8e6102",
+      "sha256": "0946a34d45190656092813af78dfd8c049fac3e1b32e9546c43d02487efaff4d",
+      "bytes": 1896,
+      "ranges": [
+        [
+          1,
+          38
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/summarize/SKILL.md",
+      "git_blob": "766ab5d0b627cbdaea3252bc2dbf898f99f2cda3",
+      "sha256": "6bd7eaac4ddcfab1b23535488229047feff002404b6170ddd5d95d74188919f5",
+      "bytes": 2040,
+      "ranges": [
+        [
+          1,
+          67
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/tmux/SKILL.md",
+      "git_blob": "f2a3144d8516e6e32375beb7bc40851101cbf006",
+      "sha256": "906a130fb461ec9cef36674f17222a8365b0e6aac486768815d708caf7c1ac6e",
+      "bytes": 4063,
+      "ranges": [
+        [
+          1,
+          121
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/tmux/scripts/find-sessions.sh",
+      "git_blob": "00552c68477920b2c9e9d9d2561d175f4a85d40a",
+      "sha256": "f2539169ec14175e3cb95ca52e5dc123d8b64598637286ee1a117e133bc39b78",
+      "bytes": 2942,
+      "ranges": [
+        [
+          1,
+          112
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/tmux/scripts/wait-for-text.sh",
+      "git_blob": "56354be835459c7614bfc96b5526e92dc1dbde5d",
+      "sha256": "96bc42702f7353c32233c223d61dd11f2f99033267aeefac838aea8983a67735",
+      "bytes": 2139,
+      "ranges": [
+        [
+          1,
+          83
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/update-setup/SKILL.md",
+      "git_blob": "d0d7e8427639f2dc9439aa9e103bbb14e69d5649",
+      "sha256": "6bd9b1f642e8b429b7fae49fcc8b2aae41b0320c15b3aa8e9e3c92dc505d02c8",
+      "bytes": 5243,
+      "ranges": [
+        [
+          1,
+          129
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/weather/SKILL.md",
+      "git_blob": "6dfffa9ac23ab8b49b0523412e0a0ad157cbb118",
+      "sha256": "964e97c904e9c16b633127bfcd3567a0c83a320fe85fb4bf5900b181f36eb361",
+      "bytes": 1852,
+      "ranges": [
+        [
+          1,
+          66
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/mobile-app-testing/SKILL.md",
+      "git_blob": "b49638f4dfd846de74b01a38b234b23ca3b23e00",
+      "sha256": "17afc36e89615ec0730eb0386bfd7c682f1df9f79c2403efd479f19226aa710c",
+      "bytes": 5128,
+      "ranges": [
+        [
+          1,
+          149
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/mobile-dogfood/SKILL.md",
+      "git_blob": "3e622b1ca628be03f496d55833183ec258c207be",
+      "sha256": "4ac4e7c7e203df93a2a340e55bb68df1209ac0543f6270d440f5db263ae677aa",
+      "bytes": 3681,
+      "ranges": [
+        [
+          1,
+          123
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/video-understanding/SKILL.md",
+      "git_blob": "1c06130f404bc9ed074a4b4bc57bfbdea7f26209",
+      "sha256": "2afe0873028ca38f73bb10e1a598beb207a51a188c3a354a32d4bfc112a288c5",
+      "bytes": 5664,
+      "ranges": [
+        [
+          1,
+          114
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/video-understanding/references/frame-selection.md",
+      "git_blob": "d2d7928307a28711b03f738c40efdea9a71c2e27",
+      "sha256": "eaa40beb6131c56f41d550bd77e19aefc13dce9d31ee50901105bec67b11e0c7",
+      "bytes": 1819,
+      "ranges": [
+        [
+          1,
+          55
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/video-understanding/scripts/extract_keyframes.py",
+      "git_blob": "6d8439ab84a18c58f4e5fcdf84836feaaf1777c5",
+      "sha256": "d3c4f19c196eaa8864450c038e01969d7d27a0cfa208b9cc21bb42b79ea06005",
+      "bytes": 23164,
+      "ranges": [
+        [
+          1,
+          683
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/skills/webapp-testing/SKILL.md",
+      "git_blob": "3c9bb662db08618139d3bbcef4e82e249a5045d2",
+      "sha256": "f74cd49b7274e392327200f75e5da38659e99261018dd9e27376e193aadb20ed",
+      "bytes": 6808,
+      "ranges": [
+        [
+          1,
+          191
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/AGENTS.md",
+      "git_blob": "2a6e668a9f2b11cb2266f66b3af970f86f941ca6",
+      "sha256": "d0ff321c6c5b3a5803e2851d156d6012cdd44d7d52d80aeb1f94fef039f18d0d",
+      "bytes": 2314,
+      "ranges": [
+        [
+          1,
+          32
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/HEARTBEAT.md",
+      "git_blob": "97af125c990a31f9efe86d3745dd7dfae5979b64",
+      "sha256": "86803bd40a5d365821bf27f29762e156674af845d4c99bba23e2a5555d29e0fb",
+      "bytes": 698,
+      "ranges": [
+        [
+          1,
+          14
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/IDENTITY.md",
+      "git_blob": "f5b0cdb2a424dbbe87d712472259fac09df366f8",
+      "sha256": "59140b158ca97efa46d32f713fd6c58c344048aa747c92663ff4635e5b7b9483",
+      "bytes": 212,
+      "ranges": [
+        [
+          1,
+          9
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/SOUL.md",
+      "git_blob": "fad0936ed793675cf21912f9f404a630fc025270",
+      "sha256": "46b53c52427751e6f927d744750b439a0c3e97259a7e954d855a61131ce3d46e",
+      "bytes": 464,
+      "ranges": [
+        [
+          1,
+          23
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/TOOLS.md",
+      "git_blob": "aee215773d5a049c269341ac9fee7048a84add1c",
+      "sha256": "030283aee8c8633f33e8a0006c9f248da2dd2ee5fe1f1b85b8825a2e5817a96f",
+      "bytes": 1751,
+      "ranges": [
+        [
+          1,
+          33
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/USER.md",
+      "git_blob": "671ec49a110f8a0a5d65134c4c484d24497bc870",
+      "sha256": "bfd7f7a5e129a86f1d392374669e5375986b830fce9d0d591de15c296845725e",
+      "bytes": 842,
+      "ranges": [
+        [
+          1,
+          49
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/__init__.py",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "ranges": [],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator",
+      "empty_file": true
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/_snippets/untrusted_content.md",
+      "git_blob": "19f26c77782ada8c63a8642b80c07b77b30a286c",
+      "sha256": "04dabbc576fb0d440556e86079e94126ced2fb866df363335c62a8ff87105b4b",
+      "bytes": 278,
+      "ranges": [
+        [
+          1,
+          2
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/consolidator_archive.md",
+      "git_blob": "91efcded71da4d5a9a3d5535a2626ed1937ee5be",
+      "sha256": "a745367804f2e57fa4eeb852753e43be4295fce3c22e773eeddcbf1c6ddf553f",
+      "bytes": 1935,
+      "ranges": [
+        [
+          1,
+          42
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/cron_reminder.md",
+      "git_blob": "64f94f21ba47cec883503e540a016671763dda2c",
+      "sha256": "6c7203dabdd598cafe4b81ce48b84695870466c916efec34c14378b99132c700",
+      "bytes": 359,
+      "ranges": [
+        [
+          1,
+          9
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/dream.md",
+      "git_blob": "341bb0e726a443b070af453830cd8521969239df",
+      "sha256": "da6a1c0fe66bbe0276048feaec522a34b71a837522a7952572ca08c7676da9dd",
+      "bytes": 7313,
+      "ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/evaluator.md",
+      "git_blob": "54138aa96e792977341e5a4886f6228c58d90052",
+      "sha256": "82a0c48a85072c2435b9dfc1af5fbafb3e7e59c434bd0fbe8c28697f7b4b58eb",
+      "bytes": 1091,
+      "ranges": [
+        [
+          1,
+          17
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/goal_runtime.md",
+      "git_blob": "bc577d846d800ea7989478d750dac91443bb242c",
+      "sha256": "2c2c2db422b3cca5fe473fe6c90c2ac466d074a1e6dcef4b9cd16c304f94f805",
+      "bytes": 2945,
+      "ranges": [
+        [
+          1,
+          31
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/identity.md",
+      "git_blob": "e24a4dabcadc2930cbdcb65c49720134adea609f",
+      "sha256": "73dad16d14709b9aa5f349a4a6843cf8d224cd82688b153fd64c79f2efe91c3d",
+      "bytes": 1856,
+      "ranges": [
+        [
+          1,
+          35
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/max_iterations_message.md",
+      "git_blob": "3c1c33d08801618e8461673bcd0780f972720276",
+      "sha256": "495ad7f175b6f6d437a75ba61dd1a6ed104ed332aba93280ae34f6fbc288f7d1",
+      "bytes": 155,
+      "ranges": [
+        [
+          1,
+          1
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/platform_policy.md",
+      "git_blob": "a47e104e4065aaa96fa289bff9a9c4fab3b49a4a",
+      "sha256": "e81222efad1a878c60438ac4a97643b431cccb40ed532a361937deb3f4ad0dca",
+      "bytes": 493,
+      "ranges": [
+        [
+          1,
+          10
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/skills_section.md",
+      "git_blob": "d4d6441c6c052c6e1fd7ac1449109c9967e9f15f",
+      "sha256": "4ddc8e126f382ea4da61f80af3c3fff42325ee232c98f562fd153d38b318475e",
+      "bytes": 168,
+      "ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/subagent_announce.md",
+      "git_blob": "de8fdad3986d687181455b412f061d00c8a0a68d",
+      "sha256": "c31d33e41358d55f98e4ac7196d15c108665321110904acd265ab9f60f1827d6",
+      "bytes": 216,
+      "ranges": [
+        [
+          1,
+          8
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/subagent_system.md",
+      "git_blob": "38bcd468548cf1e8a6cbf523364e84609e80e52f",
+      "sha256": "c384b42851d0fa1b0c30dbb5e0dfe09762c55d0356684660f8125d80bc980d0d",
+      "bytes": 539,
+      "ranges": [
+        [
+          1,
+          20
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/agent/tool_contract.md",
+      "git_blob": "3537ea186af6c554655b60ed51614a17ba152dde",
+      "sha256": "c068e5bbf20dae6cf75599d9040906b4571e00ab98b7e986d6a8ab03a1c05613",
+      "bytes": 7905,
+      "ranges": [
+        [
+          1,
+          103
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/legacy/SOUL.md",
+      "git_blob": "f111112153452a9cf2ade97d811082272e913c91",
+      "sha256": "271e2dea9556bad270fb66f237ee2f1903d1bf83d89429756d6543fb8a4c4488",
+      "bytes": 805,
+      "ranges": [
+        [
+          1,
+          18
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/memory/MEMORY.md",
+      "git_blob": "fd2ca96811ac7aae57f7c40ee17ae17cc80d224b",
+      "sha256": "a0151a00f64bcf2e42219687341d28097ea669a9f117b0a6e65033897a207a8e",
+      "bytes": 408,
+      "ranges": [
+        [
+          1,
+          23
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/memory/__init__.py",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "ranges": [],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator",
+      "empty_file": true
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/templates/prompts/README.md",
+      "git_blob": "b141127b0a6ab7fac614073a43d97d32a7c78665",
+      "sha256": "6754a4c205d99bbb09b054482b642295977ca6c9c31ffba590bb15b2e84fd060",
+      "bytes": 995,
+      "ranges": [
+        [
+          1,
+          25
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh K01 source-only primary body read preserved from staged K01-A through K01-E checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "note": "Bounded live caller/policy/runtime reads are enumerated by substage in handoffs/K01.md and were used only for call-chain reconciliation; no primary credit."
+    }
+  ],
+  "search_only": [
+    {
+      "note": "Repository/default-branch searches were used only for bounded discovery where recorded; pinned source files, not search snippets, support promoted findings."
+    }
+  ],
+  "test_source_reads": [
+    {
+      "note": "Targeted source tests listed in handoffs/K01.md were read as contract/counterevidence only; no tests were executed and no primary credit was added."
+    }
+  ],
+  "support_reads": [
+    {
+      "path": "handoffs/K01.md",
+      "purpose": "Source-complete staged evidence, qualifications, retained observations and reconciliation record."
+    },
+    {
+      "path": "docs/audits/codebase-discovery/path-inventory.tsv",
+      "purpose": "Frozen primary hashes and stream assignment."
+    },
+    {
+      "path": "handoffs/T01.md",
+      "purpose": "Cross-stream reconciliation for retired tools/subagent compatibility and T01-F10 apply_patch ownership."
+    },
+    {
+      "path": "handoffs/A01.md",
+      "purpose": "Cross-stream reconciliation for shipped sustained-goal registration ownership."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "note": "Pinned CLI option semantics establish that --yolo bypasses approvals and sandboxing; comparison evidence only, not a parity requirement."
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "note": "Relevant prior architecture/history/cross-stream evidence is preserved in handoffs/K01.md; publication did not silently refresh source pins or runtime evidence."
+    }
+  ],
+  "findings": [
+    {
+      "id": "K01-F01",
+      "priority": "P1",
+      "title": "Prompt/skill loading has confinement gaps outside centralized resource-policy validation",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F02",
+      "priority": "P2",
+      "title": "save_knowledge does not enforce the active project's knowledge_repos association",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F03",
+      "priority": "P2",
+      "title": "Runtime skill discovery does not enforce the shipped skill validation contract before shadowing/activation",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F04",
+      "priority": "P2",
+      "title": "The cron skill misdocuments reminder execution and default timezone semantics",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F05",
+      "priority": "P2",
+      "title": "The ClawHub skill installs and manages skills in the default workspace instead of the effective agent workspace",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F06",
+      "priority": "P1",
+      "title": "The tmux skill recommends launching Codex with its approvals and sandbox disabled",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F07",
+      "priority": "P2",
+      "title": "Mobile testing skills require both platform toolchains even though each supports either platform",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F08",
+      "priority": "P1",
+      "title": "video-understanding silently bypasses Nanobot provider routing for semantic frame analysis",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F09",
+      "priority": "P2",
+      "title": "webapp-testing recommends a caller-supplied CDP mode that the live browser wrapper always blocks",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F10",
+      "priority": "P2",
+      "title": "Non-positive video max-gap values can spin forever before frame capping",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F11",
+      "priority": "P2",
+      "title": "Live prompt guidance advertises retired search/edit tools absent from the default registry",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F12",
+      "priority": "P1",
+      "title": "Degraded compaction can elevate raw transcript/tool text into the future system prompt",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "K01-F13",
+      "priority": "P1",
+      "title": "Dream can persist skill instructions outside its own audit and restore boundary",
+      "conditional": true,
+      "state": "promoted-report"
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "K01-Q1",
+      "question": "D2/D4: Should every prompt, context-repo entrypoint, prompt override and non-builtin skill read pass one effective ResourceAccessPolicy regardless of managed mode?"
+    },
+    {
+      "id": "K01-Q2",
+      "question": "D4: Is knowledge_repos an enforceable project ownership boundary or advisory discovery metadata; if global writes remain, should they be separate?"
+    },
+    {
+      "id": "K01-Q3",
+      "question": "D4/P01: Should invalid skills be rejected before precedence/shadowing with one shared creator/package/runtime validator, or is a compatibility tier required?"
+    },
+    {
+      "id": "K01-Q4",
+      "question": "D4/D6: Should bundled operational skills derive workspace, timezone, route, platform prerequisites and browser-control semantics from live runtime metadata?"
+    },
+    {
+      "id": "K01-Q5",
+      "question": "D2/D4: Should nested-agent sandbox/approval bypass flags be classified as an authority escalation requiring explicit approval/proven containment?"
+    },
+    {
+      "id": "K01-Q6",
+      "question": "D2/D4: Must auxiliary semantic media analysis use the active Nanobot provider/policy/accounting route, or may it select a separate provider/key/model?"
+    },
+    {
+      "id": "K01-Q7",
+      "question": "D2/D7: Must degraded archived raw transcript/tool evidence remain lower-authority data instead of being inserted into the system prompt?"
+    },
+    {
+      "id": "K01-Q8",
+      "question": "D4/D7/P01: Should Dream remain memory-only, or should its audit/restore transaction include every instruction surface it may mutate, including workspace skills?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    "T01-F10 owns the underlying apply_patch registration omission; K01-F11 owns the broader live prompt/skill synchronization mismatch and missing grep/find_files workflow. Deduplicate in integrated review.",
+    "A01-F02 owns the shipped /goal registration mismatch; K01 retains the unrendered goal_runtime template only as compatibility evidence.",
+    "D2/D4/D7 decisions govern prompt/resource authority, nested-agent/provider routing, archived-context authority and Dream mutation ownership.",
+    "P01 should decide restoration versus retirement of stale capability guidance and whether Dream skill mutation belongs in the product at all."
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "K01 source-review publication only",
+    "verified": {
+      "primary_full": 56,
+      "partial": 0,
+      "unread": 0,
+      "inventory_all_roles": 62,
+      "supplementary_test_support": 6,
+      "findings": 13,
+      "questions": 8,
+      "frozen_hashes": true,
+      "exact_primary_assignment": true,
+      "branch_source_drift": false,
+      "conditional_findings": [
+        "K01-F01",
+        "K01-F02",
+        "K01-F06",
+        "K01-F08",
+        "K01-F10",
+        "K01-F12",
+        "K01-F13"
+      ],
+      "cross_stream_deduplication": [
+        "K01-F11/T01-F10",
+        "goal_runtime/A01-F02"
+      ],
+      "empty_primary_markers": [
+        "nanobot/templates/__init__.py",
+        "nanobot/templates/memory/__init__.py"
+      ],
+      "retained_observations_unpromoted": true
+    },
+    "integrated_review": "pending",
+    "decisions": "pending",
+    "note": "Coordinator reconciled the 56 primary implementation/runtime-instruction assignments against the frozen inventory and source-complete handoff, confirmed six K01 test-support paths remain supplementary, verified all primary SHA-256 values and bounded ranges, found no non-audit source drift from the pinned Nanobot commit, retained all thirteen findings with their qualifications, and preserved cross-stream ownership."
+  },
+  "integrated_review": null,
+  "git_checkpoint": null,
+  "limits": [
+    "Source-only review; no tests, builds, checkers, imports, application/service/tool launches, external CLI/process execution, provider/network calls or benchmarks.",
+    "Runtime frequency, deployed configuration, third-party skill/provider behavior and OS-level containment remain unmeasured.",
+    "Pinned Codex evidence is comparative and limited to the --yolo authority semantics used by K01-F06."
+  ],
+  "counts": {
+    "assigned_primary_paths": 56,
+    "full": 56,
+    "partial": 0,
+    "unread": 0,
+    "findings": 13,
+    "discussion_questions": 8
+  },
+  "current_origin_refresh": {
+    "status": "PASS two-file source delta readback; cross-module integrated disposition pending",
+    "checked_at": "2026-11-07",
+    "reviewer": "ChatGPT same-assistant, not an independent peer",
+    "base": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "branch": "frozen original inventory"
+    },
+    "current": {
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "branch": "staging",
+      "ahead_by": 2,
+      "behind_by": 0,
+      "commit_title": "Merge branch 'fix/skills-summary-builtin-path' into staging"
+    },
+    "compare": {
+      "paths": [
+        "nanobot/agent/skills.py",
+        "tests/agent/test_skills_loader.py"
+      ],
+      "no_other_changes": true,
+      "source_lines_added": 6,
+      "source_lines_removed": 2,
+      "test_lines_added": 3,
+      "test_lines_removed": 2
+    },
+    "files": [
+      {
+        "path": "nanobot/agent/skills.py",
+        "role": "implementation-or-tooling-source",
+        "baseline": {
+          "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+          "blob": "f4519cdbfa5ca3dc63661c91d6364a3653739825",
+          "sha256": "24a4daccff64dec31fcab4c3acfd0c68c9f38a2b539c75b5ccd05cce21a4ee42",
+          "bytes": 16522,
+          "lines": 413
+        },
+        "current": {
+          "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+          "blob": "2630a3b8f5a5ecaf0ca09eb96b3b2781e25c422b",
+          "sha256": "be6408315042f1f00058c7749215c41fc3e37c1d9b261b49e0b059e0c87202dd",
+          "bytes": 16681,
+          "lines": 417
+        },
+        "added": 6,
+        "deleted": 2,
+        "ranges": [
+          [
+            1,
+            417
+          ]
+        ],
+        "sections_changed": [
+          [
+            279,
+            308
+          ]
+        ],
+        "kind": "full body at both frozen and current staging refs"
+      },
+      {
+        "path": "tests/agent/test_skills_loader.py",
+        "role": "test-support-source",
+        "baseline": {
+          "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+          "blob": "e67bce5e6a865f0fcf308f4dddab554842d29845",
+          "sha256": "6aa438010b43a7418d65b95472885c6f67058afcfefc0b2cf944c0bf9fd326a2",
+          "bytes": 21630,
+          "lines": 598
+        },
+        "current": {
+          "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+          "blob": "3b8cc423eadffa6bba174fbe89b11a08be84505b",
+          "sha256": "9190027710d0c18292924ff9673d5dcf1b48c94b6eb5865bbe1177959f98530a",
+          "bytes": 21679,
+          "lines": 599
+        },
+        "added": 3,
+        "deleted": 2,
+        "ranges": [
+          [
+            1,
+            599
+          ]
+        ],
+        "sections_changed": [
+          [
+            301,
+            342
+          ]
+        ],
+        "kind": "full test source at both frozen and current staging refs; read, NOT executed"
+      }
+    ],
+    "source_only_summary": "Built-in skill summary displays source as skills and prefixes skill entry paths with skills/ regardless of selected project; actual discovery/validation and read_file code unchanged. Selected project may contain a same-name skills/<builtin>/SKILL.md, and read_file checks existing project file before built-in fallback, making claimed builtin provenance ambiguous.",
+    "frozen_findings_reexamined": [
+      {
+        "id": "K01-F03",
+        "conclusion": "UNRESOLVED",
+        "evidence": "SkillsLoader.list_skills/_skill_entries_from_dir and valid_skill_metadata not changed. Invalid high-priority skill shadowing remains possible; patched build_skills_summary affects display only."
+      },
+      {
+        "id": "K01-F01",
+        "conclusion": "No direct change to existing admission/policy mechanism; not individually re-reviewed",
+        "evidence": "Only summary formatting changed; exact original finding preserved."
+      },
+      {
+        "id": "K01-F11",
+        "conclusion": "No direct change to registered tool manifest or missing tool guidance",
+        "evidence": "Summary path guidance is distinct from grep/find_files/apply_patch registry drift."
+      }
+    ],
+    "staging_only_findings": [
+      {
+        "id": "K01-STG-F01",
+        "priority": "P2 conditional",
+        "count_in_frozen_136": false,
+        "category": "prompt-displayed provenance / read_file relative resolution collision",
+        "mechanism": "At staging, builtin summary always displays skills/<name>/SKILL.md; ReadFileTool resolves that relative path against selected project first, then falls back to actual bundled skill only if resolved project target missing.",
+        "source": [
+          "nanobot/agent/skills.py:237–308",
+          "nanobot/agent/context.py:238–243",
+          "nanobot/agent/tools/filesystem.py:258–285,480–494,675–684",
+          "nanobot/security/workspace_policy.py:19–29,106–123"
+        ],
+        "trigger": "Selected project distinct from agent workspace, project skill file matching bundled skill name but not registered as a skill source and not shadowing the builtin in SkillsLoader discovery, tool follows displayed read_file path.",
+        "consequence": "Project file can be read as if it were named builtin skill, causing prompt instruction provenance/content mismatch; no permission bypass or observed injection claimed.",
+        "smallest_alternative": "For selected-project context use an unambiguous allowed absolute bundled path as before, or a source-qualified bundled resolution. Test conflicting project path against actual read_file result.",
+        "confidence": "high source-path tracing; runtime incident not measured",
+        "related_existing_questions": [
+          "K01-Q4"
+        ],
+        "related_decisions": [
+          "D2",
+          "D4",
+          "D7"
+        ],
+        "integration_status": "pending"
+      }
+    ],
+    "current_caller_context_reads": [
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/agent/tools/filesystem.py",
+        "ranges": [
+          [
+            200,
+            239
+          ],
+          [
+            258,
+            285
+          ],
+          [
+            286,
+            352
+          ],
+          [
+            480,
+            494
+          ],
+          [
+            649,
+            705
+          ]
+        ],
+        "purpose": "ReadFileTool project-root selection, policy and built-in fallback ordering"
+      },
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/security/workspace_policy.py",
+        "ranges": [
+          [
+            19,
+            29
+          ],
+          [
+            96,
+            123
+          ]
+        ],
+        "purpose": "Relative path workspace binding"
+      },
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/agent/context.py",
+        "ranges": [
+          [
+            235,
+            244
+          ]
+        ],
+        "purpose": "ContextBuilder passes effective project path to the skill summary"
+      },
+      {
+        "repository": "nanobot",
+        "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "path": "nanobot/context_repo/policy.py",
+        "ranges": [
+          [
+            175,
+            265
+          ]
+        ],
+        "purpose": "Existing path policy applied before read fallback"
+      }
+    ],
+    "test_gap": "Changed tests at tests/agent/test_skills_loader.py:301–342 assert display strings for default and selected project only, not actual read_file target when a selected project's skills/<builtin-name>/SKILL.md already exists. Other tests were not exhaustively searched.",
+    "validation": {
+      "full_source_bodies_read": 2,
+      "full_test_bodies_read": 2,
+      "definition": "Both versions of the full primary + test bodies read, 4 files/versions.",
+      "source_sha256_recomputed": 4,
+      "sha256_selftests": [
+        "abc",
+        "empty string"
+      ],
+      "baseline_inventory_matches": 2,
+      "git_blobs_recorded": 4,
+      "tests_executed": 0,
+      "product_code_modified": false,
+      "prior_primary_count_unchanged": 56,
+      "prior_findings_count_unchanged": 13,
+      "prior_project_deep_total_unchanged": 824,
+      "prior_project_findings_unchanged": 136
+    },
+    "limitations": [
+      "No runtime test, reproduction, timing or malicious file introduced; potential confusion depends on a same-name file in a selected project",
+      "No change to K01 historical frozen source hash, count, status or original findings",
+      "No staging source changes outside the two compared paths observed at fixed staging ref; later changes would require refresh"
+    ]
+  }
+}

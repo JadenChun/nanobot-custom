@@ -4,6 +4,11 @@ This page maps nanobot's runtime behavior to source files. Use it when you are d
 
 For the product-level mental model, read [`concepts.md`](./concepts.md) first.
 
+This page is the staging architecture baseline at `29612c3df01dc3dce3501fe349bcf555cd6c58b6`.
+The separately pinned A3 candidate is documented in the [A3 architecture record](./architecture/a3/README.md),
+with its design, alternatives, decision status, ordered plan and review gates. Publishing that
+record does not make the candidate merged behavior; its implementation merge remains on hold.
+
 ## Core Flow
 
 ```mermaid

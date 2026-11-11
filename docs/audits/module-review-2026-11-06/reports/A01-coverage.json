@@ -1,0 +1,1342 @@
+{
+  "schema_version": 1,
+  "stream_id": "A01",
+  "report": "reports/A01.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "ChatGPT web continuation coordinator",
+    "handoff": "handoffs/A01.md A01-A through A01-F source-complete checkpoint",
+    "published_by": "ChatGPT web continuation coordinator",
+    "note": "Continuation completed A01-A through A01-F source-only review and reconciled nine findings at F47/P0/R0."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/process_completion.py",
+    "nanobot/agent/tools/long_task.py",
+    "nanobot/session/goal_state.py",
+    "nanobot/session/turn_continuation.py",
+    "nanobot/agent/automation_turns.py",
+    "nanobot/session/automation_turns.py",
+    "nanobot/cron/completion.py",
+    "nanobot/cron/job_hooks.py",
+    "nanobot/cron/__init__.py",
+    "nanobot/cron/types.py",
+    "nanobot/cron/schedule.py",
+    "nanobot/cron/scheduler.py",
+    "nanobot/cron/scheduler_store.py",
+    "nanobot/cron/occurrence.py",
+    "nanobot/cron/occurrence_store.py",
+    "nanobot/cron/runtime.py",
+    "nanobot/cron/canonical_execution.py",
+    "nanobot/cron/canonical_result.py",
+    "nanobot/cron/composition.py",
+    "nanobot/cron/bound_runner.py",
+    "nanobot/cron/channel_sender.py",
+    "nanobot/cron/delivery.py",
+    "nanobot/cron/session_delivery.py",
+    "nanobot/cron/session_turns.py",
+    "nanobot/cron/callback_store.py",
+    "nanobot/cron/delivery_reconciliation.py",
+    "nanobot/cron/delivery_runtime.py",
+    "nanobot/cron/delivery_store.py",
+    "nanobot/cron/interruption_recovery.py",
+    "nanobot/cron/quota_recovery.py",
+    "nanobot/cron/runtime_inspection.py",
+    "nanobot/cron/visible_link.py",
+    "nanobot/agent/cron_turns.py",
+    "nanobot/agent/tools/cron.py",
+    "nanobot/cron/action_store.py",
+    "nanobot/cron/definition_store.py",
+    "nanobot/cron/gateway.py",
+    "nanobot/cron/import_copy.py",
+    "nanobot/cron/migration.py",
+    "nanobot/cron/service.py",
+    "nanobot/cron/webui_metadata.py",
+    "nanobot/triggers/__init__.py",
+    "nanobot/triggers/local_runner.py",
+    "nanobot/triggers/local_session_turns.py",
+    "nanobot/triggers/local_store.py",
+    "nanobot/triggers/local_turns.py",
+    "nanobot/triggers/local_types.py"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/process_completion.py",
+      "git_blob": "7f3cb7f607f6b6ecdc648ff1ef423e33ffe2f249",
+      "sha256": "acf6c79c6e04807e20c53ccfe578864219be3da6c3856b20c09f9ce3f8a34d5d",
+      "bytes": 10302,
+      "ranges": [
+        [
+          1,
+          217
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/tools/long_task.py",
+      "git_blob": "cbb922b0e6861d89c6eb73577247d8c4030ecd94",
+      "sha256": "3c589e12f41a20b3cb1f14b6f8e512dbfd7699c929ff921f932aa657ebfeecb2",
+      "bytes": 13239,
+      "ranges": [
+        [
+          1,
+          376
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/goal_state.py",
+      "git_blob": "8fbbba597009661290241b7748b7d19a15e8c1c1",
+      "sha256": "6ec7802984ac38f84244e29374f3611bfe5076a72ba6a6731225ee378a4fec99",
+      "bytes": 5296,
+      "ranges": [
+        [
+          1,
+          137
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/turn_continuation.py",
+      "git_blob": "3b4736bc7fab443afa489059fa2a74dceccb0f1f",
+      "sha256": "c85d69bb236aa191e3fa317c4552ef9c31a3903144ed08e48ec762a5de1a24a0",
+      "bytes": 9793,
+      "ranges": [
+        [
+          1,
+          275
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/automation_turns.py",
+      "git_blob": "ec99fd4d87540513b6d0ff25312716900792c745",
+      "sha256": "4017ba9d18224b598f6ee2de3583f6bbf06100fa7a10efbd51e721202faf8b18",
+      "bytes": 5491,
+      "ranges": [
+        [
+          1,
+          149
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/session/automation_turns.py",
+      "git_blob": "336f9f491ff9aa57f2c006b44f57f3fa77c1390f",
+      "sha256": "e6cfbf16f79b9bba0d2a89ed613b13f39ff3aa09d3af2edf73792d7c3167ee14",
+      "bytes": 3193,
+      "ranges": [
+        [
+          1,
+          93
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/completion.py",
+      "git_blob": "ad47bb860b97501521aaa86c84f12060b1834a99",
+      "sha256": "2de9379b27a77cf00e091fb5c3fc5c225c370b30c90cc4ce41f8de4bb7c8f1ac",
+      "bytes": 42008,
+      "ranges": [
+        [
+          1,
+          970
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/job_hooks.py",
+      "git_blob": "1be2ec2758849ee319952dd28c04c3ecb842fd49",
+      "sha256": "48c4dabb16697b76b461062b06b3d191ba575619f768a749dc1d8015e41a29c0",
+      "bytes": 9747,
+      "ranges": [
+        [
+          1,
+          204
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/__init__.py",
+      "git_blob": "70c377f0562f367689bf7553a186f9c625d3b838",
+      "sha256": "95348a9488a47a2c35a15b2de6153852c6b6d6a547b5a4c4ea9d20adc3ca7483",
+      "bytes": 633,
+      "ranges": [
+        [
+          1,
+          23
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/types.py",
+      "git_blob": "3abf7c2c7bf53cbccfc27ec8f67dd6137a363991",
+      "sha256": "6a2e7c021c5002f19a6091e0f50e5d84f91d6631157aa58bdd50c379963543c6",
+      "bytes": 20205,
+      "ranges": [
+        [
+          1,
+          457
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/schedule.py",
+      "git_blob": "6da1fbce0b8cdf2d9d51ce43d57ad16c77ca9953",
+      "sha256": "4b7a55aba2f22646a2fc9f50a9d29f4ce96a2a381a70b46c2469b75588c7703a",
+      "bytes": 4081,
+      "ranges": [
+        [
+          1,
+          90
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/scheduler.py",
+      "git_blob": "a1975369c8c6e44df673d1fc50b6114f7ce8f6a4",
+      "sha256": "5a8d521c20809944b63b5f49626295d90d2d81ac29be868c40f81bea68887801",
+      "bytes": 10800,
+      "ranges": [
+        [
+          1,
+          210
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/scheduler_store.py",
+      "git_blob": "2ab02e0eb540322a2c35c13a0e651bfbebbb505e",
+      "sha256": "1f8b31d16e28e08fce3cf904690ca14b342c45ed5c05b41cae778ba04f3651e3",
+      "bytes": 46659,
+      "ranges": [
+        [
+          1,
+          875
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/occurrence.py",
+      "git_blob": "e8ca7b99bf79af455ce10430807c8ef532fa4c89",
+      "sha256": "e6e9a75478b2241e6a5e2a064bb5c8be13aca35d74faf50519c657ac66546d15",
+      "bytes": 13901,
+      "ranges": [
+        [
+          1,
+          363
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/occurrence_store.py",
+      "git_blob": "3d95c6d382d05c4c7aec8b3ac97a465539ac1450",
+      "sha256": "9801d9ab0bd70ac7c5971ba95ee14d1f24a8822efa68867afa7a2a887adbf391",
+      "bytes": 77386,
+      "ranges": [
+        [
+          1,
+          1738
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/runtime.py",
+      "git_blob": "522e36e85a568c97d39224ab122d9f9d5ef84d3e",
+      "sha256": "5b45c0230b9eea54b61c947da432cb92c0c275875d5d2a6a269753aacdb4b133",
+      "bytes": 23717,
+      "ranges": [
+        [
+          1,
+          479
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/canonical_execution.py",
+      "git_blob": "c79a0b0c9b4a11b7e23e84740bdf3920a284b7c4",
+      "sha256": "02fe7064f4ed1f53a1a9e00fc15108cb018234af1003f51cd88ee2122a49f7be",
+      "bytes": 6084,
+      "ranges": [
+        [
+          1,
+          127
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/canonical_result.py",
+      "git_blob": "a9a6b454a42298c77fa2b9e561d8dcb2add2042d",
+      "sha256": "6fc3dfdac1f75d68c91e6654931521afc6257719331caebe2510d192161a2db8",
+      "bytes": 3385,
+      "ranges": [
+        [
+          1,
+          73
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/composition.py",
+      "git_blob": "88652a317dacecf3b2ba8d1ebe5cf8186d4a25ef",
+      "sha256": "8115a9363ee2e66942987aa354d033a79298cf1082256374a25f710dbaad583a",
+      "bytes": 11987,
+      "ranges": [
+        [
+          1,
+          251
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/bound_runner.py",
+      "git_blob": "003dd01314e73f55bdfc6bba74591058164ead3d",
+      "sha256": "d0ad32af61eaca3c22a647b0d87bb6a4197ce157f915f6540112b12d2b238c95",
+      "bytes": 4576,
+      "ranges": [
+        [
+          1,
+          158
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/channel_sender.py",
+      "git_blob": "e01a8a37473db206ead026a99596d3555b0d4317",
+      "sha256": "972350b7c469f06ce7a5a8a1ab502fdd7e2e102c3a1dbe22686efcfd4903f40e",
+      "bytes": 3541,
+      "ranges": [
+        [
+          1,
+          90
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/delivery.py",
+      "git_blob": "c9fdba5ed7a05665d249792e3d7e8d3638f6f249",
+      "sha256": "34e969cd5bcb24a30db0695782fcfa0dbccb46bcaa25bcafc23e8da2ebab275c",
+      "bytes": 2085,
+      "ranges": [
+        [
+          1,
+          64
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/session_delivery.py",
+      "git_blob": "15a65c41a19fbd4b7a5acc5792bb7408ec02b171",
+      "sha256": "7af15c85378af211b054f4fb0e1f2ff796df5e3b8dc657ae167b15f0cd2a6d1d",
+      "bytes": 606,
+      "ranges": [
+        [
+          1,
+          15
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/session_turns.py",
+      "git_blob": "45c71e86d33400ff792ad7139dc91651e5e8f1cc",
+      "sha256": "ea45199fa7e7d5b38a4ca60423477d4e997397e437a31834e4e2dcef404c53e4",
+      "bytes": 2196,
+      "ranges": [
+        [
+          1,
+          75
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/callback_store.py",
+      "git_blob": "23d3d8573c24c36344a88f0f2d29bc1db26b13d1",
+      "sha256": "470d410e9a666af9a59799b419623960a3d4cd595225d5c74ea500c0fa7cb3e3",
+      "bytes": 21507,
+      "ranges": [
+        [
+          1,
+          503
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/delivery_reconciliation.py",
+      "git_blob": "12f7569fd399b0e76ee596f9b2ccdc8cfd376db5",
+      "sha256": "f0d351123c5cf9544b6c13978a860b07c7a9544cb174c477faa8fe2624d16454",
+      "bytes": 50289,
+      "ranges": [
+        [
+          1,
+          1138
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/delivery_runtime.py",
+      "git_blob": "a5c253a9a19ed7e5c0cd4122f55da4a4057dd5a1",
+      "sha256": "532b985abfb0a5a8073de03951ec75deff86c683f0197f4b43c3154adbe8280c",
+      "bytes": 43669,
+      "ranges": [
+        [
+          1,
+          1118
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/delivery_store.py",
+      "git_blob": "3cfa3fd6aaa35a8e5560889fa9bf136949b4354d",
+      "sha256": "8703699f1eed6ce08414ac716aec919720f71d542ca6f8e1e34bc60fe5481da4",
+      "bytes": 140428,
+      "ranges": [
+        [
+          1,
+          3066
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/interruption_recovery.py",
+      "git_blob": "12051fb78dcef5828d73a57960b2a9076b2a2402",
+      "sha256": "44870fe7c01890c8a24131379091deb497c9fb3379bf38b08d571c85e63cc71c",
+      "bytes": 16642,
+      "ranges": [
+        [
+          1,
+          411
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/quota_recovery.py",
+      "git_blob": "6c85c3af1151864fd871e37484af6c218708a043",
+      "sha256": "5e27c20c46126b158c4a2ce011c3a7d67cd3e9567fa51bc4ea6e99ec698f3bbd",
+      "bytes": 12579,
+      "ranges": [
+        [
+          1,
+          267
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/runtime_inspection.py",
+      "git_blob": "d28a38e93fb9445f227c82efe30dbdb167ff13e7",
+      "sha256": "abc815f74644adf3314b6296fcd60fb8d212964aa8fff3e17cbe06454cdd3b74",
+      "bytes": 6323,
+      "ranges": [
+        [
+          1,
+          105
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/visible_link.py",
+      "git_blob": "80a6f9d680d7e02d17bc7262c18dd38adc15f0ce",
+      "sha256": "a3f52d6c303e0d5c014a1d54ae5a0afb580f79c70cbb26b6bd93d4d2dcc8c975",
+      "bytes": 4877,
+      "ranges": [
+        [
+          1,
+          85
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/cron_turns.py",
+      "git_blob": "3cffbd2b625adf3411c57d8906380b837fa84eea",
+      "sha256": "c0800073059a3fb8f09fca389f18821814e4ebad061c2e38b165a6e3a60334b2",
+      "bytes": 1984,
+      "ranges": [
+        [
+          1,
+          57
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/agent/tools/cron.py",
+      "git_blob": "cd5b05ea0689898b3a7368572fec2637faee642f",
+      "sha256": "76490b715cd467c3943bf6d68f126cd3157b79bdc8711f2e2018f5ccb647ee5e",
+      "bytes": 23549,
+      "ranges": [
+        [
+          1,
+          555
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/action_store.py",
+      "git_blob": "f05ec97ae4917d84cd9c6bbc3d56b1162ddbf9b8",
+      "sha256": "0806cebe3d3c7018d4e140b9a49061daab851e952a8ca785c96a1f3c78a096b1",
+      "bytes": 125471,
+      "ranges": [
+        [
+          1,
+          2345
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/definition_store.py",
+      "git_blob": "b78fda46838454e5bfdac930fabcd5977b53393b",
+      "sha256": "3bf744226112ad3c618e2e441a3a53bb6631be1df521b3ab955e481066aa277c",
+      "bytes": 51404,
+      "ranges": [
+        [
+          1,
+          939
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/gateway.py",
+      "git_blob": "22b34c28e3020cc3d2931e31d31bba5d4cb24bf1",
+      "sha256": "88132c22bd28fab16d3158498849b75b51f536ebee7d40da74066882742a001c",
+      "bytes": 8011,
+      "ranges": [
+        [
+          1,
+          168
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/import_copy.py",
+      "git_blob": "87ab2c5fdc90e60f6741ca67ad449d83f22c5d13",
+      "sha256": "e017b96ff8204cd8f707c9c0d04dc6332a62c465b7b2e0eea38da5119f960226",
+      "bytes": 7716,
+      "ranges": [
+        [
+          1,
+          162
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/migration.py",
+      "git_blob": "ace0d627458928700f289f133a14249658b1737d",
+      "sha256": "dfc4a3c208a0bfe59121ea7f3a251ae7f38056430b5a9ef9b18f4f77e6d029b3",
+      "bytes": 2866,
+      "ranges": [
+        [
+          1,
+          64
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/service.py",
+      "git_blob": "2ffd24bf39ec1cf0780024a1e7ea2bd8532d3e2f",
+      "sha256": "d3e64e20af80a8f74fb770a766b965c76cc88c5cec7c5b498b68f809f9a654e7",
+      "bytes": 49359,
+      "ranges": [
+        [
+          1,
+          1185
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/cron/webui_metadata.py",
+      "git_blob": "7dc1d7631e45ebcc89d90abddaf63835e40bcb7c",
+      "sha256": "e2c9c7cc62cddf7bc2bba93c3f239689847b562c42bacb16f8c1f8ca404a2ea8",
+      "bytes": 840,
+      "ranges": [
+        [
+          1,
+          27
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/triggers/__init__.py",
+      "git_blob": "4dca38474f8235fa7d2174b56ce2f35ae51b7401",
+      "sha256": "9e0703d776fd4d92d7fd371f47c969e018f16956ea00dadd0cda4ba938e080e8",
+      "bytes": 450,
+      "ranges": [
+        [
+          1,
+          19
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/triggers/local_runner.py",
+      "git_blob": "39f82c1c07c9d87c0ab8b7ecd862318dd2ed9291",
+      "sha256": "d9653ed6598a6e1ecd65811f23b01f0fb8d4e20e4adce04627c6bd3e5c3c3a14",
+      "bytes": 7532,
+      "ranges": [
+        [
+          1,
+          214
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/triggers/local_session_turns.py",
+      "git_blob": "8ac456bdff760ca0e3f8ed6f8ac120f00cd5d84e",
+      "sha256": "1433dac42de18ecb89e7f8a8a5efa675d77002334f17f55a01260644fc68dbfe",
+      "bytes": 1601,
+      "ranges": [
+        [
+          1,
+          51
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/triggers/local_store.py",
+      "git_blob": "3e5e93d8be815f5f4874ab90d98ee9b4cd68d2ad",
+      "sha256": "5b26ce4bde374af1aa0e0bc0230e4e5256d05bc23857012ca1d7ad0811453331",
+      "bytes": 18799,
+      "ranges": [
+        [
+          1,
+          489
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/triggers/local_turns.py",
+      "git_blob": "a468d42e35f9b08ca3c0422d9f18341adf06a6bf",
+      "sha256": "676e49dc2f2cf7b91632f1f6c897e94fdedfd20931d2ca537c66bf1f69d01fdf",
+      "bytes": 2080,
+      "ranges": [
+        [
+          1,
+          55
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/triggers/local_types.py",
+      "git_blob": "0801823bac5573168cb77f5959b795eec46217f6",
+      "sha256": "fa0d242c632d8c7f48f4f2665c6b8fd9a5fe6898d0e10160cf599ffdafb3df5e",
+      "bytes": 5324,
+      "ranges": [
+        [
+          1,
+          158
+        ]
+      ],
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh A01 source-only primary body read preserved from staged A01-A through A01-F checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "path": "nanobot/agent/loop.py",
+      "purpose": "Default tool composition, automation coordinator, bus adaptation, source classification, session history and approval flow."
+    },
+    {
+      "path": "nanobot/agent/turn_admission.py",
+      "purpose": "Approval text/alias classification and consumption boundary."
+    },
+    {
+      "path": "nanobot/cli/gateway_runtime.py",
+      "purpose": "Default foreground gateway task ownership and optional cron/process activation."
+    },
+    {
+      "path": "nanobot/cli/commands.py",
+      "purpose": "Shipped nanobot trigger enqueue CLI."
+    },
+    {
+      "path": "nanobot/command/builtin.py",
+      "purpose": "Shipped /goal and /trigger command surfaces."
+    },
+    {
+      "path": "nanobot/config/schema.py",
+      "purpose": "Gateway cron defaults and activation bounds."
+    }
+  ],
+  "search_only": [
+    {
+      "query": "scheduler history compaction/rollover and classifications/request eviction",
+      "result": "No frozen-tree owner found in later A01 management/migration surfaces; default-branch search used only as supplementary discovery."
+    },
+    {
+      "query": "local trigger production queue consumer / run_local_trigger_queue caller",
+      "result": "No additional production caller found; pinned gateway source directly establishes default inactivity."
+    },
+    {
+      "query": "definition prepared-cache eviction",
+      "result": "No eviction call found; retained as non-finding lifetime observation."
+    }
+  ],
+  "test_source_reads": [
+    "tests/cron/test_scheduler.py",
+    "tests/cron/test_scheduler_store.py",
+    "tests/cron/test_scheduler_owner_operations.py",
+    "tests/cron/test_runtime_adapters.py",
+    "tests/cron/test_canonical_execution.py",
+    "tests/cron/test_canonical_result_adapter.py",
+    "tests/cron/test_cron_composition.py",
+    "tests/cron/test_cron_channel_sender.py",
+    "tests/cron/test_cron_delivery.py",
+    "tests/cron/test_cron_delivery_runtime.py",
+    "tests/cron/test_cron_delivery_store.py",
+    "tests/cron/test_cron_callback_store.py",
+    "tests/cron/test_delivery_reconciliation.py",
+    "tests/cron/test_quota_recovery.py",
+    "tests/cron/test_interruption_recovery.py",
+    "tests/cron/test_cron_tool_list.py",
+    "tests/cron/test_cron_tool_list_fork.py",
+    "tests/cron/test_cron_tool_schema_contract.py",
+    "tests/cron/test_cron_service.py",
+    "tests/cron/test_action_store.py",
+    "tests/cron/test_definition_store.py",
+    "tests/cron/test_gateway_cron.py",
+    "tests/cron/test_import_copy.py",
+    "tests/triggers/test_local_triggers.py",
+    "tests/command/test_trigger_command.py",
+    "tests/cli/test_gateway_automation_boundary.py",
+    "tests/agent/test_migration_approval_admission.py"
+  ],
+  "support_reads": [
+    "docs/audits/module-review-2026-11-06/handoffs/A01.md",
+    "docs/audits/module-review-2026-11-06/status.json",
+    "docs/audits/module-review-2026-11-06/handoffs/index.json",
+    "docs/audits/codebase-discovery/path-inventory.tsv"
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": {
+    "dsh": "No DSH parity claim was needed to establish the nine A01 findings. Pinned DSH remains available for integrated architecture comparison only.",
+    "codex": "No Codex parity claim was needed to establish the nine A01 findings. Pinned Codex remains comparison evidence only.",
+    "note": "A01 findings are grounded in the pinned Nanobot ownership/call graph; references are not substituted for missing primary evidence."
+  },
+  "prior_change_evidence": [
+    "Frozen inventory marks local_runner.py and local_store.py as modified relative to the prior snapshot; both current bodies were reread fully.",
+    "Default-branch code search was never treated as proof for the frozen pin when revisions differed."
+  ],
+  "findings": [
+    {
+      "id": "A01-F01",
+      "priority": "P1",
+      "state": "promoted-report",
+      "title": "Process-completion persistence performs synchronous SQLite durability work on async gateway/exec paths"
+    },
+    {
+      "id": "A01-F02",
+      "priority": "P2",
+      "state": "promoted-report",
+      "title": "The shipped /goal command advertises sustained-goal behavior that default production composition cannot activate"
+    },
+    {
+      "id": "A01-F03",
+      "priority": "P1",
+      "state": "promoted-report",
+      "title": "Gateway cron polling performs synchronous full-history durable filesystem work on the event loop"
+    },
+    {
+      "id": "A01-F04",
+      "priority": "P1",
+      "state": "promoted-report",
+      "title": "Append-only scheduler evidence has a finite hard lifetime in the live timer path",
+      "qualification": "Later A01 definition/action/migration/import/service/gateway review found no scheduler-history rollover/archive owner; the earlier provisional qualification is resolved."
+    },
+    {
+      "id": "A01-F05",
+      "priority": "P2",
+      "state": "promoted-report",
+      "title": "Completed delivery dispatch entries are retained for the lifetime of the outbox store"
+    },
+    {
+      "id": "A01-F06",
+      "priority": "P1",
+      "state": "promoted-report",
+      "title": "Model-facing cron list/remove authority is global across chats",
+      "qualification": "Conditional on mutually untrusted chats/users sharing one agent/service; a strictly single-owner instance may intentionally define one administration domain."
+    },
+    {
+      "id": "A01-F07",
+      "priority": "P2",
+      "state": "promoted-report",
+      "title": "Shipped local-trigger commands queue work that the default gateway never consumes"
+    },
+    {
+      "id": "A01-F08",
+      "priority": "P1",
+      "state": "promoted-report",
+      "title": "Local-trigger restart recovery can replay an already committed turn and its effects",
+      "qualification": "Conditional on local-trigger execution being activated; the default foreground gateway does not start the runner."
+    },
+    {
+      "id": "A01-F09",
+      "priority": "P1",
+      "state": "promoted-report",
+      "title": "Local-trigger automation can affirm a pending risky-action approval",
+      "qualification": "Conditional on local-trigger execution being activated; approval admission is source-blind once automation shares the bound session/channel alias."
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "A01-Q1",
+      "tags": [
+        "D5",
+        "D6"
+      ],
+      "question": "Should process-completion, cron and future trigger durability share one ordered asynchronous persistence-owner pattern while retaining current pre-effect fsync semantics?"
+    },
+    {
+      "id": "A01-Q2",
+      "tags": [
+        "D5",
+        "D6",
+        "P01"
+      ],
+      "question": "What explicit epoch/archive policy should retire scheduler classifications, trigger requests, action receipts, scheduling commits and offline reconciliation evidence without weakening replay/authority proofs?"
+    },
+    {
+      "id": "A01-Q3",
+      "tags": [
+        "D2",
+        "D4"
+      ],
+      "question": "Is model-facing cron management intentionally instance-global, or should creator/session scope be the default with a separate administrator capability for global list/remove?"
+    },
+    {
+      "id": "A01-Q4",
+      "tags": [
+        "D4",
+        "P01"
+      ],
+      "question": "Should /goal and local-trigger commands be activated as supported first-party features, or hidden until their required tools/runtime owners are present?"
+    },
+    {
+      "id": "A01-Q5",
+      "tags": [
+        "D5",
+        "D6"
+      ],
+      "question": "Before local triggers are activated, should each delivery acquire a durable canonical run/settlement identity with explicit committed/unknown/retryable states rather than filesystem at-least-once recovery?"
+    },
+    {
+      "id": "A01-Q6",
+      "tags": [
+        "D2",
+        "D4"
+      ],
+      "question": "Should risky-action approval consumption be restricted to trusted foreground user ingress, making all cron/trigger/recovery/background automation incapable of affirmative/negative approval settlement?"
+    },
+    {
+      "id": "A01-Q7",
+      "tags": [
+        "P01",
+        "D6"
+      ],
+      "question": "Which legacy session-bound cron helpers, stale dormant comments and historical retry caches should be retired once the canonical occurrence/outbox path is the only supported owner?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    {
+      "stream": "T01",
+      "dependency": "Default tool manifest/registration controls sustained-goal reachability and command/capability consistency."
+    },
+    {
+      "stream": "H02",
+      "dependency": "Session/turn ownership and approval admission affect automation alias and approval authority."
+    },
+    {
+      "stream": "E02",
+      "dependency": "Gateway/channel trust domains affect cron management scope and future trigger activation."
+    },
+    {
+      "stream": "R01",
+      "dependency": "Repository-wide recovery/idempotency policy should reconcile local-trigger crash replay."
+    },
+    {
+      "stream": "P01",
+      "dependency": "Legacy cron helper retirement, feature gating and evidence-retention simplification remain deferred."
+    }
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "A01 source-review publication only; no repair/product/design acceptance.",
+    "staging_check": {
+      "status": "PASS",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "named_delta_reconciled": true,
+      "note": "All A01 assigned primaries were freshly reconciled to the frozen inventory; modified local-trigger primaries were fully reread."
+    },
+    "ledger_reconciliation": {
+      "status": "PASS",
+      "assigned_paths": 47,
+      "final_full_paths": 47,
+      "inventory_matches": 47,
+      "tree_blob_matches": 47,
+      "physical_lines": 20690,
+      "bytes": 934211,
+      "material_primary_gaps": 0
+    },
+    "semantic_review": {
+      "status": "PASS",
+      "promoted_findings": [
+        "A01-F01",
+        "A01-F02",
+        "A01-F03",
+        "A01-F04",
+        "A01-F05",
+        "A01-F06",
+        "A01-F07",
+        "A01-F08",
+        "A01-F09"
+      ],
+      "additional_observations": [
+        "A01-O1",
+        "A01-O2",
+        "A01-O3",
+        "A01-O4",
+        "A01-O5",
+        "A01-O6",
+        "A01-O7"
+      ],
+      "note": "All 47 A01 primaries are pinned/full. Nine findings were reconciled across process completion, sustained goals, canonical cron scheduling/delivery/management and local-trigger activation/recovery/approval boundaries.",
+      "qualifications": [
+        "A01-F04's earlier provisional maintenance qualification is resolved: no scheduler-history rollover/archive owner exists in later A01 management/migration surfaces.",
+        "A01-F06 is conditional on multiple mutually untrusted chats/users sharing one agent/service.",
+        "A01-F08 and A01-F09 are conditional activation blockers because the default foreground gateway does not start local-trigger execution.",
+        "A01-F01 and A01-F03 preserve current durability requirements; they concern blocking ownership on shared async paths.",
+        "Local-trigger pathname hardening, negative every_seconds validation, retry-cache retention and stale dormant comments remain unpromoted."
+      ]
+    },
+    "exact_documented_command_rerun": {
+      "status": "NOT_RUN",
+      "reason": "Source-only web continuation; repository tests/builds/checkers/imports and external process execution were prohibited."
+    },
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "bb860295cf03ae9df2c374842828274d743e920f",
+    "decisions": "D1–D7 remain deferred."
+  },
+  "integrated_review": {
+    "status": "pending",
+    "evidence": null
+  },
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "bb860295cf03ae9df2c374842828274d743e920f",
+    "pushed": true,
+    "evidence": "A01 F47/P0/R0 report publication checkpoint; coverage/status acceptance follows in the same bounded stage."
+  },
+  "limits": [
+    "No repository tests/builds/checkers/imports were executed.",
+    "No application/service/tool/plugin/MCP launch, external CLI/process execution, provider/network call or benchmark was performed.",
+    "Source review does not quantify filesystem latency, memory growth rate, crash-window frequency or deployed multi-user topology."
+  ],
+  "entry_rules": {
+    "primary_denominator": "A01 + implementation-or-tooling-source in frozen path-inventory.tsv",
+    "supplementary_credit": "Caller/test/search/support reads add no primary coverage credit.",
+    "source_only": true
+  },
+  "current_staging_delta": {
+    "status": "reconciled",
+    "note": "All 47 current frozen bodies were read; inventory-marked modified local-trigger files were not inherited without a fresh current read."
+  },
+  "history_limits": "No runtime or deployment claims are inferred beyond the pinned source contracts; historical/default-branch search is supplementary only.",
+  "additional_observations": [
+    {
+      "id": "A01-O1",
+      "text": "Cron scheduled execution deliberately requires qualified POSIX descriptor/flock support and fails closed otherwise."
+    },
+    {
+      "id": "A01-O2",
+      "text": "Canonical cron modules still carry stale dormant comments and older session-bound/message-fanout helpers remain as retirement debt."
+    },
+    {
+      "id": "A01-O3",
+      "text": "Delivery/operator reconciliation has explicit finite attempt/evidence bounds distinct from the live scheduler exhaustion finding."
+    },
+    {
+      "id": "A01-O4",
+      "text": "Management action receipts and scheduling commits also have 4,096-item maintenance horizons without a matching cron export owner."
+    },
+    {
+      "id": "A01-O5",
+      "text": "Definition retry caches retain historical full candidate wires until restart; growth is indirectly bounded by durable evidence ceilings."
+    },
+    {
+      "id": "A01-O6",
+      "text": "Negative every_seconds is schema-admitted and reaches typed validation as an exception rather than a normal tool diagnostic."
+    },
+    {
+      "id": "A01-O7",
+      "text": "Local-trigger storage is compatibility-grade pathname/FileLock JSON storage and should be reconsidered before first-party activation."
+    }
+  ],
+  "finding_count_convention": {
+    "total": 9,
+    "p1": 6,
+    "p2": 3,
+    "conditional": [
+      "A01-F06",
+      "A01-F08",
+      "A01-F09"
+    ],
+    "note": "Conditional findings count as promoted findings with explicit activation/trust qualifications."
+  },
+  "coverage_counts": {
+    "full": 47,
+    "partial": 0,
+    "unread": 0,
+    "total": 47
+  },
+  "raw_failures_and_limits": {
+    "read_failures": 0,
+    "primary_mismatches": 0,
+    "tests_executed": 0,
+    "builds_executed": 0,
+    "runtime_probes": 0,
+    "network_probes": 0,
+    "benchmarks": 0
+  }
+}

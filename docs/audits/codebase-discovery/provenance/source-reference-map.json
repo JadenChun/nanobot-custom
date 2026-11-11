@@ -1,0 +1,364 @@
+{
+  "architecture_reference": "AR-2026-11-05.2",
+  "purpose": "Portable pinned implementation reference index and previously retained excerpts; no new source comparison or full review implied. REF6 remains mapped, not fully reviewed.",
+  "historical_map_sha256": "a51b71fa96842172426bd297df9e8e77f25da90eb02dcdc0fee95f9df3e11406",
+  "capabilities": {
+    "REF1": [
+      "dsh-agent-code",
+      "dsh-inbox-code",
+      "codex-session",
+      "codex-input"
+    ],
+    "REF2": [
+      "dsh-agent-code",
+      "dsh-compact-code",
+      "codex-turn"
+    ],
+    "REF3": [
+      "dsh-persistence-code",
+      "codex-recorder"
+    ],
+    "REF4": [
+      "dsh-sandbox-code",
+      "dsh-policy-code",
+      "codex-tool-orchestrator",
+      "codex-sandbox-manager"
+    ],
+    "REF5": [
+      "dsh-jobs-code",
+      "codex-processes"
+    ],
+    "REF6": [
+      "dsh-subagents-code",
+      "codex-agent-spawn",
+      "codex-agent-resume"
+    ]
+  },
+  "files": {
+    "dsh-agent-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/core/agent-loop/src/agent.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/core/agent-loop/src/agent.ts",
+      "source_sha256": "ad9ee0778c0a93dec40363f88b53f442add9b033837b9ff049675a1ada3df61f",
+      "source_bytes": 31142,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "private phase: Phase",
+          "start_line": 115,
+          "end_line": 134,
+          "text": "  private phase: Phase\n  private activityDone: Promise<void> = Promise.resolve()\n\n  /** The agent-scoped registration boundary; the lifecycle owner unwinds it after the driver exits. */\n  readonly scope: Scope\n  readonly ctx: Context\n\n  /** Fused dispatcher, built once in the constructor so hot-path dispatches never allocate. */\n  private readonly dispatch: AgentEventDispatch\n\n  /** Whether this loop instance has appended its initial/resume request anchor. */\n  private requestHeaderLogged = false\n  /** Surface generation at attachment or the preceding built request. */\n  private requestSurfaceGeneration: number\n  private readonly runtimeContext: RuntimeContextProjection\n  /** Process-local revision of assistant frames for this attached Session. */\n  private assistantStreamRevision = 0\n  private assistantAttemptCounter = 0\n  private readonly systemPrompt: SystemPromptProjection\n  /** Identities fully frozen by this loop; weak references do not retain replaced history. */"
+        }
+      ],
+      "tests_executed": false
+    },
+    "dsh-inbox-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/core/agent-loop/src/inbox.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/core/agent-loop/src/inbox.ts",
+      "source_sha256": "336e10096a4899cdbef71e68da6896c5ed84c17a95c56729d17b8ba607bac1ca",
+      "source_bytes": 8873,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "if (ids.has(message.id))",
+          "start_line": 46,
+          "end_line": 54,
+          "text": "        if (ids.has(message.id)) throw new Error(`message \"${message.id}\" is already pending`)\n        ids.add(message.id)\n      }\n      return splice.target === 'next-turn'\n        ? { 'next-turn': next, 'next-step': state['next-step'] }\n        : { 'next-turn': state['next-turn'], 'next-step': next }\n    } catch (error: unknown) {\n      throw new Error(`invalid persisted inbox splice at session seq ${event.seq}`, { cause: error })\n    }"
+        }
+      ],
+      "tests_executed": false
+    },
+    "codex-session": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/session/session.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/session/session.rs",
+      "source_sha256": "5744a8ae7ea56424735be322a2b3437221f1be9208c8632fc44d1e06da0d0710",
+      "source_bytes": 99588,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "pub(crate) struct Session {",
+          "start_line": 60,
+          "end_line": 108,
+          "text": "pub(crate) struct Session {\n    pub(crate) thread_id: ThreadId,\n    pub(crate) installation_id: String,\n    pub(super) tx_event: Sender<Event>,\n    /// Installed by Guardian before its first review; forwards items and cancellation without\n    /// transferring ownership of the private session's event receiver.\n    pub(crate) parent_observer_event_tx: OnceLock<Sender<Event>>,\n    pub(super) agent_status: watch::Sender<AgentStatus>,\n    pub(super) state: Mutex<SessionState>,\n    /// Orders accepted settings commits and their persisted events with compaction checkpoints.\n    /// Keep this separate from `state` so storage I/O does not block runtime state access.\n    pub(super) thread_settings_persistence: Semaphore,\n    pub(super) code_mode_message_tasks: CodeModeMessageTasks,\n    /// Serializes rebuild/apply cycles for the running proxy; each cycle\n    /// rebuilds from the current SessionState while holding this lock.\n    pub(super) managed_network_proxy_refresh_lock: Semaphore,\n    /// The set of enabled features should be invariant for the lifetime of the\n    /// session.\n    pub(super) features: ManagedFeatures,\n    pub(super) isolation: codex_extension_api::SessionIsolation,\n    pub(crate) tool_policy: Arc<codex_extension_api::ToolPolicy>,\n    pub(crate) windows_sandbox_proxy_settings_mode:\n        codex_sandboxing::WindowsSandboxProxySettingsMode,\n    pub(super) multi_agent_version: OnceLock<MultiAgentVersion>,\n    /// Owns invalidation and serializes refreshes without blocking captured calls.\n    pub(super) mcp_refresh: McpRefresh,\n    /// Non-owning lookup for approval data retained by running MCP invocations.\n    pub(crate) mcp_tool_approval_metadata: std::sync::Mutex<McpToolApprovalMetadataMap>,\n    pub(super) mcp_elicitation_reviewer_handle: OnceLock<codex_mcp::ElicitationReviewerHandle>,\n    pub(super) mcp_elicitation_lifecycle_handle: OnceLock<codex_mcp::ElicitationLifecycle>,\n    pub(super) mcp_prewarm_tx: async_channel::Sender<()>,\n    pub(super) mcp_prewarm_shutdown: CancellationToken,\n    pub(super) mcp_prewarm_task: std::sync::Mutex<Option<JoinHandle<()>>>,\n    pub(crate) conversation: Arc<RealtimeConversationManager>,\n    pub(crate) realtime_history: Option<Mutex<crate::realtime_history::RealtimeHistoryState>>,\n    pub(crate) active_turn: Mutex<Option<ActiveTurn>>,\n    pub(crate) async_hook_results: async_channel::Receiver<HookCompletedEvent>,\n    pub(crate) input_queue: InputQueue,\n    pub(crate) services: SessionServices,\n    pub(super) git_enrichment_policy: GitEnrichmentPolicy,\n    pub(super) fork_persistence: ForkPersistence,\n    pub(super) history_initialization: HistoryInitialization,\n    pub(super) forked_from_ordinal_exclusive: Option<u64>,\n    pub(super) next_internal_sub_id: AtomicU64,\n}\n\n#[derive(Clone)]\npub(crate) struct SessionConfiguration {\n    /// Runtime provider and its provider-specific execution policy."
+        }
+      ],
+      "tests_executed": false
+    },
+    "codex-input": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/session/input_queue.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/session/input_queue.rs",
+      "source_sha256": "e5f6694425aad9a52d4d3eebc4d9c9a64ff170617b9223e776edc6971657ab09",
+      "source_bytes": 30605,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "pub(crate) struct InputQueue {",
+          "start_line": 100,
+          "end_line": 121,
+          "text": "pub(crate) struct InputQueue {\n    activity_tx: watch::Sender<InputQueueActivity>,\n    controller: Option<(ThreadId, Arc<dyn AgentControl>, watch::Receiver<bool>)>,\n    mailbox_pending_mails: Mutex<VecDeque<PendingMailboxCommunication>>,\n}\n\npub(crate) struct PendingMailboxCommunication {\n    pub(crate) communication: crate::PendingAgentMessage,\n    start_options: TurnStartOptions,\n    _diagnostics_guard: GaugeGuard,\n}\n\nimpl InputQueue {\n    pub(crate) fn new() -> Self {\n        let (activity_tx, _) = watch::channel(InputQueueActivity::Mailbox);\n        Self {\n            activity_tx,\n            controller: None,\n            mailbox_pending_mails: Mutex::new(VecDeque::new()),\n        }\n    }\n"
+        }
+      ],
+      "tests_executed": false
+    },
+    "dsh-compact-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/compaction/compaction-basic/src/index.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/compaction/compaction-basic/src/index.ts",
+      "source_sha256": "1d2ecc563147967f86842b37289682a4dd7feabccc9d9d8d55cfb01810166f54",
+      "source_bytes": 19522,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "function routedTarget(",
+          "start_line": 49,
+          "end_line": 60,
+          "text": "function routedTarget(\n  session: Session,\n): Pick<LlmCallConfig, 'provider' | 'model'> | undefined {\n  const config = session.requestHeader()?.config\n  if (config === undefined || config.provider.length === 0 || config.model.length === 0) {\n    return undefined\n  }\n  return { provider: config.provider, model: config.model }\n}\n\n/**\n * Output tokens the routed request reserves, which the provider charges to the"
+        }
+      ],
+      "tests_executed": false
+    },
+    "codex-turn": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/session/turn.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/session/turn.rs",
+      "source_sha256": "5c0ec0a968de15cabbb7bd0af66edf1dd42313a1d9aac861af9d8a549b7b2335",
+      "source_bytes": 141236,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "pub(crate) async fn run_turn(",
+          "start_line": 175,
+          "end_line": 216,
+          "text": "pub(crate) async fn run_turn(\n    sess: Arc<Session>,\n    turn_context: Arc<TurnContext>,\n    mut input: Vec<TurnInput>,\n    mcp_startup_requirements: &mut McpStartupRequirements,\n    prewarmed_client_session: Option<ModelClientSession>,\n    cancellation_token: CancellationToken,\n) -> CodexResult<Option<String>> {\n    let auto_compaction_enabled = sess\n        .services\n        .thread_extension_data\n        .get::<AutoCompactionDisabled>()\n        .is_none();\n    let auto_summarization_enabled =\n        auto_compaction_enabled && !turn_context.config.features.enabled(Feature::TokenBudget);\n    if crate::guardian::is_basic_session_source(&turn_context.session_source) {\n        crate::guardian::check_pending_guardian_input(&sess, &turn_context).await?;\n    }\n    // Record results from hooks that finished after the previous turn before this turn's user prompt.\n    drain_async_hook_results(&sess, &turn_context, /*before_user_prompt*/ true).await;\n\n    let mut client_session =\n        prewarmed_client_session.unwrap_or_else(|| sess.services.model_client.new_session());\n    // TODO(ccunningham): Pre-turn compaction runs before context updates and the\n    // new user message are recorded. Estimate pending incoming items (context\n    // diffs/full reinjection + user input) and trigger compaction preemptively\n    // when they would push the thread over the compaction threshold.\n    if auto_compaction_enabled\n        && let Err(err) = run_pre_sampling_compact(\n            &sess,\n            &turn_context,\n            &mut client_session,\n            &cancellation_token,\n        )\n        .await\n    {\n        // Compaction runs before the new input is recorded, so preserve it on every failure.\n        run_hooks_and_record_inputs(\n            &sess,\n            &turn_context,\n            &turn_context.capture_current_model_info(),\n            &input,"
+        }
+      ],
+      "tests_executed": false
+    },
+    "dsh-persistence-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/session/session-persistence-jsonl/src/index.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/session/session-persistence-jsonl/src/index.ts",
+      "source_sha256": "1475457333ca86a01f7ea72dcf33de25b02be8b9c670fb32e8b99d8efb54cd81",
+      "source_bytes": 75727,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "private async appendLines(",
+          "start_line": 1413,
+          "end_line": 1436,
+          "text": "  private async appendLines(meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {\n    const content = await this.encodeEventBatch(events)\n    const path = logPath(this.root, meta.cwd, meta.id, this.compression)\n    const handle = await open(path, 'a')\n    let closed = false\n    const closeAppendHandle = async (): Promise<void> => {\n      if (closed) return\n      closed = true\n      await handle.close()\n    }\n\n    try {\n      const { size: before } = await handle.stat()\n      try {\n        await handle.writeFile(content)\n        await handle.sync()\n      } catch (error) {\n        try {\n          await closeAppendHandle()\n          await this.rollbackAppend(path, before)\n        } catch (rollbackError) {\n          throw new AggregateError([error, rollbackError], `failed to roll back append to \"${path}\"`)\n        }\n        throw error"
+        }
+      ],
+      "tests_executed": false
+    },
+    "codex-recorder": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/rollout/src/recorder.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/rollout/src/recorder.rs",
+      "source_sha256": "7d784c76b3a1aa9b6e57410c46f01d967fc1aeb2adabccefd2296c9ab0d5791b",
+      "source_bytes": 78952,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "let (tx, rx) = mpsc::channel",
+          "start_line": 1032,
+          "end_line": 1061,
+          "text": "        let (tx, rx) = mpsc::channel::<RolloutCmd>(256);\n        // Spawn a Tokio task that owns the file handle and performs async\n        // writes. Using `tokio::fs::File` keeps everything on the async I/O\n        // driver instead of blocking the runtime.\n        let writer_task = Arc::new(RolloutWriterTask::new(writer_lock));\n        let writer_task_for_spawn = Arc::clone(&writer_task);\n        let rollout_path_for_spawn = rollout_path.clone();\n        let handle = tokio::task::spawn(async move {\n            let result = rollout_writer(state, rx).await;\n            if let Err(err) = result {\n                // This is the terminal background-task failure path. Normal I/O failures stay inside\n                // `rollout_writer`, are reported through command acks, and leave items buffered for retry.\n                error!(\n                    \"rollout writer task failed for {}: {err}; error_kind={:?}; raw_os_error={:?}\",\n                    rollout_path_for_spawn.display(),\n                    err.kind(),\n                    err.raw_os_error()\n                );\n                writer_task_for_spawn.mark_failed(&err);\n            }\n        });\n        writer_task.set_handle(handle);\n\n        Ok(Self {\n            tx,\n            writer_task,\n            rollout_path,\n        })\n    }\n"
+        },
+        {
+          "marker": "pub async fn flush(",
+          "start_line": 1118,
+          "end_line": 1134,
+          "text": "    pub async fn flush(&self) -> std::io::Result<()> {\n        let (tx, rx) = oneshot::channel();\n        self.tx\n            .send(RolloutCmd::Flush { ack: tx })\n            .await\n            .map_err(|e| {\n                self.writer_task.terminal_failure().unwrap_or_else(|| {\n                    IoError::other(format!(\"failed to queue rollout flush: {e}\"))\n                })\n            })?;\n        rx.await.map_err(|e| {\n            self.writer_task\n                .terminal_failure()\n                .unwrap_or_else(|| IoError::other(format!(\"failed waiting for rollout flush: {e}\")))\n        })?\n    }\n"
+        },
+        {
+          "marker": "pub async fn shutdown(",
+          "start_line": 1224,
+          "end_line": 1249,
+          "text": "    pub async fn shutdown(&self) -> std::io::Result<()> {\n        let (tx_done, rx_done) = oneshot::channel();\n        match self.tx.send(RolloutCmd::Shutdown { ack: tx_done }).await {\n            Ok(_) => rx_done.await.map_err(|e| {\n                self.writer_task.terminal_failure().unwrap_or_else(|| {\n                    IoError::other(format!(\"failed waiting for rollout shutdown: {e}\"))\n                })\n            })??,\n            Err(e) => {\n                if let Some(err) = self.writer_task.terminal_failure() {\n                    warn!(\n                        \"failed to send rollout shutdown command because writer task failed: {err}\"\n                    );\n                    return Err(err);\n                }\n                warn!(\"failed to send rollout shutdown command: {e}\");\n                return Err(IoError::other(format!(\n                    \"failed to send rollout shutdown command: {e}\"\n                )));\n            }\n        };\n        self.wait_for_exit().await\n    }\n\n    /// Stops the writer without materializing deferred items, after already-running IO completes.\n    pub async fn discard(&self) -> std::io::Result<()> {"
+        }
+      ],
+      "tests_executed": false
+    },
+    "dsh-sandbox-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/sandbox/sandbox-local/src/index.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/sandbox/sandbox-local/src/index.ts",
+      "source_sha256": "a7a531c067547da088f37867b0c24dc366dab0a045fa53f7a16ff7d8b4a100ef",
+      "source_bytes": 28863,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "private chainVerdict()",
+          "start_line": 513,
+          "end_line": 529,
+          "text": "  private chainVerdict(): SelectedRunner | 'unavailable' {\n    const chain = this.internals.chain ?? PLATFORM_CHAINS[this.internals.platform ?? process.platform] ?? []\n    const [first, ...rest] = chain\n    if (first === undefined) return 'unavailable'\n    // A sole candidate needs no arbitration; its execution-time refusal still fails closed.\n    if (rest.length === 0) return { runner: first, enforcement: STATIC_ENFORCEMENT[first] }\n    for (const runner of chain) {\n      const enforcement = this.probeRunner(runner)\n      if (enforcement !== 'unusable') return { runner, enforcement }\n    }\n    return 'unavailable'\n  }\n\n  /** One rung's functional probe (each at most once, via the chain walk). */\n  private probeRunner(runner: SelectedRunner['runner']): SandboxEnforcement | 'unusable' {\n    // bwrap's mount profile and Seatbelt's deny-file-write* profile govern\n    // every promised file effect by construction, so their passing probes"
+        }
+      ],
+      "tests_executed": false
+    },
+    "dsh-policy-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/sandbox/sandbox-policy/src/index.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/sandbox/sandbox-policy/src/index.ts",
+      "source_sha256": "de18aa0f8f2ab668876f9f181dd521b72910da428eab185fb85dd30163af8d35",
+      "source_bytes": 10277,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "resolve(request: SandboxPolicyRequest",
+          "start_line": 197,
+          "end_line": 206,
+          "text": "  resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {\n    const { session } = request\n    return {\n      mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,\n      workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),\n      ...this.additionalWritableRoots === undefined ? {} : { additionalWritableRoots: this.additionalWritableRoots },\n      ...session === undefined ? {} : { sessionId: session.id },\n    }\n  }\n"
+        }
+      ],
+      "tests_executed": false
+    },
+    "codex-tool-orchestrator": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/tools/orchestrator.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/orchestrator.rs",
+      "source_sha256": "8996f718b818804473c151a8a643747c2b5ab69b05f4630eee143fac7daa0bb5",
+      "source_bytes": 28899,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "let sandbox_requested = match sandbox_override",
+          "start_line": 327,
+          "end_line": 353,
+          "text": "        let sandbox_requested = match sandbox_override {\n            SandboxOverride::BypassSandboxFirstAttempt => false,\n            SandboxOverride::NoOverride | SandboxOverride::EscalatedSandboxWithRestrictions => {\n                sandbox_manager.should_sandbox(\n                    initial_permissions,\n                    sandbox_preference,\n                    managed_network_active,\n                )\n            }\n        };\n        let windows_sandbox_type = codex_protocol::sandbox::effective_windows_sandbox_type(\n            sandbox_config.windows_sandbox_type,\n            sandbox_config.windows_sandbox_level,\n        );\n        let initial_sandbox = if sandbox_requested && !executor_managed_process_sandbox {\n            sandbox_manager.select_initial(\n                initial_permissions,\n                sandbox_preference,\n                windows_sandbox_type,\n                managed_network_active,\n            )\n        } else {\n            SandboxType::None\n        };\n        if !executor_managed_process_sandbox {\n            ensure_native_sandbox(sandbox_override, initial_sandbox)?;\n        }"
+        }
+      ],
+      "tests_executed": false
+    },
+    "codex-sandbox-manager": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/sandboxing/src/manager.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/sandboxing/src/manager.rs",
+      "source_sha256": "8abe2a5f66f8101a669dd0c1571fb7c5edbab9eff2e80c8d13d9064bc5bc175d",
+      "source_bytes": 33960,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "pub fn get_platform_sandbox(",
+          "start_line": 50,
+          "end_line": 65,
+          "text": "pub fn get_platform_sandbox(windows_sandbox_enabled: bool) -> Option<SandboxType> {\n    if cfg!(target_os = \"macos\") {\n        Some(SandboxType::MacosSeatbelt)\n    } else if cfg!(target_os = \"linux\") {\n        Some(SandboxType::LinuxSeccomp)\n    } else if cfg!(target_os = \"windows\") {\n        if windows_sandbox_enabled {\n            Some(SandboxType::WindowsRestrictedToken)\n        } else {\n            None\n        }\n    } else {\n        None\n    }\n}\n"
+        }
+      ],
+      "tests_executed": false
+    },
+    "dsh-jobs-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/jobs/jobs-local/src/index.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/jobs/jobs-local/src/index.ts",
+      "source_sha256": "8c52fcba4410a89afd065b77a0cb98b558926292508cde276cce76355df76d19",
+      "source_bytes": 30527,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "start(spec: JobSpec)",
+          "start_line": 207,
+          "end_line": 236,
+          "text": "  start(spec: JobSpec): JobId {\n    const owner = this.resolveOwner(spec.owner)\n    if (!this.servesOwner(owner)) {\n      throw new Error('background jobs unavailable: no job controller serves this agent (load @deepseek-ai/dsh-tool-jobs in its composition)')\n    }\n    if (spec.kind.length === 0) throw new Error('invalid job kind: expected a non-empty string')\n    if (spec.label.length === 0) throw new Error('invalid job label: expected a non-empty string')\n    if (spec.outputLimitBytes !== undefined\n      && (!Number.isSafeInteger(spec.outputLimitBytes) || spec.outputLimitBytes <= 0)) {\n      throw new Error(`invalid outputLimitBytes: expected a positive safe integer, got ${JSON.stringify(spec.outputLimitBytes)}`)\n    }\n    if (owner !== undefined) this.ensureOwnerCleanup(owner)\n\n    const active = this.activeJobCount(owner)\n    if (active >= this.maxConcurrentJobsPerOwner) {\n      throw new Error(\n        `background job limit reached for this owner (limit: ${this.maxConcurrentJobsPerOwner}); use job_kill to stop an unneeded job, wait for it to finish, then retry`,\n      )\n    }\n\n    // The producer uses the same short UUID identity as controls and durable lifecycle records.\n    // Retry a collision while this registry still holds an earlier id.\n    let id: JobId\n    do {\n      id = JobId(`${spec.kind}-${randomUUID().replaceAll('-', '').slice(0, 16)}`)\n    } while (this.store.has(id))\n    const toolCall = spec.toolCall === undefined ? undefined : { ...spec.toolCall }\n    const ring = new OutputRing()\n    const state: ProducerState = { progress: undefined, job: undefined }\n    const handle: JobHandle = {"
+        },
+        {
+          "marker": "private async disposeAll()",
+          "start_line": 674,
+          "end_line": 691,
+          "text": "  private async disposeAll(): Promise<void> {\n    const all = [...this.store.values()]\n    this.cancelForTeardown(all, 'jobs service disposed')\n    await Promise.all(all.map(job => job.settled))\n    // A subscriber mounted outside this service \u2014 the job controller's rows\n    // stream registers from its own context \u2014 is still reachable here.\n    // Without the removals it keeps the rows it last received after a\n    // registry reload.\n    this.drop(all)\n    // Detach cross-fiber owner effects after the shared store is quiescent.\n    const ownerCleanups = [...this.ownerCleanups.values()]\n    this.ownerCleanups.clear()\n    await Promise.all(ownerCleanups.map(cleanup => Promise.resolve(cleanup())))\n  }\n\n  /**\n   * Cancel jobs during teardown with per-job containment. A throwing cancel\n   * force-fails the record and reports a possible orphan; a cancel that returns"
+        }
+      ],
+      "tests_executed": false
+    },
+    "codex-processes": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/unified_exec/process_manager.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/unified_exec/process_manager.rs",
+      "source_sha256": "7ac519358b0a4725193fb7657f25ad24be0e3434f6c3f37c2c70baadf254e916",
+      "source_bytes": 74094,
+      "kind": "implementation",
+      "inspection": "bounded excerpt/test-case inspection",
+      "excerpts": [
+        {
+          "marker": "async fn store_process(",
+          "start_line": 1247,
+          "end_line": 1305,
+          "text": "    async fn store_process(\n        &self,\n        process: Arc<UnifiedExecProcess>,\n        context: &UnifiedExecContext,\n        command: &[String],\n        hook_command: String,\n        cwd: PathUri,\n        environment_id: String,\n        permissions: super::TerminalPermissions,\n        plugin_attribution: Option<PluginCommandAttribution>,\n        started_at: Instant,\n        process_id: i32,\n        tty: bool,\n        network_approval: Option<DeferredNetworkApproval>,\n        network_denial_monitor: Option<tokio::task::JoinHandle<()>>,\n        metrics_sidecar: Option<PluginMetricsSidecar>,\n        output_buffer: Arc<tokio::sync::Mutex<OutputBuffers>>,\n        initial_exec_command_active: Arc<AtomicBool>,\n    ) {\n        let plugin_metrics_sidecar =\n            metrics_sidecar.map(|sidecar| Arc::new(std::sync::Mutex::new(Some(sidecar))));\n        let entry = ProcessEntry {\n            process: Arc::clone(&process),\n            plugin_metrics_sidecar: plugin_metrics_sidecar.clone(),\n            call_id: context.call_id.clone(),\n            process_id,\n            cwd: cwd.clone(),\n            initial_exec_command_active,\n            hook_command,\n            tty,\n            environment_id,\n            permissions,\n            network_approval,\n            session: Arc::downgrade(&context.session),\n            last_used: started_at,\n        };\n        let pruned_entry = {\n            let mut store = self.process_store.lock().await;\n            let pruned_entry = Self::prune_processes_if_needed(&mut store);\n            store.processes.insert(process_id, entry);\n            pruned_entry\n        };\n        spawn_exit_watcher(\n            Arc::clone(&process),\n            context,\n            command.to_vec(),\n            cwd,\n            process_id,\n            plugin_attribution,\n            output_buffer,\n            started_at,\n            network_denial_monitor,\n            plugin_metrics_sidecar,\n        );\n        // Install the watcher before cancellable cleanup, and outside the process-store lock.\n        if let Some(pruned_entry) = pruned_entry {\n            unregister_network_approval_for_entry(&pruned_entry).await;\n            pruned_entry.process.terminate();\n        }"
+        }
+      ],
+      "tests_executed": false
+    },
+    "dsh-subagents-code": {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/subagent/subagent/src/manager.ts",
+      "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/subagent/subagent/src/manager.ts",
+      "source_sha256": "49c0c13ec997970c2133994fedcfa8c76f8ba8d3288486fbebd16ac4ffb50566",
+      "source_bytes": 58693,
+      "kind": "implementation",
+      "inspection": "mapped for follow-up; not fully reviewed",
+      "excerpts": [],
+      "tests_executed": false,
+      "current_review_status": "mapped implementation reference; full review pending REF-COMPARE"
+    },
+    "codex-agent-spawn": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/agent/control/spawn.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/agent/control/spawn.rs",
+      "source_sha256": "abfc6a33c6327805ce17e438d23eb9bf1af97a4b2c465fa4b72940d37466c94a",
+      "source_bytes": 47000,
+      "kind": "implementation",
+      "inspection": "mapped for follow-up; not fully reviewed",
+      "excerpts": [],
+      "tests_executed": false,
+      "current_review_status": "mapped implementation reference; full review pending REF-COMPARE"
+    },
+    "codex-agent-resume": {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/agent/control/resume.rs",
+      "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/agent/control/resume.rs",
+      "source_sha256": "6083de124c4b26de3a81a6559a77ca33ae241ff46df58f9f319acf30e07bce0b",
+      "source_bytes": 1433,
+      "kind": "implementation",
+      "inspection": "mapped for follow-up; not fully reviewed",
+      "excerpts": [],
+      "tests_executed": false,
+      "current_review_status": "mapped implementation reference; full review pending REF-COMPARE"
+    }
+  },
+  "application_code_executed": false,
+  "portability": "Commit/path/hash/URL and embedded excerpts stand alone; no retained-copy or temporary-clone dependency."
+}
