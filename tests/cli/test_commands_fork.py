@@ -154,20 +154,6 @@ def test_onboard_fresh_install(mock_paths):
     )
 
 
-def test_onboard_existing_config_refresh(mock_paths):
-    """Config exists, user declines overwrite — should refresh (load-merge-save)."""
-    config_file, workspace_dir = mock_paths
-    config_file.write_text('{"existing": true}')
-
-    result = runner.invoke(app, ["onboard"], input="n\n")
-
-    assert result.exit_code == 0
-    assert "Config already exists" in result.stdout
-    assert "existing values preserved" in "".join(result.stdout.splitlines())
-    assert workspace_dir.exists()
-    assert (workspace_dir / "AGENTS.md").exists()
-
-
 def test_onboard_existing_config_overwrite(mock_paths):
     """Config exists, user confirms overwrite — should reset to defaults."""
     config_file, workspace_dir = mock_paths

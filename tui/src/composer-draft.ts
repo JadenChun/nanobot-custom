@@ -66,11 +66,11 @@ export class ComposerDraft {
     return index
   }
 
-  image(image: DraftImage, visible = ""): PasteInsertion | null {
+  image(image: DraftImage | OutboundMedia, visible = ""): PasteInsertion | null {
     if (this.images.size >= MAX_DRAFT_IMAGES) return null
     const index = this.nextImageIndex(visible)
     const label = `[Image #${index}]`
-    this.images.set(label, {
+    this.images.set(label, "data_url" in image ? image : {
       data_url: image.dataUrl,
       name: `clipboard-image-${index}.${IMAGE_EXTENSIONS[image.mimeType]}`,
     })

@@ -920,6 +920,28 @@ def sessions_export(
     console.print("Export complete.")
 
 
+@sessions_app.command("prepare-rollback")
+def sessions_prepare_rollback(
+    copied_workspace: Path = typer.Option(..., "--copied-workspace"),
+    copied_sessions_root: Path = typer.Option(..., "--copied-sessions-root"),
+    offline_copy: bool = typer.Option(False, "--offline-copy"),
+    config: str | None = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Prepare current session journals for the previous reader on a stopped copy."""
+    _require_offline_copy(offline_copy)
+    loaded, live_root = _copied_state_config(config)
+    count = _run_copied_operation(
+        _with_offline_manager(
+            loaded,
+            live_root,
+            copied_workspace,
+            copied_sessions_root,
+            lambda manager: manager.prepare_session_rollback(),
+        )
+    )
+    console.print(f"Rollback copy prepared. Restored {count} current mode journal(s).")
+
+
 @session_artifacts_app.command("inspect")
 def sessions_artifacts_inspect(
     key: str = typer.Argument(...),

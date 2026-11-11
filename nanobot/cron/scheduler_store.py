@@ -185,6 +185,7 @@ class SchedulerState(TypedDict):
         "cron_scheduler_state_v1",
         "cron_scheduler_state_v2",
         "cron_scheduler_state_v3",
+        "cron_scheduler_state_v4",
     ]
     schema_version: int
     namespace: str
@@ -310,7 +311,7 @@ class _PrivateFiles(CronOccurrenceStore):
 
     @staticmethod
     def read_existing_scheduler_evidence(
-        root: Path, validate_content: Callable[[object], SchedulerState]
+        root: Path, validate_content: Callable[[int, object], SchedulerState]
     ) -> SchedulerState:
         files = _PrivateFiles.__new__(_PrivateFiles)
         files.root, files._root_identity, files._lock_identity = root, None, None
@@ -341,7 +342,7 @@ class _PrivateFiles(CronOccurrenceStore):
                 wire = _fields(wire, {"state", "integrity"})
                 if wire["integrity"] != hashlib.sha256(_canonical_json(wire["state"]).encode()).hexdigest():
                     raise OccurrenceCorruptError("scheduler state integrity mismatch")
-                value = validate_content(wire["state"])
+                value = validate_content(held.root_fd, wire["state"])
                 held.assert_bound()
                 _check_scheduler_file(held.root_fd, "state.json", fd, inode, data)
             finally:
@@ -578,7 +579,11 @@ class SchedulerStore:
         store = SchedulerStore.__new__(SchedulerStore)
         store.namespace = namespace
         store.runtime_identity = runtime_identity
-        state = _PrivateFiles.read_existing_scheduler_evidence(root, lambda content: store._validate(content))
+        store._verified_epochs = {}
+        store._epoch_states = {}
+        state = store.retained_evidence(
+            _PrivateFiles.read_existing_scheduler_evidence(root, store._validate_with_epochs)
+        )
         return {"classification": "scheduler_evidence", "generation": state["generation"],
                 "cursors": [{"key": item["key"], "revision": item["revision"],
                              "boundary": item["boundary"], "next_fire": item["next_fire"]}
@@ -598,7 +603,7 @@ class SchedulerStore:
         self._state_inode: tuple[int, int] | None = None
         self._state_content: bytes | None = None
         self._allocated_requests: dict[tuple[str, str | None, str], TriggerRequest] = {}
-        self._verified_epochs: set[str] = set()
+        self._verified_epochs: dict[str, EpochCheckpoint] = {}
         self._epoch_states: dict[str, SchedulerState] = {}
         _PrivateFiles.initialize_scheduler(self._files, _SCHEDULER_OWNER_PERMIT, self)
 
@@ -680,13 +685,8 @@ class SchedulerStore:
             if directory >= 0:
                 os.close(directory)
 
-    def _load_epoch_chain(self, root_fd: int, state: SchedulerState) -> None:
-        checkpoint = state.get("predecessor")
-        if checkpoint is None:
-            return
+    def _read_epoch_state(self, root_fd: int, checkpoint: EpochCheckpoint) -> object:
         name = checkpoint["archive"]
-        if name in self._verified_epochs:
-            return
         try:
             data = self._read_epoch_file(root_fd, name)
         except FileNotFoundError as exc:
@@ -707,39 +707,100 @@ class SchedulerStore:
             raise OccurrenceCorruptError("scheduler epoch archive invalid")
         if fields["integrity"] != hashlib.sha256(_canonical_json(fields["state"]).encode()).hexdigest():
             raise OccurrenceCorruptError("scheduler epoch archive integrity mismatch")
-        archived = self._validate(fields["state"])
-        if _exact_int(fields["epoch"], 0) != checkpoint["epoch"]:
+        archived = fields["state"]
+        if not isinstance(archived, dict):
+            raise OccurrenceCorruptError("scheduler epoch state invalid")
+        raw_state = cast(dict[str, object], archived)
+        if (
+            _exact_int(fields["epoch"], 0) != checkpoint["epoch"]
+            or _exact_int(raw_state.get("epoch", 0)) != checkpoint["epoch"]
+        ):
             raise OccurrenceCorruptError("scheduler epoch archive binding mismatch")
-        if archived["generation"] != checkpoint["generation"]:
+        if _exact_int(raw_state.get("generation")) != checkpoint["generation"]:
             raise OccurrenceCorruptError("scheduler epoch archive generation mismatch")
-        if hashlib.sha256(_canonical_json(archived).encode()).hexdigest() != checkpoint["state_digest"]:
+        if hashlib.sha256(_canonical_json(raw_state).encode()).hexdigest() != checkpoint["state_digest"]:
             raise OccurrenceCorruptError("scheduler epoch archive state digest mismatch")
-        bridges = archived.get("bridges", [])
-        if hashlib.sha256(_canonical_json(bridges).encode()).hexdigest() != checkpoint["bridges_digest"]:
+        bridges = raw_state.get("bridges", [])
+        if not isinstance(bridges, list):
+            raise OccurrenceCorruptError("scheduler epoch archive bridges invalid")
+        archive_bridges = cast(list[object], bridges)
+        if hashlib.sha256(_canonical_json(archive_bridges).encode()).hexdigest() != checkpoint["bridges_digest"]:
             raise OccurrenceCorruptError("scheduler epoch archive bridge digest mismatch")
-        if len(bridges) != checkpoint["bridge_count"]:
+        if len(archive_bridges) != checkpoint["bridge_count"]:
             raise OccurrenceCorruptError("scheduler epoch archive bridge count mismatch")
-        self._epoch_states[name] = archived
-        self._load_epoch_chain(root_fd, archived)
-        self._verified_epochs.add(name)
+        return raw_state
+
+    def _load_epoch_chain(self, root_fd: int, state: object) -> None:
+        pending: list[tuple[EpochCheckpoint, object]] = []
+        checkpoint = self._epoch_checkpoint(state)
+        while checkpoint is not None:
+            name = checkpoint["archive"]
+            if name in self._verified_epochs:
+                if self._verified_epochs[name] != checkpoint:
+                    raise OccurrenceCorruptError("scheduler epoch checkpoint changed")
+                break
+            archived = self._read_epoch_state(root_fd, checkpoint)
+            pending.append((checkpoint, archived))
+            checkpoint = self._epoch_checkpoint(archived)
+        for checkpoint, archived in reversed(pending):
+            name = checkpoint["archive"]
+            self._epoch_states[name] = self._validate(archived)
+            self._verified_epochs[name] = checkpoint
+
+    def _validate_with_epochs(self, root_fd: int, state: object) -> SchedulerState:
+        self._load_epoch_chain(root_fd, state)
+        return self._validate(state)
+
+    def retained_evidence(self, state: SchedulerState) -> SchedulerState:
+        """Read current evidence together with the verified predecessor history."""
+        if state["kind"] != "cron_scheduler_state_v4":
+            return state
+        epochs = [state]
+        while (checkpoint := epochs[-1].get("predecessor")) is not None:
+            name = checkpoint["archive"]
+            if self._verified_epochs.get(name) != checkpoint:
+                raise OccurrenceCorruptError("scheduler epoch predecessor not verified")
+            epochs.append(self._epoch_states[name])
+            if epochs[-1]["kind"] != "cron_scheduler_state_v4":
+                break
+        return {
+            **state,
+            "classifications": [item for epoch in reversed(epochs) for item in epoch["classifications"]],
+            "requests": [item for epoch in reversed(epochs) for item in epoch["requests"]],
+        }
+
+    @staticmethod
+    def _checkpoint_for_epoch(epoch: int, state: SchedulerState) -> EpochCheckpoint:
+        bridges = state.get("bridges", [])
+        return {
+            "epoch": epoch,
+            "generation": state["generation"],
+            "state_digest": hashlib.sha256(_canonical_json(state).encode()).hexdigest(),
+            "bridges_digest": hashlib.sha256(_canonical_json(bridges).encode()).hexdigest(),
+            "bridge_count": len(bridges),
+            "archive": f"epoch-{epoch}.json",
+        }
 
     @staticmethod
     def write_epoch_held(store: SchedulerStore, permit: object, held: SchedulerHeldRoot,
                          epoch: int, state: SchedulerState) -> EpochCheckpoint:
         require_scheduler_owner_permit(permit)
         _exact_int(epoch, 0)
+        if epoch >= MAX_EPOCHS:
+            raise SchedulerConflictError("scheduler epoch bound exceeded")
         state = store._validate(state)
+        checkpoint = store._checkpoint_for_epoch(epoch, state)
         payload = {
             "kind": "cron_scheduler_epoch_v1",
             "schema_version": 1,
             "epoch": epoch,
             "state": state,
-            "integrity": hashlib.sha256(_canonical_json(state).encode()).hexdigest(),
+            "integrity": checkpoint["state_digest"],
         }
         data = _canonical_json(payload).encode()
         if len(data) > MAX_EPOCH_BYTES:
             raise SchedulerConflictError("scheduler epoch byte bound exceeded")
-        name = f"epoch-{epoch}.json"
+        name = checkpoint["archive"]
         held.assert_bound()
         directory = -1
         try:
@@ -822,15 +883,7 @@ class SchedulerStore:
             if directory >= 0:
                 os.close(directory)
         held.assert_bound()
-        bridges = state.get("bridges", [])
-        return {
-            "epoch": epoch,
-            "generation": state["generation"],
-            "state_digest": hashlib.sha256(_canonical_json(state).encode()).hexdigest(),
-            "bridges_digest": hashlib.sha256(_canonical_json(bridges).encode()).hexdigest(),
-            "bridge_count": len(bridges),
-            "archive": name,
-        }
+        return checkpoint
 
     def bridge_records(self, state: SchedulerState, occurrence_id: str) -> list[ReconciliationBridge]:
         records: list[ReconciliationBridge] = []
@@ -861,6 +914,34 @@ class SchedulerStore:
     def _validate_entries(self, root_fd: int) -> None:
         _validate_scheduler_entries(root_fd)
 
+    @staticmethod
+    def _epoch_checkpoint(state: object) -> EpochCheckpoint | None:
+        if not isinstance(state, dict):
+            return None
+        value = cast(dict[str, object], state)
+        kind = value.get("kind")
+        if kind not in ("cron_scheduler_state_v3", "cron_scheduler_state_v4"):
+            return None
+        epoch = _exact_int(value.get("epoch"), 1)
+        if epoch > MAX_EPOCHS:
+            raise OccurrenceCorruptError("scheduler epoch bound exceeded")
+        checkpoint = _fields(
+            value.get("predecessor"),
+            {"epoch", "generation", "state_digest", "bridges_digest", "bridge_count", "archive"},
+        )
+        if _exact_int(checkpoint["epoch"], 0) != epoch - 1:
+            raise OccurrenceCorruptError("scheduler epoch predecessor mismatch")
+        if _exact_int(checkpoint["generation"]) >= _exact_int(value.get("generation")):
+            raise OccurrenceCorruptError("scheduler epoch generation mismatch")
+        for name in ("state_digest", "bridges_digest"):
+            digest = checkpoint[name]
+            if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                raise OccurrenceCorruptError("scheduler epoch digest invalid")
+        _exact_int(checkpoint["bridge_count"], 1 if kind == "cron_scheduler_state_v3" else 0)
+        if checkpoint["archive"] != f"epoch-{epoch - 1}.json":
+            raise OccurrenceCorruptError("scheduler epoch archive invalid")
+        return cast(EpochCheckpoint, checkpoint)
+
     def _validate(self, state: object) -> SchedulerState:
         from nanobot.cron.definition_store import parse_persisted_scheduler_commit
         from nanobot.cron.schedule import is_fire, next_fire
@@ -871,48 +952,27 @@ class SchedulerStore:
         )
         v2 = raw_kind == "cron_scheduler_state_v2"
         v3 = raw_kind == "cron_scheduler_state_v3"
+        v4 = raw_kind == "cron_scheduler_state_v4"
         allowed = set(self._empty())
-        if v2 or v3:
+        if v2 or v3 or v4:
             allowed.add("bridges")
-        if v3:
+        if v3 or v4:
             allowed |= {"epoch", "predecessor"}
         value = _fields(cast(object, state), allowed)
-        expected_kind = (
-            "cron_scheduler_state_v3" if v3
-            else "cron_scheduler_state_v2" if v2
-            else "cron_scheduler_state_v1"
-        )
-        expected_version = 3 if v3 else 2 if v2 else 1
+        expected_version = 4 if v4 else 3 if v3 else 2 if v2 else 1
+        expected_kind = f"cron_scheduler_state_v{expected_version}"
         if value["kind"] != expected_kind or type(value["schema_version"]) is not int or value["schema_version"] != expected_version or value["namespace"] != self.namespace or value["runtime_identity"] != self.runtime_identity:
             raise OccurrenceCorruptError("scheduler authority binding mismatch")
         _exact_int(value["generation"])
-        if v3:
-            epoch = _exact_int(value["epoch"], 1)
-            checkpoint = _fields(
-                value["predecessor"],
-                {
-                    "epoch",
-                    "generation",
-                    "state_digest",
-                    "bridges_digest",
-                    "bridge_count",
-                    "archive",
-                },
-            )
-            if _exact_int(checkpoint["epoch"], 0) != epoch - 1:
-                raise OccurrenceCorruptError("scheduler epoch predecessor mismatch")
-            if _exact_int(checkpoint["generation"]) >= value["generation"]:
-                raise OccurrenceCorruptError("scheduler epoch generation mismatch")
-            for name in ("state_digest", "bridges_digest"):
-                digest = checkpoint[name]
-                if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
-                    raise OccurrenceCorruptError("scheduler epoch digest invalid")
-            _exact_int(checkpoint["bridge_count"], 1)
-            if checkpoint["archive"] != f"epoch-{epoch - 1}.json":
-                raise OccurrenceCorruptError("scheduler epoch archive invalid")
+        checkpoint = self._epoch_checkpoint(value)
         for name, limit in (("cursors", MAX_CURSORS), ("classifications", MAX_CLASSIFICATIONS), ("requests", MAX_REQUESTS)):
             if not isinstance(value[name], list) or len(value[name]) > limit:
                 raise OccurrenceCorruptError("scheduler evidence bound exceeded")
+        evidence = self.retained_evidence(cast(SchedulerState, value))
+        classifications = [
+            _fields(item, {"key", "revision", "predecessor_revision", "lower", "upper", "kind", "exclusions"})
+            for item in evidence["classifications"]
+        ]
         keys: set[str] = set()
         for cursor in value["cursors"]:
             _fields(cursor, {"key", "job_id", "commit", "revision", "boundary", "next_fire"})
@@ -925,12 +985,11 @@ class SchedulerStore:
             _exact_int(cursor["boundary"], -1)
             if cursor["next_fire"] != next_fire(commit["schedule"], commit["commit_clock_ms"], cursor["boundary"]):
                 raise OccurrenceCorruptError("scheduler successor does not match exact schedule")
-            history = [item for item in value["classifications"] if item.get("key") == key]
+            history = [item for item in classifications if item.get("key") == key]
             if len(history) != cursor["revision"] or not history or history[-1]["upper"] != cursor["boundary"]:
                 raise OccurrenceCorruptError("scheduler cursor lost predecessor classification")
             prior = None
             for revision, item in enumerate(history, 1):
-                _fields(item, {"key", "revision", "predecessor_revision", "lower", "upper", "kind", "exclusions"})
                 if item["revision"] != revision or type(item["revision"]) is not int or item["predecessor_revision"] != revision - 1 or type(item["predecessor_revision"]) is not int:
                     raise OccurrenceCorruptError("scheduler classification revision mismatch")
                 _exact_int(item["lower"], -1)
@@ -938,26 +997,31 @@ class SchedulerStore:
                 if item["upper"] < item["lower"] or (prior is not None and item["lower"] != prior):
                     raise OccurrenceCorruptError("scheduler classification boundary mismatch")
                 prior = item["upper"]
-                if item["kind"] not in {"missed", "claimed", "observed"} or not isinstance(item["exclusions"], list) or len(item["exclusions"]) > MAX_EXCLUSIONS:
+                raw_exclusions: object = item["exclusions"]
+                if item["kind"] not in {"missed", "claimed", "observed"} or not isinstance(raw_exclusions, list):
+                    raise OccurrenceCorruptError("scheduler classification invalid")
+                exclusions = cast(list[object], raw_exclusions)
+                if len(exclusions) > MAX_EXCLUSIONS:
                     raise OccurrenceCorruptError("scheduler classification invalid")
                 ids: set[str] = set()
-                for exclusion in item["exclusions"]:
-                    _fields(exclusion, {"occurrence_id", "fire", "owner", "generation", "state"})
-                    if exclusion["occurrence_id"] in ids or not isinstance(exclusion["occurrence_id"], str) or len(exclusion["occurrence_id"]) != 64 or any(char not in "0123456789abcdef" for char in exclusion["occurrence_id"]):
+                for raw_exclusion in exclusions:
+                    exclusion = _fields(raw_exclusion, {"occurrence_id", "fire", "owner", "generation", "state"})
+                    occurrence_id: object = exclusion["occurrence_id"]
+                    if not isinstance(occurrence_id, str) or occurrence_id in ids or len(occurrence_id) != 64 or any(char not in "0123456789abcdef" for char in occurrence_id):
                         raise OccurrenceCorruptError("scheduler exclusion identity invalid")
-                    ids.add(exclusion["occurrence_id"])
+                    ids.add(occurrence_id)
                     _exact_int(exclusion["fire"])
                     _exact_int(exclusion["generation"], 1)
                     if not isinstance(exclusion["owner"], str) or not exclusion["owner"] or exclusion["state"] not in {"claimed", "completed"} or not item["lower"] < exclusion["fire"] <= item["upper"] or not is_fire(commit["schedule"], commit["commit_clock_ms"], exclusion["fire"]):
                         raise OccurrenceCorruptError("scheduler exclusion not in represented fire set")
-                if item["kind"] != "missed" and (len(item["exclusions"]) != 1 or next_fire(commit["schedule"], commit["commit_clock_ms"], item["lower"]) != item["upper"]):
+                if item["kind"] != "missed" and (len(exclusions) != 1 or next_fire(commit["schedule"], commit["commit_clock_ms"], item["lower"]) != item["upper"]):
                     raise OccurrenceCorruptError("scheduler claimed classification not exact")
-        if any(item.get("key") not in keys for item in value["classifications"]):
+        if any(item.get("key") not in keys for item in classifications):
             raise OccurrenceCorruptError("scheduler orphan classification")
         request_keys: set[tuple[str, str | None, str]] = set()
         sequences: dict[tuple[str, str | None], int] = {}
-        for ordinal, request in enumerate(value["requests"], 1):
-            _fields(request, {"source", "controller", "request_id", "inputs", "clock_ms", "sequence", "allocation_sequence"})
+        for ordinal, raw_request in enumerate(evidence["requests"], 1):
+            request = _fields(raw_request, {"source", "controller", "request_id", "inputs", "clock_ms", "sequence", "allocation_sequence"})
             key = (request["source"], request["controller"], request["request_id"])
             domain = key[:2]
             expected_sequence = sequences.get(domain, 0) + 1
@@ -975,14 +1039,14 @@ class SchedulerStore:
             _exact_int(request["clock_ms"])
             request_keys.add(key)
             sequences[domain] = expected_sequence
-        if v2 or v3:
+        if v2 or v3 or v4:
             bridges = value["bridges"]
             if not isinstance(bridges, list) or len(cast(list[object], bridges)) > MAX_BRIDGES:
                 raise OccurrenceCorruptError("scheduler bridge bound exceeded")
             if v2 and not bridges:
                 raise OccurrenceCorruptError("scheduler bridge bound exceeded")
-            if v3 and bridges:
-                predecessor_floor = value["predecessor"]["generation"]
+            predecessor_floor = checkpoint["generation"] if checkpoint is not None else 0
+            if predecessor_floor and bridges:
                 if any(
                     cast(dict[str, Any], bridge).get("publication_generation", 0)
                     <= predecessor_floor
@@ -990,7 +1054,7 @@ class SchedulerStore:
                 ):
                     raise OccurrenceCorruptError("scheduler epoch bridge publication invalid")
             tails: dict[str, dict[str, Any]] = {}
-            publication = value["predecessor"]["generation"] if v3 and bridges else 0
+            publication = predecessor_floor
             for raw_bridge in cast(list[object], value["bridges"]):
                 bridge = _fields(raw_bridge, {"occurrence_id", "identity", "immutable_digest", "predecessor_owner",
                     "predecessor_generation", "successor_owner", "successor_generation", "resolution",
@@ -1055,8 +1119,10 @@ class SchedulerStore:
             wire = _fields(wire, {"state", "integrity"})
             if wire["integrity"] != hashlib.sha256(_canonical_json(wire["state"]).encode()).hexdigest():
                 raise OccurrenceCorruptError("scheduler state integrity mismatch")
-            value = self._validate(wire["state"])
-            self._load_epoch_chain(held.root_fd, value)
+            if reconciliation_refresh:
+                self._verified_epochs.clear()
+                self._epoch_states.clear()
+            value = self._validate_with_epochs(held.root_fd, wire["state"])
             if reconciliation_refresh and self._state_inode is not None and (inode != self._state_inode or data != self._state_content):
                 self._prove_reconciliation_extension(value, inode, data)
             # Durable reproof is mandatory for every runtime admission/read.
@@ -1080,8 +1146,10 @@ class SchedulerStore:
         # The pinned bytes came from _read's exact envelope validation.
         prior_wire = cast(dict[str, object], _strict_json_loads(self._state_content, label="pinned scheduler state"))
         prior = self._validate(prior_wire["state"])
+        value_evidence = self.retained_evidence(value)
+        prior_evidence = self.retained_evidence(prior)
         for name in ("namespace", "runtime_identity", "cursors", "classifications", "requests"):
-            if value[name] != prior[name]:
+            if value_evidence[name] != prior_evidence[name]:
                 raise OccurrenceCorruptError("scheduler acquisition changed non-reconciliation evidence")
         prior_epoch = prior.get("epoch", 0)
         value_epoch = value.get("epoch", 0)
@@ -1111,77 +1179,106 @@ class SchedulerStore:
         refresh = SchedulerLease.consume_acquisition_refresh(lease, _SCHEDULER_OWNER_PERMIT, self)
         return _PrivateFiles.read_scheduler_acquisition(self._files, _SCHEDULER_OWNER_PERMIT, self, lease, refresh=refresh)
 
+    @staticmethod
+    def _state_with_bridge(state: SchedulerState, bridge: ReconciliationBridge) -> SchedulerState:
+        successor = deepcopy(state)
+        if "epoch" not in state:
+            successor.update(kind="cron_scheduler_state_v2", schema_version=2)
+        successor["generation"] += 1
+        successor["bridges"] = [*state.get("bridges", []), deepcopy(bridge)]
+        return successor
+
     def prepare_bridge(self, state: SchedulerState, bridge: ReconciliationBridge) -> SchedulerState:
         """Bound/validate the entire successor before occurrence authority is mutated."""
-        successor = deepcopy(state)
-        v3 = state.get("kind") == "cron_scheduler_state_v3"
-        successor.update(
-            kind="cron_scheduler_state_v3" if v3 else "cron_scheduler_state_v2",
-            schema_version=3 if v3 else 2,
-            generation=state["generation"] + 1,
-        )
-        successor["bridges"] = [*state.get("bridges", []), deepcopy(bridge)]
+        successor = self._state_with_bridge(state, bridge)
         self._encode(successor)
         return successor
 
-    def rollover_epoch(self, lease: SchedulerLease) -> SchedulerState:
-        """Archive bridge evidence and start the next scheduler epoch."""
+    def rollover_epoch(
+        self, lease: SchedulerLease, *, compact_evidence: bool = False,
+        pending_bridge: ReconciliationBridge | None = None,
+    ) -> SchedulerState:
+        """Archive the verified predecessor before starting the next epoch."""
         if self._lease is not lease:
             raise SchedulerConflictError("scheduler epoch rollover requires the held owner")
         lease.reprove()
         state = self.read_for_acquisition(lease)
-        bridges = state.get("bridges", [])
-        if not bridges:
-            raise SchedulerConflictError("scheduler epoch rollover requires bridge evidence")
+        compact = compact_evidence or state["kind"] == "cron_scheduler_state_v4"
+        if not state.get("bridges") and not (compact and (state["classifications"] or state["requests"])):
+            raise SchedulerConflictError("scheduler epoch rollover requires retained evidence")
         epoch = state.get("epoch", 0)
-        checkpoint = self._files.write_scheduler_epoch(
-            _SCHEDULER_OWNER_PERMIT, self, epoch, state
-        )
         successor = deepcopy(state)
         successor.update(
-            kind="cron_scheduler_state_v3",
-            schema_version=3,
+            kind="cron_scheduler_state_v4" if compact else "cron_scheduler_state_v3",
+            schema_version=4 if compact else 3,
             generation=state["generation"] + 1,
             bridges=[],
             epoch=epoch + 1,
-            predecessor=checkpoint,
+            predecessor=self._checkpoint_for_epoch(epoch, state),
         )
+        if compact:
+            successor.update(classifications=[], requests=[])
+        self._encode_bounded_state(successor)
+        if pending_bridge is not None:
+            if MAX_BRIDGES < 1:
+                raise OccurrenceCorruptError("scheduler bridge bound exceeded")
+            bridge: ReconciliationBridge = {
+                **pending_bridge, "publication_generation": successor["generation"] + 1,
+            }
+            self._encode_bounded_state(self._state_with_bridge(successor, bridge))
+        self._files.write_scheduler_epoch(_SCHEDULER_OWNER_PERMIT, self, epoch, state)
         self.compare_and_swap(state, successor)
-        self._epoch_states[checkpoint["archive"]] = state
-        self._verified_epochs.add(checkpoint["archive"])
         return successor
 
     def rollover_epoch_if_needed(
-        self, lease: SchedulerLease, state: SchedulerState
+        self, lease: SchedulerLease, state: SchedulerState, *,
+        pending_bridge: ReconciliationBridge | None = None,
     ) -> SchedulerState:
-        """Roll over before live bridge evidence reaches its structural bound."""
+        """Roll over the full live evidence before the stopped owner resumes."""
         bridges = state.get("bridges", [])
-        if not bridges:
+        classification_count = len(state["classifications"])
+        request_count = len(state["requests"])
+        if not (bridges or classification_count or request_count):
             return state
         try:
             encoded_size = len(self._encode(state))
         except SchedulerConflictError:
             encoded_size = MAX_STATE_BYTES + 1
-        if (
-            len(bridges) >= MAX_BRIDGES
-            or encoded_size > MAX_STATE_BYTES - 64 * 1024
-        ):
-            return self.rollover_epoch(lease)
+        near_byte_limit = encoded_size > MAX_STATE_BYTES - 64 * 1024
+        compact = (
+            classification_count >= MAX_CLASSIFICATIONS
+            or request_count >= MAX_REQUESTS
+            or (near_byte_limit and bool(classification_count or request_count))
+        )
+        if compact or len(bridges) >= MAX_BRIDGES or near_byte_limit:
+            return self.rollover_epoch(
+                lease, compact_evidence=compact, pending_bridge=pending_bridge,
+            )
         return state
 
     @staticmethod
     def _is_epoch_rollover(
         expected: SchedulerState, successor: SchedulerState
     ) -> bool:
+        if successor["kind"] == "cron_scheduler_state_v4":
+            evidence_ok = (
+                bool(expected["classifications"] or expected["requests"] or expected.get("bridges"))
+                and not successor["classifications"] and not successor["requests"]
+            )
+        else:
+            evidence_ok = (
+                successor["kind"] == "cron_scheduler_state_v3"
+                and expected["kind"] != "cron_scheduler_state_v4"
+                and bool(expected.get("bridges"))
+                and successor["classifications"] == expected["classifications"]
+                and successor["requests"] == expected["requests"]
+            )
         return (
-            successor.get("kind") == "cron_scheduler_state_v3"
-            and bool(expected.get("bridges", []))
+            evidence_ok
             and successor.get("epoch") == expected.get("epoch", 0) + 1
             and successor.get("generation") == expected["generation"] + 1
             and successor.get("bridges") == []
             and successor["cursors"] == expected["cursors"]
-            and successor["classifications"] == expected["classifications"]
-            and successor["requests"] == expected["requests"]
         )
 
     def _validate_epoch_rollover(
@@ -1207,12 +1304,19 @@ class SchedulerStore:
             raise SchedulerConflictError("scheduler epoch predecessor invalid")
         self._load_epoch_chain(held.root_fd, successor)
 
-    def _encode(self, state: SchedulerState) -> bytes:
-        state = self._validate(state)
+    @staticmethod
+    def _encode_bounded_state(state: SchedulerState) -> bytes:
         data = _canonical_json({"state": state, "integrity": hashlib.sha256(_canonical_json(state).encode()).hexdigest()}).encode()
         if len(data) > MAX_STATE_BYTES:
             raise SchedulerConflictError("scheduler state byte bound exceeded")
         return data
+
+    def _encode(self, state: SchedulerState) -> bytes:
+        return self._encode_bounded_state(self._validate(state))
+
+    def require_publishable(self, state: SchedulerState) -> None:
+        """Check the complete bounded cursor state before any occurrence claim."""
+        self._encode(state)
 
     def _publish(self, held: SchedulerHeldRoot, state: SchedulerState, *, create: bool = False) -> None:
         data = self._encode(state)
@@ -1264,6 +1368,8 @@ class SchedulerStore:
             self._validate_epoch_rollover(held, expected, successor)
             self._publish(held, successor)
             return successor
+        if successor.get("predecessor") != expected.get("predecessor"):
+            raise SchedulerConflictError("scheduler epoch can change only through rollover")
         # Retained proof is append-only, including first-commit cursors.
         for name in ("classifications", "requests"):
             if successor[name][:len(expected[name])] != expected[name]:
@@ -1298,12 +1404,51 @@ class SchedulerStore:
         finally:
             lease.release()
 
+    def prepare_rollback_export(
+        self, lease: SchedulerLease, records: list[OccurrenceRecord],
+    ) -> tuple[SchedulerState, bytes]:
+        """Build the previous format from all verified evidence on the stopped copy."""
+        if self._lease is not lease:
+            raise SchedulerConflictError("scheduler rollback requires the held owner")
+        current = self.read_for_acquisition(lease)
+        retained = self.retained_evidence(current)
+        bridges = sorted(
+            (
+                bridge
+                for state in (*self._epoch_states.values(), current)
+                for bridge in state.get("bridges", [])
+            ),
+            key=lambda item: item["publication_generation"],
+        )
+        legacy: SchedulerState = {
+            "kind": "cron_scheduler_state_v2" if bridges else "cron_scheduler_state_v1",
+            "schema_version": 2 if bridges else 1,
+            "namespace": current["namespace"],
+            "runtime_identity": current["runtime_identity"],
+            "generation": current["generation"],
+            "cursors": current["cursors"],
+            "classifications": retained["classifications"],
+            "requests": retained["requests"],
+        }
+        if bridges:
+            legacy["bridges"] = bridges
+        encoded = self._encode(legacy)
+        bridged = {bridge["occurrence_id"] for bridge in bridges}
+        for record in records:
+            prove_trigger_request(legacy, record)
+            if record.reconciliation is not None and record.occurrence_id not in bridged:
+                raise SchedulerConflictError("repair prior reconciliation bridge first")
+        verify_occurrence_evidence(legacy, records)
+        lease.reprove()
+        return legacy, encoded
+
     def allocate_request(self, *, source: Literal["manual", "system"], controller: str | None, request_id: str,
                          inputs: TriggerInputs, clock_ms: int) -> TriggerRequest:
         _exact_int(clock_ms)
         state = self.read()
+        requests = self.retained_evidence(state)["requests"]
         key = (source, controller, request_id)
-        for request in state["requests"]:
+        for request in requests:
             if (request["source"], request["controller"], request["request_id"]) == (source, controller, request_id):
                 if request["inputs"] != inputs or request["clock_ms"] != clock_ms:
                     raise SchedulerConflictError("authenticated request inputs changed")
@@ -1312,9 +1457,10 @@ class SchedulerStore:
                 return request
         request: TriggerRequest = {"source": source, "controller": controller, "request_id": request_id,
                    "inputs": inputs, "clock_ms": clock_ms,
-                   "sequence": 1 + sum(item["source"] == source and item["controller"] == controller for item in state["requests"]),
-                   "allocation_sequence": len(state["requests"]) + 1}
+                   "sequence": 1 + sum(item["source"] == source and item["controller"] == controller for item in requests),
+                   "allocation_sequence": len(requests) + 1}
         successor: SchedulerState = {**state, "generation": state["generation"] + 1, "requests": [*state["requests"], request]}
+        self.require_publishable(successor)
         self._allocated_requests[key] = request
         self.compare_and_swap(state, successor)
         return request

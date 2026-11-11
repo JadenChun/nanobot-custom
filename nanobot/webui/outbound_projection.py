@@ -205,6 +205,7 @@ class WebUIOutboundProjector:
                     cast(WebUIWirePayload, {
                         "event": "delegated_child",
                         "chat_id": msg.chat_id,
+                        "parent_session_key": event.parent_session_key,
                         "child_session_key": event.child_session_key,
                         "child_id": event.child_id,
                         "profile": event.profile,

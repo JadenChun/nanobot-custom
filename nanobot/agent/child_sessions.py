@@ -29,6 +29,7 @@ from nanobot.session.runtime_authority import (
     RuntimeSessionMetadata,
     read_runtime_session,
 )
+from nanobot.session.source import new_source_event
 
 DELEGATION_CHILD_METADATA_KEY = "delegation_child"
 CHILD_SESSION_PREFIX = "delegated:"
@@ -470,6 +471,26 @@ class DelegationTree:
         if child is None:
             return False
         try:
+            backend = self.sessions.source_backend(child.session_key)
+            if backend is not None:
+                snapshot = backend.source.load_source_snapshot(child.session_key)
+                metadata = snapshot.header["metadata"].get(DELEGATION_CHILD_METADATA_KEY)
+                if (
+                    not isinstance(metadata, dict)
+                    or cast(dict[str, object], metadata).get("child_id") != child_id
+                ):
+                    return False
+                messages = [new_source_event(
+                    {"role": "user", "content": assignment}, run_id=child_id,
+                )]
+                if result_text:
+                    messages.append(new_source_event(
+                        {"role": "assistant", "content": result_text}, run_id=child_id,
+                    ))
+                backend.source.append_source_events(child.session_key, snapshot.state, messages)
+                self.sessions.invalidate(child.session_key)
+                return True
+
             session = self.sessions.get_or_create(child.session_key)
             session.add_message("user", assignment)
             if result_text:

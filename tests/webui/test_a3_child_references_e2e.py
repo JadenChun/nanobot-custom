@@ -1,143 +1,137 @@
-"""End-to-end regression test for A3-5 child references.
-
-Run a real nested delegation through the normal manager entry points, then
-read the child and grandchild sessions through the authorized child-thread
-HTTP route. Each response must contain that session's own work.
-"""
+"""Follow real delegation references from a gateway chat."""
 
 import asyncio
-import itertools
-from unittest.mock import MagicMock
+from collections import deque
 from urllib.parse import quote
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.turn import TurnContext
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketConfig
-from nanobot.channels.websocket.tests.ws_test_client import InProcessHttpChannel, http_get
-from nanobot.session.manager import Session, SessionManager
+from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+from nanobot.channels.websocket.tests.ws_test_client import WsTestClient, http_get
+from nanobot.config import loader
+from nanobot.config.schema import Config
+from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.runtime_composition import RuntimeComposition
+from nanobot.session.webui_turns import WebuiTurnCoordinator
 from nanobot.webui.gateway_services import build_gateway_services
 
-_PORT = itertools.count(42_000)
-EXPLORE_OK = (
-    "---EXPLORE---\n"
-    '{"summary":"grandchild summary","findings":["g"],"references":[],'
-    '"open_questions":[],"searched_areas":[],"partial":false}\n'
-    "---END---"
-)
+
+class DelegatingProvider(LLMProvider):
+    def __init__(self):
+        super().__init__(provider_name="delegation-test")
+        self.responses = deque([
+            LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                id="delegate",
+                name="delegate_task",
+                arguments={
+                    "contract": "Inspect the fixture with a delegate and report the result.",
+                    "write_scope": ["out.txt"],
+                },
+            )]),
+            LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                id="explore",
+                name="explore",
+                arguments={"task": "Read the fixture", "thoroughness": "quick"},
+            )]),
+            LLMResponse(content=(
+                "---EXPLORE---\n"
+                '{"summary":"grandchild result","findings":["fixture"],"references":[],'
+                '"open_questions":[],"searched_areas":[],"partial":false}\n'
+                "---END---"
+            )),
+            LLMResponse(content="child report"),
+            LLMResponse(content="parent report"),
+        ])
+
+    async def chat(self, messages, tools=None, model=None, **kwargs):
+        return self.responses.popleft()
+
+    def estimate_prompt_tokens(self, messages, tools=None, model=None):
+        return len(messages) + 1, "delegation-fixture"
+
+    def get_default_model(self):
+        return "delegation-fixture"
 
 
-class NestedRunner:
-    def __init__(self, manager):
-        self.manager = manager
-        self.calls = 0
-
-    async def run(self, spec):
-        self.calls += 1
-        if self.calls == 1:
-            nested = await self.manager.run_explore(
-                task="grandchild read-only task",
-                thoroughness="quick",
-                max_iterations=2,
-                turn_context=spec.turn_context,
-            )
-            return AgentRunResult(
-                final_content=f"child result: {nested['summary']}",
-                messages=[],
-            )
-        return AgentRunResult(final_content=EXPLORE_OK, messages=[])
-
-
-async def test_a3_child_references_e2e(tmp_path):
+async def test_a3_child_references_e2e(tmp_path, monkeypatch, unused_tcp_port):
     workspace = tmp_path / "workspace"
-    sessions_root = tmp_path / "sessions"
     workspace.mkdir()
-    sessions_root.mkdir()
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    config_path = runtime_dir / "config.json"
+    config = Config()
+    config.agents.defaults.workspace = str(workspace)
+    config.agents.defaults.model = "delegation-fixture"
+    config.agents.defaults.dream.enabled = False
+    config.gateway.heartbeat.enabled = False
+    config.artifacts.enabled = False
+    config.tools.restrict_to_workspace = True
+    config.bind_source_path(config_path)
+    monkeypatch.setattr(loader, "_current_config_path", config_path)
+    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: DelegatingProvider())
 
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-
-    sessions = SessionManager(workspace, sessions_root=sessions_root)
-    manager = ForegroundAgentManager(
-        provider=provider, workspace=workspace, sessions=sessions
+    composition = RuntimeComposition.define(
+        config, sessions_root=runtime_dir / "sessions", startup_receipt_admitted=True,
     )
-    parent_key = "websocket:parent"
-    sessions.save(Session(key=parent_key))
-
-    nested_runner = NestedRunner(manager)
-    manager.runner = nested_runner
-
-    await manager.run_worker(
-        contract="Do the bounded work with acceptance evidence and validation.",
-        write_scope=["out.txt"],
-        turn_context=TurnContext(session_key=parent_key, run_id="turn-1"),
-    )
-
-    children = manager._delegation_tree.children_of(parent_key)
-    assert len(children) == 1
-    child = children[0]
-    grandchildren = manager._delegation_tree.children_of(child.session_key)
-    assert len(grandchildren) == 1
-    grandchild = grandchildren[0]
-
-    config = WebSocketConfig.model_validate(
-        {
-            "enabled": True,
-            "allowFrom": ["*"],
-            "host": "127.0.0.1",
-            "port": next(_PORT),
-            "path": "/",
-            "websocketRequiresToken": False,
-        }
-    )
-    bus = MessageBus()
+    handle = await composition.acquire()
+    ws_config = WebSocketConfig(enabled=True, allow_from=["*"], port=unused_tcp_port)
     gateway = build_gateway_services(
-        config=config,
-        bus=bus,
-        session_manager=sessions,
+        config=ws_config,
+        bus=handle.bus,
+        session_manager=handle.sessions,
         static_dist_path=None,
         workspace_path=workspace,
-        default_restrict_to_workspace=False,
+        default_restrict_to_workspace=True,
+        config_path=config_path,
         runtime_model_name=None,
         runtime_surface="browser",
         runtime_capabilities_overrides=None,
     )
-    channel = InProcessHttpChannel(config, bus, gateway=gateway)
-    server_task = asyncio.create_task(channel.start())
+    channel = WebSocketChannel(ws_config, handle.bus, gateway=gateway)
+    coordinator = WebuiTurnCoordinator(
+        bus=handle.bus, sessions=handle.sessions, schedule_background=handle.agent.schedule_background,
+    )
+    unsubscribe = coordinator.subscribe()
+
+    async def deliver_outbound():
+        while True:
+            await channel.send(await handle.bus.consume_outbound())
+
+    server = asyncio.create_task(channel.start())
+    agent = asyncio.create_task(handle.agent.run())
+    outbound = asyncio.create_task(deliver_outbound())
     try:
-        token = channel.gateway.tokens.issue_api_token(300)
-        headers = {"Authorization": f"Bearer {token}"}
+        ws_token = gateway.tokens.issue_token(60, audience="webui")
+        api_token = gateway.tokens.issue_api_token(60)
+        async with asyncio.timeout(10), WsTestClient(
+            f"ws://127.0.0.1:{unused_tcp_port}{ws_config.path}", token=ws_token,
+        ) as client:
+            await client.recv_ready()
+            await client.send_json({"type": "new_chat"})
+            while (attached := await client.recv_raw()).get("event") != "attached":
+                pass
+            chat = attached["chat_id"]
+            await client.send_json({"type": "message", "chat_id": chat, "content": "Delegate this task."})
+            references = {}
+            while True:
+                event = await client.recv_raw()
+                if event.get("event") == "delegated_child":
+                    references[event["parent_session_key"]] = event["child_session_key"]
+                if event.get("event") == "turn_end":
+                    break
 
-        async def read(key: str):
-            encoded = quote(key, safe="")
-            url = (
-                f"http://127.0.0.1:{config.port}"
-                f"/api/sessions/{encoded}/webui-thread"
+        child_key = references[f"websocket:{chat}"]
+        grandchild_key = references[child_key]
+        for key, expected in ((child_key, "child report"), (grandchild_key, "grandchild result")):
+            response = await http_get(
+                f"http://127.0.0.1:{unused_tcp_port}/api/sessions/{quote(key, safe='')}/webui-thread",
+                headers={"Authorization": f"Bearer {api_token}"},
             )
-            response = await http_get(url, headers=headers)
             assert response.status_code == 200, response.text
-            return response.json()
-
-        child_body = await read(child.session_key)
-        grandchild_body = await read(grandchild.session_key)
-
-        child_text = "\n".join(
-            str(message.get("content") or "")
-            for message in child_body["messages"]
-        )
-        grandchild_text = "\n".join(
-            str(message.get("content") or "")
-            for message in grandchild_body["messages"]
-        )
-
-        assert "child result" in child_text or "bounded work" in child_text
-        assert "grandchild" in grandchild_text
-        assert child_text != grandchild_text
+            assert any(expected in str(message.get("content")) for message in response.json()["messages"])
     finally:
+        unsubscribe()
+        for task in (agent, outbound):
+            task.cancel()
+        await asyncio.gather(agent, outbound, return_exceptions=True)
         await channel.stop()
-        server_task.cancel()
-        try:
-            await server_task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.gather(server, return_exceptions=True)
+        await composition.aclose()

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,13 +53,8 @@ func testServer(t *testing.T) *httptest.Server {
 		_, _ = w.Write([]byte(`{"fixture":true}`))
 	})
 	mux.HandleFunc("/fixture/v1/read", func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Query().Get("cursor") {
-		case "slow":
+		if r.URL.Query().Get("cursor") == "slow" {
 			time.Sleep(3 * time.Second)
-		case "large":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(bytes.Repeat([]byte("x"), 8<<20))
-			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[]}`))
@@ -583,46 +579,88 @@ func TestQueueFullRetainsTerminalResult(t *testing.T) {
 }
 
 func TestTerminalBudgetHoldsEveryAdmittedResult(t *testing.T) {
-	server := testServer(t)
-	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
-	ids := make([]uint64, 0, 4)
-	for i := 0; i < 4; i++ {
+	release := make(chan struct{})
+	releaseResponses := sync.OnceFunc(func() { close(release) })
+	written := make(chan struct{}, 5)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		marker := r.URL.Query().Get("cursor")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("ETag", `"fixture-`+marker+`"`)
+		_, _ = w.Write(bytes.Repeat([]byte(marker), 8<<20))
+		written <- struct{}{}
+	}))
+	defer server.Close()
+	defer releaseResponses()
+	core := testCore(t, server, func(cfg *Config) {
+		cfg.QueueSize = 1
+		cfg.MaxRequests = 4
+	})
+	expected := make(map[uint64]byte)
+	for _, marker := range []byte("abcd") {
 		id, err := core.HTTP(HTTPRequest{
 			Operation: "fixture_read",
 			Method:    http.MethodGet,
-			Path:      "/fixture/v1/read?cursor=large",
+			Path:      "/fixture/v1/read?cursor=" + string(marker),
 		})
 		if err != nil {
-			t.Fatalf("admit %d: %v", i, err)
+			t.Fatalf("admit %q: %v", marker, err)
 		}
-		ids = append(ids, id)
+		expected[id] = marker
+	}
+	refused, err := core.HTTP(HTTPRequest{
+		Operation: "fixture_read",
+		Method:    http.MethodGet,
+		Path:      "/fixture/v1/read?cursor=e",
+	})
+	if refused != 0 || err != ErrQueueFull {
+		t.Fatalf("expected synchronous refusal, got id=%d err=%v", refused, err)
+	}
+	releaseResponses()
+	deadline := time.After(10 * time.Second)
+	for range expected {
+		select {
+		case <-written:
+		case <-deadline:
+			t.Fatal("fixture responses did not complete")
+		}
 	}
 	buffer := make([]byte, 12<<20)
 	seen := map[uint64]bool{}
-	for len(seen) < len(ids) {
+	for len(seen) < len(expected) {
 		n, err := core.PollEvent(buffer)
 		if err != nil {
 			t.Fatalf("poll: %v", err)
 		}
 		if n == 0 {
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-deadline:
+				t.Fatalf("terminal results did not settle: %v", seen)
+			case <-time.After(10 * time.Millisecond):
+			}
 			continue
 		}
 		var event struct {
-			Type      string  `json:"type"`
-			RequestID float64 `json:"request_id"`
+			Type      string            `json:"type"`
+			RequestID uint64            `json:"request_id"`
+			Headers   map[string]string `json:"headers"`
+			Body      string            `json:"body_base64"`
 		}
 		if err := json.Unmarshal(buffer[:n], &event); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if event.Type == "http_response" {
-			seen[uint64(event.RequestID)] = true
+		marker, admitted := expected[event.RequestID]
+		if !admitted || seen[event.RequestID] || event.Type != "http_response" {
+			t.Fatalf("unexpected terminal result: id=%d type=%s", event.RequestID, event.Type)
 		}
+		body, err := base64.StdEncoding.DecodeString(event.Body)
+		if err != nil || len(body) != 8<<20 || body[0] != marker || event.Headers["etag"] != `"fixture-`+string(marker)+`"` {
+			t.Fatalf("wrong response for request %d", event.RequestID)
+		}
+		seen[event.RequestID] = true
 	}
-	for _, id := range ids {
-		if !seen[id] {
-			t.Fatalf("missing terminal result for %d: %v", id, seen)
-		}
+	if n, err := core.PollEvent(buffer); n != 0 || err != nil {
+		t.Fatalf("extra terminal result: n=%d err=%v", n, err)
 	}
 }
 

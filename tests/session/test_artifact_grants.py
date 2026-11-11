@@ -576,12 +576,11 @@ async def test_runner_adopts_handoff_after_parent_result_and_adds_runtime_notice
 
         assert result.final_content == "done"
         assert parent_reader.read(descriptor.reference).text.encode() == content
-        assert context.artifact_handoff_notices == []
-        notices = [message for message in result.messages if message.get("role") == "system"]
-        assert len(notices) == 1 and descriptor.reference in notices[0]["content"]
+        next_request = provider.chat_with_retry.await_args.kwargs["messages"]
+        assert any(descriptor.reference in str(message.get("content", "")) for message in next_request)
         events = parent.owner.read_snapshot().events
         assert any(event.get("name") == "delegate_task" for event in events)
-        assert not any(event.get("role") == "system" for event in events)
+        assert all(descriptor.reference not in str(event.get("content", "")) for event in events)
 
 
 async def test_foreground_child_uses_parent_admission_for_granted_artifact(tmp_path):

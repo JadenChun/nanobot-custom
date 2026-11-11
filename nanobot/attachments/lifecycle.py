@@ -9,6 +9,7 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from nanobot.attachments.store import AttachmentStore
 
@@ -19,10 +20,10 @@ def _record_hashes(value: object) -> Iterable[str]:
     if not isinstance(value, list):
         return ()
     hashes: list[str] = []
-    for item in value:
+    for item in cast(list[object], value):
         if not isinstance(item, dict):
             continue
-        sha256 = item.get("sha256")
+        sha256 = cast(dict[object, object], item).get("sha256")
         if isinstance(sha256, str) and _HASH_RE.match(sha256):
             hashes.append(sha256)
     return hashes
@@ -32,7 +33,7 @@ def _media_hashes(value: object) -> Iterable[str]:
     if not isinstance(value, list):
         return ()
     hashes: list[str] = []
-    for item in value:
+    for item in cast(list[object], value):
         if not isinstance(item, str):
             continue
         stem = Path(item).name.split(".", 1)[0]
@@ -60,8 +61,9 @@ def reference_evidence(
                         continue
                     if not isinstance(event, dict):
                         continue
-                    referenced.update(_record_hashes(event.get("attachments")))
-                    referenced.update(_media_hashes(event.get("media")))
+                    event_data = cast(dict[str, object], event)
+                    referenced.update(_record_hashes(event_data.get("attachments")))
+                    referenced.update(_media_hashes(event_data.get("media")))
         except OSError:
             complete = False
             continue
@@ -145,7 +147,7 @@ def _migrate_event(
         return None
     media_root = get_media_dir()
     records: list[dict[str, object]] = []
-    for raw_path in media:
+    for raw_path in cast(list[object], media):
         if not isinstance(raw_path, str) or not raw_path:
             return None
         try:
@@ -208,17 +210,21 @@ def migrate_legacy_media(
             except (TypeError, ValueError):
                 output.append(line)
                 continue
-            if not isinstance(event, dict) or event.get("role") != "user":
+            if not isinstance(event, dict):
+                output.append(line)
+                continue
+            event_data = cast(dict[str, object], event)
+            if event_data.get("role") != "user":
                 output.append(line)
                 continue
             result = _migrate_event(
-                event,
+                event_data,
                 store=store,
                 ingress=ingress,
                 source="legacy",
             )
             if result is None:
-                if isinstance(event.get("media"), list) and event.get("media"):
+                if isinstance(event_data.get("media"), list) and event_data.get("media"):
                     events_skipped += 1
                 output.append(line)
                 continue

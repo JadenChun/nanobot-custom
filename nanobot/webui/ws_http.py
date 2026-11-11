@@ -1553,21 +1553,15 @@ class GatewayHTTPHandler:
             return None
 
         if is_child:
-            transcript = (
-                child_payload.get("transcript")
-                if child_payload is not None else None
-            )
+            transcript = load_session_messages() or []
             display_messages = [
                 {
                     "id": f"delegated-{index}",
-                    "role": str(cast(dict[str, Any], item).get("role") or "assistant"),
-                    "content": str(cast(dict[str, Any], item).get("content") or ""),
+                    "role": str(item.get("role")),
+                    "content": str(item.get("content") or "")[:4000 if item["role"] == "user" else 8000],
                 }
-                for index, item in enumerate(
-                    cast(list[Any], transcript)
-                    if isinstance(transcript, list) else []
-                )
-                if isinstance(item, dict)
+                for index, item in enumerate(transcript[-2:])
+                if item.get("role") in {"user", "assistant"}
             ]
             return _http_json_response({
                 "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,

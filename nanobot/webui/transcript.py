@@ -1315,14 +1315,14 @@ def build_user_transcript_event(
     text: str,
     *,
     media_paths: list[Any] | None = None,
-    attachments: Sequence[Mapping[str, Any]] | None = None,
+    attachments: Sequence[object] | None = None,
     cli_apps: list[Any] | None = None,
     mcp_presets: list[Any] | None = None,
     session_mentions: Sequence[Any] | None = None,
 ) -> dict[str, Any] | None:
     paths = [str(path) for path in (media_paths or []) if path]
     records = [
-        dict(attachment)
+        dict(cast(Mapping[str, Any], attachment))
         for attachment in (attachments or [])
         if isinstance(attachment, Mapping)
     ]
@@ -1394,7 +1394,11 @@ def _session_user_event(
         text,
         media_paths=media or None,
         attachments=(
-            [dict(item) for item in cast(list[Any], attachments) if isinstance(item, Mapping)]
+            [
+                dict(cast(Mapping[str, Any], item))
+                for item in cast(list[object], attachments)
+                if isinstance(item, Mapping)
+            ]
             if isinstance(attachments, list)
             else None
         ),
@@ -1837,7 +1841,7 @@ _MAX_TOOL_EVENT_FIELD_BYTES = 16 * 1024
 _TOOL_EVENT_BOUNDED_FIELDS = ("result", "arguments", "error")
 
 
-def _bounded_tool_value(value: Any) -> Any:
+def _bounded_tool_value(value: object) -> object:
     """Redact inline payloads and long text while preserving the value's shape."""
     if isinstance(value, str):
         if value.startswith("data:") and ";base64," in value:
@@ -1847,11 +1851,13 @@ def _bounded_tool_value(value: Any) -> Any:
             return value[:_MAX_TOOL_EVENT_TEXT_CHARS]
         return value
     if isinstance(value, list):
-        items = [_bounded_tool_value(item) for item in value]
-        return value if all(new is old for new, old in zip(items, value)) else items
+        values = cast(list[object], value)
+        items = [_bounded_tool_value(item) for item in values]
+        return values if all(new is old for new, old in zip(items, values)) else items
     if isinstance(value, dict):
-        items = {key: _bounded_tool_value(item) for key, item in value.items()}
-        return value if all(items[key] is value[key] for key in value) else items
+        entries = cast(dict[object, object], value)
+        items = {key: _bounded_tool_value(item) for key, item in entries.items()}
+        return entries if all(items[key] is entries[key] for key in entries) else items
     return value
 
 

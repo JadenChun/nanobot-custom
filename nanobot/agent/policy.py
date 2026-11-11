@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from nanobot.agent.tools.filesystem import find_edit_match as _find_match
+from nanobot.agent.turn import ToolOutcome
 from nanobot.context_repo import ContextRepoManager
 from nanobot.providers.base import ToolCallRequest
 
@@ -239,6 +240,8 @@ class RiskyActionPolicy(ToolPolicy):
                         resolved = self._resolve_write_target(tool_call.name, raw_path)
                         if resolved is not None:
                             self._assessed_write_targets[tool_call.id] = resolved
+                        else:
+                            self._denied_write_targets.add(tool_call.id)
                     continue
                 calls_to_assess.append(tool_call)
             if not calls_to_assess:
@@ -423,22 +426,20 @@ class RiskyActionPolicy(ToolPolicy):
             try:
                 return self.write_target_resolver(tool_name, raw_path)
             except (OSError, PermissionError, ValueError):
-                # The owning tool refuses this target. Let dispatch return its
-                # existing denial instead of reading the target for risk.
                 return None
         return self._resolve_workspace_path(raw_path)
 
     def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
         """Recheck the assessed target through the tool immediately before dispatch."""
         error, _target = self.validate_write_target_binding(tool_call, tool)
-        return error
+        return str(error.content) if isinstance(error, ToolOutcome) else error
 
     def validate_write_target_binding(
         self,
         tool_call: ToolCallRequest,
         tool: Any,
         params: Any = None,
-    ) -> tuple[str | None, Path | None]:
+    ) -> tuple[str | ToolOutcome | None, Path | None]:
         """Recheck and return the assessed target for the mutation boundary."""
         if tool_call.id in self._denied_write_targets:
             self._denied_write_targets.discard(tool_call.id)
@@ -449,18 +450,11 @@ class RiskyActionPolicy(ToolPolicy):
                 raw_path = str(
                     cast(dict[object, object], tool_call.arguments).get("path") or ""
                 )
-            resolver = getattr(tool, "resolve_write_path", None)
-            if raw_path and callable(resolver):
-                try:
-                    resolved_denied: object = cast(
-                        Callable[[str], object], resolver
-                    )(raw_path)
-                except Exception:
-                    # The owning tool still denies this target. Let dispatch
-                    # return its specific access-recovery outcome.
-                    return None, None
-                if resolved_denied is None:
-                    return None, None
+            explain = getattr(tool, "write_refusal", None)
+            if raw_path and callable(explain):
+                refusal = cast(Callable[[str], str | ToolOutcome | None], explain)(raw_path)
+                if refusal is not None:
+                    return refusal, None
             return "write target was not assessable and remains unauthorized", None
         assessed = self._assessed_write_targets.pop(tool_call.id, None)
         if assessed is None:

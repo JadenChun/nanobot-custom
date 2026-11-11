@@ -28,6 +28,7 @@ from nanobot.agent.tools.filesystem import (
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
+from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.runtime import (
     repeated_external_lookup_error,
     repeated_workspace_violation_error,
@@ -335,7 +336,7 @@ async def _execute_tool_call(
         validate_binding = getattr(tool_policy, "validate_write_target_binding", None)
         if callable(validate_binding):
             target_error, assessed_write_target = cast(
-                Callable[[ToolCallRequest, Any, Any], tuple[str | None, Path | None]],
+                Callable[[ToolCallRequest, Any, Any], tuple[str | ToolOutcome | None, Path | None]],
                 validate_binding,
             )(tool_call, validation_tool, params)
         else:
@@ -347,6 +348,11 @@ async def _execute_tool_call(
                 )(tool_call, validation_tool)
             else:
                 target_error = None
+        if isinstance(target_error, ToolOutcome):
+            stopped = {"name": tool_call.name, "status": "stopped", "detail": target_error.stop_reason}
+            await _record_result(tool_result_callback, ordinal, tool_call, target_error,
+                                 target_error, stopped, dispatched=False)
+            return target_error, stopped
         if target_error:
             payload = _with_retry_hint(target_error)
             event: dict[str, Any] = {
@@ -354,6 +360,15 @@ async def _execute_tool_call(
                 "status": "error",
                 "detail": target_error[:120],
             }
+            handled = _classify_violation(
+                raw_text=target_error,
+                soft_payload=payload,
+                event=event,
+                tool_call=tool_call,
+                workspace_violation_counts=workspace_violation_counts,
+            )
+            if handled is not None:
+                payload, event = handled
             await _record_result(tool_result_callback, ordinal, tool_call,
                                  target_error, payload, event, dispatched=False)
             await hook.on_execute_tool_error(context, tool_call, tool, params, target_error)
@@ -388,6 +403,8 @@ async def _execute_tool_call(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            if task_is_cancelling():
+                raise asyncio.CancelledError() from exc
             event = {
                 "name": tool_call.name,
                 "status": "error",

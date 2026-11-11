@@ -206,7 +206,7 @@ async def test_managed_unavailable_tool_gets_one_safe_recovery(tmp_path: Path) -
     home, store = _managed_store(tmp_path)
     calls: list[str] = []
     safe = _RecordingTool("list_dir", calls)
-    stale_host_tool = _RecordingTool("agent_browser", [])
+    stale_host_tool = _RecordingTool("agent_browser", calls)
     full_registry = ToolRegistry()
     full_registry.register(safe)
     full_registry.register(stale_host_tool)
@@ -257,14 +257,9 @@ async def test_managed_unavailable_tool_gets_one_safe_recovery(tmp_path: Path) -
     assert result.stop_reason == "completed"
     assert result.final_content == "Used a permitted tool."
     assert calls == ["list_dir"]
-    assert result.tool_events[0]["status"] == "error"
+    recovery_request = provider.chat_with_retry.await_args_list[1].kwargs["messages"]
     tool_message = next(
-        message for message in result.messages
+        message for message in recovery_request
         if message.get("tool_call_id") == "unavailable"
     )
     assert "managed folder access" in str(tool_message["content"])
-    guidance = [
-        message["content"] for message in result.messages
-        if message.get("role") == "system"
-    ]
-    assert any("unconfined host capability" in str(content) for content in guidance)

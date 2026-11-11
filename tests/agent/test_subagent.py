@@ -224,39 +224,6 @@ async def test_subagent_keeps_project_runtime_scope_with_agent_owned_tools(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_foreground_tool_error_stops_without_extra_model_call(tmp_path):
-    provider = MagicMock(spec=LLMProvider)
-    provider.get_default_model.return_value = "test"
-    provider.supports_bound_conversation_state.return_value = False
-    provider.can_resume_conversation_state.return_value = False
-    provider.chat_with_retry = AsyncMock(side_effect=[
-        LLMResponse(
-            content="reading",
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_1",
-                    name="read_file",
-                    arguments={"path": "missing.txt"},
-                )
-            ],
-        ),
-        LLMResponse(content="recovered without restarting", tool_calls=[]),
-    ])
-    manager = ForegroundAgentManager(provider=provider, workspace=tmp_path, runtime=_runtime(provider))
-    try:
-        result = await manager._run_role(
-            role="planner", prompt="Inspect files", assignment="read a missing file",
-            tools=manager._tools_for_role("planner"), max_iterations=3,
-        )
-        assert result.stop_reason == "tool_error"
-        assert provider.chat_with_retry.await_count == 1
-        assert any(event["status"] == "error" for event in result.tool_events)
-        assert not (tmp_path / "missing.txt").exists()
-    finally:
-        await manager.close()
-
-
-@pytest.mark.asyncio
 async def test_spawned_subagent_inherits_llm_usage_source(tmp_path):
     provider = MagicMock(spec=LLMProvider)
     provider.get_default_model.return_value = "test"

@@ -6111,36 +6111,17 @@ def test_handle_file_preview_returns_workspace_file(tmp_path) -> None:
     assert body["truncated"] is False
 
 
-def test_handle_file_preview_probe_checks_availability_without_content(tmp_path) -> None:
-    from urllib.parse import quote
-
-    from websockets.datastructures import Headers
-    from websockets.http11 import Request
-
-    workspace = tmp_path / "workspace"
-    source = workspace / "notes" / "ready.md"
-    source.parent.mkdir(parents=True)
-    source.write_text("ready\n", encoding="utf-8")
-
-    gateway = _basic_handler(MagicMock(), workspace_path=workspace)
-    gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
-    key = "websocket:file-preview"
-    enc = quote(key, safe="")
-    path = quote("notes/ready.md", safe="")
-    req = Request(
-        f"/api/sessions/{enc}/file-preview?path={path}&probe=1",
-        Headers([("Authorization", "Bearer tok")]),
-    )
-
-    resp = gateway.http._handle_file_preview(
-        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
-    )
-
-    assert resp.status_code == 200
-    assert json.loads(resp.body.decode()) == {"available": True}
-
-
-def test_handle_file_preview_probe_reports_missing_file_as_unavailable(tmp_path) -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("relative_path", "data", "available"),
+    [
+        ("notes/ready.md", b"ready\n", True),
+        ("notes/missing.md", None, False),
+        ("firmware.bin", b"\x00\x01\x02\xff", False),
+    ],
+    ids=["text", "missing", "unsupported-binary"],
+)
+async def test_file_preview_probe_reports_availability(tmp_path, relative_path, data, available):
     from urllib.parse import quote
 
     from websockets.datastructures import Headers
@@ -6148,48 +6129,26 @@ def test_handle_file_preview_probe_reports_missing_file_as_unavailable(tmp_path)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    if data is not None:
+        source = workspace / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(data)
+
     gateway = _basic_handler(MagicMock(), workspace_path=workspace)
-    gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
-    key = "websocket:file-preview"
-    enc = quote(key, safe="")
-    req = Request(
-        f"/api/sessions/{enc}/file-preview?path=notes%2Fmissing.md&probe=1",
-        Headers([("Authorization", "Bearer tok")]),
+    token = gateway.tokens.issue_api_token(60)
+    key = quote("websocket:file-preview", safe="")
+    path = quote(relative_path, safe="")
+    request = Request(
+        f"/api/sessions/{key}/file-preview?path={path}&probe=1",
+        Headers([("Authorization", f"Bearer {token}")]),
     )
 
-    resp = gateway.http._handle_file_preview(
-        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    response = await gateway.http.dispatch(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), request,
     )
 
-    assert resp.status_code == 200
-    assert json.loads(resp.body.decode()) == {"available": False}
-
-
-def test_handle_file_preview_probe_reports_binary_file_as_unavailable(tmp_path) -> None:
-    from urllib.parse import quote
-
-    from websockets.datastructures import Headers
-    from websockets.http11 import Request
-
-    workspace = tmp_path / "workspace"
-    source = workspace / "image.png"
-    workspace.mkdir()
-    source.write_bytes(b"\x89PNG\r\n\0binary")
-    gateway = _basic_handler(MagicMock(), workspace_path=workspace)
-    gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
-    key = "websocket:file-preview"
-    enc = quote(key, safe="")
-    req = Request(
-        f"/api/sessions/{enc}/file-preview?path=image.png&probe=1",
-        Headers([("Authorization", "Bearer tok")]),
-    )
-
-    resp = gateway.http._handle_file_preview(
-        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
-    )
-
-    assert resp.status_code == 200
-    assert json.loads(resp.body.decode()) == {"available": False}
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"available": available}
 
 
 def test_file_preview_normalizes_windows_file_url() -> None:

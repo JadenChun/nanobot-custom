@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ class AdoptionResult:
 
 
 def adopt_media_paths(
-    media: list[str],
+    media: Sequence[object],
     *,
     source: str,
     logger: Any = None,

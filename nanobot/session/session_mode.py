@@ -3394,6 +3394,36 @@ class SessionModeResolver:
             raise _fail()
         return results
 
+    @_locked_operation(migration=True)
+    def prepare_rollback(self) -> int:
+        """Restore current mode proofs to the previous reader's layout."""
+        self.list_modes()
+        live = ".session-mode/journals"
+        retained = ".session-mode/retained-journals"
+        live_ids = set(self.storage.list(live))
+        for operation_id in live_ids:
+            journal = self._journal_records(operation_id)
+            if journal[-1]["phase"] not in {"complete", "aborted"}:
+                raise _fail("recover pending session operations before rollback")
+
+        required: set[str] = set()
+        for name in self.storage.list(".session-mode/records", suffix=".json"):
+            record = _parse_json(self.storage.read(f".session-mode/records/{name}"))
+            required.add(cast(str, record["committed_operation_id"]))
+        missing = sorted(required - live_ids)
+        excess = max(0, len(live_ids) + len(missing) - mode_storage.MODE_ENUM_LIMIT)
+        movable = sorted(live_ids - required)[:excess]
+        if len(movable) != excess or any(
+            self.storage.exists(f"{retained}/{operation_id}") for operation_id in movable
+        ):
+            raise _fail("current proofs exceed the previous reader's journal bound")
+        for operation_id in movable:
+            self.storage.rename(f"{live}/{operation_id}", f"{retained}/{operation_id}")
+        for operation_id in missing:
+            self.storage.rename(f"{retained}/{operation_id}", f"{live}/{operation_id}")
+        self.list_modes()
+        return len(missing)
+
     @_locked_operation(execution=True)
     def begin_export(
         self,

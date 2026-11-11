@@ -1,6 +1,7 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
+def unsignedRelease = project.findProperty('nanobotUnsignedRelease') == 'true'
 def releaseKeystorePath = System.getenv("NANOBOT_MOBILE_KEYSTORE") ?: "${System.properties['user.home']}/.config/nanobot-mobile/release.keystore"
 def releaseKeyAlias = System.getenv("NANOBOT_MOBILE_KEY_ALIAS")
 def releaseStorePassword = System.getenv("NANOBOT_MOBILE_KEYSTORE_PASSWORD")
@@ -14,7 +15,7 @@ if (!releaseStorePassword && releasePasswordFile) {
     }
 }
 def releaseKeystore = new File(releaseKeystorePath)
-def hasReleaseSigning = releaseKeystore.isFile() && releaseKeyAlias && releaseStorePassword
+def hasReleaseSigning = !unsignedRelease && releaseKeystore.isFile() && releaseKeyAlias && releaseStorePassword
 
 android {
     namespace = "ai.nanobot.mobile"
@@ -108,7 +109,7 @@ try {
 
 tasks.register("verifyReleaseSigning") {
     doLast {
-        if (!hasReleaseSigning) {
+        if (!hasReleaseSigning && !unsignedRelease) {
             throw new GradleException(
                 "Release signing is not configured. Set NANOBOT_MOBILE_KEYSTORE, " +
                 "NANOBOT_MOBILE_KEY_ALIAS and a password environment variable, or run " +

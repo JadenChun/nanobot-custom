@@ -78,7 +78,9 @@ async function mount(
   appOptions: AppOptions = options,
   clipboard?: ClipboardImageReader,
 ): Promise<{ app: NanobotTui; ui: InspectableApp }> {
-  setup = await createTestRenderer({ width: 88, height: 24, screenMode: "alternate-screen" })
+  setup = await createTestRenderer({
+    width: 88, height: 24, screenMode: "alternate-screen", exitOnCtrlC: false,
+  })
   const app = NanobotTui.mount(
     setup.renderer,
     appOptions,
@@ -213,6 +215,34 @@ describe("queued prompt admission", () => {
     expect(ui.status.plainText).not.toContain("queued")
   })
 
+  test("Stop restores an image-only follow-up for the next send", async () => {
+    const sent: string[] = []
+    const sentOptions: MessageOptions[] = []
+    const image = "data:image/png;base64,AAEC/w=="
+    const { app, ui } = await mount(makeClient(sent, sentOptions), options, {
+      read: async () => ({ mimeType: "image/png", dataUrl: image }),
+      dispose: async () => undefined,
+    })
+
+    app.accept({ event: "goal_status", chat_id: "chat", status: "running", turn_id: "turn-1" })
+    await setup!.mockInput.pressKey("v", { ctrl: true })
+    await waitUntil(() => ui.composer.plainText === "[Image #1] ")
+    await setup!.mockInput.pressTab()
+    await waitUntil(() => ui.composer.plainText === "")
+
+    await setup!.mockInput.pressKey("c", { ctrl: true })
+    await waitUntil(() => sent.length === 1)
+    expect(sent).toEqual(["/stop"])
+    expect(sentOptions[0]?.targetTurnId).toBe("turn-1")
+    app.accept({ event: "turn_end", chat_id: "chat", turn_id: "turn-1" })
+    expect(ui.composer.plainText).toBe("[Image #1] ")
+
+    await setup!.mockInput.pressEnter()
+    await waitUntil(() => sent.length === 2)
+    expect(sent[1]).toBe("")
+    expect(sentOptions[1]?.media?.map(({ data_url }) => data_url)).toEqual([image])
+  })
+
   test("reconnect reconciles a lost admission once and keeps order", async () => {
     const sent: string[] = []
     const sentOptions: MessageOptions[] = []
@@ -275,14 +305,16 @@ describe("queued prompt admission", () => {
       await waitUntil(() => sent.length === 1)
       expect(sent[0]).toBe("first")
 
-      // The owner admission receipts for both messages are lost.
+      // The first receipt was lost, but the owner still reports an active turn.
       app.accept({ event: "attached", chat_id: "chat" })
+      await waitUntil(() => ui.status.plainText.includes("1 queued"))
+      expect(sent).toEqual(["first"])
+      app.accept({ event: "turn_end", chat_id: "chat", turn_id: "turn-a" })
       await waitUntil(() => sent.length === 2)
 
       expect(sent).toEqual(["first", "second"])
       expect(ui.status.plainText).toContain("1 queued")
 
-      admitOwner(app, "turn-a")
       admitOwner(app, "turn-b")
 
       expect(sent).toEqual(["first", "second"])

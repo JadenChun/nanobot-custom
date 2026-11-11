@@ -283,10 +283,12 @@ async def _read_bounded_content(
     if encoding in {"gzip", "x-gzip", "deflate"}:
         window = 16 + zlib.MAX_WBITS if encoding != "deflate" else zlib.MAX_WBITS
         decoder = zlib.decompressobj(window)
+        encoded_size = 0
         try:
             async for raw in raw_iterator:
+                encoded_size += len(raw)
                 remaining = limit + 1 - len(chunks)
-                if remaining <= 0:
+                if encoded_size > limit or remaining <= 0:
                     raise _FetchTooLargeError(
                         f"Response exceeds the {limit // (1024 * 1024)} MiB download limit"
                     )

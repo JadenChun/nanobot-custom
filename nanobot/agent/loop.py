@@ -4909,11 +4909,15 @@ class AgentLoop:
         content: list[object],
     ) -> list[object]:
         """Strip volatile multimodal payloads before writing session history."""
-        text_blobs = "\n".join(
-            cast(str, block.get("text", ""))
+        text_blocks = (
+            cast(dict[object, object], block)
             for block in content
             if isinstance(block, dict)
-            and block.get("type") in ("text", "input_text", "output_text")
+        )
+        text_blobs = "\n".join(
+            cast(str, block.get("text", ""))
+            for block in text_blocks
+            if block.get("type") in ("text", "input_text", "output_text")
             and isinstance(block.get("text"), str)
         )
         filtered: list[object] = []

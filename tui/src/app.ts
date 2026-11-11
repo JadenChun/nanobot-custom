@@ -1469,6 +1469,10 @@ export class NanobotTui {
         this.historyBeforeCursor = history.beforeCursor
         this.historyHasMore = history.hasMoreBefore
         this.reconcilePendingFollowUp(history)
+        if (history.activeTurnId) {
+          this.activeTurnId = history.activeTurnId
+          this.setActive(true)
+        }
         this.transcript.history(history.messages)
         this.restorePromptHistory(history.messages)
         const reversedHistory = [...history.messages].reverse()
@@ -1728,7 +1732,7 @@ export class NanobotTui {
     completedTurnIds?: string[]
   }): void {
     const pending = this.pendingFollowUp
-    if (!pending) return
+    if (!pending || pending.chatId !== this.currentChatId) return
     const admitted = pending.turnId === history.activeTurnId
       || (history.completedTurnIds || []).includes(pending.turnId)
     if (!admitted) return
@@ -1797,43 +1801,45 @@ export class NanobotTui {
   }
 
   private restoreQueuedPrompts(): void {
-    this.pendingFollowUp = null
-    const queued = this.promptQueue.restore()
-    if (!queued.length) return
+    if (this.pendingFollowUp) return
+    const queued = this.promptQueue.snapshot()
+    if (!queued.length || !this.restoreDraft([this.composerPrompt(), ...queued])) return
+    this.promptQueue.clear()
     this.syncQueuePreview()
-    const current = this.draft.expand(this.composer.plainText).trim()
-    this.setComposer([current, ...queued.map((prompt) => prompt.content)].filter(Boolean).join("\n\n"))
+  }
+
+  private restoreDraft(prompts: readonly QueuedPrompt[]): boolean {
+    const media = prompts.flatMap((prompt) => prompt.options.media ?? [])
+    if (media.length > MAX_DRAFT_IMAGES) return false
+    this.setComposer(prompts.map((prompt) => prompt.content).filter(Boolean).join("\n\n"))
+    for (const image of media) {
+      const visible = this.composer.plainText
+      const insertion = this.draft.image(image, visible)
+      if (insertion) this.composer.insertText(visible ? ` ${insertion.text}` : insertion.text)
+    }
+    return true
   }
 
   private queueFollowUp(): void {
     if (!this.activeTurn || !this.ready) return
-    const visibleContent = this.composer.plainText.trim()
-    const media = this.draft.media(visibleContent)
-    const content = this.draft.expand(visibleContent).trim()
-    if (!content && media.length === 0) return
-    this.promptQueue.enqueue({
-      content,
-      options: {
-        ...mentionOptions(content, this.availableMentions()),
-        ...(media.length ? { media } : {}),
-      },
-    })
+    const prompt = this.composerPrompt()
+    if (!this.canSendPrompt(prompt)) return
+    this.promptQueue.enqueue(prompt)
     this.clearComposer()
     this.commandMenu.hide()
     this.mentionMenu.hide()
     this.skillMenu.hide()
-    this.recordPrompt(content)
+    this.recordPrompt(prompt.content)
     this.syncQueuePreview()
     this.renderActiveStatus()
     this.updateMeta()
   }
 
   private editLastFollowUp(): boolean {
-    const prompt = this.promptQueue.takeLast()
-    if (!prompt) return false
-    if (this.pendingFollowUp?.prompt === prompt) this.pendingFollowUp = null
-    const current = this.draft.expand(this.composer.plainText).trim()
-    this.setComposer([prompt.content, current].filter(Boolean).join("\n\n"))
+    const prompt = this.promptQueue.snapshot().at(-1)
+    if (!prompt || this.pendingFollowUp?.prompt === prompt) return false
+    if (!this.restoreDraft([prompt, this.composerPrompt()])) return false
+    this.promptQueue.takeLast()
     this.syncQueuePreview()
     this.renderActiveStatus()
     this.updateMeta()
@@ -1847,7 +1853,9 @@ export class NanobotTui {
   }
 
   private syncQueuePreview(): void {
-    this.queuePreview.update(this.promptQueue.snapshot().map(({ content }) => content))
+    this.queuePreview.update(this.promptQueue.snapshot().map(
+      ({ content, displayContent }) => displayContent ?? content,
+    ))
   }
 
   private handleTranscriptNavigation(state: TranscriptNavigation): void {

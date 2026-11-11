@@ -2693,6 +2693,12 @@ class SessionManager:
         self.invalidate(key)
         return result
 
+    def prepare_session_rollback(self) -> int:
+        """Prepare a stopped copy for a reader with live-only mode journals."""
+        if self._mode_resolver is None or not self._mode_operator:
+            raise RuntimeError("offline session operator authority is required")
+        return self._mode_resolver.prepare_rollback()
+
     def peek_cron_interruption_reset_occurrence(self, key: str) -> tuple[str, str] | None:
         """Read the claimed occurrence and run bound to a pending cron reset."""
         if self._mode_resolver is None:

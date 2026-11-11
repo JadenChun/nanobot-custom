@@ -71,7 +71,9 @@ func NewCore(cfg Config) (*Core, error) {
 	// A terminal event carries base64-encoded response bytes plus JSON
 	// overhead. Reserve one terminal slot for each of several maximum
 	// responses; admission refuses when all reserved slots are in use.
-	perResponse := base64.StdEncoding.EncodedLen(cfg.MaxResponseBytes) + 4096
+	// JSON can encode each header byte as a six-byte escape.
+	headerBudget := len(safeResponseHeaderNames) * maxResponseHeaderBytes * 6
+	perResponse := base64.StdEncoding.EncodedLen(cfg.MaxResponseBytes) + headerBudget + 4096
 	terminalLimit := perResponse * 4
 	if terminalLimit < 16<<20 {
 		terminalLimit = 16 << 20
@@ -80,9 +82,6 @@ func NewCore(cfg Config) (*Core, error) {
 		terminalLimit = 64 << 20
 	}
 	maxTerminalResults := terminalLimit / perResponse
-	if maxTerminalResults < 2 {
-		maxTerminalResults = 2
-	}
 	if maxTerminalResults > cfg.MaxRequests {
 		maxTerminalResults = cfg.MaxRequests
 	}

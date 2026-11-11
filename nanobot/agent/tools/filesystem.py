@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
+from nanobot.agent.tools.base import Tool, ToolDenialKind, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.file_state import FileStates, _hash_file, current_file_states
 from nanobot.agent.tools.path_utils import resolve_workspace_path
@@ -455,6 +455,33 @@ class _FsTool(Tool):
     def resolve_write_path(self, path: str) -> Path:
         """Resolve a write request through the filesystem owner's existing policy."""
         return self._resolve_write(path)
+
+    def write_refusal(self, path: str) -> str | ToolOutcome | None:
+        """Report a denied write without entering the mutation path."""
+        try:
+            self.resolve_write_path(path)
+        except FolderAccessNeededError as error:
+            return self._folder_access_result(error)
+        except WorkspaceBoundaryError as error:
+            return ToolResult.error(f"Error: {error}")
+        except PermissionError as error:
+            from nanobot.agent.turn import ToolOutcome
+
+            return ToolOutcome(
+                ToolResult.error(f"Error: {error}"),
+                "tool_error",
+                recovery_kind=ToolDenialKind.WRITE_PERMISSION,
+            )
+        except (OSError, ValueError) as error:
+            return ToolResult.error(f"Error: {error}")
+        return None
+
+    def _folder_access_result(self, error: FolderAccessNeededError) -> str | ToolOutcome:
+        if self._resource_policy is None:
+            return ToolResult.error("Error: file access is unavailable")
+        from nanobot.agent.tools.workspace import folder_access_outcome
+
+        return folder_access_outcome(error, self._resource_policy)
 
     def _resolve(self, path: str, action: str = "read") -> Path:
         resolved = self._resolve_read(path)
@@ -1094,11 +1121,7 @@ class WriteFileTool(_FsTool):
                 self._record_touch(fp)
                 return f"Successfully wrote {len(content)} characters to {fp}"
         except FolderAccessNeededError as e:
-            if self._resource_policy is not None:
-                from nanobot.agent.tools.workspace import folder_access_outcome
-
-                return folder_access_outcome(e, self._resource_policy)
-            return ToolResult.error("Error: file access is unavailable")
+            return self._folder_access_result(e)
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1568,11 +1591,7 @@ class EditFileTool(_FsTool):
                     msg = f"{warning}\n{msg}"
                 return msg
         except FolderAccessNeededError as e:
-            if self._resource_policy is not None:
-                from nanobot.agent.tools.workspace import folder_access_outcome
-
-                return folder_access_outcome(e, self._resource_policy)
-            return ToolResult.error("Error: file access is unavailable")
+            return self._folder_access_result(e)
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:

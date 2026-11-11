@@ -998,6 +998,11 @@ class ForegroundAgentManager:
             assignment=assignment,
             result_text=text,
         )
+        # Commit the child's own source before projecting its terminal outcome.
+        if not tree.record_exchange(
+            admission.child_id, assignment=assignment, result_text=text,
+        ):
+            state, outcome = "uncertain", "history_write_failed"
         result.policy_metadata.setdefault("delegated_child", admission.metadata())
         updated = await tree.complete(
             admission.child_id,
@@ -1006,13 +1011,6 @@ class ForegroundAgentManager:
         )
         if updated is not None:
             await self._emit_child(updated)
-        # Every child keeps an independent durable history even when it also
-        # writes a parent-visible source stream.
-        tree.record_exchange(
-            admission.child_id,
-            assignment=assignment,
-            result_text=text,
-        )
 
     async def _recover_existing_attempt(
         self,

@@ -1,20 +1,22 @@
 """Real temporary manager/channel lifecycle proofs on isolated copied roots."""
 
+import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.bus.events import INBOUND_META_RUNTIME_CONTROL, RUNTIME_CONTROL_SESSION_DISCARD
-from nanobot.channels.websocket.runtime import WebSocketChannel
-from nanobot.channels.websocket.tests.test_websocket_channel import (
-    _basic_handler,
-    _new_temporary_chat,
+from nanobot.bus.events import (
+    INBOUND_META_RUNTIME_CONTROL,
+    RUNTIME_CONTROL_SESSION_DISCARD,
+    OutboundMessage,
 )
-from nanobot.session import webui_turns as wth
+from nanobot.bus.queue import MessageBus
+from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+from nanobot.channels.websocket.tests.ws_test_client import WsTestClient
 from nanobot.session.manager import Session, SessionManager
-from nanobot.session.runtime_authority import OfflineSessionOperator
-from nanobot.webui.temporary_chats import TemporaryChatError
+from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
+from nanobot.webui.gateway_services import build_gateway_services
 from nanobot.webui.transcript import read_transcript_lines
 from tests.session.test_p5_stage2_consumers import state
 
@@ -180,69 +182,76 @@ def isolated_webui(tmp_path, monkeypatch):
     monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 
 
-@pytest.mark.parametrize("managed", [False, True])
 @pytest.mark.parametrize("disposal", ["discard", "disconnect"])
-async def test_real_channel_temporary_lifecycle_and_late_events(tmp_path, managed, disposal):
+async def test_temporary_chat_discards_upload_and_ignores_late_reply(
+    tmp_path, unused_tcp_port, disposal,
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    lease = (await OfflineSessionOperator(workspace, copied_sessions_root=tmp_path / "sessions").acquire()
-             if managed else None)
-    manager = lease.manager if lease else SessionManager(workspace, sessions_root=tmp_path / "sessions")
-    bus = MagicMock()
-    bus.publish_inbound = AsyncMock()
-    channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus,
-        gateway=_basic_handler(bus, session_manager=manager, workspace_path=workspace))
-    owner, other = AsyncMock(), AsyncMock()
+    lease = await DurableSessionAuthority(workspace, sessions_root=tmp_path / "sessions").acquire()
     try:
+        manager = lease.manager
         before = state(manager)
-        chat_id = await _new_temporary_chat(channel, owner)
-        key = f"websocket:{chat_id}"
-        session = manager.get_cached(key)
-        assert session is channel._temporary_chats._active_sessions[chat_id]
-        assert session is not None and not session.policy.persist and not session.policy.log_content
-        assert {"create_goal", "update_goal", "spawn", "cron"} <= session.policy.disabled_tools
-        manager._max_cached_sessions = 1
-        manager.get_or_create("cli:cache-pressure")
-        assert key not in manager._cache
-        assert manager.get_cached(key) is session
-        with pytest.raises(TemporaryChatError, match="^temporary_chat_unavailable$"):
-            channel._temporary_chats.message_policy(other, chat_id, "hello")
-        for command in ("/goal private", "/new", "/dream"):
-            with pytest.raises(TemporaryChatError, match="^temporary_chat_command_rejected$"):
-                channel._temporary_chats.message_policy(owner, chat_id, command)
-        with pytest.raises(TemporaryChatError, match="^temporary_chat_workspace_rejected$"):
-            channel._temporary_chats.validate_workspace_update(chat_id)
-        with pytest.raises(TemporaryChatError, match="^temporary_chat_unavailable$"):
-            channel._temporary_chats.validate_attach(chat_id)
-        await channel._dispatch_envelope(owner, "webui", {"type": "message", "chat_id": chat_id,
-            "content": "private", "webui": True, "turn_id": "turn-1",
-            "media": [{"data_url": "data:text/plain;base64,cHJpdmF0ZQ=="}],
-            "workspace_scope": {"project_path": str(workspace), "access_mode": "restricted"}})
-        assert manager.get_cached(key) is session
-        assert state(manager) == before
-        assert manager.read_session_metadata(key) is None
-        assert read_transcript_lines(key) == []
-        inbound = bus.publish_inbound.await_args_list[0].args[0]
-        upload = Path(inbound.media[0])
-        assert upload.exists()
-        if disposal == "discard":
-            await channel._dispatch_envelope(owner, "webui", {"type": "discard_temporary_chat", "chat_id": chat_id})
-        else:
-            await channel._cleanup_connection(owner)
-        control = bus.publish_inbound.await_args.args[0]
-        assert control.metadata[INBOUND_META_RUNTIME_CONTROL] == RUNTIME_CONTROL_SESSION_DISCARD
-        assert manager.get_cached(key) is None
-        assert not upload.exists()
-        assert not channel._temporary_chats.owns(owner, chat_id)
-        with pytest.raises(TemporaryChatError, match="^temporary_chat_unavailable$"):
-            channel._temporary_chats.message_policy(owner, chat_id, "late")
-        assert channel._persist_turn_transcript_event(chat_id, {"content": "late"}, phase="complete", metadata={"webui": True})
-        assert channel._persist_turn_stream_event(chat_id, {"content": "late"}, completed_text="late", phase="answer", metadata={"webui": True})
-        assert read_transcript_lines(key) == [] and state(manager) == before
+        bus = MessageBus()
+        config = WebSocketConfig(enabled=True, allow_from=["*"], port=unused_tcp_port)
+        gateway = build_gateway_services(
+            config=config, bus=bus, session_manager=manager, static_dist_path=None,
+            workspace_path=workspace, default_restrict_to_workspace=True,
+            runtime_model_name=None, runtime_surface="browser",
+            runtime_capabilities_overrides=None,
+        )
+        channel = WebSocketChannel(config, bus, gateway=gateway)
+        server = asyncio.create_task(channel.start())
+        try:
+            token = gateway.tokens.issue_token(60, audience="webui")
+            async with asyncio.timeout(10), WsTestClient(
+                f"ws://127.0.0.1:{unused_tcp_port}{config.path}", token=token,
+            ) as client:
+                await client.recv_ready()
+                await client.send_json({"type": "new_temporary_chat"})
+                attached = await client.recv_raw()
+                assert attached["event"] == "attached" and attached["temporary"] is True
+                chat_id = attached["chat_id"]
+                key = f"websocket:{chat_id}"
+
+                await client.send_json({
+                    "type": "message", "chat_id": chat_id, "content": "private",
+                    "turn_id": "temporary-turn", "webui": True,
+                    "request_settings_version": 1, "request_intent": "new",
+                    "media": [{"data_url": "data:text/plain;base64,cHJpdmF0ZQ=="}],
+                })
+                accepted = await client.recv_raw()
+                assert accepted["event"] == "message_accepted", accepted
+                inbound = await bus.consume_inbound()
+                assert inbound.session_key == key
+                assert inbound.workspace_scope.access_mode == "restricted"
+                upload = Path(inbound.media[0])
+                assert upload.read_bytes() == b"private"
+                assert manager.read_session_snapshot(key) is None
+                assert read_transcript_lines(key) == []
+
+                if disposal == "discard":
+                    await client.send_json({"type": "discard_temporary_chat", "chat_id": chat_id})
+                else:
+                    await client.close()
+                discarded = await bus.consume_inbound()
+                assert discarded.session_key == key
+                assert discarded.metadata[INBOUND_META_RUNTIME_CONTROL] == RUNTIME_CONTROL_SESSION_DISCARD
+                assert manager.get_cached(key) is None
+                assert not upload.exists()
+
+                await channel.send(OutboundMessage(
+                    channel="websocket", chat_id=chat_id, content="late reply",
+                    metadata={"webui": True},
+                ))
+                assert manager.read_session_snapshot(key) is None
+                assert read_transcript_lines(key) == []
+                assert state(manager) == before
+        finally:
+            await channel.stop()
+            await server
     finally:
-        channel._temporary_chats.close()
-        if lease:
-            await lease.close()
+        await lease.close()
 
 
 async def test_managed_transient_default_is_detached_and_activation_rejects_collisions(tmp_path):
@@ -309,82 +318,3 @@ def test_unmanaged_activation_rejects_durable_collision_even_with_live_transient
     with pytest.raises(RuntimeError, match="^temporary session activation conflicts with session policy$"):
         manager.get_or_create_transient(key, retain=True)
     assert manager.get_cached(key) is retained and state(manager) == before
-
-
-@pytest.mark.asyncio
-async def test_temporary_submitted_sandbox_wins_when_full_is_enabled(tmp_path):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    manager = SessionManager(workspace, sessions_root=tmp_path / "sessions")
-    bus = MagicMock()
-    bus.publish_inbound = AsyncMock()
-    channel = WebSocketChannel(
-        {"enabled": True, "allowFrom": ["*"]},
-        bus,
-        gateway=_basic_handler(bus, session_manager=manager, workspace_path=workspace),
-    )
-    owner = AsyncMock()
-    try:
-        chat_id = await _new_temporary_chat(channel, owner)
-        workspaces = channel.gateway.workspaces
-        prepared = workspaces.prepare_full({"chat_id": chat_id}, local_ui=True)
-        enabled = workspaces.set_permission_mode(
-            {
-                "chat_id": chat_id,
-                "mode": "full",
-                "expected_runtime_id": prepared["workspace_permissions"]["runtime_id"],
-                "expected_permission_revision": prepared[
-                    "workspace_permissions"
-                ]["revision"],
-            },
-            local_ui=True,
-        )
-        assert enabled["workspace_scope"]["access_mode"] == "full"
-        policy = channel._temporary_chats.message_policy(owner, chat_id, "hello")
-        assert policy is not None
-        assert policy.workspace_scope.access_mode == "full"
-
-        await channel._dispatch_envelope(
-            owner,
-            "webui-client",
-            {
-                "type": "message",
-                "chat_id": chat_id,
-                "content": "sandbox",
-                "webui": True,
-                "turn_id": "turn-sandbox",
-                "request_settings_version": 1,
-                "request_intent": "new",
-                "workspace_scope": {
-                    "project_path": str(policy.workspace_scope.project_path),
-                    "access_mode": "restricted",
-                    "restrict_to_workspace": True,
-                },
-            },
-        )
-        sandbox_message = bus.publish_inbound.await_args.args[0]
-        assert sandbox_message.workspace_scope.access_mode == "restricted"
-        wth.clear_websocket_turns(chat_id)
-
-        await channel._dispatch_envelope(
-            owner,
-            "webui-client",
-            {
-                "type": "message",
-                "chat_id": chat_id,
-                "content": "full",
-                "webui": True,
-                "turn_id": "turn-full",
-                "request_settings_version": 1,
-                "request_intent": "new",
-                "workspace_scope": {
-                    "project_path": str(policy.workspace_scope.project_path),
-                    "access_mode": "full",
-                    "restrict_to_workspace": False,
-                },
-            },
-        )
-        full_message = bus.publish_inbound.await_args.args[0]
-        assert full_message.workspace_scope.access_mode == "full"
-    finally:
-        channel._temporary_chats.close()

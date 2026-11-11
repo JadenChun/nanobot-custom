@@ -1,5 +1,7 @@
 import pytest
 
+from nanobot.cron.occurrence_store import OccurrenceCorruptError
+from nanobot.cron.runtime_inspection import inspect_scheduler
 from nanobot.cron.scheduler_store import SchedulerConflictError
 from tests.cron.stage3_fixtures import offline_denial, runtime  # noqa: F401
 
@@ -133,6 +135,40 @@ async def test_bridge_capacity_rolls_epoch_and_resumes_timers(tmp_path, monkeypa
     await graph.scheduler.wake_once()
     assert calls or channels.calls
     await graph.aclose()
+
+
+async def test_recurring_job_keeps_its_receipts_across_scheduler_capacity(tmp_path, monkeypatch):
+    from nanobot.cron import scheduler_store
+
+    monkeypatch.setattr(scheduler_store, "MAX_CLASSIFICATIONS", 3)
+    graph, _item, clock, calls, channels = runtime(tmp_path)
+    store = graph.service.occurrence_store
+    try:
+        for fire in (1100, 1200):
+            clock.now = fire
+            await graph.scheduler.wake_once()
+        earlier = {record.occurrence_id: record for record in store.inspect_records()}
+
+        clock.now = 1300
+        with pytest.raises(OccurrenceCorruptError, match="evidence bound"):
+            await graph.scheduler.wake_once()
+        assert {record.occurrence_id: record for record in store.inspect_records()} == earlier
+
+        graph.stop_claiming()
+        graph.scheduler.release_lease()
+        graph.acquire()
+        evidence = inspect_scheduler(graph.store.root, namespace="stage3", runtime_identity="copied-root")
+        assert evidence["cursors"][0]["next_fire"] == 1400
+
+        clock.now = 1400
+        await graph.scheduler.wake_once()
+        after = {record.occurrence_id: record for record in store.inspect_records()}
+        assert {key: after[key] for key in earlier} == earlier
+        assert sorted(record.identity.scheduled_fire_time_ms for record in after.values()) == [1100, 1200, 1400]
+        assert len(calls) == 3
+        assert channels.calls == ["A", "B"] * 3
+    finally:
+        await graph.aclose()
 
 
 async def test_epoch_archive_tamper_fails_closed(tmp_path, monkeypatch):

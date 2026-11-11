@@ -22,6 +22,17 @@ type HTTPRequest struct {
 	TimeoutMS  int               `json:"timeout_ms,omitempty"`
 }
 
+const maxResponseHeaderBytes = 8192
+
+var safeResponseHeaderNames = map[string]bool{
+	"content-type":   true,
+	"content-length": true,
+	"content-range":  true,
+	"accept-ranges":  true,
+	"etag":           true,
+	"cache-control":  true,
+}
+
 func (c *Core) HTTP(input HTTPRequest) (uint64, error) {
 	c.mu.Lock()
 	state := c.state
@@ -143,14 +154,16 @@ func (c *Core) doHTTP(
 			c.emitHTTPError(id, "too_large", "response body exceeds the configured limit", response.StatusCode)
 			return
 		}
-		c.emit(map[string]any{
+		if err := c.emit(map[string]any{
 			"type":        "http_response",
 			"request_id":  id,
 			"status":      response.StatusCode,
 			"headers":     safeResponseHeaders(response.Header),
 			"body_base64": base64.StdEncoding.EncodeToString(responseBody),
 			"bytes":       len(responseBody),
-		})
+		}); err != nil {
+			c.emitHTTPError(id, "unavailable", "response could not be queued", response.StatusCode)
+		}
 		return
 	}
 	c.emitHTTPError(id, "redirect_denied", "redirect limit exceeded", 0)
@@ -163,6 +176,9 @@ func (c *Core) removeRequest(id uint64) {
 }
 
 func (c *Core) emitHTTPError(id uint64, code, message string, status int) {
+	if len(message) > maxResponseHeaderBytes {
+		message = message[:maxResponseHeaderBytes]
+	}
 	_ = c.emit(map[string]any{
 		"type":       "http_error",
 		"request_id": id,
@@ -196,23 +212,15 @@ func isRedirect(status int) bool {
 }
 
 func safeResponseHeaders(headers http.Header) map[string]string {
-	allowed := map[string]bool{
-		"content-type":   true,
-		"content-length": true,
-		"content-range":  true,
-		"accept-ranges":  true,
-		"etag":           true,
-		"cache-control":  true,
-	}
 	out := make(map[string]string)
 	for key, values := range headers {
 		lower := strings.ToLower(key)
-		if !allowed[lower] || len(values) == 0 {
+		if !safeResponseHeaderNames[lower] || len(values) == 0 {
 			continue
 		}
 		value := values[0]
-		if len(value) > 8192 {
-			value = value[:8192]
+		if len(value) > maxResponseHeaderBytes {
+			value = value[:maxResponseHeaderBytes]
 		}
 		out[lower] = value
 	}

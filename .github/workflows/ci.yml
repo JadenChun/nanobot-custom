@@ -175,6 +175,7 @@ jobs:
         run: uv pip check
 
       - name: Record verification identity
+        id: verification_setup
         shell: bash
         env:
           MATRIX_NAME: ${{ matrix.name }}
@@ -230,7 +231,7 @@ jobs:
           > basedpyright.json
 
       - name: Compare strict diagnostics with the frozen baseline
-        if: always() && matrix.coverage
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
         run: >-
           uv run --no-sync python scripts/check_type_regressions.py
           .github/baselines/a3-0-basedpyright.json basedpyright.json
@@ -238,7 +239,7 @@ jobs:
           --current-root "${{ github.workspace }}"
 
       - name: Run tests with coverage
-        if: always() && matrix.coverage
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
         env:
           COLUMNS: "120"
           LINES: "40"
@@ -250,7 +251,7 @@ jobs:
           --junitxml=artifacts/pytest.xml
 
       - name: Run serial CLI command tests with coverage
-        if: always() && matrix.coverage
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
         env:
           COLUMNS: "120"
           LINES: "40"
@@ -262,7 +263,7 @@ jobs:
           --junitxml=artifacts/cli.xml
 
       - name: Run compatibility tests
-        if: always() && !matrix.coverage
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && !matrix.coverage }}
         env:
           COLUMNS: "120"
           LINES: "40"
@@ -273,7 +274,7 @@ jobs:
           --junitxml=artifacts/pytest.xml
 
       - name: Run serial CLI command compatibility tests
-        if: always() && !matrix.coverage
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && !matrix.coverage }}
         env:
           COLUMNS: "120"
           LINES: "40"

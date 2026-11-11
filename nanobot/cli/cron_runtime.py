@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 
 from nanobot.cron.runtime_inspection import (
+    export_scheduler_rollback,
     inspect_occurrences,
     inspect_scheduler,
     reconcile_occurrence,
@@ -35,6 +36,25 @@ def scheduler_inspect(root: Path = typer.Option(...), namespace: str = typer.Opt
 @cron_runtime_app.command("occurrence-inspect")
 def occurrence_inspect(root: Path = typer.Option(...), namespace: str = typer.Option(...)) -> None:
     _emit(lambda: inspect_occurrences(root, namespace=namespace))
+
+
+@cron_runtime_app.command("scheduler-rollback-export")
+def scheduler_rollback_export(
+    root: Path = typer.Option(...),
+    occurrence_root: Path = typer.Option(...),
+    namespace: str = typer.Option(...),
+    runtime_identity: str = typer.Option(...),
+    destination: Path = typer.Option(...),
+    offline_copy: bool = typer.Option(False, "--offline-copy"),
+) -> None:
+    """Export verified scheduler evidence for the previous release."""
+    if not offline_copy:
+        typer.echo("Error: stop the writers and use a separate state copy.", err=True)
+        raise typer.Exit(5)
+    _emit(lambda: export_scheduler_rollback(
+        root, occurrence_root=occurrence_root, namespace=namespace,
+        runtime_identity=runtime_identity, destination=destination,
+    ))
 
 
 @cron_runtime_app.command("occurrence-reconcile")
