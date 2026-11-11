@@ -1123,8 +1123,12 @@ class SchedulerStore:
                 self._verified_epochs.clear()
                 self._epoch_states.clear()
             value = self._validate_with_epochs(held.root_fd, wire["state"])
-            if reconciliation_refresh and self._state_inode is not None and (inode != self._state_inode or data != self._state_content):
-                self._prove_reconciliation_extension(value, inode, data)
+            if reconciliation_refresh and self._state_content is not None:
+                if data == self._state_content:
+                    if inode != self._state_inode:
+                        raise OccurrenceCorruptError("scheduler state replaced without reconciliation publication")
+                else:
+                    self._prove_reconciliation_extension(value)
             # Durable reproof is mandatory for every runtime admission/read.
             if durable:
                 os.fsync(fd)
@@ -1138,11 +1142,12 @@ class SchedulerStore:
         finally:
             os.close(fd)
 
-    def _prove_reconciliation_extension(self, value: SchedulerState, inode: tuple[int, int], data: bytes) -> None:
+    def _prove_reconciliation_extension(self, value: SchedulerState) -> None:
         if self._state_content is None:
             raise OccurrenceCorruptError("scheduler acquisition predecessor proof missing")
-        if inode == self._state_inode or data == self._state_content:
-            raise OccurrenceCorruptError("scheduler state replaced without reconciliation publication")
+        # Inode numbers can be reused across atomic replacements. A changed
+        # content envelope is the publication identity; the extension below
+        # proves that the new state is a forward continuation.
         # The pinned bytes came from _read's exact envelope validation.
         prior_wire = cast(dict[str, object], _strict_json_loads(self._state_content, label="pinned scheduler state"))
         prior = self._validate(prior_wire["state"])
