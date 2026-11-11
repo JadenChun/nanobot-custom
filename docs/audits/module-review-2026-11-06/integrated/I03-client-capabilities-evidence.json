@@ -1,0 +1,744 @@
+{
+  "schema_version": 1,
+  "stage_id": "I03",
+  "report": "integrated/I03-client-capabilities.md",
+  "status": "same-assistant source checkpoint; full integrated review pending",
+  "date": "2026-11-07",
+  "frozen_pin": {
+    "repository": "JadenChun/nanobot-custom",
+    "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+  },
+  "current_origin_overlay": {
+    "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+    "finding_id": "K01-STG-F01",
+    "original_finding_count_increase": 0,
+    "source": "reports/K01.md current-origin addendum"
+  },
+  "groups": [
+    {
+      "id": "I03-A",
+      "title": "Queued prompts and local send admission",
+      "original_finding_ids": [
+        "U01-F01",
+        "D01-F01"
+      ],
+      "owners": "React composer queue + TUI prompt queue",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": []
+    },
+    {
+      "id": "I03-B",
+      "title": "Async session/channel/skill generation fencing",
+      "original_finding_ids": [
+        "U01-F02",
+        "U01-F03",
+        "U01-F04",
+        "D01-F02"
+      ],
+      "owners": "React session asset/channel/skill components + TUI context panel",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": []
+    },
+    {
+      "id": "I03-C",
+      "title": "Optimistic client state and turn completion attribution",
+      "original_finding_ids": [
+        "U01-F05",
+        "U01-F06"
+      ],
+      "owners": "React sidebar preference hook and per-turn event projection",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": []
+    },
+    {
+      "id": "I03-D",
+      "title": "Registered tools versus advertised command/feature behavior",
+      "original_finding_ids": [
+        "T01-F10",
+        "K01-F11",
+        "A01-F02",
+        "A01-F07"
+      ],
+      "owners": "ToolLoader manifest, instruction text, slash commands, default runtime owners",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": []
+    },
+    {
+      "id": "I03-E",
+      "title": "Skill instructions and runtime/provenance compatibility",
+      "original_finding_ids": [
+        "K01-F03",
+        "K01-F04",
+        "K01-F05",
+        "K01-F07",
+        "K01-F09"
+      ],
+      "owners": "SkillsLoader, current tool semantics and shipped skill metadata/guidance",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": [
+        "K01-STG-F01"
+      ]
+    },
+    {
+      "id": "I03-F",
+      "title": "Route contract, validation and mobile readiness",
+      "original_finding_ids": [
+        "E02-F08",
+        "E02-F19",
+        "E02-F21",
+        "R01-F04",
+        "R01-F07"
+      ],
+      "owners": "WebUI search/settings router, mobile operations contract/production edge, Serve readiness",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": []
+    },
+    {
+      "id": "I03-G",
+      "title": "Tool schema/plugin construction/MCP readiness",
+      "original_finding_ids": [
+        "T01-F01",
+        "T01-F02",
+        "T01-F03",
+        "T01-F05",
+        "T01-F06"
+      ],
+      "owners": "ToolRegistry/ToolLoader, MCPConnection, ForegroundAgentManager",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": []
+    },
+    {
+      "id": "I03-H",
+      "title": "Fixture qualification, gated onboarding, health and cron scope",
+      "original_finding_ids": [
+        "R01-F05",
+        "C00-F04",
+        "C00-F05",
+        "C00-F07",
+        "A01-F06"
+      ],
+      "owners": "Production gateway vs mobile fixture, migration guard, local management and cron admin",
+      "disposition": "related contract invariant, underlying mechanisms/failure windows retained as distinct; see report",
+      "conditional_overlay": []
+    }
+  ],
+  "source_reports": [
+    {
+      "stream": "U01",
+      "report": "reports/U01.md",
+      "coverage": "reports/U01-coverage.json",
+      "coverage_blob_sha": "2fd2a98f7ed5afb25267889b2d019fcaf7073463",
+      "published_finding_ids_referenced": [
+        "U01-F01",
+        "U01-F02",
+        "U01-F03",
+        "U01-F04",
+        "U01-F05",
+        "U01-F06"
+      ],
+      "original_stream_finding_count": 6
+    },
+    {
+      "stream": "D01",
+      "report": "reports/D01.md",
+      "coverage": "reports/D01-coverage.json",
+      "coverage_blob_sha": "a0dfdd64cf21575583c4baf5ded5b4d91278fc53",
+      "published_finding_ids_referenced": [
+        "D01-F01",
+        "D01-F02"
+      ],
+      "original_stream_finding_count": 2
+    },
+    {
+      "stream": "T01",
+      "report": "reports/T01.md",
+      "coverage": "reports/T01-coverage.json",
+      "coverage_blob_sha": "6d4dfb067a8ef3abf0acdec11e856abfcae36150",
+      "published_finding_ids_referenced": [
+        "T01-F10",
+        "T01-F01",
+        "T01-F02",
+        "T01-F03",
+        "T01-F05",
+        "T01-F06"
+      ],
+      "original_stream_finding_count": 12
+    },
+    {
+      "stream": "K01",
+      "report": "reports/K01.md",
+      "coverage": "reports/K01-coverage.json",
+      "coverage_blob_sha": "abb29b01f89515b297275abaf8a8db77a31e3505",
+      "published_finding_ids_referenced": [
+        "K01-F11",
+        "K01-F03",
+        "K01-F04",
+        "K01-F05",
+        "K01-F07",
+        "K01-F09"
+      ],
+      "original_stream_finding_count": 13
+    },
+    {
+      "stream": "A01",
+      "report": "reports/A01.md",
+      "coverage": "reports/A01-coverage.json",
+      "coverage_blob_sha": "196a5755fa626077baa1e665a87a0715f36664cf",
+      "published_finding_ids_referenced": [
+        "A01-F02",
+        "A01-F07",
+        "A01-F06"
+      ],
+      "original_stream_finding_count": 9
+    },
+    {
+      "stream": "E02",
+      "report": "reports/E02.md",
+      "coverage": "reports/E02-coverage.json",
+      "coverage_blob_sha": "b46651bb7dfbd0d6fc7a74fd805838f6cf6d669b",
+      "published_finding_ids_referenced": [
+        "E02-F08",
+        "E02-F19",
+        "E02-F21"
+      ],
+      "original_stream_finding_count": 23
+    },
+    {
+      "stream": "R01",
+      "report": "reports/R01.md",
+      "coverage": "reports/R01-coverage.json",
+      "coverage_blob_sha": "0442ec59262de9f58e6115c9d22ed9eb3d059e0b",
+      "published_finding_ids_referenced": [
+        "R01-F04",
+        "R01-F07",
+        "R01-F05"
+      ],
+      "original_stream_finding_count": 20
+    },
+    {
+      "stream": "C00",
+      "report": "reports/C00.md",
+      "coverage": "reports/C00-coverage.json",
+      "coverage_blob_sha": "cae600b64c0df5dc8675d8cb3270cbebab648059",
+      "published_finding_ids_referenced": [
+        "C00-F04",
+        "C00-F05",
+        "C00-F07"
+      ],
+      "original_stream_finding_count": 7
+    }
+  ],
+  "crosscutting_reports": [
+    "reports/P01.md",
+    "integrated/I01-authority.md",
+    "integrated/I02-durability.md"
+  ],
+  "pinned_direct_source_ranges": [
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/components/thread/ThreadComposer.tsx",
+      "ranges": [
+        [
+          499,
+          536
+        ],
+        [
+          1951,
+          2049
+        ]
+      ],
+      "purpose": "Queued prompts allow images while auto-flush chooses text-only",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tui/src/app.ts",
+      "ranges": [
+        [
+          1006,
+          1030
+        ],
+        [
+          1565,
+          1599
+        ],
+        [
+          2723,
+          2804
+        ]
+      ],
+      "purpose": "TUI local send throw, auto dequeue and /context without identity fence",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/hooks/useSessionGeneratedAssets.ts",
+      "ranges": [
+        [
+          28,
+          88
+        ]
+      ],
+      "purpose": "Initial cancellation versus loadMore unguarded stale response",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/components/settings/channels/ChannelSetupPanel.tsx",
+      "ranges": [
+        [
+          280,
+          321
+        ],
+        [
+          349,
+          408
+        ]
+      ],
+      "purpose": "Feature reset versus async validation and saving stale completion",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/components/settings/SkillsCatalogSettings.tsx",
+      "ranges": [
+        [
+          339,
+          438
+        ]
+      ],
+      "purpose": "Detail fetch cancellation versus enable/delete stale actions",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/hooks/useSidebarState.ts",
+      "ranges": [
+        [
+          180,
+          225
+        ]
+      ],
+      "purpose": "Optimistic state after persistence rejection",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/lib/thread-event-projection.ts",
+      "ranges": [
+        [
+          110,
+          144
+        ]
+      ],
+      "purpose": "Completion metadata scanner crosses old user boundary",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/fork_factories.py",
+      "ranges": [
+        [
+          1,
+          196
+        ]
+      ],
+      "purpose": "Actual explicit tool factory manifest",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/loader.py",
+      "ranges": [
+        [
+          130,
+          179
+        ],
+        [
+          190,
+          225
+        ]
+      ],
+      "purpose": "External plugin create and tool registry publication",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/templates/agent/tool_contract.md",
+      "ranges": [
+        [
+          1,
+          104
+        ]
+      ],
+      "purpose": "Shipped tool-use recommendations and absent tool names",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/command/builtin.py",
+      "ranges": [
+        [
+          935,
+          1038
+        ],
+        [
+          1116,
+          1141
+        ]
+      ],
+      "purpose": "Goal/trigger commands available independent of core tool/trigger consumer",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/cli/commands.py",
+      "ranges": [
+        [
+          321,
+          342
+        ],
+        [
+          505,
+          532
+        ]
+      ],
+      "purpose": "Gated onboarding and CLI local-trigger enqueue",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/cli/gateway_runtime.py",
+      "ranges": [
+        [
+          490,
+          689
+        ]
+      ],
+      "purpose": "Default gateway activation of cron/process completion but no trigger queue consumer",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/delegation.py",
+      "ranges": [
+        [
+          303,
+          330
+        ]
+      ],
+      "purpose": "Lazy foreground MCP readiness race",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/mcp.py",
+      "ranges": [
+        [
+          1348,
+          1450
+        ]
+      ],
+      "purpose": "MCP wrapper register before complete setup; initialization deadline absent",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/registry.py",
+      "ranges": [
+        [
+          220,
+          292
+        ]
+      ],
+      "purpose": "Runtime definitions from admitted registry and dispatch",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/settings_routes.py",
+      "ranges": [
+        [
+          125,
+          155
+        ],
+        [
+          373,
+          403
+        ]
+      ],
+      "purpose": "Missing remote pairing renew route in settings router",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/settings_remote.py",
+      "ranges": [
+        [
+          79,
+          96
+        ],
+        [
+          137,
+          165
+        ]
+      ],
+      "purpose": "Truthy nonboolean enable and implemented renew handler",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/lib/remote-access-api.ts",
+      "ranges": [
+        [
+          269,
+          289
+        ]
+      ],
+      "purpose": "Frontend renew action",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/remote/operations.py",
+      "ranges": [
+        [
+          1,
+          187
+        ]
+      ],
+      "purpose": "Mobile operation declaration loader and strictness",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/remote/contracts/operations-v1.json",
+      "ranges": [
+        [
+          456,
+          486
+        ]
+      ],
+      "purpose": "Advertised enabled POST /mobile/v1/attachment",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/remote/edge.py",
+      "ranges": [
+        [
+          300,
+          332
+        ],
+        [
+          615,
+          633
+        ]
+      ],
+      "purpose": "Actual mobile HTTP routing and attachment WS handler",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/cli/webui_support.py",
+      "ranges": [
+        [
+          394,
+          424
+        ]
+      ],
+      "purpose": "Local health parser crashes on non-object JSON",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/schema.py",
+      "ranges": [
+        [
+          1,
+          236
+        ]
+      ],
+      "purpose": "Typed declaration keywords and raw schema surface",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/skills/cron/SKILL.md",
+      "ranges": [
+        [
+          1,
+          60
+        ]
+      ],
+      "purpose": "Cron workflow time zone instructions",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/loop.py",
+      "ranges": [
+        [
+          1,
+          125
+        ]
+      ],
+      "purpose": "Loop feature entrypoint inspected for activation context",
+      "kind": "selected source evidence, NOT additional primary body credit"
+    }
+  ],
+  "source_data_inspection": {
+    "mobile_registry": "nanobot/remote/contracts/operations-v1.json parsed as JSON and compared against nanobot/remote/edge.py in source analysis; no repository script/import executed",
+    "found_mobile_contract_example": "attachment.write enabled POST /mobile/v1/attachment; production serves attachment via handle_ws_frame rather than the advertised HTTP route",
+    "available_tool_manifest": "fork_factories construct_core_tools has no find_files/grep/apply_patch while template recommends all three"
+  },
+  "cross_substage_overlap": {
+    "I01": [
+      "K01-F03"
+    ],
+    "I02": [
+      "A01-F07"
+    ],
+    "reason": "Each is one existing original finding in separate integrated perspectives; do not add to source finding count"
+  },
+  "staging_cross_reference": [
+    "K01-STG-F01"
+  ],
+  "distinct_defect_nonmerges": [
+    {
+      "a": "U01-F01",
+      "b": "D01-F01",
+      "reason": "modality-dependent FIFO eligibility vs dequeue-before-send",
+      "merge": false
+    },
+    {
+      "a": "U01-F02",
+      "b": "U01-F03",
+      "reason": "gallery session paging vs channel validation surface",
+      "merge": false
+    },
+    {
+      "a": "U01-F04",
+      "b": "D01-F02",
+      "reason": "skill mutation stale completion vs TUI context stale completion",
+      "merge": false
+    },
+    {
+      "a": "U01-F05",
+      "b": "E02-F20",
+      "reason": "optimistic UI preference vs backend effect acknowledgement",
+      "merge": false
+    },
+    {
+      "a": "T01-F10",
+      "b": "K01-F11",
+      "reason": "missing apply_patch one source defect vs broader missing grep/find_files guidance",
+      "merge": false
+    },
+    {
+      "a": "A01-F02",
+      "b": "A01-F07",
+      "reason": "goal tools vs trigger consumer activation",
+      "merge": false
+    },
+    {
+      "a": "K01-F03",
+      "b": "K01-STG-F01",
+      "reason": "malformed skill pre-shadowing vs selected-project builtin path collision",
+      "merge": false
+    },
+    {
+      "a": "E02-F21",
+      "b": "R01-F04",
+      "reason": "missing WebUI route vs mobile contract/edge mismatch",
+      "merge": false
+    },
+    {
+      "a": "T01-F03",
+      "b": "T01-F05",
+      "reason": "first-use MCP no awaited readiness vs partial per-server registry publication",
+      "merge": false
+    },
+    {
+      "a": "T01-F05",
+      "b": "T01-F06",
+      "reason": "partial MCP publication vs stdio handshake without deadline",
+      "merge": false
+    },
+    {
+      "a": "C00-F04",
+      "b": "U01-F05",
+      "reason": "gated config wizard byte writes vs active client preference state",
+      "merge": false
+    },
+    {
+      "a": "R01-F05",
+      "b": "R01-F04",
+      "reason": "fixture qualification differs from real transport route drift",
+      "merge": false
+    }
+  ],
+  "unpromoted_observations": [
+    "U01-O1 queued attachment localStorage data URL privacy/retention awaits explicit D2/D7; no proven disclosure",
+    "U01-O2 pending pairing restoration without client generation fence remains unpromoted",
+    "D01-O4 outstanding runtime controls/discovery after transport rotation remains unpromoted",
+    "K01-STG-F01 is current origin overlay, not original source finding",
+    "R01-F19/F20 test parity and update APK qualifications belong in later release integration",
+    "A01-F08/F09 activation blockers retained and not silently cleared by I03, though not among 32 grouped IDs"
+  ],
+  "limits": {
+    "no_tests_or_source_execution": true,
+    "no_build_or_client_launch": true,
+    "no_product_code_edits": true,
+    "source_only": true,
+    "independent_peer": false,
+    "current_branch_compare_separately": true,
+    "prior_E01_limited_depth_preserved": true,
+    "all_136_integrated": false,
+    "D1_D7_choices_accepted": 0
+  },
+  "counts": {
+    "groups": 8,
+    "unique_frozen_finding_ids": 32,
+    "verified_against_original_coverage": 32,
+    "new_source_credits": 0,
+    "new_findings": 0,
+    "new_questions": 0,
+    "staging_only_overlays_cross_referenced": 1,
+    "I01_overlap": 1,
+    "I02_overlap": 1,
+    "prior_frozen_findings": 136,
+    "prior_questions": 105,
+    "prior_deep_required_coverage": 824,
+    "prior_deep_required_denominator": 824,
+    "E01_limited_depth": 95
+  },
+  "next": "I04 separately: bounded release/toolchain, operational qualification, resource limits and residual compatibility integrations; then final cross-module reconciliation and D1-D7 discussion"
+}

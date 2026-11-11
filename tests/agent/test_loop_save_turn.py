@@ -1690,10 +1690,10 @@ async def test_internal_continuation_queues_turn_without_fake_user_history(_make
     tmp_path: Path,
 ) -> None:
     loop = await _make_full_loop(tmp_path, keys=('feishu:c-auto',))
-    # Explicit historical goal context only; no default goal capability is enabled.
+    # Historical goal continuation must preserve the registered tool contract.
     definitions_before = loop.tools.get_definitions()
-    assert loop.tools.get("create_goal") is None
-    assert loop.tools.get("update_goal") is None
+    assert loop.tools.get("create_goal") is not None
+    assert loop.tools.get("update_goal") is not None
     unsubscribe = loop.register_runtime_context_provider(
         CreateGoalTool(loop.sessions).runtime_context_provider(),
     )
@@ -1760,8 +1760,8 @@ async def test_internal_continuation_queues_turn_without_fake_user_history(_make
             {"role": "assistant", "content": "done"},
         ]
         assert loop.tools.get_definitions() == definitions_before
-        assert loop.tools.get("create_goal") is None
-        assert loop.tools.get("update_goal") is None
+        assert loop.tools.get("create_goal") is not None
+        assert loop.tools.get("update_goal") is not None
     finally:
         unsubscribe()
 

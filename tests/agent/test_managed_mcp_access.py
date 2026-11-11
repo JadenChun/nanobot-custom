@@ -263,3 +263,10 @@ async def test_managed_unavailable_tool_gets_one_safe_recovery(tmp_path: Path) -
         if message.get("tool_call_id") == "unavailable"
     )
     assert "managed folder access" in str(tool_message["content"])
+    guidance = [
+        message["content"] for message in result.messages
+        if message.get("role") == "user"
+        and str(message.get("content", "")).startswith("[Internal recovery note]")
+    ]
+    assert len(guidance) == 1
+    assert "unconfined host capability" in str(guidance[0])

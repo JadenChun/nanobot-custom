@@ -373,6 +373,21 @@ export function RuntimeSettings({
           ) : null}
           <ReadOnlyRow title={t("settings.rows.configPath")} value={settings.runtime.config_path} />
           <SettingsRow
+            title="Periodic Heartbeat"
+            description={settings.runtime.heartbeat.unavailable_reason}
+          >
+            <span className="text-sm text-muted-foreground">
+              {settings.runtime.heartbeat.effective_enabled === true ? "Active" : "Inactive"}
+              {settings.runtime.heartbeat.configured_enabled ? " · Enabled in config" : ""}
+            </span>
+          </SettingsRow>
+          <SettingsRow title="Periodic Dream" description={settings.runtime.dream.unavailable_reason}>
+            <span className="text-sm text-muted-foreground">
+              {settings.runtime.dream.effective_enabled === true ? "Active" : "Inactive"}
+              {settings.runtime.dream.configured_enabled ? " · Enabled in config" : ""}
+            </span>
+          </SettingsRow>
+          <SettingsRow
             title={tx("settings.agentHome.title", "Agent home")}
             description={tx("settings.agentHome.description", "Stores agent instructions, memory, skills, and default outputs.")}
           >

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from bisect import bisect_left
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -13,7 +14,11 @@ from loguru import logger
 
 from nanobot.config.paths import get_webui_dir
 from nanobot.session.manager import SessionManager
-from nanobot.webui.generated_assets import collect_generated_asset_groups
+from nanobot.webui.generated_assets import (
+    SCHEMA_VERSION,
+    build_generated_assets_payload_from_groups,
+    collect_generated_asset_groups,
+)
 from nanobot.webui.session_identity import (
     WEBUI_SESSION_STORAGE_PREFIX,
     webui_session_key,
@@ -123,48 +128,85 @@ def webui_session_keys(webui_dir: Path) -> list[str]:
     return sorted(keys)
 
 
-def _load_generated_asset_groups(
-    session_keys: Sequence[str],
-) -> list[dict[str, Any]]:
+def build_generated_asset_library_page(
+    webui_dir: Path,
+    *,
+    media_root: Path,
+    sign_path: Callable[[Path], Mapping[str, str] | None],
+    cursor: str | None = None,
+    limit: int = 50,
+    max_sessions: int = 200,
+) -> dict[str, Any]:
+    """Read a bounded session page, continuing within a session when necessary.
+
+    Library totals count returned artifacts only. A global count would require
+    reading every transcript. The opaque cursor anchors to a session key so
+    inserting/removing earlier sessions cannot shift later pages.
+    """
+    anchor, offset = _library_cursor(cursor)
+    keys = webui_session_keys(webui_dir)
+    start = bisect_left(keys, anchor)
     groups: list[dict[str, Any]] = []
-    for session_key in session_keys:
+    next_cursor: str | None = None
+    scanned = 0
+    for index in range(start, min(len(keys), start + max_sessions)):
+        session_key = keys[index]
+        scanned += 1
         session_groups = load_or_build_generated_asset_index(
             session_key,
             signature=webui_transcript_signature(session_key),
             records_loader=lambda key=session_key: read_transcript_lines(key),
         )
-        for group in session_groups:
+        group_offset = offset if session_key == anchor else 0
+        payload = build_generated_assets_payload_from_groups(
+            session_groups,
+            session_key=session_key,
+            media_root=media_root,
+            sign_path=sign_path,
+            cursor=group_offset,
+            limit=limit - len(groups),
+        )
+        page: list[dict[str, Any]] = payload["groups"]
+        for group in page:
             item = dict(group)
             item["sessionKey"] = session_key
             groups.append(item)
-    return groups
+        if payload["next"] is not None:
+            next_cursor = json.dumps([session_key, group_offset + len(page)])
+            break
+        if index + 1 < len(keys):
+            next_cursor = json.dumps([keys[index + 1], 0])
+        else:
+            next_cursor = None
+        if len(groups) >= limit:
+            break
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "sessionKey": "*",
+        "groups": groups,
+        "total": sum(len(group["artifacts"]) for group in groups),
+        "totalScope": "page",
+        "complete": next_cursor is None,
+        "sessionsScanned": scanned,
+        "next": next_cursor,
+    }
 
 
-def load_all_generated_asset_page(
-    webui_dir: Path,
-    *,
-    session_cursor: int = 0,
-    max_sessions: int = 200,
-) -> tuple[list[dict[str, Any]], int | None]:
-    """Return one bounded session page and the next stable session cursor."""
-    keys = webui_session_keys(webui_dir)
-    start = max(0, session_cursor)
-    page_keys = keys[start:start + max(0, max_sessions)]
-    groups = _load_generated_asset_groups(page_keys)
-    next_cursor = start + len(page_keys)
-    return groups, (next_cursor if next_cursor < len(keys) else None)
-
-
-def load_all_generated_asset_groups(
-    webui_dir: Path,
-    *,
-    max_sessions: int = 200,
-    session_cursor: int = 0,
-) -> list[dict[str, Any]]:
-    """Return indexed groups for one bounded session page."""
-    groups, _next = load_all_generated_asset_page(
-        webui_dir,
-        session_cursor=session_cursor,
-        max_sessions=max_sessions,
-    )
-    return groups
+def _library_cursor(raw: str | None) -> tuple[str, int]:
+    if raw is None or not raw.strip():
+        return "", 0
+    if len(raw) > 4096:
+        raise ValueError("invalid cursor")
+    try:
+        value: object = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError("invalid cursor") from exc
+    if not isinstance(value, list):
+        raise ValueError("invalid cursor")
+    parts = cast(list[object], value)
+    if len(parts) != 2:
+        raise ValueError("invalid cursor")
+    key, offset = parts
+    if not isinstance(key, str) or not key or type(offset) is not int or offset < 0:
+        raise ValueError("invalid cursor")
+    return key, offset

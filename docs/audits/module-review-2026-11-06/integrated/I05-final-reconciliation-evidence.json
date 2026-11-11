@@ -1,0 +1,887 @@
+{
+  "schema_version": 1,
+  "stage_id": "I05",
+  "report": "integrated/I05-final-reconciliation.md",
+  "date": "2026-11-07",
+  "status": "final source-based integrated reconciliation complete; D1-D7 and implementation remain undecided",
+  "pins": {
+    "frozen_nanobot": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "current_staging": {
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "overlay": "K01-STG-F01"
+    }
+  },
+  "integrated_input_ledgers": [
+    {
+      "path": "integrated/I01-authority-evidence.json",
+      "sha": "5fa3d5743a7707ea925452fd2de53c5d160709d6"
+    },
+    {
+      "path": "integrated/I02-durability-evidence.json",
+      "sha": "bd90ede398b18c9f905bf43e06c75e82eba4119c"
+    },
+    {
+      "path": "integrated/I03-client-capabilities-evidence.json",
+      "sha": "e0eefda49fdd45821dc206bc5cb282a162f4aceb"
+    },
+    {
+      "path": "integrated/I04-release-residuals-evidence.json",
+      "sha": "052212bd78516382f0209b4681934b3c392f0638"
+    }
+  ],
+  "finding_partition": [
+    {
+      "id": "R01",
+      "title": "Effective resource, workspace and instance authority",
+      "original_finding_ids": [
+        "S01-F01",
+        "S01-F03",
+        "H01-F4",
+        "K01-F01",
+        "K01-F02",
+        "T01-F07",
+        "X01-F01",
+        "C00-F06",
+        "E02-F11",
+        "E02-F13",
+        "E02-F15",
+        "E02-F16",
+        "E02-F17",
+        "E02-F18"
+      ],
+      "canonical_owner": "ResourceAccessPolicy / workspace facts + explicit gateway-instance roots",
+      "decision_dependencies": [
+        "D2",
+        "D3",
+        "D4"
+      ],
+      "count": 14,
+      "source_streams": [
+        "S01",
+        "H01",
+        "K01",
+        "T01",
+        "X01",
+        "C00",
+        "E02"
+      ]
+    },
+    {
+      "id": "R02",
+      "title": "Approval and delegated mutation trust",
+      "original_finding_ids": [
+        "H01-F5",
+        "T01-F04",
+        "T01-F08",
+        "K01-F06",
+        "A01-F09",
+        "X01-F02"
+      ],
+      "canonical_owner": "RiskyActionPolicy + approval admission provenance",
+      "decision_dependencies": [
+        "D2",
+        "D3",
+        "D4"
+      ],
+      "count": 6,
+      "source_streams": [
+        "H01",
+        "T01",
+        "K01",
+        "A01",
+        "X01"
+      ]
+    },
+    {
+      "id": "R03",
+      "title": "Listener, mobile command and local side-effect authentication",
+      "original_finding_ids": [
+        "E02-F02",
+        "E02-F22",
+        "R01-F02",
+        "Q01-F01"
+      ],
+      "canonical_owner": "gateway listener auth + remote WS action/scope + crawler IPC auth",
+      "decision_dependencies": [
+        "D1",
+        "D2",
+        "D4"
+      ],
+      "count": 4,
+      "source_streams": [
+        "E02",
+        "R01",
+        "Q01"
+      ]
+    },
+    {
+      "id": "R04",
+      "title": "External credential/provenance/privacy boundary",
+      "original_finding_ids": [
+        "H03-F4",
+        "K01-F08",
+        "Q01-F02",
+        "R01-F11",
+        "X01-F04"
+      ],
+      "canonical_owner": "provider credential + log/provenance owners",
+      "decision_dependencies": [
+        "D2",
+        "D7"
+      ],
+      "count": 5,
+      "source_streams": [
+        "H03",
+        "K01",
+        "Q01",
+        "R01",
+        "X01"
+      ]
+    },
+    {
+      "id": "R05",
+      "title": "Instruction authority and auditable self-mutation",
+      "original_finding_ids": [
+        "K01-F12",
+        "K01-F13"
+      ],
+      "canonical_owner": "compaction checkpoint/system prompt + Dream transaction owner",
+      "decision_dependencies": [
+        "D2",
+        "D4",
+        "D6"
+      ],
+      "count": 2,
+      "source_streams": [
+        "K01"
+      ]
+    },
+    {
+      "id": "R06",
+      "title": "Canonical turn/source/effect outcome",
+      "original_finding_ids": [
+        "H01-F1",
+        "H01-F2",
+        "H01-F6",
+        "H01-F7",
+        "E02-F01",
+        "E02-F20"
+      ],
+      "canonical_owner": "TurnWriter/Runner + mutation replay outcome",
+      "decision_dependencies": [
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "count": 6,
+      "source_streams": [
+        "H01",
+        "E02"
+      ]
+    },
+    {
+      "id": "R07",
+      "title": "Source/history capacity and rotation",
+      "original_finding_ids": [
+        "H02-CAP-SOURCE64",
+        "H02-CAP-JOURNAL4096",
+        "H02-IO",
+        "A01-F04",
+        "E02-F07"
+      ],
+      "canonical_owner": "canonical source/mode/scheduler/transcript stores",
+      "decision_dependencies": [
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "count": 5,
+      "source_streams": [
+        "H02",
+        "A01",
+        "E02"
+      ]
+    },
+    {
+      "id": "R08",
+      "title": "Provider terminal, attempt and OAuth generation",
+      "original_finding_ids": [
+        "H03-F1",
+        "H03-F2",
+        "H03-F3",
+        "H03-F5",
+        "H03-F7"
+      ],
+      "canonical_owner": "provider transport/route/login generation",
+      "decision_dependencies": [
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "count": 5,
+      "source_streams": [
+        "H03"
+      ]
+    },
+    {
+      "id": "R09",
+      "title": "Process/composition/child lifetime",
+      "original_finding_ids": [
+        "S02-F01",
+        "S02-F02",
+        "S02-F03",
+        "C00-F01",
+        "C00-F02",
+        "C00-F03",
+        "E02-F14",
+        "R01-F06",
+        "T01-F09",
+        "T01-F12",
+        "X01-F03"
+      ],
+      "canonical_owner": "supervised process + RuntimeComposition/SDK close",
+      "decision_dependencies": [
+        "D1",
+        "D5",
+        "D7"
+      ],
+      "count": 11,
+      "source_streams": [
+        "S02",
+        "C00",
+        "E02",
+        "R01",
+        "T01",
+        "X01"
+      ]
+    },
+    {
+      "id": "R10",
+      "title": "Scheduler/process continuation and trigger durability",
+      "original_finding_ids": [
+        "A01-F01",
+        "A01-F03",
+        "A01-F05",
+        "A01-F08"
+      ],
+      "canonical_owner": "ProcessCompletionRuntime + GatewayCron + local-trigger delivery",
+      "decision_dependencies": [
+        "D4",
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "count": 4,
+      "source_streams": [
+        "A01"
+      ]
+    },
+    {
+      "id": "R11",
+      "title": "Mobile credential custody and native completion",
+      "original_finding_ids": [
+        "R01-F01",
+        "R01-F03",
+        "R01-F08",
+        "R01-F09",
+        "R01-F10",
+        "R01-F12",
+        "R01-F13",
+        "R01-F15"
+      ],
+      "canonical_owner": "remote auth/pairing + Android/native broker completion",
+      "decision_dependencies": [
+        "D1",
+        "D2",
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "count": 8,
+      "source_streams": [
+        "R01"
+      ]
+    },
+    {
+      "id": "R12",
+      "title": "Media/session deletion and destructive maintenance",
+      "original_finding_ids": [
+        "M01-F01",
+        "M01-F02",
+        "M01-F04",
+        "E02-F03",
+        "E02-F05",
+        "E02-F06",
+        "E02-F09",
+        "E02-F10"
+      ],
+      "canonical_owner": "attachment store/prune + canonical session/transcript cleanup",
+      "decision_dependencies": [
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "count": 8,
+      "source_streams": [
+        "M01",
+        "E02"
+      ]
+    },
+    {
+      "id": "R13",
+      "title": "Resource budgets and finite index visibility",
+      "original_finding_ids": [
+        "R01-F14",
+        "M01-F03",
+        "M01-F05",
+        "M01-F06",
+        "E02-F23",
+        "T01-F11",
+        "E02-F04"
+      ],
+      "canonical_owner": "parser/provider/cache/web-fetch + generated-asset index",
+      "decision_dependencies": [
+        "D5",
+        "D7"
+      ],
+      "count": 7,
+      "source_streams": [
+        "R01",
+        "M01",
+        "E02",
+        "T01"
+      ]
+    },
+    {
+      "id": "R14",
+      "title": "Client queue, generation and projection integrity",
+      "original_finding_ids": [
+        "U01-F01",
+        "U01-F02",
+        "U01-F03",
+        "U01-F04",
+        "U01-F05",
+        "U01-F06",
+        "D01-F01",
+        "D01-F02"
+      ],
+      "canonical_owner": "React per-surface state + TUI per-session state",
+      "decision_dependencies": [
+        "D5",
+        "D7"
+      ],
+      "count": 8,
+      "source_streams": [
+        "U01",
+        "D01"
+      ]
+    },
+    {
+      "id": "R15",
+      "title": "Capability manifest, feature activation and skill/runtime parity",
+      "original_finding_ids": [
+        "T01-F10",
+        "K01-F03",
+        "K01-F04",
+        "K01-F05",
+        "K01-F07",
+        "K01-F09",
+        "K01-F11",
+        "A01-F02",
+        "A01-F07"
+      ],
+      "canonical_owner": "ToolLoader/core manifest + feature readiness + skill renderer",
+      "decision_dependencies": [
+        "D4",
+        "D5",
+        "D7"
+      ],
+      "count": 9,
+      "source_streams": [
+        "T01",
+        "K01",
+        "A01"
+      ]
+    },
+    {
+      "id": "R16",
+      "title": "Route/input/local readiness contracts",
+      "original_finding_ids": [
+        "E02-F08",
+        "E02-F19",
+        "E02-F21",
+        "R01-F04",
+        "R01-F07",
+        "C00-F07"
+      ],
+      "canonical_owner": "WebUI settings router + mobile edge + local health parser",
+      "decision_dependencies": [
+        "D1",
+        "D4",
+        "D7"
+      ],
+      "count": 6,
+      "source_streams": [
+        "E02",
+        "R01",
+        "C00"
+      ]
+    },
+    {
+      "id": "R17",
+      "title": "Tool schema, plugin/MCP readiness and runtime generation",
+      "original_finding_ids": [
+        "T01-F01",
+        "T01-F02",
+        "T01-F03",
+        "T01-F05",
+        "T01-F06",
+        "H01-F8",
+        "H03-F6"
+      ],
+      "canonical_owner": "ToolRegistry/ToolLoader + MCP owner + ModelRuntimeResolver",
+      "decision_dependencies": [
+        "D4",
+        "D5",
+        "D7"
+      ],
+      "count": 7,
+      "source_streams": [
+        "T01",
+        "H01",
+        "H03"
+      ]
+    },
+    {
+      "id": "R18",
+      "title": "Compatibility, gated paths and dormant machinery",
+      "original_finding_ids": [
+        "C00-F04",
+        "C00-F05",
+        "S01-F02",
+        "H02-ART-SOURCE",
+        "H02-LEGACY-ISOLATE",
+        "H02-IDLE-DORMANT"
+      ],
+      "canonical_owner": "compatibility-retirement ledger",
+      "decision_dependencies": [
+        "D4",
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "count": 6,
+      "source_streams": [
+        "C00",
+        "S01",
+        "H02"
+      ]
+    },
+    {
+      "id": "R19",
+      "title": "Qualification fidelity and administration scope",
+      "original_finding_ids": [
+        "R01-F05",
+        "A01-F06"
+      ],
+      "canonical_owner": "production test composition + product admin-scope contract",
+      "decision_dependencies": [
+        "D2",
+        "D4",
+        "D7"
+      ],
+      "count": 2,
+      "source_streams": [
+        "R01",
+        "A01"
+      ]
+    },
+    {
+      "id": "R20",
+      "title": "Release artifact provenance and signing/toolchain trust",
+      "original_finding_ids": [
+        "Q01-F03",
+        "Q01-F04",
+        "E02-F12",
+        "R01-F16",
+        "R01-F17",
+        "R01-F18"
+      ],
+      "canonical_owner": "installer/build hook/mobile release pipeline",
+      "decision_dependencies": [
+        "D1",
+        "D6",
+        "D7"
+      ],
+      "count": 6,
+      "source_streams": [
+        "Q01",
+        "E02",
+        "R01"
+      ]
+    },
+    {
+      "id": "R21",
+      "title": "Deployment, CI and real upgrade qualification",
+      "original_finding_ids": [
+        "Q01-F05",
+        "Q01-F06",
+        "Q01-F07",
+        "R01-F19",
+        "R01-F20"
+      ],
+      "canonical_owner": "deploy switch/rollback + CI/migration/upgrade gates",
+      "decision_dependencies": [
+        "D1",
+        "D6",
+        "D7"
+      ],
+      "count": 5,
+      "source_streams": [
+        "Q01",
+        "R01"
+      ]
+    },
+    {
+      "id": "R22",
+      "title": "Early input normalization and progress guards",
+      "original_finding_ids": [
+        "H01-F3",
+        "K01-F10"
+      ],
+      "canonical_owner": "constructor/script argument owner",
+      "decision_dependencies": [
+        "D7"
+      ],
+      "count": 2,
+      "source_streams": [
+        "H01",
+        "K01"
+      ]
+    }
+  ],
+  "deduplication": {
+    "whole_finding_merges": [],
+    "whole_finding_merge_count": 0,
+    "original_finding_count_before": 136,
+    "original_finding_count_after": 136,
+    "partial_factual_overlaps": [
+      {
+        "fact": "default core manifest omits apply_patch while shipped guidance advertises it",
+        "ids": [
+          "T01-F10",
+          "K01-F11"
+        ],
+        "canonical_repair_owner": "R15 / ToolLoader core manifest and tool-contract guidance",
+        "reason_not_to_merge": "K01-F11 additionally covers grep and find_files and the broader live-guidance mismatch; T01-F10 is the specific apply_patch migration omission."
+      }
+    ],
+    "repeated_integration_references_not_duplicates": [
+      "A01-F07",
+      "K01-F03",
+      "S02-F02"
+    ],
+    "staging_overlay": {
+      "id": "K01-STG-F01",
+      "package": "R15",
+      "counted_in_frozen_136": false,
+      "relationship": "distinct selected-project builtin-relative-path provenance collision; not K01-F03"
+    }
+  },
+  "exact_partition_validation": {
+    "integrated_union_original_ids": 136,
+    "assigned_ids": 136,
+    "assigned_unique": 136,
+    "missing": [],
+    "extra": [],
+    "valid": true
+  },
+  "priority_method": {
+    "rule": "preserve original per-stream priority/classification; add deployment reachability/activation lane, never silently regrade",
+    "lanes": [
+      {
+        "id": "A",
+        "name": "supported-boundary authority/security blockers",
+        "examples": [
+          "H01-F4",
+          "T01-F04",
+          "T01-F07",
+          "T01-F08",
+          "K01-F01",
+          "K01-F06",
+          "K01-F08",
+          "K01-F12",
+          "K01-F13",
+          "E02-F02",
+          "E02-F15",
+          "E02-F16",
+          "E02-F17",
+          "R01-F02",
+          "X01-F01",
+          "X01-F02",
+          "Q01-F01",
+          "A01-F08",
+          "A01-F09"
+        ],
+        "qualification": "conditional entries block only supported/enabled boundary; disabled/unsupported boundary should fail closed"
+      },
+      {
+        "id": "B",
+        "name": "active correctness/durability/destructive-data",
+        "examples": [
+          "H01-F1",
+          "H03-F1",
+          "S02-F01",
+          "S02-F02",
+          "E02-F20",
+          "A01-F04",
+          "M01-F04",
+          "R01-F09",
+          "R01-F10",
+          "R01-F13",
+          "R01-F01",
+          "R01-F03",
+          "H03-F2",
+          "H03-F7"
+        ]
+      },
+      {
+        "id": "C",
+        "name": "release/qualification before distribution",
+        "packages": [
+          "R20",
+          "R21"
+        ]
+      },
+      {
+        "id": "D",
+        "name": "bounded resource/client/interface correctness",
+        "packages": [
+          "R13",
+          "R14",
+          "R16",
+          "R17",
+          "R22"
+        ]
+      },
+      {
+        "id": "E",
+        "name": "structural/optional retirement last unless measured/required",
+        "examples": [
+          "H02-IO",
+          "H02-ART-SOURCE",
+          "H02-LEGACY-ISOLATE",
+          "H02-IDLE-DORMANT",
+          "S01-F02",
+          "S02-F03"
+        ]
+      }
+    ]
+  },
+  "reachability": [
+    {
+      "boundary": "local trigger runner",
+      "current": "inactive default gateway",
+      "ids": [
+        "A01-F07",
+        "A01-F08",
+        "A01-F09"
+      ],
+      "disposition": "feature mismatch now; F08/F09 activation blockers before enabling"
+    },
+    {
+      "boundary": "idle compaction",
+      "current": "no production constructor/start refused",
+      "ids": [
+        "H02-IDLE-DORMANT"
+      ],
+      "disposition": "D4 retirement/integration choice"
+    },
+    {
+      "boundary": "legacy onboarding",
+      "current": "migration guard denies main entry",
+      "ids": [
+        "C00-F04",
+        "C00-F05"
+      ],
+      "disposition": "repair before reactivation; not default incident"
+    },
+    {
+      "boundary": "multi-instance explicit gateways",
+      "current": "single CLI instance usually aligns globals",
+      "ids": [
+        "E02-F11",
+        "E02-F13",
+        "E02-F15",
+        "E02-F16",
+        "E02-F17",
+        "E02-F18",
+        "C00-F06"
+      ],
+      "disposition": "conditional on supported multi-instance/explicit config contract"
+    },
+    {
+      "boundary": "cron administration",
+      "current": "instance-global",
+      "ids": [
+        "A01-F06"
+      ],
+      "disposition": "authority issue only for mutually untrusted users/chats; may be intentional single-owner"
+    },
+    {
+      "boundary": "Windows authenticated crawler profile",
+      "current": "optional",
+      "ids": [
+        "Q01-F01"
+      ],
+      "disposition": "P1 conditional if same-host untrusted principals are in supported threat model"
+    },
+    {
+      "boundary": "CLI apps/crawler/desktop tools",
+      "current": "optional/configured",
+      "ids": [
+        "X01-F01",
+        "X01-F02",
+        "T01-F08"
+      ],
+      "disposition": "block when enabled under restricted/delegated promise"
+    },
+    {
+      "boundary": "mobile route declaration",
+      "current": "production WS supports some functions",
+      "ids": [
+        "R01-F04"
+      ],
+      "disposition": "contract defect; not all mobile attachment flows broken"
+    }
+  ],
+  "decision_map": {
+    "D1": {
+      "title": "Supported executor/client platforms",
+      "packages": [
+        "R03",
+        "R09",
+        "R11",
+        "R16",
+        "R20",
+        "R21"
+      ]
+    },
+    "D2": {
+      "title": "Authority/private boundaries",
+      "packages": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R11",
+        "R19"
+      ]
+    },
+    "D3": {
+      "title": "Managed sessions/delegation",
+      "packages": [
+        "R01",
+        "R02"
+      ]
+    },
+    "D4": {
+      "title": "Compatibility/retirement/feature promises",
+      "packages": [
+        "R01",
+        "R02",
+        "R03",
+        "R05",
+        "R10",
+        "R15",
+        "R16",
+        "R17",
+        "R18",
+        "R19"
+      ]
+    },
+    "D5": {
+      "title": "Registration and owner lifetime",
+      "packages": [
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+        "R14",
+        "R15",
+        "R17",
+        "R18"
+      ]
+    },
+    "D6": {
+      "title": "Attempt/recovery/release outcomes",
+      "packages": [
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R10",
+        "R11",
+        "R12",
+        "R18",
+        "R20",
+        "R21"
+      ]
+    },
+    "D7": {
+      "title": "Completion/resource/retention policy",
+      "packages": [
+        "R04",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+        "R14",
+        "R15",
+        "R16",
+        "R17",
+        "R18",
+        "R19",
+        "R20",
+        "R21",
+        "R22"
+      ]
+    }
+  },
+  "gaps": [
+    "E01 95 primary bodies remain limited-depth; its 26 retained findings are outside the 136 deep-source denominator",
+    "No runtime/test/build/deploy/benchmark execution in audit",
+    "External compatibility consumers not discoverable from repository require proof before retirement",
+    "H01-F8 semantics remain open pending D5",
+    "No performance benefit claimed for structural findings without measurement",
+    "Future staging changes after 29612c3 require targeted refresh"
+  ],
+  "counts": {
+    "original_findings": 136,
+    "original_questions": 105,
+    "packages": 22,
+    "whole_finding_merges": 0,
+    "partial_factual_overlaps": 1,
+    "staging_overlays": 1,
+    "deep_required_bodies": 824,
+    "E01_limited_depth_bodies": 95,
+    "new_findings": 0,
+    "new_questions": 0,
+    "new_primary_body_credit": 0,
+    "integrated_review_complete": 1,
+    "D1_D7_decisions_accepted": 0
+  },
+  "next": "D1-D7 discussion only; implementation planning after user decisions"
+}

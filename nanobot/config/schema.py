@@ -186,7 +186,7 @@ class DreamConfig(Base):
 
     _HOUR_MS = 3_600_000
 
-    enabled: bool = False  # Register the periodic Dream consolidation job on startup
+    enabled: bool = False  # Compatibility intent; periodic Dream is not installed by the gateway
     interval_h: int = Field(default=2, ge=1)  # Every 2 hours by default
     cron: str | None = Field(
         default=None,
@@ -716,7 +716,7 @@ class ProvidersConfig(Base):
 
 class HeartbeatConfig(Base):
     keep_recent_messages: int = 8
-    """Heartbeat service configuration (now backed by cron)."""
+    """Retained Heartbeat configuration; periodic execution is unavailable."""
 
     # P5 D7: installation alone must never opt a process into provider-backed
     # background work.  Explicit ``enabled: true`` remains representable for
@@ -764,6 +764,7 @@ class GatewayConfig(Base):
     restart_mode: Literal["auto", "exec", "spawn", "exit"] = "auto"
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
     process_continuations: bool = False
+    local_triggers: StrictBool = False
     cron: GatewayCronConfig = Field(default_factory=GatewayCronConfig)
 
     @model_validator(mode="before")

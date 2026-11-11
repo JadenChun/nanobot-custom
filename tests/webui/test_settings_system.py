@@ -42,3 +42,17 @@ def test_system_domain_validates_channel_field_values() -> None:
     ]
     assert coerce_channel_value("enabled", "yes", "bool") is True
     assert coerce_channel_value("port", "8765", "int") == 8765
+
+
+def test_background_settings_distinguish_intent_from_effective_support(tmp_path) -> None:
+    config = Config()
+    config.gateway.heartbeat.enabled = True
+    config.agents.defaults.dream.enabled = True
+    runtime = system_settings_payload(
+        config, config_path=tmp_path / "config.json", version="0.3.0",
+    )["runtime"]
+    for feature in ("heartbeat", "dream"):
+        assert runtime[feature]["configured_enabled"] is True
+        assert runtime[feature]["effective_enabled"] is False
+        assert runtime[feature]["unavailable_reason"]
+    assert runtime["heartbeat"]["enabled"] is False

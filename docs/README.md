@@ -78,10 +78,17 @@ These pages explain implementation and extension points. You do not need them to
 | Goal | Read |
 |---|---|
 | Understand source ownership and runtime flow | [Architecture](./architecture.md) |
+| Review feature implementation gaps and acceptance criteria | [Feature implementation audit](./feature-implementation-audit-2026-11-05.md) |
+| Review completed feature repairs and their validation limits | [Feature repair results](./audits/feature-implementation-2026-11-05/repair-results.md) |
+| Follow the code-quality audit scope and stages | [Code-quality audit charter](./code-quality-audit-2026-11-04.md) |
+| Review the A3 audit, candidate design, decisions and merge gates | [A3 architecture record](./architecture/a3/README.md) |
 | Review future agent-managed sessions and the SuperAgent study | [SuperAgent research and session direction](./superagent-research-and-session-direction.md) |
 | Review the retired H1/concurrency cleanup | [Telegram H1 and global concurrency cleanup plan](./telegram-h1-concurrency-cleanup-plan.md) |
 | Set up a development environment | [Development](./development.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Add a channel package | [Channel Package Guide](./channel-package-guide.md) |
 | Build the WebUI source | [WebUI Development](../webui/README.md) |
+
+The A3 record describes a separately pinned candidate and links its immutable audit history.
+Its review and qualification states are separate from the staging runtime described by the main architecture page.
 
 If a command or screen no longer matches these docs, please [open an issue](https://github.com/HKUDS/nanobot/issues) with your nanobot version, operating system, and the page that needs correction.

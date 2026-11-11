@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from nanobot.config.schema import DirectoryBrowserConfig, DirectoryBrowserRootConfig
+from nanobot.webui import workspace_directories
 from nanobot.webui.workspace_directories import DirectoryBrowserError, WorkspaceDirectoryBrowser
 
 
@@ -391,12 +392,10 @@ def test_resolve_and_cursor_stores_are_bounded(tmp_path) -> None:
     assert len(service._cursors) <= 256
 
 
-def test_roots_response_is_bounded(tmp_path) -> None:
-    deep = tmp_path
-    for index in range(10):
-        deep = deep / ("d" * 200 + str(index))
-        deep.mkdir()
-    path = str(deep)
+def test_roots_response_is_bounded(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exercise response overflow independently of the host's filesystem PATH_MAX.
+    monkeypatch.setattr(workspace_directories, "MAX_RESPONSE_BYTES", 1024)
+    path = str(tmp_path)
     roots = [
         DirectoryBrowserRootConfig(id=f"r{index}", label="x" * 64, path=path)
         for index in range(32)

@@ -35,6 +35,8 @@ from nanobot.context_repo.catalog import CatalogRevisionConflictError
 from nanobot.context_repo.manager import ContextRepoManager
 from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.cron.definition_store import DefinitionStoreConflictError
+from nanobot.cron.occurrence_store import OccurrenceConflictError
+from nanobot.cron.scheduler_store import SchedulerConflictError
 from nanobot.cron.service import (
     CronDefinitionConflictError,
     CronDefinitionTokenRequiredError,
@@ -63,7 +65,7 @@ from nanobot.webui.file_preview import (
 )
 from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
 from nanobot.webui.generated_asset_index import (
-    load_all_generated_asset_page,
+    build_generated_asset_library_page,
     load_or_build_generated_asset_index,
 )
 from nanobot.webui.generated_assets import build_generated_assets_payload_from_groups
@@ -1845,17 +1847,7 @@ class GatewayHTTPHandler:
         query = _parse_query(request.path)
         raw_limit = _query_first(query, "limit")
         raw_cursor = _query_first(query, "cursor")
-        raw_session_cursor = _query_first(query, "sessionCursor")
-        limit: int | None = None
-        cursor = 0
-        session_cursor = 0
-        if raw_session_cursor is not None and raw_session_cursor.strip():
-            try:
-                session_cursor = int(raw_session_cursor)
-            except ValueError:
-                return _http_error(400, "invalid sessionCursor")
-            if session_cursor < 0:
-                return _http_error(400, "invalid sessionCursor")
+        limit = 50
         if raw_limit is not None and raw_limit.strip():
             try:
                 limit = int(raw_limit)
@@ -1863,31 +1855,20 @@ class GatewayHTTPHandler:
                 return _http_error(400, "invalid limit")
             if not 1 <= limit <= 500:
                 return _http_error(400, "invalid limit")
-        if raw_cursor is not None and raw_cursor.strip():
-            try:
-                cursor = int(raw_cursor)
-            except ValueError:
-                return _http_error(400, "invalid cursor")
-            if cursor < 0:
-                return _http_error(400, "invalid cursor")
         try:
-            groups, next_session_cursor = await asyncio.to_thread(
-                load_all_generated_asset_page,
+            payload = await asyncio.to_thread(
+                build_generated_asset_library_page,
                 get_webui_dir(),
-                session_cursor=session_cursor,
-            )
-            payload = build_generated_assets_payload_from_groups(
-                groups,
-                session_key="*",
                 media_root=get_media_dir(),
                 sign_path=lambda path: self.media.sign_or_stage_media_path(
                     path,
                     allow_folder_grants=False,
                 ),
-                cursor=cursor,
+                cursor=raw_cursor,
                 limit=limit,
-                next_session_cursor=next_session_cursor,
             )
+        except ValueError:
+            return _http_error(400, "invalid cursor")
         except Exception:
             self._log.exception("generated asset library projection failed")
             return _http_error(500, "generated_assets_unavailable")
@@ -1984,7 +1965,13 @@ class GatewayHTTPHandler:
                 {
                     "deleted": False,
                     "blocked_by_automations": True,
-                    "automations": serialize_automation_jobs(automation_jobs),
+                    "automations": serialize_automation_jobs(
+                        automation_jobs, cron_service=self.cron_service,
+                        trigger_delivery_active=(
+                            self.local_trigger_store.delivery_active
+                            if self.local_trigger_store is not None else False
+                        ),
+                    ),
                 }
             )
         if automation_jobs:
@@ -2181,8 +2168,10 @@ class GatewayHTTPHandler:
             elif action == "run":
                 if not job.enabled:
                     return _http_error(409, "automation is disabled")
-                task = asyncio.create_task(self.cron_service.run_job(job_id, force=False))
-                task.add_done_callback(self._log_automation_run_result)
+                if not await self.cron_service.run_job(
+                    job_id, force=False, request_id=_query_first(query, "request_id"),
+                ):
+                    return _http_error(409, "automation execution is unavailable")
             elif action == "update":
                 values = _automation_values_from_request(request)
                 if values is None:
@@ -2214,6 +2203,8 @@ class GatewayHTTPHandler:
                 409,
                 f"automation definition conflict: {exc}. Refresh and retry.",
             )
+        except (OccurrenceConflictError, SchedulerConflictError, PermissionError, ValueError) as exc:
+            return _http_error(409, f"automation admission failed: {exc}")
 
         return self._handle_webui_automations(request)
 
@@ -2250,16 +2241,6 @@ class GatewayHTTPHandler:
             return _http_error(404, "unknown automation action")
 
         return self._handle_webui_automations(request)
-
-    @staticmethod
-    def _log_automation_run_result(task: asyncio.Task[bool]) -> None:
-        try:
-            ran = task.result()
-        except Exception:
-            logger.exception("WebUI automation run-now task failed")
-            return
-        if not ran:
-            logger.warning("WebUI automation run-now task did not execute")
 
     # -- Media routes -------------------------------------------------------
 

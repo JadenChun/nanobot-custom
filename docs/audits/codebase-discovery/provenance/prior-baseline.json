@@ -1,0 +1,11 @@
+{
+  "created_at": "2026-11-05T20:38:03.270949+08:00",
+  "source_commit": "4e2bf4d8d0b34f133c01591b67826ca956fed384",
+  "source_tree": "d5cc262acda5fb8051ffac9996ee9ab189c361cd",
+  "source_ref": "local staging; merged feature-audit-repairs",
+  "remote_staging_at_fetch": "b94b12527b014785c1454a04ef3b8138ee6070a5",
+  "fix_tip_included": "d3380eb69d3c8416a9ca72522001234ce30a8eeb",
+  "method": "Source inspection only; discover before reference evaluation or repairs",
+  "user_direction": "Separate fixes done; discover whole codebase in separate worktrees and consolidate before comparing to reference harnesses.",
+  "runtime_tests_run": false
+}

@@ -193,6 +193,12 @@ export interface SessionAutomationJob {
   id: string;
   name: string;
   enabled: boolean;
+  execution?: {
+    manual_run_supported: boolean;
+    active?: boolean;
+    unavailable_reason?: string | null;
+    delivery_status?: string | null;
+  };
   protected?: boolean;
   delete_after_run?: boolean;
   created_at_ms?: number | null;
@@ -270,6 +276,10 @@ export interface SessionGeneratedAssetsPayload {
   schemaVersion: number;
   sessionKey: string;
   total: number;
+  /** Library totals count only this page; session totals cover the session. */
+  totalScope?: "page";
+  complete?: boolean;
+  sessionsScanned?: number;
   groups: GeneratedAssetGroup[];
   next?: string | null;
   nextSessionCursor?: string | null;
@@ -1085,9 +1095,15 @@ export interface SettingsPayload {
     heartbeat: {
       enabled: boolean;
       interval_s: number;
+      configured_enabled?: boolean;
+      effective_enabled?: boolean;
+      unavailable_reason?: string;
     };
     dream: {
       schedule: string;
+      configured_enabled?: boolean;
+      effective_enabled?: boolean;
+      unavailable_reason?: string;
     };
     unified_session: boolean;
   };

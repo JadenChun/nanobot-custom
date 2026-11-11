@@ -65,6 +65,7 @@ from nanobot.cron.types import (
     CronJob,
     CronJobState,
     CronPayload,
+    CronRuntimeStatus,
     CronSchedule,
     CronStore,
     CronVerifier,
@@ -381,6 +382,8 @@ class CronService:
         self._store_dirty = False
         self._fresh_job_validator: Callable[[CronJob], None] | None = None
         self._runtime_status: Callable[[], dict[str, object]] | None = None
+        self._manual_run: Callable[[CronJob, str], bool] | None = None
+        self._job_runtime_status: Callable[[CronJob], CronRuntimeStatus] | None = None
         # Kept as an observable compatibility path.  No writer in this class
         # opens it; the action store lock is the sole mutation boundary.
         self._run_records_dir = path.parent / "runs"
@@ -629,9 +632,25 @@ class CronService:
         """Compatibility answer; runtime snapshots are not service-owned."""
         return False
 
-    def admission_diagnostic(self, _job: CronJob) -> str:
-        """Return the stable execution fence for every job kind."""
-        return CRON_DEFINITION_ONLY_DIAGNOSTIC
+    def admission_diagnostic(self, job: CronJob) -> str:
+        """Describe effective manual-run admission without changing definitions."""
+        if self._manual_run is None or self._runtime_status is None:
+            return CRON_DEFINITION_ONLY_DIAGNOSTIC
+        if self._runtime_status().get("enabled") is not True:
+            return "Scheduled execution is not active in this gateway."
+        if not job.enabled:
+            return "Automation is disabled."
+        if self._fresh_job_validator is not None:
+            try:
+                self._fresh_job_validator(job)
+            except ValueError as exc:
+                return str(exc)
+        return ""
+
+    def job_runtime_status(self, job: CronJob) -> CronRuntimeStatus:
+        if self._job_runtime_status is None:
+            return CronRuntimeStatus()
+        return self._job_runtime_status(job)
 
     @property
     def migration_diagnostic(self) -> str:
@@ -1136,10 +1155,16 @@ class CronService:
         logger.info("Cron: updated definition '{}' ({})", result.definition["name"], job_id)
         return _public_job(result)
 
-    async def run_job(self, _job_id: str, force: bool = False) -> bool:
-        """Fence manual/forced execution without invoking a callback."""
-        del force
-        return False
+    async def run_job(
+        self, job_id: str, force: bool = False, *, request_id: str | None = None,
+    ) -> bool:
+        """Delegate supported manual admission to the installed execution owner."""
+        if force or self._manual_run is None:
+            return False
+        job = self.get_job(job_id)
+        if job is None or self.admission_diagnostic(job):
+            return False
+        return self._manual_run(job, request_id or uuid.uuid4().hex)
 
     def get_job(self, job_id: str) -> CronJob | None:
         """Return one detached typed definition projection."""
@@ -1158,11 +1183,14 @@ class CronService:
         }
 
     def configure_gateway_execution(self, validator: Callable[[CronJob], None],
-                                    status: Callable[[], dict[str, object]]) -> None:
+                                    status: Callable[[], dict[str, object]], *,
+                                    manual_run: Callable[[CronJob, str], bool] | None = None,
+                                    job_status: Callable[[CronJob], CronRuntimeStatus] | None = None) -> None:
         """Opt new gateway jobs into fresh execution before accepting messages."""
         if self._fresh_job_validator is not None:
             raise ValueError("gateway cron execution is already configured")
         self._fresh_job_validator, self._runtime_status = validator, status
+        self._manual_run, self._job_runtime_status = manual_run, job_status
 
 
 def _stable_job_instance_id(namespace: str, job_id: str) -> str:

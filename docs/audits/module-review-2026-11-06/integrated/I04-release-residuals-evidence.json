@@ -1,0 +1,886 @@
+{
+  "schema_version": 1,
+  "stage_id": "I04",
+  "report": "integrated/I04-release-residuals.md",
+  "status": "bounded source checkpoint; all original IDs mapped but final integration not accepted",
+  "date": "2026-11-07",
+  "pins": {
+    "frozen_nanobot": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "current_staging": {
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "scope": "K01-only current-origin overlay, not I04 source replacement"
+    }
+  },
+  "groups": [
+    {
+      "id": "I04-A",
+      "title": "Installed/build artifact identity and release trust",
+      "original_finding_ids": [
+        "Q01-F03",
+        "Q01-F04",
+        "E02-F12",
+        "R01-F16",
+        "R01-F17",
+        "R01-F18"
+      ],
+      "disposition": "residual integrated owner group; original finding semantics/priority retained; no issue-count merge yet"
+    },
+    {
+      "id": "I04-B",
+      "title": "Deployment switch, historical/CI and upgrade qualification",
+      "original_finding_ids": [
+        "Q01-F05",
+        "Q01-F06",
+        "Q01-F07",
+        "R01-F19",
+        "R01-F20"
+      ],
+      "disposition": "residual integrated owner group; original finding semantics/priority retained; no issue-count merge yet"
+    },
+    {
+      "id": "I04-C",
+      "title": "External process/network/output and global-index bounds",
+      "original_finding_ids": [
+        "T01-F09",
+        "T01-F11",
+        "T01-F12",
+        "X01-F03",
+        "E02-F04"
+      ],
+      "disposition": "residual integrated owner group; original finding semantics/priority retained; no issue-count merge yet"
+    },
+    {
+      "id": "I04-D",
+      "title": "Constructor/script input normalization",
+      "original_finding_ids": [
+        "H01-F3",
+        "K01-F10"
+      ],
+      "disposition": "residual integrated owner group; original finding semantics/priority retained; no issue-count merge yet"
+    },
+    {
+      "id": "I04-E",
+      "title": "Approval target/provenance and narrow exemptions",
+      "original_finding_ids": [
+        "H01-F4",
+        "H01-F5",
+        "A01-F09"
+      ],
+      "disposition": "residual integrated owner group; original finding semantics/priority retained; no issue-count merge yet"
+    },
+    {
+      "id": "I04-F",
+      "title": "Runtime capability/credential generations",
+      "original_finding_ids": [
+        "H01-F8",
+        "H03-F4",
+        "H03-F6"
+      ],
+      "disposition": "residual integrated owner group; original finding semantics/priority retained; no issue-count merge yet"
+    },
+    {
+      "id": "I04-G",
+      "title": "Compatibility and knowledge ownership cleanup",
+      "original_finding_ids": [
+        "S01-F02",
+        "K01-F02"
+      ],
+      "disposition": "residual integrated owner group; original finding semantics/priority retained; no issue-count merge yet"
+    }
+  ],
+  "original_coverage_ledgers": [
+    {
+      "stream": "C00",
+      "coverage": "reports/C00-coverage.json",
+      "coverage_blob_sha": "cae600b64c0df5dc8675d8cb3270cbebab648059",
+      "original_finding_count": 7
+    },
+    {
+      "stream": "H01",
+      "coverage": "reports/H01-coverage.json",
+      "coverage_blob_sha": "2ba982c44778afb314744ee1a1ca23a351ca5fa3",
+      "original_finding_count": 8
+    },
+    {
+      "stream": "H02",
+      "coverage": "reports/H02-coverage.json",
+      "coverage_blob_sha": "edf1c2b01ae5e126182d2be25226d5aad6db65dc",
+      "original_finding_count": 6
+    },
+    {
+      "stream": "H03",
+      "coverage": "reports/H03-coverage.json",
+      "coverage_blob_sha": "51ca8abfa9f10776db3d0d51b2281142f3f9a497",
+      "original_finding_count": 7
+    },
+    {
+      "stream": "S01",
+      "coverage": "reports/S01-coverage.json",
+      "coverage_blob_sha": "1d7a40ce46bcf052b0c0657f802172f63959cd9a",
+      "original_finding_count": 3
+    },
+    {
+      "stream": "S02",
+      "coverage": "reports/S02-coverage.json",
+      "coverage_blob_sha": "4d302094cc25b6453f1496b648d2254ad8687f01",
+      "original_finding_count": 3
+    },
+    {
+      "stream": "T01",
+      "coverage": "reports/T01-coverage.json",
+      "coverage_blob_sha": "6d4dfb067a8ef3abf0acdec11e856abfcae36150",
+      "original_finding_count": 12
+    },
+    {
+      "stream": "A01",
+      "coverage": "reports/A01-coverage.json",
+      "coverage_blob_sha": "196a5755fa626077baa1e665a87a0715f36664cf",
+      "original_finding_count": 9
+    },
+    {
+      "stream": "K01",
+      "coverage": "reports/K01-coverage.json",
+      "coverage_blob_sha": "abb29b01f89515b297275abaf8a8db77a31e3505",
+      "original_finding_count": 13
+    },
+    {
+      "stream": "E02",
+      "coverage": "reports/E02-coverage.json",
+      "coverage_blob_sha": "b46651bb7dfbd0d6fc7a74fd805838f6cf6d669b",
+      "original_finding_count": 23
+    },
+    {
+      "stream": "U01",
+      "coverage": "reports/U01-coverage.json",
+      "coverage_blob_sha": "2fd2a98f7ed5afb25267889b2d019fcaf7073463",
+      "original_finding_count": 6
+    },
+    {
+      "stream": "D01",
+      "coverage": "reports/D01-coverage.json",
+      "coverage_blob_sha": "a0dfdd64cf21575583c4baf5ded5b4d91278fc53",
+      "original_finding_count": 2
+    },
+    {
+      "stream": "R01",
+      "coverage": "reports/R01-coverage.json",
+      "coverage_blob_sha": "0442ec59262de9f58e6115c9d22ed9eb3d059e0b",
+      "original_finding_count": 20
+    },
+    {
+      "stream": "M01",
+      "coverage": "reports/M01-coverage.json",
+      "coverage_blob_sha": "a675c5e81dcf9fc72d3f56c662deb8cd122e9338",
+      "original_finding_count": 6
+    },
+    {
+      "stream": "X01",
+      "coverage": "reports/X01-coverage.json",
+      "coverage_blob_sha": "0124c388fbdd804d18d23d6d1e0a89e1be407e67",
+      "original_finding_count": 4
+    },
+    {
+      "stream": "Q01",
+      "coverage": "reports/Q01-coverage.json",
+      "coverage_blob_sha": "d461b1676fb2a7c3d4a1a65e4260f0e5a684a1c0",
+      "original_finding_count": 7
+    }
+  ],
+  "mapping_accounting": {
+    "original_unique_findings": 136,
+    "unique_referenced_before_I04": 110,
+    "exact_unmapped_before_I04": 26,
+    "I04_unique_original_ids": 26,
+    "I04_overlaps_prior_integrated": [],
+    "I04_missing_from_original_ledgers": [],
+    "residual_not_covered_by_I04": [],
+    "I01_I04_union_unique_original_ids": 136,
+    "all_original_findings_now_have_integrated_home": true
+  },
+  "pre_I04_residual_by_stream": [
+    {
+      "stream": "H01",
+      "ids": [
+        "H01-F3",
+        "H01-F4",
+        "H01-F5",
+        "H01-F8"
+      ]
+    },
+    {
+      "stream": "H03",
+      "ids": [
+        "H03-F4",
+        "H03-F6"
+      ]
+    },
+    {
+      "stream": "S01",
+      "ids": [
+        "S01-F02"
+      ]
+    },
+    {
+      "stream": "T01",
+      "ids": [
+        "T01-F09",
+        "T01-F11",
+        "T01-F12"
+      ]
+    },
+    {
+      "stream": "A01",
+      "ids": [
+        "A01-F09"
+      ]
+    },
+    {
+      "stream": "K01",
+      "ids": [
+        "K01-F02",
+        "K01-F10"
+      ]
+    },
+    {
+      "stream": "E02",
+      "ids": [
+        "E02-F04",
+        "E02-F12"
+      ]
+    },
+    {
+      "stream": "R01",
+      "ids": [
+        "R01-F16",
+        "R01-F17",
+        "R01-F18",
+        "R01-F19",
+        "R01-F20"
+      ]
+    },
+    {
+      "stream": "X01",
+      "ids": [
+        "X01-F03"
+      ]
+    },
+    {
+      "stream": "Q01",
+      "ids": [
+        "Q01-F03",
+        "Q01-F04",
+        "Q01-F05",
+        "Q01-F06",
+        "Q01-F07"
+      ]
+    }
+  ],
+  "pinned_direct_source_ranges": [
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "scripts/install.sh",
+      "ranges": [
+        [
+          72,
+          102
+        ],
+        [
+          145,
+          149
+        ],
+        [
+          289,
+          321
+        ]
+      ],
+      "purpose": "pipx runner uses pipx run --spec after persistent install",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "scripts/install.ps1",
+      "ranges": [
+        [
+          108,
+          132
+        ],
+        [
+          178,
+          186
+        ],
+        [
+          312,
+          346
+        ]
+      ],
+      "purpose": "Windows pipx runner mirrors temporary run behavior",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "hatch_build.py",
+      "ranges": [
+        [
+          40,
+          104
+        ]
+      ],
+      "purpose": "Packaging hook discards build status and checks only index existence",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/build.py",
+      "ranges": [
+        [
+          120,
+          185
+        ],
+        [
+          180,
+          304
+        ]
+      ],
+      "purpose": "mtime freshness inspection and non-frozen frontend install/build",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".github/workflows/ci.yml",
+      "ranges": [
+        [
+          1,
+          31
+        ],
+        [
+          272,
+          289
+        ]
+      ],
+      "purpose": "docs ignore and separately frozen frontend CI install",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "deploy/scripts/update_nanobot_gateway.sh",
+      "ranges": [
+        [
+          1,
+          48
+        ]
+      ],
+      "purpose": "working checkout switched/pulled before deploy success",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "deploy/scripts/deploy_nanobot_gateway.sh",
+      "ranges": [
+        [
+          29,
+          124
+        ]
+      ],
+      "purpose": "existing environment/service mutation and restart",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "docs/migration/run-p0-baseline.sh",
+      "ranges": [
+        [
+          1,
+          35
+        ],
+        [
+          110,
+          140
+        ]
+      ],
+      "purpose": "mutable current helper/freeze used with historical source",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "docs/migration/verify-p0-archive.py",
+      "ranges": [
+        [
+          112,
+          174
+        ]
+      ],
+      "purpose": "strong archive source verify but current helper provenance",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/scripts/build-release.sh",
+      "ranges": [
+        [
+          1,
+          58
+        ]
+      ],
+      "purpose": "export release environment before pre-sign build phases",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/scripts/bootstrap-toolchain.sh",
+      "ranges": [
+        [
+          30,
+          132
+        ]
+      ],
+      "purpose": "cached executables skip digest/version verification",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/scripts/mobile-env.sh",
+      "ranges": [
+        [
+          1,
+          55
+        ]
+      ],
+      "purpose": "toolchain readiness checks executability",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/android/gradle/wrapper/gradle-wrapper.properties",
+      "ranges": [
+        [
+          1,
+          8
+        ]
+      ],
+      "purpose": "version URL without distributionSha256Sum",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/scripts/check-desktop-parity.py",
+      "ranges": [
+        [
+          112,
+          145
+        ]
+      ],
+      "purpose": "AST checker handles FunctionDef only",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/scripts/test-update-persistence.sh",
+      "ranges": [
+        [
+          18,
+          52
+        ]
+      ],
+      "purpose": "same APP_APK installed both before and after seed",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/process.py",
+      "ranges": [
+        [
+          1,
+          210
+        ]
+      ],
+      "purpose": "process group helper returns from group signal if root already exited",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/apps/cli/service.py",
+      "ranges": [
+        [
+          993,
+          1038
+        ],
+        [
+          1431,
+          1487
+        ]
+      ],
+      "purpose": "subprocess capture_output and post-exit truncation",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/web.py",
+      "ranges": [
+        [
+          1328,
+          1380
+        ]
+      ],
+      "purpose": "stream-safe URL path but unbounded aread for body/image",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/trend_vpn.py",
+      "ranges": [
+        [
+          40,
+          112
+        ],
+        [
+          140,
+          176
+        ]
+      ],
+      "purpose": "blocking broker request wrapped with asyncio.to_thread",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/generated_asset_index.py",
+      "ranges": [
+        [
+          104,
+          130
+        ]
+      ],
+      "purpose": "global generated asset scan first max_sessions only",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/turn.py",
+      "ranges": [
+        [
+          241,
+          331
+        ]
+      ],
+      "purpose": "media adoption before alias agreement validation",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/skills/video-understanding/scripts/extract_keyframes.py",
+      "ranges": [
+        [
+          147,
+          160
+        ],
+        [
+          199,
+          208
+        ],
+        [
+          560,
+          630
+        ]
+      ],
+      "purpose": "max_gap loop and argument without positive validation",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/loop.py",
+      "ranges": [
+        [
+          3508,
+          3638
+        ]
+      ],
+      "purpose": "approval snapshot before trusted foreground classification and policy workspace capture",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/policy.py",
+      "ranges": [
+        [
+          278,
+          447
+        ]
+      ],
+      "purpose": "AutoPush exemption and risky write root resolution",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/runner.py",
+      "ranges": [
+        [
+          1650,
+          1715
+        ]
+      ],
+      "purpose": "tool definition snapshot before provider request",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/providers/bedrock_provider.py",
+      "ranges": [
+        [
+          45,
+          76
+        ]
+      ],
+      "purpose": "process-global AWS bearer environment mutation",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/model_runtime.py",
+      "ranges": [
+        [
+          1,
+          220
+        ]
+      ],
+      "purpose": "direct model/context setters retain immutable capability snapshot",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/session/workspace_focus.py",
+      "ranges": [
+        [
+          74,
+          126
+        ],
+        [
+          347,
+          355
+        ],
+        [
+          757,
+          878
+        ]
+      ],
+      "purpose": "always-managed owner leaves private legacy paths unreachable",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    },
+    {
+      "repository": "JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/repositories.py",
+      "ranges": [
+        [
+          1,
+          287
+        ]
+      ],
+      "purpose": "SaveKnowledge validates named knowledge repo but not active project association",
+      "kind": "selected direct evidence only; no new primary-source denominator credit"
+    }
+  ],
+  "reference_mechanisms": [
+    {
+      "repository": "deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "scripts/pre-merge-check.ts",
+      "ranges": [
+        [
+          1,
+          131
+        ]
+      ],
+      "blob": "576b6ee7f9b1bbd9afbc2391d83c2ffb2603d381",
+      "purpose": "frozen dependency install in merged-tree check; comparison only"
+    },
+    {
+      "repository": "deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "scripts/ssh-helper/release.ts",
+      "ranges": [
+        [
+          1,
+          76
+        ]
+      ],
+      "blob": "31643ae45c30ff2bc26711d429d0bb8c48f3215e",
+      "purpose": "same-commit clean artifact digest/runtime evidence before release; comparison only"
+    },
+    {
+      "repository": "openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "docs/install.md",
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "blob": "4f63765b5e72a5085585cb6c5b01eecb04200807",
+      "purpose": "locked tool installation documentation; secondary context, not implementation standard"
+    }
+  ],
+  "cross_references_not_recounted": [
+    "Q01-F01 Windows authenticated crawler worker peer auth — I01",
+    "Q01-F02 deployment audit secret logging — I01",
+    "R01-F11 signed media URL logging — I01",
+    "R01-F05 substitute mobile fixture qualification — I03",
+    "R01-F06 systemd outcome reporting — I02",
+    "R01-F14 mobile cache pre-write bound — I02",
+    "M01-F03/F05/F06 and E02-F23 parser/model/transcript budgets — I02",
+    "X01-F04 extension catalog executable provenance — I01"
+  ],
+  "false_merges": [
+    {
+      "a": "Q01-F04",
+      "b": "E02-F12",
+      "reason": "dependency resolution identity vs bundle post-build evidence",
+      "merge": false
+    },
+    {
+      "a": "R01-F17",
+      "b": "R01-F18",
+      "reason": "cached/ambient toolchain validation vs Gradle downloaded archive digest",
+      "merge": false
+    },
+    {
+      "a": "R01-F19",
+      "b": "R01-F20",
+      "reason": "parity checker source coverage vs two-build upgrade migration test",
+      "merge": false
+    },
+    {
+      "a": "T01-F09",
+      "b": "X01-F03",
+      "reason": "descendant process lifetime vs stdout/stderr memory capture",
+      "merge": false
+    },
+    {
+      "a": "T01-F11",
+      "b": "E02-F04",
+      "reason": "download byte admission vs finite library pagination visibility",
+      "merge": false
+    },
+    {
+      "a": "T01-F12",
+      "b": "T01-F09",
+      "reason": "thread-backed session lease after cancellation vs child-process group quiescence",
+      "merge": false
+    },
+    {
+      "a": "H01-F3",
+      "b": "K01-F10",
+      "reason": "constructor alias normalization ordering vs standalone script numeric validation",
+      "merge": false
+    },
+    {
+      "a": "H01-F4",
+      "b": "H01-F5",
+      "reason": "approval inspects wrong file root vs overly broad AutoPush approval exemption",
+      "merge": false
+    },
+    {
+      "a": "H01-F5",
+      "b": "A01-F09",
+      "reason": "command classification exemption vs untrusted automation consuming user approval",
+      "merge": false
+    },
+    {
+      "a": "H01-F8",
+      "b": "H03-F6",
+      "reason": "tool registry/connection generation contract vs model capability snapshot generation",
+      "merge": false
+    },
+    {
+      "a": "H03-F4",
+      "b": "R01-F16",
+      "reason": "runtime ambient provider credential mutation vs build-time signing secret exposure",
+      "merge": false
+    },
+    {
+      "a": "S01-F02",
+      "b": "K01-F02",
+      "reason": "dead private compatibility branches vs active global knowledge-write ownership",
+      "merge": false
+    }
+  ],
+  "future_only_acceptance": [
+    "installer invokes exact installed pipx binary and reports artifact version/hash",
+    "release WebUI install is frozen and built bundle digest/freshness matches source+lock",
+    "cached mobile toolchain versions/digests and Gradle wrapper SHA enforced",
+    "signing credentials absent from native/shared-web build subprocess environments",
+    "staged deploy failure leaves prior release active and rollback identity intact",
+    "historical P0 verifier/freeze digests fixed to baseline",
+    "docs/migration executable-only change runs relevant CI",
+    "parity checker detects known async inbound and misc route",
+    "update persistence test uses distinct baseline/candidate APK hashes",
+    "descendant persists after root exit and cleanup proves group quiescence",
+    "large CLI/web response stops at predeclared byte ceiling",
+    "cancelled VPN start late success gets reconciled/reaped",
+    "asset library over 200 sessions exposes continuation/truncation",
+    "TurnRequest alias+media case normalizes after validation",
+    "max-gap <=0 rejected before processing",
+    "selected project risky edit approval checks same absolute target as execution",
+    "AutoPush exemption allows only intended synchronization verbs",
+    "automation cannot consume approval without trusted foreground provenance",
+    "registry/provider capability generation transitions produce explicit unavailable/stale outcomes",
+    "unreachable private focus branches removed only after compatibility proof",
+    "knowledge write blocked unless associated or explicit global-write capability"
+  ],
+  "limits": {
+    "tests_executed": 0,
+    "builds_executed": 0,
+    "scripts_executed": 0,
+    "deployments_executed": 0,
+    "network_probes": 0,
+    "product_source_edits": 0,
+    "independent_peer_review": false,
+    "E01_limited_depth_preserved": true,
+    "D1_D7_choices": 0,
+    "final_dedup_not_performed": true
+  },
+  "counts": {
+    "groups": 7,
+    "I04_original_findings": 26,
+    "all_original_findings": 136,
+    "mapped_after_I04": 136,
+    "original_questions": 105,
+    "deep_required_source_bodies": 824,
+    "E01_limited_depth": 95,
+    "new_findings": 0,
+    "new_questions": 0,
+    "new_primary_source_credit": 0,
+    "integrated_review_complete": 0
+  },
+  "next": "I05 final whole-project reconciliation only: deduplicate true source duplicates vs non-merges, prioritize repair packages/ownership, retain conditional reachability, then separate D1-D7 discussion"
+}

@@ -933,6 +933,11 @@ class AgentRunner:
                     tool_result_callback=(record_result if source_writer is not None
                                           else spec.tool_result_callback),
                 )
+                # Failing cancellation cleanup can surface as an ordinary tool
+                # error. Honour cancellation before starting recovery or another model call.
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise asyncio.CancelledError
                 terminal = next((
                     r for r in results
                     if isinstance(r, ToolOutcome) and r.stop_reason

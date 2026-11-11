@@ -39,10 +39,16 @@ export function SkillsCatalogSettings({
   skills,
   catalogComplete = true,
   catalogNotice,
+  loading = false,
+  error,
+  onRetry,
 }: {
   skills: SkillSummary[];
   catalogComplete?: boolean;
   catalogNotice?: string;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const { t } = useTranslation();
   const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
@@ -131,7 +137,21 @@ export function SkillsCatalogSettings({
 
       {view === "installed" ? (
         <section className="overflow-hidden rounded-panel bg-settings-surface">
-          {!catalogComplete ? (
+          {loading ? (
+            <p role="status" className="flex items-center gap-2 px-4 pt-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t("settings.skills.loading", { defaultValue: "Loading skills…" })}
+            </p>
+          ) : null}
+          {error ? (
+            <div role="alert" className="flex items-center justify-between gap-3 px-4 pt-4 text-sm text-destructive">
+              <p>{error}</p>
+              <Button variant="outline" size="sm" onClick={onRetry} disabled={loading}>
+                {t("common.retry", { defaultValue: "Retry" })}
+              </Button>
+            </div>
+          ) : null}
+          {!loading && !error && !catalogComplete ? (
             <div
               role="status"
               className="mx-4 mt-4 rounded-control bg-amber-500/10 px-3 py-2.5 text-[12px] leading-5 text-amber-800 dark:text-amber-200"
@@ -224,13 +244,13 @@ export function SkillsCatalogSettings({
                 </section>
               ))}
             </div>
-          ) : (
+          ) : !loading && !error ? (
             <div className="px-3 py-12 text-center text-sm text-muted-foreground">
               {t("settings.skills.noMatching", {
                 defaultValue: "No matching skills.",
               })}
             </div>
-          )}
+          ) : null}
         </section>
       ) : (
         <SkillsMarketplace
@@ -395,10 +415,11 @@ function SkillDetailSheet({
     const targetName = activeSkill.name;
     setActionBusy(true);
     setActionError("");
+    const scope = getToken();
     try {
       const payload = await updateSkillEnabled(client, targetName, !enabled);
       if (skillNameRef.current !== targetName) return;
-      notifySkillsChanged(payload);
+      notifySkillsChanged(payload, scope);
       const updated = payload.skills.find((item) => item.name === targetName);
       if (updated) {
         setDetail((current) => current ? { ...current, ...updated } : current);
@@ -425,10 +446,11 @@ function SkillDetailSheet({
     setDeleteOpen(false);
     setActionBusy(true);
     setActionError("");
+    const scope = getToken();
     try {
       const payload = await deleteSkill(client, targetName);
       if (skillNameRef.current !== targetName) return;
-      notifySkillsChanged(payload);
+      notifySkillsChanged(payload, scope);
       onOpenChange(false);
     } catch (reason) {
       if (skillNameRef.current === targetName) {

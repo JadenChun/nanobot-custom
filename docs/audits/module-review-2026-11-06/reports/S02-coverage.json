@@ -1,0 +1,1114 @@
+{
+  "schema_version": 1,
+  "stream_id": "S02",
+  "report": "reports/S02.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "/root/deep_sandbox_authority",
+    "handoff": "Three direct packets dated 2026-11-06: provenance/primary coverage; S01 architecture; S02 architecture and shared support.",
+    "published_by": "/root/publish_module_reviews",
+    "analyst_checkout": "/Users/jaden/.codex/worktrees/discover-sandbox/nanobot",
+    "analyst_git_status": "Clean at repeated checks, latest handoff; supplied analyst evidence."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/agent/tools/exec_session.py",
+    "nanobot/agent/tools/native_process.py",
+    "nanobot/agent/tools/native_process_supervisor.py",
+    "nanobot/agent/tools/sandbox.py",
+    "nanobot/agent/tools/shell.py",
+    "nanobot/security/native_admission.py"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/exec_session.py",
+      "ranges": [
+        [
+          1,
+          938
+        ]
+      ],
+      "git_blob": "0d413123e6d43a78c65c1bd65f2e0c21fdef56f2",
+      "sha256": "9fafab6599fb2361a38c5a1a8dd459cab8aa4f363cdf1e8be8cf8b91b2114177",
+      "bytes": 35768,
+      "line_count": 938,
+      "purpose": "Fresh primary body reads collectively cover 1\u2013EOF; not an all-branch or runtime certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "extent": "1\u2013EOF collectively, freshly read",
+      "primary_stream": "S02",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/native_process.py",
+      "ranges": [
+        [
+          1,
+          364
+        ]
+      ],
+      "git_blob": "b27a402df97755493d55c931286fe9c4384cbb45",
+      "sha256": "74f8b13f55b52b72e409381521859c6fe5569871a49392bd2777b9b0775de0ca",
+      "bytes": 14654,
+      "line_count": 364,
+      "purpose": "Fresh primary body reads collectively cover 1\u2013EOF; not an all-branch or runtime certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "extent": "1\u2013EOF collectively, freshly read",
+      "primary_stream": "S02",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/native_process_supervisor.py",
+      "ranges": [
+        [
+          1,
+          520
+        ]
+      ],
+      "git_blob": "1dfa2f0d32ceac107e60510ac6875275ed161493",
+      "sha256": "ac3191b8ceae5bccbb20aeeb787323427f5313984717be3fe6087c6b80542515",
+      "bytes": 20398,
+      "line_count": 520,
+      "purpose": "Fresh primary body reads collectively cover 1\u2013EOF; not an all-branch or runtime certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "extent": "1\u2013EOF collectively, freshly read",
+      "primary_stream": "S02",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/sandbox.py",
+      "ranges": [
+        [
+          1,
+          370
+        ]
+      ],
+      "git_blob": "97b4715b3e0422cc6864f7e3abb9b6b44774d748",
+      "sha256": "7051a61d11134097a61a55dec60f8c73a032bf895961044466047d06e67aa051",
+      "bytes": 15406,
+      "line_count": 370,
+      "purpose": "Fresh primary body reads collectively cover 1\u2013EOF; not an all-branch or runtime certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "extent": "1\u2013EOF collectively, freshly read",
+      "primary_stream": "S02",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/shell.py",
+      "ranges": [
+        [
+          1,
+          1635
+        ]
+      ],
+      "git_blob": "ae16b9d80bf29fbce46305f89a7ea0277d8bf87e",
+      "sha256": "4109e9611d4ceda2116e0e562d40d270bcdd79c0ac8b034252cc164209e4de3d",
+      "bytes": 67434,
+      "line_count": 1635,
+      "purpose": "Fresh primary body reads collectively cover 1\u2013EOF; not an all-branch or runtime certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "extent": "1\u2013EOF collectively, freshly read",
+      "primary_stream": "S02",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/security/native_admission.py",
+      "ranges": [
+        [
+          1,
+          1177
+        ]
+      ],
+      "git_blob": "39275a4258d3d466564727f66830804637c65693",
+      "sha256": "b3b039c00bd6f026deedafc4048f6aa3ecae3b77585b4ef90d635413d9c707de",
+      "bytes": 45848,
+      "line_count": 1177,
+      "purpose": "Fresh primary body reads collectively cover 1\u2013EOF; not an all-branch or runtime certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "extent": "1\u2013EOF collectively, freshly read",
+      "primary_stream": "S02",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/foreground.py",
+      "ranges": [
+        [
+          1,
+          69
+        ]
+      ],
+      "git_blob": "42055e403892232eb20918fc6187bbf5b6f0fb12",
+      "sha256": "0adfe757dae14c39679112dc5f88246c0a173a1e4244d26400ef5ab0b9559c25",
+      "bytes": 3521,
+      "line_count": 69,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/delegation.py",
+      "ranges": [
+        [
+          169,
+          182
+        ]
+      ],
+      "git_blob": "fedefcc5aea5c73e182c2dadc1792be871bcae39",
+      "sha256": "166193268f67c0f8b9b7de375fb36da6e133312e7bdc879c8324b1c6f7379d6d",
+      "bytes": 35531,
+      "line_count": 838,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/loop.py",
+      "ranges": [
+        [
+          650,
+          710
+        ],
+        [
+          1270,
+          1291
+        ],
+        [
+          1976,
+          2020
+        ],
+        [
+          2204,
+          2255
+        ],
+        [
+          3230,
+          3400
+        ],
+        [
+          3500,
+          3550
+        ],
+        [
+          4125,
+          4195
+        ]
+      ],
+      "git_blob": "4e9c4493aea2e8ff181f19024d6b8db16d404ab5",
+      "sha256": "0286918d9bf7cf4a9e8edf369c0c577f9b67c1acebba0bd12aaf83d728777a06",
+      "bytes": 242372,
+      "line_count": 5133,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/context.py",
+      "ranges": [
+        [
+          280,
+          312
+        ]
+      ],
+      "git_blob": "c6bdd0ab459659f50ffee16df1d096325c03edbb",
+      "sha256": "498502a382926dd9f695728bb62da5c1a327ea5cbfc1b09e662d91d79e51a939",
+      "bytes": 26085,
+      "line_count": 598,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/write_guard.py",
+      "ranges": [
+        [
+          1,
+          87
+        ]
+      ],
+      "git_blob": "733f4d674de0a1c53fe27145b926f6eed71c828c",
+      "sha256": "569588c53a6e85be42863b8dd97efd8ee1fd556c1cbf4db00a662ed141b14744",
+      "bytes": 2908,
+      "line_count": 87,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/_windows_job.py",
+      "ranges": [
+        [
+          1,
+          218
+        ]
+      ],
+      "git_blob": "19ca985d35ec317e4113952a6ed24b3651e36296",
+      "sha256": "1965c9fcbe7d6fe1626ebbc582c67459598b45af3458e28952ead207e414b990",
+      "bytes": 7547,
+      "line_count": 218,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/workspaces.py",
+      "ranges": [
+        [
+          240,
+          302
+        ],
+        [
+          658,
+          712
+        ],
+        [
+          791,
+          873
+        ],
+        [
+          934,
+          1245
+        ]
+      ],
+      "git_blob": "41b956b1ee80de0d90648a4b3eabb865420e4f9d",
+      "sha256": "03f59845a4fd76d25987eda4b45262a5cca3fe0ec1afab8b7621a5b936d84823",
+      "bytes": 67371,
+      "line_count": 1657,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/inbound_commands.py",
+      "ranges": [
+        [
+          105,
+          128
+        ],
+        [
+          1000,
+          1260
+        ]
+      ],
+      "git_blob": "5ff43718c9bf5582eb72adb852905b459e3bd37f",
+      "sha256": "64c65eea78736a3f120473d49a30025ec23d606c971f4f0cd11d0b7ed15563ec",
+      "bytes": 74998,
+      "line_count": 1915,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/channels/websocket/runtime.py",
+      "ranges": [
+        [
+          465,
+          500
+        ]
+      ],
+      "git_blob": "011f7c6a6649e474045acda5b0bdab3b7701b9b7",
+      "sha256": "73de43ba6f49eecac245cbc67f0edf8534f5b830ce9241e0832b7896a478996e",
+      "bytes": 64811,
+      "line_count": 1665,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/ws_http.py",
+      "ranges": [
+        [
+          845,
+          975
+        ],
+        [
+          2411,
+          2537
+        ]
+      ],
+      "git_blob": "fe34ce6bf74dbbc57553ebcf56cc8966d8683cd4",
+      "sha256": "be26d17a15f86dae30af10560e3d48ea1054d1edc4d870f5ce4e662c1105ad08",
+      "bytes": 138333,
+      "line_count": 3225,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/remote/permissions.py",
+      "ranges": [
+        [
+          1,
+          175
+        ]
+      ],
+      "git_blob": "d7bf259283b637876868526634347dc97ed824f1",
+      "sha256": "aaff440332c827dc8e583715581cf5b42e945b75770be5f44a2e16ac0eb111c0",
+      "bytes": 7103,
+      "line_count": 175,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/remote/ipc.py",
+      "ranges": [
+        [
+          1,
+          245
+        ]
+      ],
+      "git_blob": "b45c7c8846cb3fa0a6c8cfb69867273792fe2fa7",
+      "sha256": "824deea052fe3f40128810d47654f0ffec0aa4740d872e66a2340ac76a2cb4c6",
+      "bytes": 41866,
+      "line_count": 895,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "webui/src/components/thread/WorkspaceControls.tsx",
+      "ranges": [
+        [
+          207,
+          240
+        ],
+        [
+          677,
+          758
+        ],
+        [
+          895,
+          941
+        ]
+      ],
+      "git_blob": "cbec1d17359976ebaa7870245663e6efb33f312b",
+      "sha256": "d73e80ac8be49287d1817ad4062d5a1174516415e973aae160b22d1fe7625832",
+      "bytes": 43617,
+      "line_count": 945,
+      "purpose": "Shared bounded caller/presentation/lifetime context; no extra primary-stream completion credit.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    }
+  ],
+  "search_only": [
+    {
+      "kind": "test-source search only",
+      "paths": [
+        "tests/tools/test_exec_session_tools.py",
+        "tests/security/test_native_admission.py",
+        "tests/security/test_workspace_sandbox.py",
+        "tests/tools/test_sandbox.py",
+        "tests/tools/test_shell_reap.py",
+        "tests/agent/test_exec_session_isolation.py"
+      ],
+      "reported_operand_terms": [
+        "timeout",
+        "notify_on_exit",
+        "deadline",
+        "revalid",
+        "cancel_if_unlaunched",
+        "derived",
+        "owner_counts",
+        "full"
+      ],
+      "exact_command": null,
+      "limit": "The handoff supplies terms and corrected path inventory, not exact full shell invocations; no body-read credit from hits."
+    },
+    {
+      "kind": "callsite searches",
+      "reported_topics": [
+        "managed/legacy and native reservation/reference callers",
+        "WorkspaceFocusOwner subclasses/private legacy helper callers",
+        "current_scope_allows_loopback nanobot callers",
+        "configured repo exec and owner tag/count paths"
+      ],
+      "exact_operands": null,
+      "limit": "Reported search scope only; do not infer exhaustive external callsites or new body credit."
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/security/test_workspace_focus.py",
+      "ranges": [
+        [
+          325,
+          370
+        ]
+      ],
+      "git_blob": "f6651935e2b12e35d0a5368ecbe1710c3355500c",
+      "sha256": "18b17095451802a98ed1a00a6ca05203aecd3ccafe204ce4fe2d37c623384019",
+      "bytes": 21673,
+      "line_count": 603,
+      "purpose": "Read as text: normal configured protected-vs-readable directory cases; no test execution or absence-of-other-tests claim.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    }
+  ],
+  "support_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "AGENTS.md",
+      "ranges": [
+        [
+          1,
+          98
+        ]
+      ],
+      "git_blob": "240a96898e5c503b772ef7b4aeb938b3aa7ebe3a",
+      "sha256": "d5ee7b85713545f9c9e9ad9baaafa4f1f0d0fb337b8d837645e0d56f12b61c56",
+      "bytes": 6068,
+      "line_count": 98,
+      "purpose": "Analyst guidance read in full; support only.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".agent/design.md",
+      "ranges": [
+        [
+          1,
+          37
+        ]
+      ],
+      "git_blob": "1eb925ae85ae720848b675a7a3b5602313b265e6",
+      "sha256": "9e8969e53e054d1a4614ccd124e479442df5cf4c5f688b138d1728ecf4e90696",
+      "bytes": 3758,
+      "line_count": 37,
+      "purpose": "Analyst guidance read in full; support only.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".agent/security.md",
+      "ranges": [
+        [
+          1,
+          29
+        ]
+      ],
+      "git_blob": "91f2f41b11a20d4dec54f573beabacab86822dff",
+      "sha256": "bbcf86dd1a39e02b2f33db416c0d20a18789b9e35530ef992fed0adceb5cc86f",
+      "bytes": 3302,
+      "line_count": 29,
+      "purpose": "Analyst guidance read in full; support only.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".agent/gotchas.md",
+      "ranges": [
+        [
+          1,
+          40
+        ]
+      ],
+      "git_blob": "588d957a0eee073e0293995fddb9034ffadd7546",
+      "sha256": "5fedec0bd03af39fcfee57fef44aff6175f888f778adbe720679a713330feec0",
+      "bytes": 2556,
+      "line_count": 40,
+      "purpose": "Analyst guidance read in full; support only.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    {
+      "repository": "nanobot audit documents",
+      "path": "docs/audits/architecture-review-2026-11-06/README.md",
+      "ranges": [],
+      "reported_extent": "Governance/support read; exact ranges not supplied.",
+      "read_commit": null,
+      "verified_content_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+      "git_blob": "1ea66ee410e6dfd2d700363cb6614c849e30826f",
+      "sha256": "7401ba34875a14a9d7447ac64dce268f3d705672235d65e6d33ad04f4f92a6b9",
+      "bytes": 14178,
+      "line_count": 115,
+      "body_credit": 0,
+      "tree": "b11fe32824f31bab44d9d92038d539b198a5488a",
+      "tree_meaning": "Verified coordinator-document content tree; analyst read revision remains unspecified."
+    },
+    {
+      "repository": "nanobot audit documents",
+      "path": "docs/audits/architecture-review-2026-11-06/authority-sandbox.md",
+      "ranges": [],
+      "reported_extent": "Governance/support read; exact ranges not supplied.",
+      "read_commit": null,
+      "verified_content_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+      "git_blob": "5459ee64c3f5bf32d54c93ddb937899d049a7d15",
+      "sha256": "cd9f44ebca1b786c191500dc0d1415369fa22f15ec4404d78e4e19e17b29e696",
+      "bytes": 21119,
+      "line_count": 115,
+      "body_credit": 0,
+      "tree": "b11fe32824f31bab44d9d92038d539b198a5488a",
+      "tree_meaning": "Verified coordinator-document content tree; analyst read revision remains unspecified."
+    },
+    {
+      "repository": "nanobot audit documents",
+      "path": "docs/audits/architecture-review-2026-11-06/decisions.md",
+      "ranges": [],
+      "reported_extent": "Governance/support read; exact ranges not supplied.",
+      "read_commit": null,
+      "verified_content_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+      "git_blob": "7949373eee752498f536ef3bb440749e1127dc7c",
+      "sha256": "bfee8eb7ac1640849f3d7133641cb4bf97e428dd5023eec3e88453efdb8bacee",
+      "bytes": 11512,
+      "line_count": 111,
+      "body_credit": 0,
+      "tree": "b11fe32824f31bab44d9d92038d539b198a5488a",
+      "tree_meaning": "Verified coordinator-document content tree; analyst read revision remains unspecified."
+    },
+    {
+      "repository": "nanobot audit documents",
+      "path": "docs/audits/architecture-review-2026-11-06/audit-backlog.md",
+      "ranges": [],
+      "reported_extent": "Governance/support read; exact ranges not supplied.",
+      "read_commit": null,
+      "verified_content_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+      "git_blob": "7704500406e7d2301b65ddc464205cb65949bd9c",
+      "sha256": "5d45c475c18a570eac9e1503c966242026ec14bde908ab68ca1b60887f84f3d0",
+      "bytes": 13319,
+      "line_count": 96,
+      "body_credit": 0,
+      "tree": "b11fe32824f31bab44d9d92038d539b198a5488a",
+      "tree_meaning": "Verified coordinator-document content tree; analyst read revision remains unspecified."
+    },
+    {
+      "repository": "nanobot audit documents",
+      "path": "docs/audits/architecture-review-2026-11-06/persistence-lifecycle.md",
+      "ranges": [
+        [
+          1,
+          113
+        ]
+      ],
+      "read_commit": null,
+      "verified_content_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+      "git_blob": "f4978a2e9f89c51488f96ac028000048c7d05f68",
+      "sha256": "0281ead21b110d17938f041f76859a9a150ad88b10f2a58cd776cb2f6716d0f2",
+      "bytes": 22072,
+      "line_count": 113,
+      "additional_fragments": null,
+      "limit": "Coordinator-document read revision was not supplied; matching stage-start blob is mechanical content provenance, not an invented read revision.",
+      "tree": "b11fe32824f31bab44d9d92038d539b198a5488a",
+      "tree_meaning": "Verified coordinator-document content tree; analyst read revision remains unspecified."
+    },
+    {
+      "repository": "nanobot audit documents",
+      "path": "docs/audits/project-audit-plan.md",
+      "ranges": [
+        [
+          1,
+          180
+        ]
+      ],
+      "read_commit": null,
+      "verified_content_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+      "git_blob": "afc16bc8ec6424602bd9b7a46e75c841d08e443d",
+      "sha256": "136823796db5fe20e296eae4cdb55638046cc22c85466e71b050c40529958561",
+      "bytes": 52869,
+      "line_count": 585,
+      "additional_fragments": "Additional selected fragments within 181\u2013405; exact fragment ranges were not supplied and receive no contiguous-range credit.",
+      "limit": "Coordinator-document read revision was not supplied; matching stage-start blob is mechanical content provenance, not an invented read revision.",
+      "tree": "b11fe32824f31bab44d9d92038d539b198a5488a",
+      "tree_meaning": "Verified coordinator-document content tree; analyst read revision remains unspecified."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "coverage_counts": {
+    "primary_assignments": 6,
+    "fresh_primary_body_paths": 6,
+    "primary_physical_lines": 5004,
+    "primary_exclusions": 0,
+    "primary_unread_paths": 0,
+    "shared_caller_context_paths": 13,
+    "test_source_body_paths": 1,
+    "reference_body_paths": 9
+  },
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/sandbox/sandbox-local/src/index.ts",
+      "ranges": [
+        [
+          1,
+          220
+        ],
+        [
+          315,
+          343
+        ],
+        [
+          369,
+          391
+        ],
+        [
+          406,
+          570
+        ]
+      ],
+      "git_blob": "acf4b4e7387d7e6b3ec7931d96070896c3b71578",
+      "sha256": "a7a531c067547da088f37867b0c24dc366dab0a045fa53f7a16ff7d8b4a100ef",
+      "bytes": 28863,
+      "line_count": 586,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/sandbox/sandbox/src/index.ts",
+      "ranges": [
+        [
+          20,
+          93
+        ]
+      ],
+      "git_blob": "0fa31839872630bfbdf80d9e71a34316ab8c5fde",
+      "sha256": "0a44c9d691a200068ecfff4c1659dd205d0d6a776513a03823b54e51d5df468a",
+      "bytes": 8689,
+      "line_count": 197,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/sandbox/sandbox/src/diagnostics.ts",
+      "ranges": [
+        [
+          1,
+          100
+        ]
+      ],
+      "git_blob": "d515ab20f739fa30b2dc5d2bd70dcd2f2f5e855c",
+      "sha256": "758d86ef3e565f534a9903ea75b25bab92d31d7c080c8740ff118388966c8659",
+      "bytes": 4608,
+      "line_count": 100,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "packages/shell/bash-sandbox/src/index.ts",
+      "ranges": [
+        [
+          40,
+          192
+        ]
+      ],
+      "git_blob": "1cf112d309275b2c28a32eb349c7ad1dcb5d76b6",
+      "sha256": "45dec72853eb9ab2f40697b7618dd922eefc7d5a5c7eb427dcd590898ab1ad9f",
+      "bytes": 8389,
+      "line_count": 192,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/sandboxing/src/manager.rs",
+      "ranges": [
+        [
+          1,
+          125
+        ],
+        [
+          300,
+          536
+        ]
+      ],
+      "git_blob": "f6c281a061d0af01ddf0ee9d56646ea5c0943ad9",
+      "sha256": "8abe2a5f66f8101a669dd0c1571fb7c5edbab9eff2e80c8d13d9064bc5bc175d",
+      "bytes": 33960,
+      "line_count": 833,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/tools/sandboxing.rs",
+      "ranges": [
+        [
+          220,
+          280
+        ],
+        [
+          387,
+          523
+        ]
+      ],
+      "git_blob": "5a51a5dc6b9fb8c6a70a33a8aa6237744298295f",
+      "sha256": "13fdc2b336a2b135fef1b2dead5d3cc736f27ba15ba326408f32c8d694a6d61c",
+      "bytes": 20514,
+      "line_count": 580,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/core/src/tools/orchestrator.rs",
+      "ranges": [
+        [
+          110,
+          291
+        ],
+        [
+          365,
+          510
+        ]
+      ],
+      "git_blob": "a1a88e445449e55f3f8038adef48e0457df9a534",
+      "sha256": "8996f718b818804473c151a8a643747c2b5ab69b05f4630eee143fac7daa0bb5",
+      "bytes": 28899,
+      "line_count": 645,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/linux-sandbox/src/linux_run_main.rs",
+      "ranges": [
+        [
+          245,
+          295
+        ],
+        [
+          360,
+          417
+        ]
+      ],
+      "git_blob": "3ba283b37399861c3e5e71e797759bc82a3144bb",
+      "sha256": "2c8cdf628b8b8467cccf38227cada5295f5cb6a04888b860ea1b882fe2d19d53",
+      "bytes": 43570,
+      "line_count": 1198,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "codex-rs/sandboxing/src/seatbelt.rs",
+      "ranges": [
+        [
+          860,
+          908
+        ]
+      ],
+      "git_blob": "0f8701a167117562d41fc372f63f4daee630cf73",
+      "sha256": "ebd230e96ce456d95466406137995dc055cc8116ec32879b3ff4e8ddff5c65a3",
+      "bytes": 42646,
+      "line_count": 1125,
+      "purpose": "Actual bounded engineering-reference implementation read; no parity/operational certification.",
+      "evidence_origin": "/root/deep_sandbox_authority handoff parts 1\u20133; metadata mechanically verified by publisher",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    }
+  ],
+  "reference_limits": [
+    "Selection/probe/transform/runner failure are distinct; sole DSH macOS/Windows providers are not all functionally probed.",
+    "DSH Windows extra writable-root rejection is specifically workspace-write.",
+    "Nanobot deadline/reservation obligations establish F01/F02 independently of reference differences; no architecture/platform/network promise copied."
+  ],
+  "prior_change_evidence": [
+    {
+      "commit": "88acd736c2b24707dfa0c34f4eeefb56793dffee",
+      "read_kind": "Bounded --follow logs and selected commit bodies/diffs",
+      "purpose": "Approved-input staging/revalidation diff introduced later prelaunch return.",
+      "exact_ranges": null,
+      "range_unit": null,
+      "limit": "Exact selected historical diff extent otherwise not supplied; no whole-file or exhaustive-history credit. Historical validation claims are not current check results."
+    },
+    {
+      "commit": "f2579298b0967a13e6f5724dc0474a10deacc9a6",
+      "read_kind": "Bounded --follow logs and selected commit bodies/diffs",
+      "purpose": "Exec-session polling/wait API diff; relevant first 220 diff lines supplied.",
+      "exact_ranges": [
+        [
+          1,
+          220
+        ]
+      ],
+      "range_unit": "diff lines",
+      "limit": "Exact selected historical diff extent otherwise not supplied; no whole-file or exhaustive-history credit. Historical validation claims are not current check results."
+    },
+    {
+      "commit": "eeb7ff6aec5ad6cb40ea9f24c81560bc6456a942",
+      "read_kind": "Bounded --follow logs and selected commit bodies/diffs",
+      "purpose": "Tree release after root exit diff.",
+      "exact_ranges": null,
+      "range_unit": null,
+      "limit": "Exact selected historical diff extent otherwise not supplied; no whole-file or exhaustive-history credit. Historical validation claims are not current check results."
+    },
+    {
+      "commit": "79489ab92a9ee3955944874c8bd4665e4bf9f530",
+      "read_kind": "Bounded --follow logs and selected commit bodies/diffs",
+      "purpose": "Derived Full retirement diff.",
+      "exact_ranges": null,
+      "range_unit": null,
+      "limit": "Exact selected historical diff extent otherwise not supplied; no whole-file or exhaustive-history credit. Historical validation claims are not current check results."
+    }
+  ],
+  "findings": [
+    {
+      "id": "S02-F01",
+      "classification": "reliability/resource defect",
+      "priority": "high",
+      "confidence": "high conditional",
+      "source": [
+        "nanobot/agent/tools/shell.py:130",
+        "nanobot/config/schema.py:169\u2013172",
+        "nanobot/agent/tools/exec_session.py:147\u2013184,272\u2013274,396,447\u2013472,613\u2013625"
+      ],
+      "trigger": "Finite initial yield, root still running, notify_on_exit=False/default and no later poll/stop/shutdown.",
+      "impact": "Advertised hard deadline has no independently scheduled owner; no observed runaway claimed.",
+      "smallest_options": "Always-owned deadline task or one mandatory process-lifetime watcher with optional notification consumer; watcher does not drain foreground output.",
+      "consequences": "Preserve stdin proof, root/tree distinction, failed-kill/unknown ownership and raw output; broader public result/output choices remain D6/D7.",
+      "report_anchor": "s02-f01--yielded-hard-deadline-depends-on-notification-ownership"
+    },
+    {
+      "id": "S02-F02",
+      "classification": "data-integrity/recovery defect",
+      "priority": "medium",
+      "confidence": "high conditional",
+      "source": [
+        "nanobot/agent/tools/shell.py:410\u2013426,486\u2013505,539\u2013554"
+      ],
+      "trigger": "External filesystem/store-health change denies second approved-input revalidation after native reservation, before spawn/session cleanup owns it.",
+      "impact": "Unlaunched durable starting row can survive, become conservative unknown after restart, block activation or consume bounded capacity; no new authority.",
+      "smallest_options": "Scoped reservation owner immediately after reservation, covering every prelaunch return/exception, with explicit transfer to spawn/session ownership.",
+      "consequences": "Cancel only proven-unlaunched reservations; retain uncertain launched effects and exact snapshots/revalidation. Preserve 88acd736c2 input guards.",
+      "report_anchor": "s02-f02--prelaunch-input-denial-abandons-an-already-reserved-admission"
+    },
+    {
+      "id": "S02-F03",
+      "classification": "simplification/efficiency opportunity",
+      "priority": "low",
+      "confidence": "high in source mechanism; contention unmeasured",
+      "source": [
+        "nanobot/agent/tools/exec_session.py:385\u2013429,551\u2013580,613\u2013625"
+      ],
+      "trigger": "Manager start/cleanup awaits spawn/readiness/kill under global lock.",
+      "impact": "Independent operations serialize for those waits; eight-session bounded workload may justify retaining lock.",
+      "smallest_options": "Retain lock, or separately narrow with explicit pending slots, capacity accounting, closed/cancellation rollback and failed cleanup reinsertion.",
+      "consequences": "Adds state; deadline/cleanup corrections first. No measured benefit, copied eviction/capacity policy or silent unknown-effect reclamation (D7).",
+      "report_anchor": "s02-f03--manager-lock-covers-external-process-waits"
+    }
+  ],
+  "related_findings": [
+    {
+      "id": "S01-F03",
+      "report": "S01.md",
+      "relationship": "Shared native owner-epoch count issue; cross-reference only, not a second S02 finding."
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "S02-Q01",
+      "decision": "D1",
+      "question": "Required executor/client pairs and intended trusted legacy-channel behavior across standing-grant activation."
+    },
+    {
+      "id": "S02-Q02",
+      "decision": "D6",
+      "question": "Compatible internal denied/unavailable/runner-failure/cancelled/ordinary-child outcomes while retaining raw fields and no authority-widening retry."
+    },
+    {
+      "id": "S02-Q03",
+      "decision": "D7",
+      "question": "Promised completion view and root-exit versus receipt proof, then retention/slot/lock policy."
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    "S01/S02 permissions, confinement, native lifetime and durable proof stay distinct; root corroboration is not artifact acceptance.",
+    "H01 selected-project risky approval and K01 autoPush contract remain shared concerns, not containment escapes.",
+    "E02/R01 controller/IPC reads are bounded context, not complete auth/client reviews.",
+    "D1\u2013D7 explicitly deferred to final consolidated discussion; no open decision blocks inspection."
+  ],
+  "rejected_hypotheses": [
+    "prepare\u2192reserve\u2192spawn event-loop retirement race rejected under synchronous single-event-loop contract.",
+    "File resolution before fail-fast/non-suspending FileLockRegistry.acquire alone does not establish an interleaved permission race.",
+    "Literal git status && rm -rf is blocked later by shell deny patterns; no end-to-end exploit claim.",
+    "Client OS/environment markers do not prove actual executor confinement or incident cause."
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "/root",
+    "scope": "S01/S02 source-review publication only; no repair or product/design acceptance.",
+    "evidence_origin": "Direct root VERDICT message authorizing this narrow acceptance-record pass.",
+    "semantic_review": "Root read both complete reports and independently corroborated key enforcement/projection/count/deadline/reservation call chains and bounded reference mechanisms.",
+    "independent_metadata_check": {
+      "status": "PASS",
+      "current_primary_hashes": 919,
+      "primary_EOF_bodies": 21,
+      "unique_pinned_source_records": 52,
+      "missing_trees": 0,
+      "primary_gaps": 0,
+      "protected_files_unchanged": 2510,
+      "frozen_files_unchanged": 55
+    },
+    "exact_documented_command_rerun": {
+      "id": "MS2-S01-S02-integrity",
+      "phase": "Original publication snapshot, before coordinator-checked status updates.",
+      "command_location": "module_stages[0].commands[id=MS2-S01-S02-integrity].command",
+      "command_sha256": "2df2955520842241b5555801357b01aa8d0d963ac219535c9e792c8cb3340f5d",
+      "status": "PASS",
+      "primary_bodies": 21,
+      "physical_lines": 14776,
+      "record_occurrences": 82,
+      "unique_source_records": 52,
+      "pin_trees": 3,
+      "reference_paths": 13,
+      "distinct_findings": 6,
+      "discussion_questions": 6,
+      "local_links": 67,
+      "local_anchors": 3,
+      "source_links": 34,
+      "source_anchors": 34,
+      "history_links": 8,
+      "git_diff_check_exit": 0
+    },
+    "schema_alignments_resolved": [
+      "Root-relative coverage report paths",
+      "Explicit verified per-record trees"
+    ],
+    "integrated_review": "pending until all modules",
+    "module_git_checkpoint": "pending until coordinator commits",
+    "decisions": "D1\u2013D7 remain deferred; all source-only/provisional limits retained."
+  },
+  "integrated_review": null,
+  "git_checkpoint": {
+    "status": "recorded",
+    "commit": "0972617c0e056b0214a9b9037f0ca43b1e5d1e4e",
+    "pushed": true,
+    "evidence": "Direct root followup: S01/S02 PASS committed and pushed; exact AP1 rerun PASS before checkpoint."
+  },
+  "raw_read_search_failures_and_corrections": [
+    {
+      "operation": "Earlier incorrect Codex paths/workdir",
+      "exact_commands": null,
+      "exit_code": null,
+      "correction": "Two wrong paths/workdir corrected; no failed-read credit."
+    },
+    {
+      "operation": "Three guessed nonexistent test paths",
+      "exact_paths": null,
+      "exit_code": 2,
+      "correction": "Corrected via rg --files; no failed-read credit."
+    },
+    {
+      "operation": "Unmatched zsh foreground/*.py glob",
+      "exit_code": 1,
+      "correction": "No body credit from the unmatched glob."
+    },
+    {
+      "operation": "Search managed_webui_only=True",
+      "exit_code": null,
+      "correction": "No literal hit; actual conditional assignment was read at delegation.py:169\u2013182."
+    },
+    {
+      "operation": "Missing nanobot/runtime.py",
+      "exit_code": 2,
+      "correction": "No body credit for missing path; separately printed delegation evidence retained."
+    },
+    {
+      "operation": "Unbounded Codex show truncated",
+      "exit_code": null,
+      "correction": "No whole-file credit; relevant sandboxing.rs:387\u2013442 reread within retained bounded 387\u2013523 coverage."
+    },
+    {
+      "operation": "Earlier source truncation/read bounds",
+      "exit_code": null,
+      "correction": "DSH sandbox-local 406\u2013570 gap and filesystem gaps explicitly closed. Top-level workspace_access_recovery EOF corrected to 833; prior request through 880 adds no coverage."
+    }
+  ],
+  "analyst_allowed_operations": [
+    "git status/rev-parse/log/show/diff/ls-tree",
+    "rg/rg --files",
+    "nl/sed/cat/wc/xxd source reads",
+    "Python standard-library TSV/path/hash metadata"
+  ],
+  "limits": [
+    "Fresh primary bodies are collectively 1\u2013EOF; no all-branch/runtime certification.",
+    "No deployment/OS/backend availability, hostile-plugin isolation, runtime incident cause, measured performance or stability observed.",
+    "External callers/subclasses and file-descriptor-relative external-filesystem TOCTOU protection remain unknown.",
+    "No source-body validation of changed runner/fallback from this S01/S02 packet.",
+    "All proposed repair acceptance checks are future work; no imports/scripts/tests/type/lint/build/install/probes/services/providers/benchmarks ran.",
+    "Historical validation messages remain historical; future Python repairs retain applicable frozen same-environment P6/no-new-all-file-signature obligations."
+  ]
+}

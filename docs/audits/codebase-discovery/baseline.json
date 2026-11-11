@@ -1,0 +1,36 @@
+{
+  "updated_at": "2026-11-06T12:21:09.357745+08:00",
+  "source_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+  "source_tree": "d49aca97c9a34a2d17eae53d672fa591652457f1",
+  "source_ref": "origin/staging fetched on user request",
+  "previous_source_commit": "4e2bf4d8d0b34f133c01591b67826ca956fed384",
+  "previous_source_tree": "d5cc262acda5fb8051ffac9996ee9ab189c361cd",
+  "merge_base": "b94b12527b014785c1454a04ef3b8138ee6070a5",
+  "previous_only_commits": [
+    "4e2bf4d8d0b34f133c01591b67826ca956fed384 Merge branch 'codex/feature-audit-repairs' into staging",
+    "d3380eb69d3c8416a9ca72522001234ce30a8eeb docs(audit): record feature repairs and bounded acceptance",
+    "b45519af243ce6bdbd634e025aac633d9b215472 test(platform): isolate native capabilities and optional installers",
+    "d5576f1d266df4b70461453f87c95127e32d1129 fix(remote): authenticate Darwin IPC peers with kernel credentials",
+    "5d95a10699829fbf4b45a2b9e04420da9c1efbb9 fix(runtime): connect supported automation and foreground tools",
+    "184f226839a64c91c536b90bd953026ca50f6712 fix(webui): preserve skills state and mixed clipboard text",
+    "2d9da620fbe1eb89eaed0179087f4e9c28d3c850 fix(media): guard pagination and continue the asset library"
+  ],
+  "origin_only_commits": [
+    "27adced0aacd55d61791bb88a7240d7ad7bd5b75 Merge pull request #26 from JadenChun/fix/webui-server-owned-workspace-scope",
+    "aa63416d85bac0bc3e193566ba9eb4c0bbcebd88 fix(webui): use server-owned workspace scope for messages",
+    "ee2232c138cc073173816078217d0e28b5455aaa Merge branch 'feat/mobile-background-notifications' into staging",
+    "cbff71e5a771096d5ea8c8fb9af905532cc8587d fix(mobile): remove the run keepalive wake lock",
+    "c6a61691d39005a59048aa706ea39f9cf80a20f7 feat(mobile): keep background runs alive for completion alerts",
+    "83bda006be41569227f4d9ee9d3810cc163bfc41 Merge branch 'fix/webui-stale-transcript-tail' into staging",
+    "100549b7e425f3e266022317488da0e6a70b73f9 fix(webui): close stale transcript tails from session history",
+    "49bd74f28c867fcb2fe0bc2f3f2e237f0f0dd5c7 Merge branch 'fix/file-preview-tilde-path' into staging",
+    "c56508fc12a4492102a91dbce34d2b4ed149200f fix(webui): ignore invalid tilde paths in file preview",
+    "79744974c7dd517c91e5589c6c6828305226ecb6 Merge branch 'fix/tool-error-recovery' into staging",
+    "b6df37e26d5eaf14c783805ce2d75a09b3a934e2 fix(agent): recover from ordinary tool errors before stopping"
+  ],
+  "method": "Source-only differential discovery; no tests, builds, runtime or repository imports.",
+  "prior_reports": "reports/prior-2026-11-05/",
+  "source_repository": "https://github.com/JadenChun/nanobot-custom",
+  "publication_scope": "Source tree denominator excludes discovery documents added after this pin.",
+  "path_base": "discovery-root: docs/audits/codebase-discovery/"
+}

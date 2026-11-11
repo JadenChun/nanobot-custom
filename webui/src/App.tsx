@@ -2893,6 +2893,9 @@ function Shell({
                     skills={skills}
                     skillsCatalogComplete={skillCatalog.catalog_complete}
                     skillsCatalogNotice={skillCatalog.catalog_notice}
+                    skillsCatalogLoading={skillCatalog.loading}
+                    skillsCatalogError={skillCatalog.error}
+                    onRetrySkillsCatalog={skillCatalog.refresh}
                     onSectionChange={onSettingsSectionChange}
                     onLogout={onLogout}
                     onRestart={onRestart}

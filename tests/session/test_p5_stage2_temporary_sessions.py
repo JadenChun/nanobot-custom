@@ -1,10 +1,13 @@
 """Real temporary manager/channel lifecycle proofs on isolated copied roots."""
 
 import asyncio
+import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from websockets.datastructures import Headers
 
 from nanobot.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
@@ -14,6 +17,7 @@ from nanobot.bus.events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
 from nanobot.channels.websocket.tests.ws_test_client import WsTestClient
+from nanobot.session import webui_turns as wth
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
 from nanobot.webui.gateway_services import build_gateway_services
@@ -318,3 +322,142 @@ def test_unmanaged_activation_rejects_durable_collision_even_with_live_transient
     with pytest.raises(RuntimeError, match="^temporary session activation conflicts with session policy$"):
         manager.get_or_create_transient(key, retain=True)
     assert manager.get_cached(key) is retained and state(manager) == before
+
+
+@pytest.mark.asyncio
+async def test_temporary_mode_controls_own_scope_after_full_is_enabled(tmp_path, monkeypatch):
+    # Exercise transient permission admission without launching a native process.
+    monkeypatch.setattr(
+        "nanobot.agent.tools.native_process.native_supervisor_available",
+        lambda: True,
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    manager = SessionManager(workspace, sessions_root=tmp_path / "sessions")
+    before = state(manager)
+    bus = MagicMock()
+    bus.publish_inbound = AsyncMock()
+    config = WebSocketConfig(enabled=True, allow_from=["*"])
+    gateway = build_gateway_services(
+        config=config, bus=bus, session_manager=manager, static_dist_path=None,
+        workspace_path=workspace, default_restrict_to_workspace=True,
+        runtime_model_name=None, runtime_surface="browser",
+        runtime_capabilities_overrides=None,
+    )
+    channel = WebSocketChannel(
+        config, bus, gateway=gateway,
+    )
+    owner = MagicMock()
+    owner.send = AsyncMock()
+    owner.remote_address = ("127.0.0.1", 50123)
+    owner.request = SimpleNamespace(headers=Headers([("Host", "127.0.0.1:29876")]))
+    owner.mobile_identity = None
+    try:
+        channel._webui_connections.add(owner)
+        await channel._dispatch_envelope(owner, "webui-client", {"type": "new_temporary_chat"})
+        attached = json.loads(owner.send.await_args.args[0])
+        assert attached["event"] == "attached" and attached["temporary"] is True
+        chat_id = attached["chat_id"]
+        workspaces = channel.gateway.workspaces
+        prepared = workspaces.prepare_full({"chat_id": chat_id}, local_ui=True)
+        enabled = workspaces.set_permission_mode(
+            {
+                "chat_id": chat_id,
+                "mode": "full",
+                "expected_runtime_id": prepared["workspace_permissions"]["runtime_id"],
+                "expected_permission_revision": prepared[
+                    "workspace_permissions"
+                ]["revision"],
+            },
+            local_ui=True,
+        )
+        assert enabled["workspace_scope"]["access_mode"] == "full"
+        policy = channel._temporary_chats.message_policy(owner, chat_id, "hello")
+        assert policy is not None
+        assert policy.workspace_scope.access_mode == "full"
+
+        await channel._dispatch_envelope(
+            owner,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": chat_id,
+                "content": "sandbox",
+                "webui": True,
+                "turn_id": "turn-sandbox",
+                "request_settings_version": 1,
+                "request_intent": "new",
+                "workspace_scope": {
+                    "project_path": str(policy.workspace_scope.project_path),
+                    "access_mode": "restricted",
+                    "restrict_to_workspace": True,
+                },
+            },
+        )
+        rejected = json.loads(owner.send.await_args.args[0])
+        assert rejected["detail"] == "invalid_request_settings"
+        assert rejected["reason"] == "workspace_scope"
+        bus.publish_inbound.assert_not_awaited()
+        assert state(manager) == before
+
+        restricted = workspaces.set_permission_mode(
+            {
+                "chat_id": chat_id,
+                "mode": "restricted",
+                "expected_runtime_id": enabled["workspace_permissions"]["runtime_id"],
+                "expected_permission_revision": enabled["workspace_permissions"]["revision"],
+            },
+            local_ui=True,
+        )
+        assert restricted["workspace_scope"]["access_mode"] == "restricted"
+        await channel._dispatch_envelope(
+            owner,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": chat_id,
+                "content": "sandbox",
+                "webui": True,
+                "turn_id": "turn-sandbox-owner",
+                "request_settings_version": 1,
+                "request_intent": "new",
+            },
+        )
+        assert bus.publish_inbound.await_count == 1
+        sandbox_message = bus.publish_inbound.await_args.args[0]
+        assert sandbox_message.workspace_scope.access_mode == "restricted"
+        assert not manager.get_cached(f"websocket:{chat_id}").policy.persist
+        wth.clear_websocket_turns(chat_id)
+
+        enabled_again = workspaces.set_permission_mode(
+            {
+                "chat_id": chat_id,
+                "mode": "full",
+                "expected_runtime_id": restricted["workspace_permissions"]["runtime_id"],
+                "expected_permission_revision": restricted["workspace_permissions"]["revision"],
+            },
+            local_ui=True,
+        )
+        assert enabled_again["workspace_scope"]["access_mode"] == "full"
+        await channel._dispatch_envelope(
+            owner,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": chat_id,
+                "content": "full",
+                "webui": True,
+                "turn_id": "turn-full",
+                "request_settings_version": 1,
+                "request_intent": "new",
+            },
+        )
+        assert bus.publish_inbound.await_count == 2
+        full_message = bus.publish_inbound.await_args.args[0]
+        assert full_message.workspace_scope.access_mode == "full"
+        assert not manager.get_cached(f"websocket:{chat_id}").policy.persist
+        assert manager.read_session_snapshot(f"websocket:{chat_id}") is None
+        assert read_transcript_lines(f"websocket:{chat_id}") == []
+        assert state(manager) == before
+    finally:
+        await channel.stop()

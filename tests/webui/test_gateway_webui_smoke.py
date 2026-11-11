@@ -15,6 +15,7 @@ import httpx
 import pytest
 import websockets
 
+from nanobot.agent.tools.sandbox import managed_bwrap_available
 from nanobot.session.manager import SessionManager
 from nanobot.session.recovery import PENDING_USER_TURN_KEY, RUNTIME_CHECKPOINT_KEY
 from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
@@ -147,6 +148,10 @@ async def _recv_until(ws: websockets.WebSocketClientProtocol, event: str) -> dic
 
 @pytest.mark.asyncio
 async def test_gateway_webui_bootstrap_message_and_thread_hydration(tmp_path: Path) -> None:
+    expected_shell = (
+        "shell-ok" if managed_bwrap_available()
+        else "Error: Sandbox command confinement is unavailable"
+    )
     ws_port = _free_port()
     gateway_port = _free_port()
     workspace = tmp_path / "workspace"
@@ -196,7 +201,7 @@ async def test_gateway_webui_bootstrap_message_and_thread_hydration(tmp_path: Pa
                 "turn_id": "shell-turn",
             }))
             shell = await _recv_until(ws, "message")
-            assert "shell-ok" in shell["text"]
+            assert expected_shell in shell["text"]
             assert shell["turn_id"] == "shell-turn"
             await _recv_until(ws, "turn_end")
 
@@ -214,7 +219,10 @@ async def test_gateway_webui_bootstrap_message_and_thread_hydration(tmp_path: Pa
         assert "/model" in contents
         assert any("Current model: `custom/smoke-model`" in text for text in contents)
         assert "!printf shell-ok" in contents
-        assert any("shell-ok" in text for text in contents)
+        assert any(
+            message.get("role") == "assistant" and expected_shell in str(message.get("content"))
+            for message in thread["messages"]
+        )
     finally:
         _stop_gateway(process)
 

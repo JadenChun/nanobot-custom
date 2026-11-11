@@ -375,6 +375,9 @@ def _run_gateway(
         WebuiTurnRoutePolicy,
         build_webui_fallback_model_observer,
     )
+    from nanobot.triggers.local_store import LocalTriggerStore
+
+    local_triggers = LocalTriggerStore(config.workspace_path)
 
     defaults = RuntimeFactories.defaults()
     config_path = get_config_path()
@@ -398,9 +401,13 @@ def _run_gateway(
             bus,
             session_manager=session_manager,
             cron_service=cron_service,
+            local_trigger_store=local_triggers,
             webui_runtime_model_name=lambda: agent.model.strip() or None,
             webui_refresh_runtime_config=_webui_refresh_notification(gateway_agent.refresh_runtime_config),
-            webui_cron_pending_job_ids=gateway_agent.pending_cron_job_ids_for_session,
+            webui_cron_pending_job_ids=lambda key: (
+                agent.pending_cron_job_ids_for_session(key)
+                | agent.pending_local_trigger_ids_for_session(key)
+            ),
             webui_static_dist=webui_static_dist,
             webui_runtime_surface=webui_runtime_surface,
             webui_runtime_capabilities=webui_runtime_capabilities,
@@ -455,6 +462,7 @@ def _run_gateway(
             provider_signature=snapshot.signature,
             session_manager=sessions,
             cron_service=cron,
+            local_trigger_store=local_triggers,
             turn_delivery_factory=delivery,
             image_generation_provider_configs=image_gen_provider_configs(config),
             provider_snapshot_loader=load_gateway_provider_snapshot,
@@ -493,6 +501,7 @@ def _run_gateway(
         channels = handle.channels
         assert channels is not None
         tasks: list[asyncio.Task[Any]] = []
+        local_trigger_task: asyncio.Task[None] | None = None
         shutdown = asyncio.Event()
         processes = None
         cron_gateway = None
@@ -609,8 +618,8 @@ def _run_gateway(
             console.print(
                 f"{__logo__} Starting nanobot gateway version {__version__} on port {port}..."
             )
-            console.print("[yellow]○[/yellow] Dream: inactive (P5 Stage 1)")
-            console.print("[yellow]○[/yellow] Heartbeat: inactive (P5 Stage 1)")
+            console.print("[yellow]○[/yellow] Dream: periodic execution unavailable; use /dream")
+            console.print("[yellow]○[/yellow] Heartbeat: periodic execution unavailable")
             console.print("[yellow]○[/yellow] Cron: waiting for channels" if cron_gateway is not None
                           else "[yellow]○[/yellow] Cron: definitions only; runtime inactive")
             options = instance.start_options(
@@ -670,6 +679,15 @@ def _run_gateway(
                     processes.start()
                 if cron_gateway is not None:
                     tasks.append(asyncio.create_task(cron_gateway.run()))
+                if config.gateway.local_triggers:
+                    from nanobot.triggers.local_runner import run_gateway_local_triggers
+
+                    local_trigger_task = asyncio.create_task(run_gateway_local_triggers(
+                        store=local_triggers,
+                        submit_turn=agent.submit_local_trigger_turn,
+                        is_channel_enabled=lambda name: channels.get_channel(name) is not None,
+                    ))
+                    tasks.append(local_trigger_task)
                 if health_server_enabled:
                     tasks.append(asyncio.create_task(
                         _health_server(
@@ -705,6 +723,15 @@ def _run_gateway(
             primary_error = exc
             raise
         finally:
+            if local_trigger_task is not None and not local_trigger_task.done():
+                # Stop queue admission before waiting for other runtime owners.
+                local_trigger_task.cancel()
+                try:
+                    await local_trigger_task
+                except asyncio.CancelledError:
+                    pass
+                except BaseException as exc:
+                    record_cleanup_error(exc)
             if cron_gateway is not None:
                 try:
                     await cron_gateway.aclose()

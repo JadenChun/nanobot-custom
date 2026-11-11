@@ -1,0 +1,935 @@
+{
+  "schema_version": 1,
+  "stream_id": "Q01",
+  "report": "reports/Q01.md",
+  "publication_state": "coordinator-checked",
+  "source_pins": {
+    "nanobot": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    }
+  },
+  "evidence_origin": {
+    "analyst": "ChatGPT Q01 source reviewer 2026-11-07",
+    "handoff": "Fresh 25-body source review",
+    "published_by": "Same-assistant coordinator; not independent peer"
+  },
+  "assigned_primary_paths": [
+    "core_agent_lines.sh",
+    "deploy/scripts/deploy_crawl4ai_worker.sh",
+    "deploy/scripts/deploy_nanobot_gateway.sh",
+    "deploy/scripts/local_crawl4ai_common.ps1",
+    "deploy/scripts/setup_local_crawl4ai_profile.ps1",
+    "deploy/scripts/start_local_marketing_agent.ps1",
+    "deploy/scripts/update_nanobot_gateway.sh",
+    "docs/migration/run-p0-baseline.sh",
+    "docs/migration/verify-p0-archive.py",
+    "entrypoint.sh",
+    "hatch_build.py",
+    "scripts/audit_deployed_instance.sh",
+    "scripts/check_type_regressions.py",
+    "scripts/import_cron_copy.py",
+    "scripts/install.ps1",
+    "scripts/install.sh",
+    "scripts/install_channel_dependencies.py",
+    "scripts/p6_release_rehearsal.py",
+    "scripts/update_readme_contributors.py",
+    "typings/crawl4ai/__init__.pyi",
+    "typings/oauth_cli_kit/__init__.pyi",
+    "typings/oauth_cli_kit/flow.pyi",
+    "typings/oauth_cli_kit/models.pyi",
+    "typings/oauth_cli_kit/providers/__init__.pyi",
+    "typings/oauth_cli_kit/storage.pyi"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "core_agent_lines.sh",
+      "git_blob": "fbff18363a9c012ec0a3cc806d5a1bc2b4fc2668",
+      "sha256": "22e1cff2e634fffebd5f2aeffd6b68163394d876f22193de5e6245e5355d6582",
+      "bytes": 2542,
+      "line_count": 90,
+      "ranges": [
+        [
+          1,
+          90
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "deploy/scripts/deploy_crawl4ai_worker.sh",
+      "git_blob": "5129adca4a67a45c2ccc851ef7f6e0f136fc5f70",
+      "sha256": "b9d013b89b54fa20e61e70e17a59c80705e433030df5f256dc1496cc78b8a446",
+      "bytes": 2139,
+      "line_count": 55,
+      "ranges": [
+        [
+          1,
+          55
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "deploy/scripts/deploy_nanobot_gateway.sh",
+      "git_blob": "54870bd84e87fedc3aff7882ebf369c9e1d607cc",
+      "sha256": "2042bb49545ca8ae393cdd730a4f5c16f2fe08ea63f238ebaeb9d0c24b7e82a6",
+      "bytes": 5096,
+      "line_count": 124,
+      "ranges": [
+        [
+          1,
+          124
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "deploy/scripts/local_crawl4ai_common.ps1",
+      "git_blob": "3eb18b05300a2e871bb11db7997bd54089856203",
+      "sha256": "d57e9aaa43345fa378baa31f3c2c330988fccc42bcde9b18e6ba791aa060490e",
+      "bytes": 8534,
+      "line_count": 262,
+      "ranges": [
+        [
+          1,
+          262
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "deploy/scripts/setup_local_crawl4ai_profile.ps1",
+      "git_blob": "3873764a5896bb3c80e2a226fd847b2f7f4a71b9",
+      "sha256": "30f210f2db67e1ff2e418df6daf482e7fc9b50c334e36e5cea71757c132224b7",
+      "bytes": 3008,
+      "line_count": 72,
+      "ranges": [
+        [
+          1,
+          72
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "deploy/scripts/start_local_marketing_agent.ps1",
+      "git_blob": "fcb0505aa37849b08f16870f2fbf70f143f0dd78",
+      "sha256": "6bcd0d7518d904ddb2c54def5228faec5d45d992d63340d9afa2dbebcfff5029",
+      "bytes": 9929,
+      "line_count": 242,
+      "ranges": [
+        [
+          1,
+          242
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "deploy/scripts/update_nanobot_gateway.sh",
+      "git_blob": "43b4cb0e37555b0ad24e4c09548fc8e9a716d251",
+      "sha256": "81286b56ff30c54e2ad011d40665342bb8c053d864deb5decd0bc0b4829d53c4",
+      "bytes": 1904,
+      "line_count": 47,
+      "ranges": [
+        [
+          1,
+          47
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "docs/migration/run-p0-baseline.sh",
+      "git_blob": "c1c45d4b7ff7d4c04f5aeb1c29559d676f572dd8",
+      "sha256": "45424609a75af0c92f042660051adfc680da51c7b9bfb374d420a503b911d0a0",
+      "bytes": 8043,
+      "line_count": 265,
+      "ranges": [
+        [
+          1,
+          265
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "docs/migration/verify-p0-archive.py",
+      "git_blob": "cb6df5cbf057bbf79a2c35170c87edadeafb37af",
+      "sha256": "ebb0cd5e5b0234b61381f4d4b7670b2734befb806723deda102f69e758458f4f",
+      "bytes": 6154,
+      "line_count": 174,
+      "ranges": [
+        [
+          1,
+          174
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "entrypoint.sh",
+      "git_blob": "1a4c181dede9320cb872494a8e935c07ab2ff35f",
+      "sha256": "c680348783eb3623cbf0e5fe34643dd7d19d41190c1335a91309b24845d50cc5",
+      "bytes": 2612,
+      "line_count": 55,
+      "ranges": [
+        [
+          1,
+          55
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "hatch_build.py",
+      "git_blob": "d4e93f186f7cd06e45be158b46e4812df5c056fe",
+      "sha256": "cb88f64d6a78cad798306ba25905cca4f76917533824bb2d3175f9375798f7fb",
+      "bytes": 3925,
+      "line_count": 103,
+      "ranges": [
+        [
+          1,
+          103
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/audit_deployed_instance.sh",
+      "git_blob": "5d7c427c7c82feb416223af36715259a79c62650",
+      "sha256": "431d6ec9451d253eebd109ab2322d4670371cf968c023d07987f2207da11293d",
+      "bytes": 8043,
+      "line_count": 209,
+      "ranges": [
+        [
+          1,
+          209
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/check_type_regressions.py",
+      "git_blob": "9e2b7d14f4f5f9322b7afa9064b3b2ceedd8d40d",
+      "sha256": "cc75b7fd74fb9762c4b25ac14d282ed08fc0c1e63d3d5de3cd433cee47b136f9",
+      "bytes": 11651,
+      "line_count": 295,
+      "ranges": [
+        [
+          1,
+          295
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/import_cron_copy.py",
+      "git_blob": "0e4df7965d9491214e44b9b398dd930fd7d4612d",
+      "sha256": "1fd240c2e2d6c7ab2d7944a7a184bf5806a4d84993ecc1550a603b6dead4160a",
+      "bytes": 1028,
+      "line_count": 23,
+      "ranges": [
+        [
+          1,
+          23
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/install.ps1",
+      "git_blob": "68b98f7e2facd17cba34c4e8b85f8d23f199417a",
+      "sha256": "5ba8def95bbe18bd82d88a8096503d55f26f9c0abe5f25cf3a430f57e19802e3",
+      "bytes": 11464,
+      "line_count": 346,
+      "ranges": [
+        [
+          1,
+          346
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/install.sh",
+      "git_blob": "030051be7f7832c4f13863ca6cb6f6cef2c8f962",
+      "sha256": "ddce2d665bee12b294d190aaff0d1f72ba18eeda01d9cac2e49ffee680ff82bb",
+      "bytes": 9283,
+      "line_count": 321,
+      "ranges": [
+        [
+          1,
+          321
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/install_channel_dependencies.py",
+      "git_blob": "858621ca9892b74d071e270fcb98494a11d6524d",
+      "sha256": "05ff96399d28653019fd672427fb6b86a7da4bcdeae76d8502336120950a1f5f",
+      "bytes": 3277,
+      "line_count": 97,
+      "ranges": [
+        [
+          1,
+          97
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/p6_release_rehearsal.py",
+      "git_blob": "d0e15f0fd1b95b1c6f72ce311f3db7ad26b8494c",
+      "sha256": "eedaf97e873cffde154360748e17f49d3c1f25a142ded74cbb6343406e3b48e9",
+      "bytes": 35542,
+      "line_count": 933,
+      "ranges": [
+        [
+          1,
+          933
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "scripts/update_readme_contributors.py",
+      "git_blob": "734b3f3d64f3ada92d981fb3a2efd87594955e53",
+      "sha256": "62a0d5e052084e26391d763c36aa3a5fe4ef6e6a5136ef1bf7acf9c1cbe3b8e5",
+      "bytes": 2845,
+      "line_count": 91,
+      "ranges": [
+        [
+          1,
+          91
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "typings/crawl4ai/__init__.pyi",
+      "git_blob": "85fc82f3756b642d8abb77fa758a10af4229230a",
+      "sha256": "a385c28671420bbacbb31f6e34c76dc4a19627b6d34a5bd813c4941d2d99a0ac",
+      "bytes": 2164,
+      "line_count": 67,
+      "ranges": [
+        [
+          1,
+          67
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "typings/oauth_cli_kit/__init__.pyi",
+      "git_blob": "69e8470fc1ad77f6913562c7ec18e682fdfa03b9",
+      "sha256": "ff4b9c13d2d75e80bf0c00a78e9194bfa6c0ee0636eeca01ab009fc25c3e9d2d",
+      "bytes": 288,
+      "line_count": 5,
+      "ranges": [
+        [
+          1,
+          5
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "typings/oauth_cli_kit/flow.pyi",
+      "git_blob": "f6e4b6fdc51ed78cd663fd2f163cee236b7ed791",
+      "sha256": "2ea252185bf9ca502daa666a0a6ad5d921ff7cb3044508e991367c7fc0bfe6cb",
+      "bytes": 910,
+      "line_count": 30,
+      "ranges": [
+        [
+          1,
+          30
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "typings/oauth_cli_kit/models.pyi",
+      "git_blob": "f534e864a267718633f6d12b18e394a1883b2d68",
+      "sha256": "13c7e73977c1a15265410aece28b08c3111d447522ec3ddefd364b6ff68e5a9a",
+      "bytes": 486,
+      "line_count": 22,
+      "ranges": [
+        [
+          1,
+          22
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "typings/oauth_cli_kit/providers/__init__.pyi",
+      "git_blob": "1a2063b4dff24f0b1f50f6f1a51b3a5f84e8f186",
+      "sha256": "7b5a7296902d95fea1710b6023c1fd29a59f5c583f901431c41e23c106ea363e",
+      "bytes": 85,
+      "line_count": 3,
+      "ranges": [
+        [
+          1,
+          3
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "typings/oauth_cli_kit/storage.pyi",
+      "git_blob": "189340decc58c3dc51a4a38056fc80581ba9e136",
+      "sha256": "979e5ae199dc2a8a3608f46aad6c414070ede4377ff4be87ac51065c18dce1fb",
+      "bytes": 630,
+      "line_count": 21,
+      "ranges": [
+        [
+          1,
+          21
+        ]
+      ],
+      "extent": "entire source body read 1–EOF",
+      "purpose": "Frozen 2026-11-07 Q01 source semantic read and separately recomputed SHA256"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "pyproject.toml",
+      "ranges": [
+        [
+          1,
+          197
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".github/workflows/ci.yml",
+      "ranges": [
+        [
+          1,
+          432
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "Dockerfile",
+      "ranges": [
+        [
+          1,
+          82
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "docker-compose.yml",
+      "ranges": [
+        [
+          1,
+          62
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/build.py",
+      "ranges": [
+        [
+          1,
+          303
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "deploy/systemd/nanobot-gateway.service",
+      "ranges": [
+        [
+          1,
+          24
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/crawler/worker.py",
+      "ranges": [
+        [
+          94,
+          122
+        ],
+        [
+          623,
+          630
+        ],
+        [
+          692,
+          732
+        ],
+        [
+          826,
+          850
+        ],
+        [
+          883,
+          905
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/social_crawl.py",
+      "ranges": [
+        [
+          89,
+          109
+        ],
+        [
+          161,
+          190
+        ]
+      ],
+      "extent": "caller/config/context only, not primary credit"
+    }
+  ],
+  "test_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/deploy/test_deployment_bundle.py",
+      "ranges": [
+        [
+          1,
+          100
+        ]
+      ],
+      "extent": "test source read, not executed"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/deploy/test_local_marketing_powershell.py",
+      "ranges": [
+        [
+          185,
+          295
+        ]
+      ],
+      "extent": "test source read, not executed"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/migration/test_p6_release_rehearsal.py",
+      "ranges": [
+        [
+          1,
+          107
+        ],
+        [
+          245,
+          380
+        ]
+      ],
+      "extent": "test source read, not executed"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "tests/scripts/test_type_regressions.py",
+      "ranges": [],
+      "extent": "test-name inventory only"
+    }
+  ],
+  "support_reads": [
+    {
+      "path": "deploy/systemd/crawl4ai-worker.service",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "extent": "entire source file",
+      "purpose": "Linux service socket/identity contrast"
+    },
+    {
+      "path": "docs/audits/codebase-discovery/path-inventory.tsv",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "extent": "25 Q01 rows",
+      "purpose": "Frozen hashes and assignments"
+    }
+  ],
+  "search_only": [
+    {
+      "query": "GitHub commit-text release, installer, crawler, deploy, P6",
+      "result": "Only sampled unrelated or historical docs/provider commits; no verified creation lineage"
+    }
+  ],
+  "justified_exclusions": [
+    {
+      "paths": [
+        "pyproject.toml",
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "nanobot/webui/build.py"
+      ],
+      "reason": "Supplementary context, not Q01 primary assignments"
+    }
+  ],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "scripts/pre-merge-check.ts",
+      "ranges": [
+        [
+          1,
+          131
+        ]
+      ],
+      "mechanism": "Frozen pnpm lock, version/host/client checks, reporting not always blocking"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "scripts/ssh-helper/release.ts",
+      "ranges": [
+        [
+          1,
+          76
+        ]
+      ],
+      "mechanism": "Same-commit verified artifacts, platform runtime evidence and digests"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "path": "scripts/persistence-releases.ts",
+      "ranges": [
+        [
+          1,
+          95
+        ]
+      ],
+      "mechanism": "Offline pinned historical snapshots"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "path": "docs/install.md",
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "mechanism": "Locked tool installation documentation, not executable reference code"
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "kind": "staging comparison",
+      "changed_paths": [
+        "nanobot/agent/skills.py",
+        "tests/agent/test_skills_loader.py"
+      ],
+      "impact": "No Q01 source drift; K01 refresh separate"
+    },
+    {
+      "kind": "historical sampled commit diffs",
+      "commits": [
+        "f172c9f381980a870ac47283a58136f09314b184",
+        "aebe928cf07fb29179fcbde2e4d69a08a6f37f5e",
+        "05adc9b5d9331964f4e25e81173586c8794b65cd",
+        "073a176d24fdbd955a958aedb77bc5ea5f239d94"
+      ],
+      "impact": "No verified Q01 script-introduction lineage"
+    }
+  ],
+  "findings": [
+    {
+      "id": "Q01-F01",
+      "priority": "P1 conditional",
+      "title": "Windows authenticated crawler unauthenticated loopback client",
+      "report_section": "Q01-F01",
+      "classification": "source-qualified, see report for requirement, trigger, confidence and smallest option"
+    },
+    {
+      "id": "Q01-F02",
+      "priority": "P2 conditional",
+      "title": "Deployed audit raw argv/Git remotes not redacted",
+      "report_section": "Q01-F02",
+      "classification": "source-qualified, see report for requirement, trigger, confidence and smallest option"
+    },
+    {
+      "id": "Q01-F03",
+      "priority": "P2",
+      "title": "pipx run transient environment for post-install setup",
+      "report_section": "Q01-F03",
+      "classification": "source-qualified, see report for requirement, trigger, confidence and smallest option"
+    },
+    {
+      "id": "Q01-F04",
+      "priority": "P2 conditional",
+      "title": "Hatch WebUI release build nonfrozen install",
+      "report_section": "Q01-F04",
+      "classification": "source-qualified, see report for requirement, trigger, confidence and smallest option"
+    },
+    {
+      "id": "Q01-F05",
+      "priority": "P2 conditional",
+      "title": "Gateway update not staged or rollback-safe",
+      "report_section": "Q01-F05",
+      "classification": "source-qualified, see report for requirement, trigger, confidence and smallest option"
+    },
+    {
+      "id": "Q01-F06",
+      "priority": "P2 conditional",
+      "title": "P0 source verifier/freeze remain mutable",
+      "report_section": "Q01-F06",
+      "classification": "source-qualified, see report for requirement, trigger, confidence and smallest option"
+    },
+    {
+      "id": "Q01-F07",
+      "priority": "P2 conditional",
+      "title": "Executable docs/migration scripts excluded from CI",
+      "report_section": "Q01-F07",
+      "classification": "source-qualified, see report for requirement, trigger, confidence and smallest option"
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "Q01-Q1",
+      "decisions": [
+        "D1",
+        "D2",
+        "D4"
+      ],
+      "text": "Windows local worker identity"
+    },
+    {
+      "id": "Q01-Q2",
+      "decisions": [
+        "D2",
+        "D7"
+      ],
+      "text": "Audit output redaction"
+    },
+    {
+      "id": "Q01-Q3",
+      "decisions": [
+        "D1",
+        "D6"
+      ],
+      "text": "Exact installed executable"
+    },
+    {
+      "id": "Q01-Q4",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "text": "Immutable release provenance"
+    },
+    {
+      "id": "Q01-Q5",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "text": "Staged deploy rollback"
+    },
+    {
+      "id": "Q01-Q6",
+      "decisions": [
+        "D5",
+        "D6"
+      ],
+      "text": "Historical P0 verifier retention"
+    },
+    {
+      "id": "Q01-Q7",
+      "decisions": [
+        "D6",
+        "D7"
+      ],
+      "text": "Migration executable CI ownership"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    "X01 browser and installer trust",
+    "S01/S02 process boundary",
+    "T01 process cleanup",
+    "C00 deployment",
+    "H02/A01 migration",
+    "E02/R01 privacy",
+    "U01 frontend build",
+    "K01 staging refresh"
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "authority": "same-assistant source self-check",
+    "evidence": "All 25 complete Q01 pinned source bodies; 25 SHA256/byte/Git blob matches; specific cross-callers/tests and DSH pinned mechanisms; seven qualified findings, seven questions",
+    "findings_promoted": 7,
+    "discussion_questions": 7
+  },
+  "integrated_review": {
+    "status": "pending",
+    "evidence": null
+  },
+  "git_checkpoint": {
+    "status": "report-and-coverage-published",
+    "commit": null,
+    "evidence": "Q01 report commit 873e6a604e4407e301381d65eac28f49185c92db"
+  },
+  "validation": {
+    "sha256_known_answer_tests": [
+      "abc",
+      "empty"
+    ],
+    "sha256_matches": 25,
+    "bytes_matches": 25,
+    "blob_matches": 25,
+    "tests_executed": 0,
+    "product_code_mutated": false
+  },
+  "counts": {
+    "assigned_primary": 25,
+    "full": 25,
+    "partial": 0,
+    "unread": 0,
+    "total_primary_bytes": 141582,
+    "total_primary_lines": 3952,
+    "findings": 7,
+    "discussion_questions": 7
+  },
+  "limits": [
+    "No source execution, tests, builds, imports, services, network probes or benchmark",
+    "Security P1 conditional on untrusted local principal, no deployed incident proven",
+    "No independent peer/integrated review"
+  ]
+}
