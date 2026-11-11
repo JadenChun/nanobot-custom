@@ -456,7 +456,7 @@ class _FsTool(Tool):
         """Resolve a write request through the filesystem owner's existing policy."""
         return self._resolve_write(path)
 
-    def write_refusal(self, path: str) -> str | ToolOutcome | None:
+    def write_refusal(self, path: str) -> "str | ToolOutcome | None":
         """Report a denied write without entering the mutation path."""
         try:
             self.resolve_write_path(path)
@@ -476,7 +476,7 @@ class _FsTool(Tool):
             return ToolResult.error(f"Error: {error}")
         return None
 
-    def _folder_access_result(self, error: FolderAccessNeededError) -> str | ToolOutcome:
+    def _folder_access_result(self, error: FolderAccessNeededError) -> "str | ToolOutcome":
         if self._resource_policy is None:
             return ToolResult.error("Error: file access is unavailable")
         from nanobot.agent.tools.workspace import folder_access_outcome
