@@ -6,8 +6,11 @@ from pathlib import Path
 import pytest
 
 from nanobot.remote.device_proof import (
-    DeviceProofClaims, DeviceProofError, canonical_device_proof_bytes,
-    decode_proof_base64url, verify_device_proof,
+    DeviceProofClaims,
+    DeviceProofError,
+    canonical_device_proof_bytes,
+    decode_proof_base64url,
+    verify_device_proof,
 )
 
 CORPUS_PATH = Path(__file__).resolve().parents[2] / "mobile/contracts/device-proof-v2-vectors.json"

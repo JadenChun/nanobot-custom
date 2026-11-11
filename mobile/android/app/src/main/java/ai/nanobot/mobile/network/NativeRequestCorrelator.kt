@@ -32,6 +32,13 @@ internal class NativeRequestCorrelator<T> {
         return !entry.internal && !closed
     }
 
+    /** Forward only external terminal events to the WebView event sink. */
+    @Synchronized fun dispatch(id: Long, result: T, deliver: (T) -> Unit): Boolean {
+        val external = receive(id, result)
+        if (external) deliver(result)
+        return external
+    }
+
     @Synchronized fun abandon(id: Long) {
         // Keep classification and count against admission until the actual
         // terminal completion arrives. Timeouts never turn credentials public.

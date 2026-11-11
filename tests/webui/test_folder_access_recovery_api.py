@@ -167,6 +167,11 @@ async def test_owner_remote_can_resolve_recovery_action() -> None:
     handler.check_api_token = lambda _request: True
     handler._log = SimpleNamespace(exception=lambda *_args: None)
     handler.authorize_webui_mutation = lambda *_args: None
+
+    async def allow_mobile_revalidation(_connection) -> bool:
+        return True
+
+    handler.mobile_revalidator = allow_mobile_revalidation
     handler._webui_mutation_path = GatewayHTTPHandler._webui_mutation_path
     handler._connection_headers = lambda _connection: Headers(
         [("Host", "127.0.0.1:8765")]

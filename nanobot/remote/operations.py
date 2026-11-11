@@ -31,6 +31,8 @@ def mobile_mutation_allowed(scopes: Collection[str], action: str) -> bool:
     if spec is None or not spec.enabled:
         return False
     if action in CHAT_MUTATIONS:
+        if action == "session.delete":
+            return "chat.write" in scopes and "owner" in scopes and spec.scope in scopes
         return "chat.write" in scopes
     return "owner" in scopes and spec.scope in scopes
 

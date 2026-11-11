@@ -14,9 +14,11 @@ import (
 )
 
 type HTTPRequest struct {
-	Operation  string            `json:"operation"`
-	Method     string            `json:"method"`
-	Path       string            `json:"path"`
+	Operation string `json:"operation"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	// Native is set only by the packaged Android owner, never by the WebView bridge.
+	Native     bool              `json:"native,omitempty"`
 	Headers    map[string]string `json:"headers,omitempty"`
 	BodyBase64 string            `json:"body_base64,omitempty"`
 	TimeoutMS  int               `json:"timeout_ms,omitempty"`
@@ -47,7 +49,7 @@ func (c *Core) HTTP(input HTTPRequest) (uint64, error) {
 		baseContext = context.Background()
 	}
 
-	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, input.Method, input.Path)
+	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, input.Method, input.Path, input.Native)
 	if err != nil {
 		return 0, err
 	}

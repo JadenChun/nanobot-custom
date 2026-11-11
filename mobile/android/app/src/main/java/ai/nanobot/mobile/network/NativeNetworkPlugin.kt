@@ -342,9 +342,12 @@ class NativeNetworkPlugin : Plugin() {
                         PairingChallengeCodec.encode(challenge), generation)
                     activePairing = challenge
                 }
-                val result = JSObject(collected.toString())
+                val result = JSObject()
+                    .put("pairing_id", collected.getString("pairing_id"))
                     .put("origin", origin)
                     .put("installationId", installationId)
+                (collected.opt("comparison_code") as? String)?.let { result.put("comparison_code", it) }
+                (collected.opt("status") as? String)?.let { result.put("status", it) }
                 mainHandler.post { call.resolve(result) }
             } catch (exception: Exception) {
                 mainHandler.post { call.reject(exception.message ?: "pairing collect failed") }
@@ -384,7 +387,12 @@ class NativeNetworkPlugin : Plugin() {
         operationExecutor.execute {
             try {
                 val collected = collectPairingCode(origin, installationId, code, label, generation)
-                val result = JSObject(collected.toString()).put("origin", origin).put("installationId", installationId)
+                val result = JSObject()
+                    .put("pairing_id", collected.getString("pairing_id"))
+                    .put("origin", origin)
+                    .put("installationId", installationId)
+                (collected.opt("comparison_code") as? String)?.let { result.put("comparison_code", it) }
+                (collected.opt("status") as? String)?.let { result.put("status", it) }
                 mainHandler.post { call.resolve(result) }
             } catch (exception: Exception) {
                 mainHandler.post { call.reject(exception.message ?: "pairing code failed") }
@@ -528,7 +536,13 @@ class NativeNetworkPlugin : Plugin() {
                     polled
                 }
                 if (approved.optString("status") != "approved") {
-                    mainHandler.post { call.resolve(JSObject(approved.toString())) }
+                    val publicState = JSObject()
+                    (approved.opt("status") as? String)?.let { publicState.put("status", it) }
+                    (approved.opt("pairing_id") as? String)?.let { publicState.put("pairing_id", it) }
+                    (approved.opt("comparison_code") as? String)?.let { publicState.put("comparison_code", it) }
+                    (approved.opt("expires_at") as? Number)?.let { publicState.put("expires_at", it.toLong()) }
+                    (approved.opt("expires_in") as? Number)?.let { publicState.put("expires_in", it.toLong()) }
+                    mainHandler.post { call.resolve(publicState) }
                     return@execute
                 }
                 val record = custody.load()
@@ -1259,10 +1273,18 @@ class NativeNetworkPlugin : Plugin() {
                 logTransportEvent(event)
                 if (current != transportHandle) return@scheduleWithFixedDelay
                 val requestId = event.optLong("request_id", 0L)
-                if (event.optString("type") in setOf("http_response", "http_error")) {
-                    if (!requests.receive(requestId, event)) return@scheduleWithFixedDelay
+                val publish: (JSONObject) -> Unit = { admitted ->
+                    val jsEvent = JSObject(admitted, admitted.keys().asSequence().toList().toTypedArray())
+                    mainHandler.post {
+                        if (current == transportHandle) notifyListeners("networkEvent", jsEvent)
+                    }
                 }
-                mainHandler.post { notifyListeners("networkEvent", JSObject(event, event.keys().asSequence().toList().toTypedArray())) }
+                if (event.optString("type") in setOf("http_response", "http_error")) {
+                    val requestOwner = requests
+                    if (!requestOwner.dispatch(requestId, event, publish)) return@scheduleWithFixedDelay
+                } else {
+                    publish(event)
+                }
             },
             0,
             20,
@@ -1414,6 +1436,7 @@ class NativeNetworkPlugin : Plugin() {
             .put("operation", operation)
             .put("method", if (body == null) "GET" else "POST")
             .put("path", path)
+            .put("native", true)
         if (headers.isNotEmpty()) {
             val encodedHeaders = JSONObject()
             headers.forEach { (key, value) -> encodedHeaders.put(key, value) }
@@ -1432,7 +1455,7 @@ class NativeNetworkPlugin : Plugin() {
         try {
             val event = future.get(timeoutSeconds, TimeUnit.SECONDS)
             if (event.optString("type") == "http_error") {
-                throw IllegalStateException(event.optString("message", "native request failed"))
+                throw IllegalStateException(event.optString("code", "native request failed"))
             }
             val status = event.optInt("status")
             if (status < 200 || status >= 300) {
@@ -1441,7 +1464,8 @@ class NativeNetworkPlugin : Plugin() {
                 } catch (_: Exception) {
                     ""
                 }
-                throw IllegalStateException("HTTP $status ${detail.take(200)}".trim())
+                val safeCode = if (detail.contains("pairing_expired")) " pairing_expired" else ""
+                throw IllegalStateException("HTTP $status$safeCode")
             }
             val payload = Base64.decode(event.getString("body_base64"), Base64.DEFAULT)
             return JSONObject(String(payload, Charsets.UTF_8))

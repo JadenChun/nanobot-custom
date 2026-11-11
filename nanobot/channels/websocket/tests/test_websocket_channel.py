@@ -6535,10 +6535,11 @@ async def test_raw_mobile_frames_revalidate_before_plain_text() -> None:
         SimpleNamespace(mobile_identity=identity)
     ) is False
     assert calls == ["checked"]
-    # Loose mocks are not mobile identities and do not trigger owner IPC.
+    # Explicit malformed mobile identity evidence must fail closed.
     assert await channel._revalidate_raw_mobile_frame(
         SimpleNamespace(mobile_identity=object())
-    ) is True
+    ) is False
+    assert calls == ["checked", "checked"]
 
 
 @pytest.mark.asyncio

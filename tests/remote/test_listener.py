@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from nanobot.remote.staging import TailscaleServeAdapter
 from nanobot.remote.store import RemoteAccessStore
 from tests.remote.proof_helpers import (
     complete_proof,
+    encode_proof_base64url,
     new_device_key,
     sign_claims,
 )
@@ -58,8 +60,6 @@ def test_listener_manual_pairing_code_without_nonce(tmp_path) -> None:
             assert wrong.json()["error"] == "pairing_code_invalid"
 
             _key, public_der = new_device_key()
-            import base64
-
             collected = client.post(
                 "/remote/v1/pair/code",
                 json={
@@ -111,8 +111,6 @@ def test_listener_pairing_flow_and_bounds(tmp_path) -> None:
                 media_consent=False,
             )
             _key, public_der = new_device_key()
-            import base64
-
             collect = client.post(
                 "/remote/v1/pair/collect",
                 json={
@@ -182,8 +180,6 @@ def test_owner_pairing_admin_ipc_is_local_only(tmp_path) -> None:
             chat_consent=True,
         )
         with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3.0) as http:
-            import base64
-
             key, public_der = new_device_key()
             collected = http.post(
                 "/remote/v1/pair/collect",
@@ -208,7 +204,7 @@ def test_owner_pairing_admin_ipc_is_local_only(tmp_path) -> None:
             client.prove_pairing(
                 pairing_id=offer["pairing_id"],
                 claims=claims.payload(),
-                signature=base64.b64encode(sign_claims(key, claims)).decode("ascii"),
+                signature=encode_proof_base64url(sign_claims(key, claims)),
             )
             result = http.post(
                 "/remote/v1/pair/poll",

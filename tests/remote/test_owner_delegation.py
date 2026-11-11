@@ -368,10 +368,12 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
             shared_history_consent=True,
         )
         assert "owner" in offer["scopes"]
-        import base64
-
         from nanobot.remote.device_proof import DeviceProofClaims
-        from tests.remote.proof_helpers import new_device_key, sign_claims
+        from tests.remote.proof_helpers import (
+            encode_proof_base64url,
+            new_device_key,
+            sign_claims,
+        )
 
         key, public_der = new_device_key()
         pending = client.collect_pairing(
@@ -380,7 +382,7 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
             collector_secret=offer["collector_secret"],
             installation_id="install-product-owner",
             label="phone",
-            device_public_key=base64.b64encode(public_der).decode("ascii"),
+            device_public_key=encode_proof_base64url(public_der),
         )
         assert pending["comparison_code"] == offer["comparison_code"]
         client.approve_pairing(
@@ -393,7 +395,7 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
         result = client.prove_pairing(
             pairing_id=offer["pairing_id"],
             claims=claims.payload(),
-            signature=base64.b64encode(sign_claims(key, claims)).decode("ascii"),
+            signature=encode_proof_base64url(sign_claims(key, claims)),
         )
         assert result["status"] == "approved"
         assert "owner" in result["scopes"]

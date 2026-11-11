@@ -14,13 +14,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from nanobot.remote.auth import AuthRejectedError, AuthUpgradeRequiredError, TokenService
-from nanobot.remote.device_proof import DeviceProofError, decode_proof_base64url
 from nanobot.remote.delegation import (
     DelegatedAdminOperation,
     DelegationError,
     OwnerDelegationService,
     current_digest,
 )
+from nanobot.remote.device_proof import DeviceProofError, decode_proof_base64url
 from nanobot.remote.pairing import (
     PairingBusyError,
     PairingCodeInvalidError,

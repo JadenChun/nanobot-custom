@@ -436,14 +436,14 @@ class WebSocketChannel(BaseChannel):
         return await self.gateway.endpoint.revalidate_mobile_connection(connection)
 
     async def _revalidate_raw_mobile_frame(self, connection: ServerConnection) -> bool:
-        identity = getattr(connection, "mobile_identity", None)
-        if identity is None:
-            return True
-        if not isinstance(getattr(identity, "installation_id", None), str):
-            return True
-        if not isinstance(getattr(identity, "scopes", None), (tuple, list, set, frozenset)):
-            return True
         return await self.revalidate_mobile_connection(connection)
+
+    async def _mobile_delivery_allowed(self, connection: ServerConnection) -> bool:
+        """Revalidate mobile authority immediately before private delivery."""
+        try:
+            return await self.revalidate_mobile_connection(connection)
+        except Exception:
+            return False
 
     async def webui_send_event(
         self,
@@ -993,6 +993,16 @@ class WebSocketChannel(BaseChannel):
                     return
                 try:
                     async with asyncio.timeout(_OUTBOUND_SEND_TIMEOUT_S):
+                        if not await self._mobile_delivery_allowed(connection):
+                            self.logger.debug("dropping outbound frame for stale mobile connection")
+                            self._schedule_connection_retirement(
+                                connection,
+                                state,
+                                close_connection=True,
+                                close_code=1008,
+                                close_reason="mobile access is no longer current",
+                            )
+                            return
                         await connection.send(frame.raw)
                 except asyncio.CancelledError:
                     raise

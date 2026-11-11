@@ -344,6 +344,15 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
 })
 
 
+def attached_mobile_identity(connection: object) -> object | None:
+    """Read mobile identity metadata explicitly attached to this connection."""
+    try:
+        attributes: Mapping[str, object] = vars(connection)
+    except TypeError:
+        return None
+    return attributes.get("mobile_identity")
+
+
 def _typed_owner_identity(connection: Any) -> Any | None:
     """Return a real owner-scoped mobile identity, never a loose mock."""
     identity = getattr(connection, "mobile_identity", None)
@@ -894,12 +903,14 @@ class GatewayHTTPHandler:
         payload: dict[str, Any],
     ) -> WebUIMutationAuthorizationFailure | None:
         """Authorize the current socket for this action before cache admission or replay."""
-        identity = getattr(connection, "mobile_identity", None)
-        if identity is not None and isinstance(getattr(identity, "installation_id", None), str):
+        identity = attached_mobile_identity(connection)
+        if identity is not None:
+            from nanobot.remote.edge import AccessIdentity
             from nanobot.remote.operations import mobile_mutation_allowed
 
-            scopes = getattr(identity, "scopes", ())
-            if not isinstance(scopes, (tuple, list, set, frozenset)) or not mobile_mutation_allowed(scopes, action):
+            if not isinstance(identity, AccessIdentity):
+                return WebUIMutationAuthorizationFailure(403, "scope_denied")
+            if not mobile_mutation_allowed(identity.scopes, action):
                 return WebUIMutationAuthorizationFailure(403, "scope_denied")
         path = self._webui_mutation_path(action, payload)
         if not isinstance(path, str):
@@ -951,8 +962,12 @@ class GatewayHTTPHandler:
         check_expected_source_binding: bool = False,
     ) -> Response:
         """Run one explicitly allowlisted mutation for an authenticated WebUI socket."""
-        identity = getattr(connection, "mobile_identity", None)
-        if isinstance(getattr(identity, "installation_id", None), str):
+        from nanobot.remote.edge import AccessIdentity
+
+        raw_identity = attached_mobile_identity(connection)
+        if raw_identity is not None:
+            if not isinstance(raw_identity, AccessIdentity):
+                return _http_error(403, "scope_denied")
             revalidate = getattr(self, "mobile_revalidator", None)
             if revalidate is None or not await revalidate(connection):
                 return _http_error(403, "scope_denied")
@@ -978,9 +993,9 @@ class GatewayHTTPHandler:
         request = WsRequest(path, headers)
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
         setattr(request, _WEBUI_MUTATION_REQUEST_ATTR, True)
-        identity = getattr(connection, "mobile_identity", None)
-        installation = getattr(identity, "installation_id", None)
-        if isinstance(installation, str) and installation:
+        identity = attached_mobile_identity(connection)
+        installation = identity.installation_id if isinstance(identity, AccessIdentity) else None
+        if installation:
             setattr(request, "_nanobot_owner_installation", installation)
         setattr(request, _WEBUI_MUTATION_PAYLOAD_ATTR, dict(payload))
         if check_expected_source_binding or expected_source_binding is not None:
@@ -991,13 +1006,8 @@ class GatewayHTTPHandler:
             )
             setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, expected_binding)
         audit_client = getattr(self, "owner_audit_client", None)
-        audit_identity = getattr(connection, "mobile_identity", None)
-        audit_installation = getattr(audit_identity, "installation_id", None)
-        if (
-            audit_client is not None
-            and isinstance(audit_installation, str)
-            and audit_installation
-        ):
+        audit_installation = installation
+        if audit_client is not None and audit_installation:
             try:
                 await asyncio.to_thread(
                     audit_client.audit_event,
@@ -1010,7 +1020,7 @@ class GatewayHTTPHandler:
                 self._log.exception("owner audit pre-effect write failed")
                 return _http_error(503, "audit_unavailable")
         try:
-            if isinstance(audit_installation, str) and audit_installation:
+            if audit_installation:
                 revalidate = getattr(self, "mobile_revalidator", None)
                 if revalidate is None or not await revalidate(connection):
                     return _http_error(403, "scope_denied")
@@ -1021,7 +1031,6 @@ class GatewayHTTPHandler:
         except asyncio.CancelledError:
             if (
                 getattr(self, "owner_audit_client", None) is not None
-                and isinstance(audit_installation, str)
                 and audit_installation
             ):
                 try:
@@ -1037,7 +1046,6 @@ class GatewayHTTPHandler:
         except Exception:
             if (
                 getattr(self, "owner_audit_client", None) is not None
-                and isinstance(audit_installation, str)
                 and audit_installation
             ):
                 try:
@@ -1055,7 +1063,6 @@ class GatewayHTTPHandler:
         if isinstance(response, Response):
             if (
                 getattr(self, "owner_audit_client", None) is not None
-                and isinstance(audit_installation, str)
                 and audit_installation
             ):
                 try:
@@ -1071,7 +1078,6 @@ class GatewayHTTPHandler:
             return response
         if (
             getattr(self, "owner_audit_client", None) is not None
-            and isinstance(audit_installation, str)
             and audit_installation
         ):
             try:

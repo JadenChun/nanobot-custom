@@ -1,16 +1,19 @@
 package ai.nanobot.mobile.network
 
 import java.nio.charset.StandardCharsets
-import java.util.Base64
 import org.json.JSONObject
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /** Fixed mobile/contracts/device-proof-v2-schema.json; no value coercion. */
+@OptIn(ExperimentalEncodingApi::class)
 internal object DeviceProofCanonicalizer {
     private val integerKeys = setOf("version", "device_generation", "expires_at")
     private val keys = integerKeys + setOf(
         "purpose", "instance_id", "origin", "installation_id", "device_fingerprint",
         "challenge_id", "nonce",
     )
+    private val base64Url = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
 
     fun fromJson(value: JSONObject): Map<String, Any?> = value.keys().asSequence()
         .associateWith { value.get(it) }
@@ -37,11 +40,11 @@ internal object DeviceProofCanonicalizer {
     fun canonicalBytes(values: Map<String, Any?>): ByteArray =
         canonicalJson(values).toByteArray(StandardCharsets.UTF_8)
 
-    fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    fun encode(bytes: ByteArray): String = base64Url.encode(bytes)
 
     fun decode(value: String): ByteArray {
         require(value.matches(Regex("[A-Za-z0-9_-]+"))) { "invalid proof encoding" }
-        val bytes = Base64.getUrlDecoder().decode(value)
+        val bytes = base64Url.decode(value)
         require(encode(bytes) == value) { "non-canonical proof encoding" }
         return bytes
     }

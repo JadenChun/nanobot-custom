@@ -51,6 +51,7 @@ function installPlugin(
     pairStart,
     pairStartCode,
     pairPoll,
+    pairCancel: vi.fn(async () => ({ status: "cancelled" })),
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
@@ -73,6 +74,7 @@ function installPreflightPlugin() {
     pairStart: vi.fn(),
     pairStartCode: vi.fn(),
     pairPoll: vi.fn(),
+    pairCancel: vi.fn(async () => ({ status: "cancelled" })),
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
@@ -153,17 +155,105 @@ function installCancelPlugin() {
     resolvePairStart = resolve;
   }));
   const pairPoll = vi.fn(async () => ({ status: "waiting" }));
+  const pairCancel = vi.fn(async () => ({ status: "cancelled" }));
   const plugin = {
     target: vi.fn(async () => ({ hasAccess: false })),
     pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
     pairStart,
     pairPoll,
+    pairCancel,
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
     Plugins: { NativeNetwork: plugin },
   };
-  return { pairStart, pairPoll, resolvePairStart: (value: Record<string, unknown>) => resolvePairStart(value) };
+  return {
+    pairStart,
+    pairPoll,
+    pairCancel,
+    resolvePairStart: (value: Record<string, unknown>) => resolvePairStart(value),
+  };
+}
+
+function installHeldPairingPlugin(hold: "collect" | "poll") {
+  let releaseCollect: (value: Record<string, unknown>) => void = () => {};
+  let releasePoll: (value: Record<string, unknown>) => void = () => {};
+  let resolveCancel: (value: Record<string, unknown>) => void = () => {};
+  const collected = { pairing_id: "pairing-1", comparison_code: "123456" };
+  const pairStart = vi.fn(() => hold === "collect"
+    ? new Promise<Record<string, unknown>>((resolve) => { releaseCollect = resolve; })
+    : Promise.resolve(collected));
+  const pairStartCode = vi.fn(() => hold === "collect"
+    ? new Promise<Record<string, unknown>>((resolve) => { releaseCollect = resolve; })
+    : Promise.resolve(collected));
+  const pairPoll = vi.fn(() => hold === "poll"
+    ? new Promise<Record<string, unknown>>((resolve) => { releasePoll = resolve; })
+    : Promise.resolve({ status: "waiting" }));
+  const pairCancel = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => {
+    resolveCancel = resolve;
+  }));
+  const plugin = {
+    target: vi.fn(async () => ({ hasAccess: false })),
+    pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
+    pairStart,
+    pairStartCode,
+    pairPoll,
+    pairCancel,
+    pendingPairingLink: vi.fn(async () => null),
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  return {
+    pairStart,
+    pairStartCode,
+    pairPoll,
+    pairCancel,
+    resolveCancel: () => resolveCancel({ status: "cancelled" }),
+    releaseHeld: () => {
+      if (hold === "collect") releaseCollect({
+        pairing_id: "late-pairing",
+        comparison_code: "999999",
+        installationId: "phone-local-id",
+      });
+      else releasePoll({ status: "approved", installationId: "phone-local-id" });
+    },
+  };
+}
+
+function installHandshakeRacePlugin() {
+  let listener: ((event: Record<string, unknown>) => void) | null = null;
+  let releaseHandshake: (value: { requestId: number }) => void = () => {};
+  const refresh = vi.fn(async () => true);
+  const plugin = {
+    target: vi.fn(async () => ({
+      origin: "https://desktop.example",
+      installationId: "phone-local-id",
+      hasAccess: true,
+    })),
+    start: vi.fn(async () => undefined),
+    status: vi.fn(async () => ({ state: "ready" })),
+    addListener: vi.fn(async (
+      _name: string,
+      callback: (event: Record<string, unknown>) => void,
+    ) => {
+      listener = callback;
+      return { remove: vi.fn(async () => { if (listener === callback) listener = null; }) };
+    }),
+    http: vi.fn(() => new Promise<{ requestId: number }>((resolve) => { releaseHandshake = resolve; })),
+    cancel: vi.fn(async () => undefined),
+    refresh,
+    logout: vi.fn(async () => ({ serverRevocationPending: false })),
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  return {
+    plugin,
+    refresh,
+    emit: (event: Record<string, unknown>) => listener?.(event),
+    releaseHandshake: (requestId: number) => releaseHandshake({ requestId }),
+  };
 }
 
 function installStartupRejectPlugin() {
@@ -176,6 +266,7 @@ function installStartupRejectPlugin() {
     pairingIdentity,
     pairStart: vi.fn(async () => ({ pairing_id: "pairing-1", comparison_code: "123456" })),
     pairPoll: vi.fn(async () => ({ status: "waiting" })),
+    pairCancel: vi.fn(async () => ({ status: "cancelled" })),
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
@@ -195,6 +286,7 @@ function installRejectedPairStartPlugin() {
     pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
     pairStart,
     pairPoll,
+    pairCancel: vi.fn(async () => ({ status: "cancelled" })),
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
@@ -218,6 +310,7 @@ function installRejectedPollPlugin() {
     pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
     pairStart,
     pairPoll,
+    pairCancel: vi.fn(async () => ({ status: "cancelled" })),
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
@@ -361,7 +454,7 @@ describe("mobile pairing identity", () => {
   });
 
   it("ignores a pairing result that arrives after cancel", async () => {
-    const { pairStart, pairPoll, resolvePairStart } = installCancelPlugin();
+    const { pairStart, pairPoll, pairCancel, resolvePairStart } = installCancelPlugin();
     window.eval(bootstrapSource);
 
     const form = await vi.waitFor(() => {
@@ -381,7 +474,10 @@ describe("mobile pairing identity", () => {
     const cancel = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
       .find((button) => button.textContent === "Use a different link");
     cancel?.click();
-    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    expect(pairCancel).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    });
 
     resolvePairStart({
       pairing_id: "stale-pairing",
@@ -448,6 +544,113 @@ describe("mobile pairing identity", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
     expect(document.body.textContent).not.toContain("late poll failure");
+  });
+
+  it.each([
+    { flow: "QR", hold: "collect" as const },
+    { flow: "manual", hold: "collect" as const },
+    { flow: "QR", hold: "poll" as const },
+    { flow: "manual", hold: "poll" as const },
+  ])("fences a held $flow $hold result before returning to pairing", async ({ flow, hold }) => {
+    const fixture = installHeldPairingPlugin(hold);
+    window.eval(bootstrapSource);
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+
+    if (flow === "QR") {
+      document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
+        "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+        "installation=desktop-generated-id",
+        "challenge=pairing-1.nonce.secret",
+      ].join("&");
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    } else {
+      document.querySelector<HTMLDetailsElement>(".mobile-pairing-manual")!.open = true;
+      document.querySelector<HTMLInputElement>("#mobile-pairing-origin")!.value = "https://desktop.example";
+      document.querySelector<HTMLInputElement>("#mobile-pairing-code-input")!.value = "12345678";
+      [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+        .find((button) => button.textContent === "Pair with code")!.click();
+    }
+
+    const collect = flow === "QR" ? fixture.pairStart : fixture.pairStartCode;
+    await vi.waitFor(() => expect(collect).toHaveBeenCalledTimes(1));
+    if (hold === "poll") await vi.waitFor(() => expect(fixture.pairPoll).toHaveBeenCalledTimes(1));
+
+    [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((button) => button.textContent === "Cancel" || button.textContent === "Use a different link")!
+      .click();
+    expect(fixture.pairCancel).toHaveBeenCalledTimes(1);
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).not.toBe("idle");
+    expect(document.querySelector<HTMLElement>(".mobile-pairing-status")?.textContent).toBe("Cancelling pairing...");
+
+    fixture.resolveCancel();
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    });
+    fixture.releaseHeld();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    expect(document.querySelectorAll<HTMLElement>(".mobile-pairing-pill")[1]?.textContent)
+      .toBe("Connects when pairing");
+    expect(document.body.textContent).not.toContain("Paired. Loading Nanobot...");
+    expect(document.body.textContent).not.toContain("999999");
+  });
+
+  it("shows a native pairing cancellation persistence failure", async () => {
+    const fixture = installHeldPairingPlugin("collect");
+    fixture.pairCancel.mockRejectedValueOnce(new Error("custody fence sync failed"));
+    window.eval(bootstrapSource);
+
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+    document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
+      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "installation=desktop-generated-id",
+      "challenge=pairing-1.nonce.secret",
+    ].join("&");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(fixture.pairStart).toHaveBeenCalledTimes(1));
+
+    [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((button) => button.textContent === "Use a different link")!.click();
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("error");
+    });
+    expect(document.querySelector<HTMLElement>(".mobile-pairing-status")?.textContent)
+      .toContain("Pairing cancellation failed: custody fence sync failed");
+
+    fixture.releaseHeld();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("error");
+    expect(document.body.textContent).not.toContain("Paired. Loading Nanobot...");
+  });
+
+  it("joins the bootstrap handshake when its terminal event arrives before the ID", async () => {
+    const fixture = installHandshakeRacePlugin();
+    window.eval(bootstrapSource);
+    const ready = (window as unknown as { nanobotMobileReady: Promise<void> }).nanobotMobileReady;
+    let readyCount = 0;
+    void ready.then(() => { readyCount += 1; });
+    await vi.waitFor(() => expect(fixture.plugin.http).toHaveBeenCalledTimes(1));
+
+    fixture.emit({ type: "http_response", request_id: 7, status: 401, body_base64: "other-id" });
+    fixture.emit({ type: "http_response", request_id: 41, status: 200, body_base64: "handshake" });
+    fixture.emit({ type: "http_response", request_id: 41, status: 500, body_base64: "duplicate" });
+    fixture.releaseHandshake(41);
+    await ready;
+    await Promise.resolve();
+
+    expect(readyCount).toBe(1);
+    expect(fixture.refresh).not.toHaveBeenCalled();
+    expect(fixture.plugin.logout).not.toHaveBeenCalled();
+    expect(document.querySelector(".mobile-reauth")).toBeNull();
   });
 
   it("clears a revoked pairing before the app shell opens", async () => {

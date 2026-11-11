@@ -21,6 +21,9 @@ from nanobot.session.manager import SessionManager
 from nanobot.webui.gateway_services import GatewayServices, build_gateway_services
 from nanobot.webui.transcript import append_transcript_object
 
+ORIGIN = "https://127.0.0.1:29999"
+ORIGIN_HOST = "127.0.0.1:29999"
+
 
 @dataclass
 class PreviewClient:
@@ -56,7 +59,14 @@ class PreviewClient:
             token = self.mobile_token
         return await self.services.endpoint.process_request(
             None,
-            Request(url, Headers({"Authorization": f"Bearer {token}"})),
+            Request(
+                url,
+                Headers({
+                    "Authorization": f"Bearer {token}",
+                    "Host": ORIGIN_HOST,
+                    "Origin": ORIGIN,
+                }),
+            ),
             is_allowed=lambda _client: True,
         )
 
@@ -75,7 +85,13 @@ def preview_client(tmp_path: Path):
     owner.start()
     owner.store.set_enabled(True)
     try:
-        pair = owner.tokens.issue("preview-owner-device", OWNER_PAIRING_SCOPES)
+        pair = owner.tokens.issue_device(
+            "preview-owner-device",
+            OWNER_PAIRING_SCOPES,
+            device_fingerprint="a" * 64,
+            device_generation=1,
+            origin=ORIGIN,
+        )
         services = build_gateway_services(
             config=WebSocketConfig(host="127.0.0.1", port=29999, path="/"),
             bus=MessageBus(),

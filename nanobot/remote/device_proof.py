@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
-import base64
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -154,7 +154,7 @@ def device_proof_fingerprint(public_key_der: bytes) -> str:
     return hashlib.sha256(bytes(public_key_der)).hexdigest()
 
 
-def decode_proof_base64url(value: str) -> bytes:
+def decode_proof_base64url(value: object) -> bytes:
     """Decode only the canonical unpadded base64url representation."""
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise DeviceProofError("invalid_proof_encoding")

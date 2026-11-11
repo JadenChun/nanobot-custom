@@ -12,7 +12,11 @@ import pytest
 from nanobot.remote.client import OwnerRequestError, OwnerUnavailableError, RemoteAccessClient
 from nanobot.remote.device_proof import DeviceProofClaims
 from nanobot.remote.owner import RemoteAccessOwner
-from tests.remote.proof_helpers import new_device_key, sign_claims
+from tests.remote.proof_helpers import (
+    encode_proof_base64url,
+    new_device_key,
+    sign_claims,
+)
 
 
 def start_owner(tmp_path: Path) -> tuple[RemoteAccessOwner, RemoteAccessClient, str]:
@@ -82,8 +86,6 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
         assert pending["pending"][0]["state"] == "offer_created"
         assert pending["pending"][0]["pairing_code"] == offer["pairing_code"]
 
-        import base64
-
         qr_key, qr_public = new_device_key()
         client.collect_pairing(
             pairing_id=offer["pairing_id"],
@@ -93,7 +95,7 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
             label="Pixel 10",
             platform="Android 16",
             model="Pixel 10",
-            device_public_key=base64.b64encode(qr_public).decode("ascii"),
+            device_public_key=encode_proof_base64url(qr_public),
         )
         status = client.pairing_status(offer["pairing_id"])
         assert status["state"] == "pending_approval"
@@ -109,9 +111,7 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
         client.prove_pairing(
             pairing_id=offer["pairing_id"],
             claims=qr_claims.payload(),
-            signature=base64.b64encode(
-                sign_claims(qr_key, qr_claims)
-            ).decode("ascii"),
+            signature=encode_proof_base64url(sign_claims(qr_key, qr_claims)),
         )
 
         manual = client.create_pairing(
@@ -125,7 +125,7 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
             installation_id="install-code-1",
             label="Manual phone",
             platform="Android 16",
-            device_public_key=base64.b64encode(code_public).decode("ascii"),
+            device_public_key=encode_proof_base64url(code_public),
         )
         assert collected["state"] == "pending_approval"
         with pytest.raises(OwnerRequestError) as missing:
@@ -142,9 +142,7 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
         client.prove_pairing(
             pairing_id=manual["pairing_id"],
             claims=code_claims.payload(),
-            signature=base64.b64encode(
-                sign_claims(code_key, code_claims)
-            ).decode("ascii"),
+            signature=encode_proof_base64url(sign_claims(code_key, code_claims)),
         )
         assert owner.store.get_device("install-code-1").is_owner  # type: ignore[union-attr]
 
@@ -159,7 +157,7 @@ def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
             collector_secret=denied["collector_secret"],
             installation_id="install-deny-1",
             label="Denied phone",
-            device_public_key=base64.b64encode(deny_public).decode("ascii"),
+            device_public_key=encode_proof_base64url(deny_public),
         )
         assert client.deny_pairing(denied["pairing_id"])["state"] == "denied"
         with pytest.raises(OwnerRequestError) as rejected:

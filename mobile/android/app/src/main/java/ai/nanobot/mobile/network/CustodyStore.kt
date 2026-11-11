@@ -573,14 +573,28 @@ class CustodyStore(context: Context) {
 
     private fun pendingInstallationFile(): File = File(custodyDir, "installation.id")
 
-    private fun syncDirectory() {
-        val descriptor = Os.open(custodyDir.absolutePath, OsConstants.O_RDONLY or OsConstants.O_DIRECTORY, 0)
-        try { Os.fsync(descriptor) } finally { Os.close(descriptor) }
+    private fun syncDirectory(directory: File = custodyDir) {
+        val descriptor = Os.open(
+            directory.absolutePath,
+            OsConstants.O_RDONLY or OsConstants.O_NOFOLLOW,
+            0,
+        )
+        try {
+            check(OsConstants.S_ISDIR(Os.fstat(descriptor).st_mode)) {
+                "custody sync target is not a directory"
+            }
+            Os.fsync(descriptor)
+        } finally {
+            Os.close(descriptor)
+        }
     }
 
     private fun ensureDirectory() {
-        if (!custodyDir.exists() && !custodyDir.mkdirs()) {
-            throw CustodyException("custody directory could not be created")
+        if (!custodyDir.exists()) {
+            if (!custodyDir.mkdirs()) {
+                throw CustodyException("custody directory could not be created")
+            }
+            syncDirectory(appContext.filesDir)
         }
         custodyDir.setReadable(false, false)
         custodyDir.setWritable(false, false)

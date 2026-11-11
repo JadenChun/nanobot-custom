@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -409,6 +410,7 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Operation: "mobile_pair_collect",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/pair/collect",
+		Native:    true,
 		Headers: map[string]string{
 			"X-Nanobot-Pairing-Id":     "pair-1",
 			"X-Nanobot-Pairing-Nonce":  "nonce-1",
@@ -432,6 +434,7 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Operation: "mobile_pair_collect",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/pair/collect",
+		Native:    true,
 		Headers:   map[string]string{"X-Admin": "1"},
 	}); err == nil {
 		t.Fatal("unlisted pairing header was accepted")
@@ -440,6 +443,7 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Operation: "mobile_pair_code",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/pair/code",
+		Native:    true,
 		Headers: map[string]string{
 			"X-Nanobot-Pairing-Code": "12345678",
 			"X-Nanobot-Installation": "install-1",
@@ -483,6 +487,7 @@ func TestHTTPRefreshRouteUsesBoundedHeaders(t *testing.T) {
 		Operation: "mobile_refresh_get",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/refresh",
+		Native:    true,
 		Headers: map[string]string{
 			"X-Nanobot-Installation":  "install-1",
 			"X-Nanobot-Refresh-Token": "refresh-1",
@@ -498,6 +503,74 @@ func TestHTTPRefreshRouteUsesBoundedHeaders(t *testing.T) {
 	body, err := base64.StdEncoding.DecodeString(event["body_base64"].(string))
 	if err != nil || !strings.Contains(string(body), `"access_token":"nbm_at_new"`) {
 		t.Fatalf("body: %q err=%v", body, err)
+	}
+}
+
+func TestHTTPCredentialRouteRequiresTrustedNativeProvenance(t *testing.T) {
+	requests := make(chan string, 4)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mobile/v1/pair/prove", func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"native-secret"}`))
+	})
+	mux.HandleFunc("/mobile/v1/handshake", func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"mobile_protocol":1}`))
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+	core := testCore(t, server, nil)
+	proof := HTTPRequest{
+		Operation: "mobile_pair_prove",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/pair/prove",
+	}
+	if id, err := core.HTTP(proof); id != 0 || !errors.Is(err, ErrDenied) {
+		t.Fatalf("WebView proof request was not denied: id=%d err=%v", id, err)
+	}
+	select {
+	case request := <-requests:
+		t.Fatalf("denied WebView proof reached transport: %s", request)
+	default:
+	}
+
+	proof.Native = true
+	proofID, err := core.HTTP(proof)
+	if err != nil || proofID == 0 {
+		t.Fatalf("trusted native proof request was denied: id=%d err=%v", proofID, err)
+	}
+	proofEvent := waitEvent(t, core, "http_response")
+	if proofEvent["request_id"].(float64) != float64(proofID) {
+		t.Fatalf("proof response ID = %v, want %d", proofEvent["request_id"], proofID)
+	}
+	proofBody, err := base64.StdEncoding.DecodeString(proofEvent["body_base64"].(string))
+	if err != nil || !strings.Contains(string(proofBody), `"access_token":"native-secret"`) {
+		t.Fatalf("trusted native proof response = %q, err=%v", proofBody, err)
+	}
+	if request := <-requests; request != "GET /mobile/v1/pair/prove" {
+		t.Fatalf("native proof request = %q", request)
+	}
+
+	handshakeID, err := core.HTTP(HTTPRequest{
+		Operation: "mobile_handshake",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/handshake",
+	})
+	if err != nil || handshakeID == 0 {
+		t.Fatalf("WebView handshake was denied: id=%d err=%v", handshakeID, err)
+	}
+	handshakeEvent := waitEvent(t, core, "http_response")
+	if handshakeEvent["request_id"].(float64) != float64(handshakeID) {
+		t.Fatalf("handshake response ID = %v, want %d", handshakeEvent["request_id"], handshakeID)
+	}
+	handshakeBody, err := base64.StdEncoding.DecodeString(handshakeEvent["body_base64"].(string))
+	if err != nil || !strings.Contains(string(handshakeBody), `"mobile_protocol":1`) {
+		t.Fatalf("WebView handshake response = %q, err=%v", handshakeBody, err)
+	}
+	if request := <-requests; request != "GET /mobile/v1/handshake" {
+		t.Fatalf("handshake request = %q", request)
 	}
 }
 

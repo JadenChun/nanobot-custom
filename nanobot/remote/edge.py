@@ -264,7 +264,7 @@ class MobileGatewayEdge:
             return http_json_response({"error": "missing_access"}, status=401)
         try:
             identity = await self.validator.validate_uncached(token)
-            self._authorize_target(request, identity.origin)
+            self.authorize_target(request, identity.origin)
             if not identity.allows("chat.read"):
                 raise EdgeAuthError(403, "scope_denied")
         except EdgeAuthError as exc:
@@ -293,7 +293,7 @@ class MobileGatewayEdge:
         return fresh
 
     @staticmethod
-    def _authorize_target(request: WsRequest, origin: str) -> None:
+    def authorize_target(request: WsRequest, origin: str) -> None:
         """The owner-bound HTTPS target proves native requests without Origin."""
         try:
             expected = urlsplit(origin)
@@ -346,7 +346,7 @@ class MobileGatewayEdge:
             return http_json_response({"error": "missing_access"}, status=401)
         try:
             identity = await self.validator.validate_uncached(token)
-            self._authorize_target(request, identity.origin)
+            self.authorize_target(request, identity.origin)
         except EdgeAuthError as exc:
             return http_json_response({"error": exc.code}, status=exc.status)
 
@@ -595,7 +595,12 @@ class MobileGatewayEdge:
                 return http_json_response({"error": "bad_request"}, status=400)
             if not isinstance(parsed, dict):
                 return http_json_response({"error": "bad_request"}, status=400)
-            self._authorize_target(request, str(parsed.get("origin", "")))
+            parsed_claims = cast(dict[str, object], parsed)
+            raw_origin = parsed_claims.get("origin")
+            self.authorize_target(
+                request,
+                raw_origin if isinstance(raw_origin, str) else "",
+            )
             try:
                 result = await asyncio.to_thread(
                     self.validator.client.complete_pairing_recovery,
@@ -643,7 +648,11 @@ class MobileGatewayEdge:
                 or not signature
             ):
                 return http_json_response({"error": "bad_request"}, status=400)
-            self._authorize_target(request, str(claims.get("origin", "")))
+            raw_origin = claims.get("origin")
+            self.authorize_target(
+                request,
+                raw_origin if isinstance(raw_origin, str) else "",
+            )
             try:
                 result = await asyncio.to_thread(
                     self.validator.client.prove_pairing,
@@ -659,7 +668,7 @@ class MobileGatewayEdge:
             return await self._pairing_delivery(request, result)
         if path.endswith("/code"):
             origin = "https://" + header("Host")
-            self._authorize_target(request, origin)
+            self.authorize_target(request, origin)
             forwarded_origin = header("X-Nanobot-Origin")
             if forwarded_origin and forwarded_origin != origin:
                 raise EdgeAuthError(403, "origin_mismatch")
@@ -725,8 +734,12 @@ class MobileGatewayEdge:
             origin = fresh.origin
         if not isinstance(origin, str) or not origin:
             proof = result.get("proof_challenge")
-            origin = proof.get("origin") if isinstance(proof, dict) else ""
-        self._authorize_target(request, origin if isinstance(origin, str) else "")
+            if isinstance(proof, dict):
+                proof_challenge = cast(dict[str, object], proof)
+                origin = proof_challenge.get("origin", "")
+            else:
+                origin = ""
+        self.authorize_target(request, origin if isinstance(origin, str) else "")
         return http_json_response(result)
 
     def _handshake(self, identity: AccessIdentity) -> dict[str, Any]:

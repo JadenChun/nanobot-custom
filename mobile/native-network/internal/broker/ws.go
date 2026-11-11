@@ -49,7 +49,7 @@ func (c *Core) WSOpen(input WSRequest) (uint64, error) {
 	if baseContext == nil {
 		baseContext = context.Background()
 	}
-	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, http.MethodGet, input.Path)
+	target, route, err := resolveRoute(&c.cfg, c.origin, input.Operation, http.MethodGet, input.Path, false)
 	if err != nil {
 		return 0, err
 	}

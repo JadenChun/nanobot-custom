@@ -43,4 +43,37 @@ class NativeRequestCorrelatorTest {
         assertEquals("first", first.future.get())
         assertEquals("second", second.future.get())
     }
+
+    @Test fun internal_credential_events_never_reach_the_network_event_sink() {
+        val owner = NativeRequestCorrelator<String>()
+        val visible = mutableListOf<String>()
+        val poller = Executors.newSingleThreadExecutor()
+        val entered = CountDownLatch(1)
+        val admission = owner.launch(true) {
+            poller.submit {
+                entered.countDown()
+                assertFalse(owner.dispatch(1, "credential-before-id") { visible += it })
+            }
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            1L
+        }
+        assertEquals("credential-before-id", admission.future.get(1, TimeUnit.SECONDS))
+        assertTrue(visible.isEmpty())
+
+        owner.launch(true) { 2L }
+        owner.abandon(2)
+        assertFalse(owner.dispatch(2, "credential-after-cancel") { visible += it })
+        assertFalse(owner.dispatch(999, "unmatched-credential") { visible += it })
+        assertTrue(visible.isEmpty())
+        poller.shutdownNow()
+    }
+
+    @Test fun admitted_webview_handshake_reaches_the_network_event_sink() {
+        val owner = NativeRequestCorrelator<String>()
+        val visible = mutableListOf<String>()
+        owner.launch(false) { 41L }
+
+        assertTrue(owner.dispatch(41, "handshake-response") { visible += it })
+        assertEquals(listOf("handshake-response"), visible)
+    }
 }

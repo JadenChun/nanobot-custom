@@ -30,7 +30,11 @@ class NativeNetworkPairingInstrumentedTest {
     }
 
     private fun http(handle: Long, operation: String, path: String, body: JSONObject?): JSONObject {
-        val request = JSONObject().put("operation", operation).put("method", "POST").put("path", path)
+        val request = JSONObject()
+            .put("operation", operation)
+            .put("method", "POST")
+            .put("path", path)
+            .put("native", true)
         if (body != null) {
             request.put("body_base64", Base64.encodeToString(body.toString().toByteArray(), Base64.NO_WRAP))
         }

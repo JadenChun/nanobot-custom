@@ -710,13 +710,33 @@
     ui.retry.addEventListener("click", retryPending);
 
     ui.cancel.addEventListener("click", function () {
-      generation += 1;
+      var run = ++generation;
       stopTimers();
-      lastLink = null;
-      lastManual = null;
-      pendingSetup = null;
-      setState("idle");
-      watchForLink();
+      ui.cancel.disabled = true;
+      ui.status.textContent = "Cancelling pairing...";
+      var cancellation;
+      try {
+        if (typeof plugin.pairCancel !== "function") {
+          throw new Error("native pairing cancellation is unavailable");
+        }
+        cancellation = plugin.pairCancel();
+      } catch (error) {
+        cancellation = Promise.reject(error);
+      }
+      Promise.resolve(cancellation).then(function () {
+        if (stopped || run !== generation) return;
+        ui.cancel.disabled = false;
+        lastLink = null;
+        lastManual = null;
+        pendingSetup = null;
+        setState("idle");
+        watchForLink();
+      }).catch(function (error) {
+        if (stopped || run !== generation) return;
+        ui.cancel.disabled = false;
+        var message = String(error && error.message ? error.message : error);
+        fail("Pairing cancellation failed: " + message);
+      });
     });
 
     setState("idle");
@@ -795,37 +815,116 @@
       throw new Error("native transport readiness timeout");
     }
 
+    var activeHandshakeProbe = null;
+
     function probeHandshake() {
-      return new Promise(async function (resolve) {
-        var requestId = 0;
-        var done = false;
-        var unsubscribe = null;
-        var timer = setTimeout(function () { finish({ error: "timeout" }); }, 8000);
-        function finish(result) {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          if (unsubscribe) unsubscribe();
-          resolve(result);
+      if (activeHandshakeProbe) return activeHandshakeProbe.promise;
+      var probe = {
+        id: 0,
+        done: false,
+        launchSettled: false,
+        cancelRequested: false,
+        unsubscribe: null,
+        early: new Map(),
+        promise: null,
+        resolve: null,
+        timer: null
+      };
+      activeHandshakeProbe = probe;
+      probe.promise = new Promise(function (resolve) { probe.resolve = resolve; });
+
+      var maxEarlyEvents = 64;
+      function releaseIfSettled() {
+        if (probe.done && probe.launchSettled && activeHandshakeProbe === probe) {
+          activeHandshakeProbe = null;
         }
+      }
+      function clearEarly() {
+        probe.early.clear();
+      }
+      function cancel(id) {
+        if (!id || probe.cancelRequested) return;
+        probe.cancelRequested = true;
         try {
-          unsubscribe = await transport.onEvent(function (event) {
-            if (requestId === 0 || event.request_id !== requestId) return;
-            if (event.type === "http_response") {
-              finish({ status: event.status, body: event.body_base64 });
-            } else if (event.type === "http_error") {
-              finish({ error: event.code });
-            }
-          });
-          requestId = await transport.http({
+          void Promise.resolve(transport.cancel(id)).catch(function () {});
+        } catch (_) {}
+      }
+      function unsubscribe() {
+        if (!probe.unsubscribe) return;
+        var remove = probe.unsubscribe;
+        probe.unsubscribe = null;
+        try { remove(); } catch (_) {}
+      }
+      function finish(result, terminal) {
+        if (probe.done) return;
+        probe.done = true;
+        clearTimeout(probe.timer);
+        unsubscribe();
+        clearEarly();
+        if (!terminal && probe.id) cancel(probe.id);
+        probe.resolve(result);
+        releaseIfSettled();
+      }
+      function terminalResult(event) {
+        return event.type === "http_response"
+          ? { status: typeof event.status === "number" && Number.isFinite(event.status) ? event.status : 0 }
+          : { error: String(event.code || "native_request_failed").slice(0, 128) };
+      }
+      function handleEvent(event) {
+        if (probe.done || (event.type !== "http_response" && event.type !== "http_error")) return;
+        if (typeof event.request_id !== "number" || !Number.isSafeInteger(event.request_id) || event.request_id <= 0) return;
+        if (probe.id) {
+          if (event.request_id !== probe.id) return;
+          finish(terminalResult(event), true);
+          return;
+        }
+        if (probe.early.has(event.request_id)) return;
+        if (probe.early.size >= maxEarlyEvents) {
+          finish({ error: "handshake completion queue is full" }, false);
+          return;
+        }
+        probe.early.set(event.request_id, terminalResult(event));
+      }
+
+      probe.timer = setTimeout(function () { finish({ error: "timeout" }, false); }, 8000);
+      void (async function () {
+        try {
+          var remove = await transport.onEvent(handleEvent);
+          if (probe.done) {
+            try { remove(); } catch (_) {}
+            probe.launchSettled = true;
+            releaseIfSettled();
+            return;
+          }
+          probe.unsubscribe = remove;
+          var id = await transport.http({
             operation: "mobile_handshake",
             method: "GET",
             path: "/mobile/v1/handshake"
           });
+          probe.launchSettled = true;
+          if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
+            finish({ error: "handshake request was not admitted" }, false);
+            releaseIfSettled();
+            return;
+          }
+          probe.id = id;
+          if (probe.done) {
+            cancel(id);
+            releaseIfSettled();
+            return;
+          }
+          var early = probe.early.get(id);
+          clearEarly();
+          if (early) finish(early, true);
+          releaseIfSettled();
         } catch (error) {
-          finish({ error: String(error && error.message ? error.message : error) });
+          probe.launchSettled = true;
+          finish({ error: String(error && error.message ? error.message : error) }, false);
+          releaseIfSettled();
         }
-      });
+      })();
+      return probe.promise;
     }
 
     async function requireValidAccess() {

@@ -23,7 +23,7 @@ func TestMobileUIReadRoutesAreAllowlisted(t *testing.T) {
 		{"mobile_dispatch", "/mobile/v1/dispatch?path=%2Fapi%2Fsettings"},
 	}
 	for _, tc := range cases {
-		resolved, route, err := resolveRoute(cfg, origin, tc.operation, http.MethodGet, tc.path)
+		resolved, route, err := resolveRoute(cfg, origin, tc.operation, http.MethodGet, tc.path, false)
 		if err != nil {
 			t.Fatalf("%s rejected: %v", tc.operation, err)
 		}
@@ -45,6 +45,7 @@ func TestMobileThreadRejectsUnknownQuery(t *testing.T) {
 		"mobile_thread",
 		http.MethodGet,
 		"/mobile/v1/sessions/websocket%3Achat-1/thread?path=/etc/passwd",
+		false,
 	); err == nil {
 		t.Fatal("expected an unallowlisted query key to be denied")
 	}
@@ -59,6 +60,7 @@ func TestMobileUIReadRoutesRejectWriteMethods(t *testing.T) {
 		"mobile_model_settings",
 		http.MethodPost,
 		"/mobile/v1/model-settings",
+		false,
 	); err == nil {
 		t.Fatal("expected POST to be rejected")
 	}
@@ -71,14 +73,15 @@ func TestOwnerControlRoutesAreIndependentlyAllowlisted(t *testing.T) {
 		operation string
 		method    string
 		path      string
+		native    bool
 	}{
-		{"remote_status", http.MethodGet, "/remote/v1/status"},
-		{"remote_refresh", http.MethodPost, "/remote/v1/refresh"},
-		{"remote_devices", http.MethodGet, "/remote/v1/devices"},
-		{"remote_device_revoke", http.MethodPost, "/remote/v1/devices/install-0001/revoke"},
+		{"remote_status", http.MethodGet, "/remote/v1/status", false},
+		{"remote_refresh", http.MethodPost, "/remote/v1/refresh", true},
+		{"remote_devices", http.MethodGet, "/remote/v1/devices", false},
+		{"remote_device_revoke", http.MethodPost, "/remote/v1/devices/install-0001/revoke", false},
 	}
 	for _, tc := range cases {
-		resolved, route, err := resolveRoute(cfg, origin, tc.operation, tc.method, tc.path)
+		resolved, route, err := resolveRoute(cfg, origin, tc.operation, tc.method, tc.path, tc.native)
 		if err != nil {
 			t.Fatalf("%s rejected: %v", tc.operation, err)
 		}
@@ -92,6 +95,7 @@ func TestOwnerControlRoutesAreIndependentlyAllowlisted(t *testing.T) {
 		"remote_device_revoke",
 		http.MethodPost,
 		"/remote/v1/devices/../status/revoke",
+		false,
 	); err == nil {
 		t.Fatal("expected a path escape to be rejected")
 	}
@@ -121,7 +125,7 @@ func TestMobilePairingProofHeadersAndRoutesAreAllowlisted(t *testing.T) {
 		{"mobile_pair_recover_complete", "/mobile/v1/pair/recover/complete"},
 	}
 	for _, tc := range cases {
-		resolved, route, err := resolveRoute(cfg, origin, tc.operation, http.MethodGet, tc.path)
+		resolved, route, err := resolveRoute(cfg, origin, tc.operation, http.MethodGet, tc.path, true)
 		if err != nil {
 			t.Fatalf("%s rejected: %v", tc.operation, err)
 		}

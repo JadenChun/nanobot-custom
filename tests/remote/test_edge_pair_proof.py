@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from nanobot.remote.device_proof import (
 )
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.webui.gateway_services import build_gateway_services
+from tests.remote.proof_helpers import encode_proof_base64url
 
 ORIGIN = "https://fixture.example:8443"
 INSTALLATION_ID = "install-0001"
@@ -85,11 +85,21 @@ async def test_edge_pair_prove_issues_access_from_device_proof(
             ec.ECDSA(hashes.SHA256()),
         )
         proof_headers = Headers([
+            ("Host", "fixture.example:8443"),
+            ("Origin", ORIGIN),
             ("X-Nanobot-Pairing-Id", created.pairing_id),
-            ("X-Nanobot-Device-Signature", base64.b64encode(signature).decode("ascii")),
-            ("X-Nanobot-Proof-Claims", base64.b64encode(
-                json.dumps(claims.payload(), separators=(",", ":")).encode()
-            ).decode("ascii")),
+            ("X-Nanobot-Device-Signature", encode_proof_base64url(signature)),
+            (
+                "X-Nanobot-Proof-Claims",
+                encode_proof_base64url(
+                    json.dumps(
+                        claims.payload(),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ),
+            ),
         ])
         request = WsRequest("/mobile/v1/pair/prove", proof_headers)
 
@@ -167,11 +177,21 @@ async def test_edge_pair_recovery_reissues_access_once(
             ec.ECDSA(hashes.SHA256()),
         )
         proof_headers = Headers([
+            ("Host", "fixture.example:8443"),
+            ("Origin", ORIGIN),
             ("X-Nanobot-Pairing-Id", created.pairing_id),
-            ("X-Nanobot-Device-Signature", base64.b64encode(signature).decode("ascii")),
-            ("X-Nanobot-Proof-Claims", base64.b64encode(
-                json.dumps(claims.payload(), separators=(",", ":")).encode()
-            ).decode("ascii")),
+            ("X-Nanobot-Device-Signature", encode_proof_base64url(signature)),
+            (
+                "X-Nanobot-Proof-Claims",
+                encode_proof_base64url(
+                    json.dumps(
+                        claims.payload(),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ),
+            ),
         ])
         proven = await services.endpoint.process_request(
             None,
@@ -183,8 +203,10 @@ async def test_edge_pair_recovery_reissues_access_once(
         recovery = await services.endpoint.process_request(
             None,
             WsRequest("/mobile/v1/pair/recover", Headers([
+                ("Host", "fixture.example:8443"),
+                ("Origin", ORIGIN),
                 ("X-Nanobot-Installation", INSTALLATION_ID),
-                ("X-Nanobot-Device-Key", base64.b64encode(public_der).decode("ascii")),
+                ("X-Nanobot-Device-Key", encode_proof_base64url(public_der)),
             ])),
             is_allowed=lambda _client: True,
         )
@@ -197,15 +219,24 @@ async def test_edge_pair_recovery_reissues_access_once(
             ec.ECDSA(hashes.SHA256()),
         )
         complete_headers = Headers([
+            ("Host", "fixture.example:8443"),
+            ("Origin", ORIGIN),
             ("X-Nanobot-Installation", INSTALLATION_ID),
-            ("X-Nanobot-Device-Signature", base64.b64encode(
-                recovery_signature
-            ).decode("ascii")),
-            ("X-Nanobot-Proof-Claims", base64.b64encode(
-                json.dumps(
-                    recovery_claims.payload(), separators=(",", ":")
-                ).encode()
-            ).decode("ascii")),
+            (
+                "X-Nanobot-Device-Signature",
+                encode_proof_base64url(recovery_signature),
+            ),
+            (
+                "X-Nanobot-Proof-Claims",
+                encode_proof_base64url(
+                    json.dumps(
+                        recovery_claims.payload(),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ),
+            ),
         ])
         completed = await services.endpoint.process_request(
             None,

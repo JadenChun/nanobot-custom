@@ -25,7 +25,10 @@ from nanobot.remote.edge import (
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.remote.protocol import MutationEnvelope, MutationMode, stable_operation_digest
 from nanobot.remote.replay import OperationReplayCache
-from tests.remote.proof_helpers import new_device_key, sign_claims
+from tests.remote.proof_helpers import encode_proof_base64url, new_device_key, sign_claims
+
+ORIGIN = "https://fedora.taila1e707.ts.net"
+ORIGIN_HOST = "fedora.taila1e707.ts.net"
 
 
 def token_headers(token: str) -> Headers:
@@ -34,6 +37,10 @@ def token_headers(token: str) -> Headers:
 
 def request(path: str, token: str | None = None, extra: list[tuple[str, str]] | None = None) -> WsRequest:
     headers = Headers(extra or [])
+    if headers.get("Host") is None:
+        headers["Host"] = ORIGIN_HOST
+    if headers.get("Origin") is None:
+        headers["Origin"] = ORIGIN
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return WsRequest(path, headers)
@@ -50,9 +57,12 @@ def edge_setup(tmp_path: Path):
     owner = RemoteAccessOwner(tmp_path / "remote-access")
     owner.start()
     owner.store.set_enabled(True)
-    pair = owner.tokens.issue(
+    pair = owner.tokens.issue_device(
         "install-0001",
         ("chat.read", "chat.write", "media.read", "attachment.write", "device.self.logout"),
+        device_fingerprint="a" * 64,
+        device_generation=1,
+        origin=ORIGIN,
     )
     validator = OwnerAccessValidator(
         RemoteAccessClient(owner.socket_path, timeout=2.0),
@@ -90,11 +100,18 @@ def _proof_headers(owner: RemoteAccessOwner, pairing_id: str, key, public_der: b
         ("X-Nanobot-Pairing-Id", pairing_id),
         (
             "X-Nanobot-Device-Signature",
-            base64.b64encode(sign_claims(key, claims)).decode("ascii"),
+            encode_proof_base64url(sign_claims(key, claims)),
         ),
         (
             "X-Nanobot-Proof-Claims",
-            base64.b64encode(json.dumps(claims.payload()).encode("utf-8")).decode("ascii"),
+            encode_proof_base64url(
+                json.dumps(
+                    claims.payload(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ),
         ),
     ]
 
@@ -210,7 +227,10 @@ async def test_edge_mobile_ui_reads_and_thread(edge_setup) -> None:
     )
     assert missing is not None and missing.status_code == 404
 
-    write_only = owner.tokens.issue("install-0003", ("chat.write",))
+    write_only = owner.tokens.issue_device(
+        "install-0003", ("chat.write",), device_fingerprint="b" * 64,
+        device_generation=1, origin=ORIGIN,
+    )
     for path in ("/mobile/v1/model-settings", "/mobile/v1/workspaces", f"/mobile/v1/sessions/{key}/thread"):
         denied = await edge.handle(None, request(path, write_only.access_token))
         assert denied is not None and denied.status_code == 403
@@ -268,7 +288,10 @@ async def test_edge_allowlisted_chat_api_proxy(edge_setup) -> None:
 @pytest.mark.asyncio
 async def test_edge_scope_denial_and_ws_frame_epoch(edge_setup) -> None:
     owner, edge, _pair = edge_setup
-    limited = owner.tokens.issue("install-0002", ("chat.read",))
+    limited = owner.tokens.issue_device(
+        "install-0002", ("chat.read",), device_fingerprint="c" * 64,
+        device_generation=1, origin=ORIGIN,
+    )
     response = await edge.handle(None, request("/mobile/v1/handshake", limited.access_token))
     assert response is not None and response.status_code == 200
     media = await edge.handle(None, request("/mobile/v1/media/sig/payload", limited.access_token))
@@ -310,7 +333,10 @@ async def test_edge_revocation_owner_loss_and_logout(edge_setup) -> None:
     revoked = await edge.handle(None, request("/mobile/v1/handshake", pair.access_token))
     assert revoked is not None and revoked.status_code == 401
 
-    second = owner.tokens.issue("install-0003", ("chat.read", "device.self.logout"))
+    second = owner.tokens.issue_device(
+        "install-0003", ("chat.read", "device.self.logout"),
+        device_fingerprint="d" * 64, device_generation=1, origin=ORIGIN,
+    )
     logout = await edge.handle(None, request("/mobile/v1/logout", second.access_token))
     assert logout is not None and logout.status_code == 404
     frame = await edge.handle_ws_frame(
@@ -391,7 +417,7 @@ async def test_mobile_websocket_authorization_binds_identity(edge_setup) -> None
 async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
     owner, edge, _pair = edge_setup
     offer = owner.pairing.create_challenge(
-        origin="https://fedora.taila1e707.ts.net",
+        origin=ORIGIN,
         label="phone",
         chat_consent=True,
         media_consent=True,
@@ -411,7 +437,7 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
                 *pairing_headers,
                 ("X-Nanobot-Installation", "install-pair-1"),
                 ("X-Nanobot-Label", "phone"),
-                ("X-Nanobot-Device-Key", base64.b64encode(public_der).decode("ascii")),
+                ("X-Nanobot-Device-Key", encode_proof_base64url(public_der)),
             ],
         ),
     )
@@ -468,7 +494,7 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
 async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> None:
     owner, edge, _pair = edge_setup
     offer = owner.pairing.create_challenge(
-        origin="https://fedora.taila1e707.ts.net",
+        origin=ORIGIN,
         label="phone",
         chat_consent=True,
         media_consent=True,
@@ -505,7 +531,7 @@ async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> No
                 ("X-Nanobot-Label", "Pixel 10"),
                 ("X-Nanobot-Platform", "Android 16"),
                 ("X-Nanobot-Model", "Pixel 10"),
-                ("X-Nanobot-Device-Key", base64.b64encode(public_der).decode("ascii")),
+                ("X-Nanobot-Device-Key", encode_proof_base64url(public_der)),
             ],
         ),
     )
@@ -550,11 +576,12 @@ async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> No
 
 @pytest.mark.asyncio
 async def test_edge_refresh_rejects_legacy_bearer(edge_setup) -> None:
-    owner, edge, pair = edge_setup
+    owner, edge, _pair = edge_setup
+    legacy = owner.tokens.issue("install-legacy", ("chat.read", "chat.write"))
     owner.store.revoke_legacy_bearer_devices()
     headers = [
-        ("X-Nanobot-Installation", "install-0001"),
-        ("X-Nanobot-Refresh-Token", pair.refresh_token),
+        ("X-Nanobot-Installation", "install-legacy"),
+        ("X-Nanobot-Refresh-Token", legacy.refresh_token),
     ]
     response = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
     assert response is not None and response.status_code == 426
@@ -566,7 +593,10 @@ async def test_edge_refresh_rejects_legacy_bearer(edge_setup) -> None:
 @pytest.mark.asyncio
 async def test_owner_feature_reads_use_registry_and_deny_legacy(edge_setup) -> None:
     owner, edge, pair = edge_setup
-    owner_pair = owner.tokens.issue("install-owner", ("chat.read", "chat.write", "owner"))
+    owner_pair = owner.tokens.issue_device(
+        "install-owner", ("chat.read", "chat.write", "owner"),
+        device_fingerprint="e" * 64, device_generation=1, origin=ORIGIN,
+    )
 
     owner_response = await edge.handle(
         None,
@@ -599,7 +629,10 @@ async def test_owner_feature_reads_use_registry_and_deny_legacy(edge_setup) -> N
 @pytest.mark.asyncio
 async def test_owner_ws_mutation_registry_and_legacy_ceiling(edge_setup) -> None:
     owner, _edge, pair = edge_setup
-    owner.tokens.issue("install-owner", ("chat.read", "chat.write", "owner"))
+    owner.tokens.issue_device(
+        "install-owner", ("chat.read", "chat.write", "owner"),
+        device_fingerprint="f" * 64, device_generation=1, origin=ORIGIN,
+    )
     effects: list[str] = []
 
     async def mutation(identity: AccessIdentity, envelope: MutationEnvelope) -> dict[str, Any]:
@@ -658,7 +691,7 @@ class _RevalidatingValidator:
         self.identity = identity
         self.calls = 0
 
-    async def validate(self, _token: str) -> AccessIdentity:
+    async def validate_uncached(self, _token: str) -> AccessIdentity:
         self.calls += 1
         if isinstance(self.identity, Exception):
             raise self.identity
@@ -669,19 +702,25 @@ class _RevalidatingValidator:
 async def test_established_mobile_socket_revalidates_expiry_and_identity() -> None:
     import time
 
-    current = AccessIdentity("install-owner", ("chat.read", "owner"), time.time() + 60, 1)
+    current = AccessIdentity(
+        "install-owner", ("chat.read", "owner"), time.time() + 60, 1, ORIGIN,
+    )
     validator = _RevalidatingValidator(current)
     edge = MobileGatewayEdge(validator, generation_provider=lambda: 1)
     refreshed = await edge.revalidate_mobile_access(current, "token")
     assert refreshed.installation_id == "install-owner"
     assert validator.calls == 1
 
-    expired = AccessIdentity("install-owner", ("chat.read", "owner"), time.time() - 1, 1)
+    expired = AccessIdentity(
+        "install-owner", ("chat.read", "owner"), time.time() - 1, 1, ORIGIN,
+    )
     with pytest.raises(EdgeAuthError) as exc:
         await edge.revalidate_mobile_access(expired, "token")
     assert exc.value.code == "access_expired"
 
-    other = AccessIdentity("install-other", ("chat.read", "owner"), time.time() + 60, 1)
+    other = AccessIdentity(
+        "install-other", ("chat.read", "owner"), time.time() + 60, 1, ORIGIN,
+    )
     validator.identity = other
     with pytest.raises(EdgeAuthError) as exc:
         await edge.revalidate_mobile_access(current, "token")
@@ -691,7 +730,10 @@ async def test_established_mobile_socket_revalidates_expiry_and_identity() -> No
 @pytest.mark.asyncio
 async def test_revoked_owner_socket_revalidation_denies(edge_setup) -> None:
     owner, edge, _pair = edge_setup
-    owner_pair = owner.tokens.issue("install-owner", ("chat.read", "chat.write", "owner"))
+    owner_pair = owner.tokens.issue_device(
+        "install-owner", ("chat.read", "chat.write", "owner"),
+        device_fingerprint="1" * 64, device_generation=1, origin=ORIGIN,
+    )
     from nanobot.remote.edge import OwnerAccessValidator
 
     validator = OwnerAccessValidator(
@@ -879,9 +921,12 @@ async def test_owner_loss_before_private_delivery_fails_closed(edge_setup) -> No
 @pytest.mark.asyncio
 async def test_standard_dispatch_is_owner_only_and_forwards_the_exact_path(edge_setup) -> None:
     owner, _edge, pair = edge_setup
-    owner_pair = owner.tokens.issue(
+    owner_pair = owner.tokens.issue_device(
         "install-owner",
         ("chat.read", "chat.write", "owner"),
+        device_fingerprint="2" * 64,
+        device_generation=1,
+        origin=ORIGIN,
     )
     seen: list[tuple[str, str, str]] = []
 

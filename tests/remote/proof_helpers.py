@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -11,6 +13,11 @@ from nanobot.remote.device_proof import (
 )
 
 _KEYS: dict[str, ec.EllipticCurvePrivateKey] = {}
+
+
+def encode_proof_base64url(value: bytes) -> str:
+    """Encode one proof binary value with canonical unpadded base64url."""
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
 def new_device_key() -> tuple[ec.EllipticCurvePrivateKey, bytes]:
