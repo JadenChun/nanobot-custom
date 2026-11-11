@@ -1,5 +1,46 @@
 # A3 implementation correction handoff
 
+## Mobile correction checkpoint (2026-11-12)
+
+Resume from `codex/staging-audit-implementation` in the implementation worktree.
+The mobile source is in `8153953f40046499e66ff01324b111b049363bd3`.
+The correction follows the accepted `A3-PLAN-2026-11-11` on staging `f1a6bb85`.
+[Implementation plan](implementation-plan.md)
+
+- **PA-01.** Mobile commands require current scopes and the owner-bound Host and Origin.
+  Queued WebSocket delivery repeats the access check. Session deletion requires owner scope and `chat.write`.
+- **PA-02 and PA-03.** Cancel uses the durable native pairing fence. The bootstrap joins early handshake results.
+  The native broker restricts credential operations to native callers. The bridge exposes typed public status fields.
+- **PA-07 and PA-G01.** The server and Android use the fixed v2 proof corpus.
+  The loopback data-server test checks one-use recovery, mutation replay and revocation.
+
+### Verification
+
+| Boundary | Evidence |
+| --- | --- |
+| Python | 247 server compatibility tests and 213 WebSocket channel tests passed. The final import and type edits passed their affected 44 and 4 tests. Mobile-slice Ruff passed. |
+| WebUI and Go | 37 WebUI mobile tests passed. Go broker tests, Go vet and the shared WebUI build passed. |
+| Android | 20 host unit tests passed. Instrumented Kotlin compiled. The unsigned APK contains the corrected bootstrap and both native ABIs. Its manifest declares minSdk 24. |
+| Strict types | The mobile snapshot applies the mobile changes to `a8b3abf5`. It reports zero diagnostics across 541 files against frozen integration `685bee92`. The combined branch comparison resolved seven diagnostics and introduced zero across 542 files. |
+
+The combined branch still reports six strict diagnostics and two Ruff findings in recovery files.
+The Linux API 36 emulator crashed before boot. Android device execution remains pending.
+Full A3 acceptance remains open.
+
+Raw logs, dependency inventories, source hashes and the accepted test cases are under
+`/home/jaden/Documents/Utilities/nanobot-custom-worktrees/a3-evidence/mobile-correction-2026-11-12-c0f12f00`.
+
+### Next stage
+
+Finish the recovery foundation in the implementation worktree.
+Start DR-F01 with `tests/session/test_filesystem_effect_recovery.py`.
+Prove that an applied or uncertain mutation blocks another model request and survives reopening.
+Then implement DR-F05 at final source admission. [Recovery foundation specification](#recovery-foundation-specification)
+
+The November 11 pause record below describes `c0f12f00` and its evidence.
+
+## November 11 pause record
+
 **Paused by the user on 2026-11-11. This is an incomplete implementation checkpoint,
 not a merge-ready or release-qualified result.** Resume only when asked. All previous
 worker write ownership has been released; no validation or agent jobs remain running.
