@@ -1,0 +1,1811 @@
+{
+  "schema_version": 1,
+  "stream_id": "R01",
+  "report": "reports/R01.md",
+  "publication_state": "coordinator-checked",
+  "evidence_origin": {
+    "analyst": "ChatGPT web continuation coordinator",
+    "handoff": "handoffs/R01.md R01-A through R01-K source-complete checkpoint",
+    "published_by": "ChatGPT web continuation coordinator",
+    "note": "Continuation completed all 70 R01 primary bodies source-only at F70/P0/R0, reconciled twenty findings and ten final discussion questions, and records coordinator semantic acceptance PASS."
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    }
+  },
+  "assigned_primary_paths": [
+    "nanobot/pairing/__init__.py",
+    "nanobot/pairing/store.py",
+    "nanobot/remote/__init__.py",
+    "nanobot/remote/auth.py",
+    "nanobot/remote/authority.py",
+    "nanobot/remote/client.py",
+    "nanobot/remote/composition.py",
+    "nanobot/remote/delegation.py",
+    "nanobot/remote/management.py",
+    "nanobot/remote/owner.py",
+    "nanobot/remote/pairing.py",
+    "nanobot/remote/permissions.py",
+    "nanobot/remote/protocol.py",
+    "nanobot/remote/store.py",
+    "nanobot/remote/ipc.py",
+    "nanobot/remote/http.py",
+    "nanobot/remote/edge.py",
+    "nanobot/remote/operations.py",
+    "nanobot/remote/replay.py",
+    "nanobot/remote/staging.py",
+    "nanobot/remote/data_server.py",
+    "nanobot/remote/supervision.py",
+    "nanobot/remote/tailscale.py",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/MainActivity.java",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/NanobotWebViewClient.java",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/NativeProbe.java",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveRegistry.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveService.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/network/CustodyStore.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetwork.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetworkPlugin.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/attachments/AttachmentPolicy.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/links/PairingChallenge.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/links/PairingLink.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/links/TargetBinding.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/media/MediaHandleStore.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/media/NativeMediaFetcher.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeMediaInterceptor.kt",
+    "mobile/android/app/src/main/cpp/native_network_jni.c",
+    "mobile/android/app/src/main/cpp/probe.c",
+    "mobile/native-network/cmd/lib/interface_android.go",
+    "mobile/native-network/cmd/lib/main.go",
+    "mobile/native-network/include/nanobot_network.h",
+    "mobile/native-network/internal/broker/config.go",
+    "mobile/native-network/internal/broker/core.go",
+    "mobile/native-network/internal/broker/events.go",
+    "mobile/native-network/internal/broker/http.go",
+    "mobile/native-network/internal/broker/media.go",
+    "mobile/native-network/internal/broker/policy.go",
+    "mobile/native-network/internal/broker/state.go",
+    "mobile/native-network/internal/broker/ws.go",
+    "mobile/capacitor.config.ts",
+    "mobile/index.html",
+    "mobile/mobile-bootstrap.js",
+    "mobile/src/native-broker.ts",
+    "mobile/vite.config.ts",
+    "mobile/android/gradlew",
+    "mobile/android/gradlew.bat",
+    "mobile/scripts/bootstrap-toolchain.sh",
+    "mobile/scripts/mobile-env.sh",
+    "mobile/scripts/build-native-network.sh",
+    "mobile/scripts/build-shared-webui.sh",
+    "mobile/scripts/build-debug.sh",
+    "mobile/scripts/build-release.sh",
+    "mobile/scripts/build-operations-contract.py",
+    "mobile/scripts/check-desktop-parity.py",
+    "mobile/scripts/install-release-update.sh",
+    "mobile/scripts/qualify-emulator.sh",
+    "mobile/scripts/test-cabi.sh",
+    "mobile/scripts/test-update-persistence.sh"
+  ],
+  "bounded_body_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/pairing/__init__.py",
+      "git_blob": "2dec720c7017bc3c580e7ea2a78cb6f99b4a13f7",
+      "sha256": "d08cdf2e9ed497db390298f8cef254320b6795a2415cdc9766ed5285f06ca707",
+      "bytes": 808,
+      "ranges": [
+        [
+          1,
+          38
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/pairing/store.py",
+      "git_blob": "260b2cb0f09a27bb3537933306248b7919af896f",
+      "sha256": "acad56cb18fc5df507299282837ebce08a745ba3b99f7857d93bf1efb8c12db6",
+      "bytes": 12599,
+      "ranges": [
+        [
+          1,
+          367
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/__init__.py",
+      "git_blob": "ee59605b02bf8c5b7ce07cfdb90957cce7648202",
+      "sha256": "a33909cb6886df5808a65c6611ddf9abb95807a32917a152f79f7a2a49f4fe65",
+      "bytes": 1315,
+      "ranges": [
+        [
+          1,
+          60
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/auth.py",
+      "git_blob": "fa89be8eb4cc1a7bb64496f71d8071127dec869b",
+      "sha256": "46fe33362dffb6390b35b5ecc775a1ca41204805f9f992c57d9ecc57fa6298d9",
+      "bytes": 7060,
+      "ranges": [
+        [
+          1,
+          190
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/authority.py",
+      "git_blob": "0a80536622725c949a406f5ded980dec9a7804d2",
+      "sha256": "221c02b42f72295e9e79576edf7e9a562dd6aac33cf3cad2c3e7b1cb1ed12418",
+      "bytes": 4389,
+      "ranges": [
+        [
+          1,
+          122
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/client.py",
+      "git_blob": "b2b3cc97522f1b0ac39bb8f03eae29f670206af6",
+      "sha256": "6da0d0fea11ff0a381e8a9dd721b5ccedd2468f09a0767a04673184379f07b32",
+      "bytes": 11658,
+      "ranges": [
+        [
+          1,
+          377
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/composition.py",
+      "git_blob": "8d37df6f4992b3da64d68df062f5b042faf739eb",
+      "sha256": "a49318121bf4481eb9e3ec88d83cdd566316766d6306b56183bbceaca2621b20",
+      "bytes": 5906,
+      "ranges": [
+        [
+          1,
+          158
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/delegation.py",
+      "git_blob": "433855122b55e5f8ce0c77796faba5d375a64a4a",
+      "sha256": "8eaf11db4c959ec176cbe7d67ffbf22f071d7eea023921a4597d2983041bd13e",
+      "bytes": 16574,
+      "ranges": [
+        [
+          1,
+          421
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/management.py",
+      "git_blob": "c859a421a2852029a7b162c500068a5d26fe5fae",
+      "sha256": "134ecbc72bd09cf08eeeafb1d39b35b43fd9ab5effaee52e74ce3dc106944937",
+      "bytes": 5655,
+      "ranges": [
+        [
+          1,
+          167
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/owner.py",
+      "git_blob": "a1a0da93a997ee487e42d6d2c7f22695bc162c24",
+      "sha256": "3fb47fd42612723a947725fc1ea17476742612f409a003f198e560303adb64a9",
+      "bytes": 3620,
+      "ranges": [
+        [
+          1,
+          116
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/pairing.py",
+      "git_blob": "8a2eff4a8ed9cbefd38035ffa6ec6a50d6806bd0",
+      "sha256": "ead818bde61ac270dc535e7843eb6f122589655484ef5575244e5e88f3078f2d",
+      "bytes": 25081,
+      "ranges": [
+        [
+          1,
+          666
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/permissions.py",
+      "git_blob": "d7bf259283b637876868526634347dc97ed824f1",
+      "sha256": "aaff440332c827dc8e583715581cf5b42e945b75770be5f44a2e16ac0eb111c0",
+      "bytes": 7103,
+      "ranges": [
+        [
+          1,
+          176
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/protocol.py",
+      "git_blob": "79535a77ac6ef0b33cb785b5729be241d914c064",
+      "sha256": "3b7dd6d50040af3ecbdc0e777118d30a065a81aa07ce55f398f507a19282e515",
+      "bytes": 16127,
+      "ranges": [
+        [
+          1,
+          501
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/store.py",
+      "git_blob": "acca474442fc3573b765b70363cf3046a267a5fd",
+      "sha256": "edecbce3ab337dbf9e90d4b16e44c8ecad733acf405d2248841b074988339b52",
+      "bytes": 25087,
+      "ranges": [
+        [
+          1,
+          643
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/ipc.py",
+      "git_blob": "b45c7c8846cb3fa0a6c8cfb69867273792fe2fa7",
+      "sha256": "824deea052fe3f40128810d47654f0ffec0aa4740d872e66a2340ac76a2cb4c6",
+      "bytes": 41866,
+      "ranges": [
+        [
+          1,
+          896
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/http.py",
+      "git_blob": "aa022a0cdcce604bd6c5979ea033709ee62fbd7d",
+      "sha256": "84f3c780f8e3c4aa61c7e0e25b8bded18149b868dbf2288355eafe444e14df7e",
+      "bytes": 15166,
+      "ranges": [
+        [
+          1,
+          372
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/edge.py",
+      "git_blob": "ef9074cf361c7e82ed0de6777e1409ef08425ffe",
+      "sha256": "cdb66ac05d47fcd272c192646ad64139856278f15f5240cfa14435ce952f4131",
+      "bytes": 31380,
+      "ranges": [
+        [
+          1,
+          720
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/operations.py",
+      "git_blob": "34abe83e6317f74bfb7353698a8c8d9533ce069a",
+      "sha256": "7bd49188a8469bcb3dbf484d66f4ce3797c06bfd2a87677ab574f1933e20955e",
+      "bytes": 7566,
+      "ranges": [
+        [
+          1,
+          187
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/replay.py",
+      "git_blob": "20c120e886260e2e384b959edea64468073957fe",
+      "sha256": "8d15c5913bfac2e5fb07932207e4d7f1ca363d67af394e192d5e8a0bf28246ca",
+      "bytes": 7730,
+      "ranges": [
+        [
+          1,
+          215
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/staging.py",
+      "git_blob": "6d34e5971769b3b04ae0220f52a3cce1d7573b4b",
+      "sha256": "08c352bb1a8e5bd94024f4ef9be1c08d4d617604b37f66b873513578fbe0fd05",
+      "bytes": 9771,
+      "ranges": [
+        [
+          1,
+          263
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/data_server.py",
+      "git_blob": "0c5da3ef0fc0e914411b68faf0ad545a46560dd9",
+      "sha256": "119e86bb027e0fe02bf8ceccc7e5b2ea01ab2053e1a627730e3da26c30e81fe3",
+      "bytes": 13816,
+      "ranges": [
+        [
+          1,
+          357
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/supervision.py",
+      "git_blob": "577cee1fbb0597dc7bd576f647b6abc8393bf2a7",
+      "sha256": "24a73a890ddcc385a961a440c685369c83eb6db22bcc4452133e5f00771d7192",
+      "bytes": 7085,
+      "ranges": [
+        [
+          1,
+          212
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "nanobot/remote/tailscale.py",
+      "git_blob": "24fe2a663ad7ba36670c355e60530d0e9bad5ff7",
+      "sha256": "8c286847edd2cb3707b818b3a02c12c11d2158c4486d643c72a978e231eb04f5",
+      "bytes": 2451,
+      "ranges": [
+        [
+          1,
+          77
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/MainActivity.java",
+      "git_blob": "dbf043d67176dd6a093d98cf26cb19cd93e85ce5",
+      "sha256": "6f65a531354336ff53f722bf7c5d9c34b81523bcb92da4f07d534325c670a780",
+      "bytes": 3417,
+      "ranges": [
+        [
+          1,
+          102
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/NanobotWebViewClient.java",
+      "git_blob": "434f4d16b9c4611f6dc5284891f26c32d674a1ee",
+      "sha256": "b34e0eda3efa8e610ac27cf2ae7866d718ad3589b35c17bf184711188b7930fb",
+      "bytes": 844,
+      "ranges": [
+        [
+          1,
+          26
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/NativeProbe.java",
+      "git_blob": "8e0ccbf6850f6fda289b97d4fda5015816c28560",
+      "sha256": "01d0937923c42e5c7e2b8b57fdd70f01dc51d12b4d54a7c769c91c88979a21a8",
+      "bytes": 2068,
+      "ranges": [
+        [
+          1,
+          63
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveRegistry.kt",
+      "git_blob": "3cba76db1e1afa5dd4a271e028c059b9fdcca766",
+      "sha256": "c6c75abc3d7962938ea65078ad4ddc94a91ebd8e05679f59ad5356d631ac1ad2",
+      "bytes": 697,
+      "ranges": [
+        [
+          1,
+          27
+        ]
+      ],
+      "inventory_change": "A",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveService.kt",
+      "git_blob": "a83b6268a0865d9a63e359c0b81ff74fe541b788",
+      "sha256": "1659b1fd1df4e279a12f05c4e4f447a49570ecab748ae4bf93da8c077474cb0b",
+      "bytes": 5124,
+      "ranges": [
+        [
+          1,
+          140
+        ]
+      ],
+      "inventory_change": "A",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/network/CustodyStore.kt",
+      "git_blob": "71e5665946823227a883488154d0d5f6c3c867af",
+      "sha256": "440198f6d81c3217763450549dd3e3d5dfcc7af58798d4642c51249960e19e12",
+      "bytes": 18516,
+      "ranges": [
+        [
+          1,
+          491
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetwork.kt",
+      "git_blob": "720ebf5dfdc722fc6f2cd60c46fdf1df5b1dd073",
+      "sha256": "4509e7b6c268a9971b1d9f34d2318e41e5572cbf616a836a3ed20c03b5c746b9",
+      "bytes": 1416,
+      "ranges": [
+        [
+          1,
+          33
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetworkPlugin.kt",
+      "git_blob": "883c0e823c88fab141543927de957d1fc505ef5a",
+      "sha256": "f84d074b9a855be7183f2b62d6c102e2da88b8fb8ec5e5e117588418ca601de5",
+      "bytes": 51719,
+      "ranges": [
+        [
+          1,
+          1359
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/attachments/AttachmentPolicy.kt",
+      "git_blob": "6ee7c8fcf3d4c50c7544e4f9eabad22e4a58bf0a",
+      "sha256": "d41427c54b6e12878fad3d1648693f27ba084926296db97c283e512aa6980aac",
+      "bytes": 1667,
+      "ranges": [
+        [
+          1,
+          50
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/links/PairingChallenge.kt",
+      "git_blob": "617aa6552a8b4766048b7a7a99467cb204ac63d1",
+      "sha256": "f163141036084ed7bd4ca03e8b6856fe198aa0c4e14e5b59151d929bb792c1e7",
+      "bytes": 1359,
+      "ranges": [
+        [
+          1,
+          36
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/links/PairingLink.kt",
+      "git_blob": "b7b251e4fb9cb89137de2ad04122897c462d6569",
+      "sha256": "26ea3d405584cfb16f912a2915d138437dbb04c4e5b441cda410ea1c63d84305",
+      "bytes": 2971,
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/links/TargetBinding.kt",
+      "git_blob": "739a184275d26e150e29ceb246af8fa8e4c79aa8",
+      "sha256": "a39e7afff1c1ff8785ff889ffa715cca115211e116cca329141ec1688fb85da0",
+      "bytes": 772,
+      "ranges": [
+        [
+          1,
+          18
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/media/MediaHandleStore.kt",
+      "git_blob": "9b09855fd25c665390e74c4788614ccc8ffaad65",
+      "sha256": "0f6c9f7cfe7a2a1a7abaad41522f09b4cf1796b45a0be99941fc1b2584dd0ff5",
+      "bytes": 1985,
+      "ranges": [
+        [
+          1,
+          51
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/media/NativeMediaFetcher.kt",
+      "git_blob": "1038bc1b138568e6fc7ccca6ba5c16d9cadcdcec",
+      "sha256": "a6654ad9790ac7495d025b04a8ac3bb92c4a4c915a5c30d2f56b1c031949c356",
+      "bytes": 2853,
+      "ranges": [
+        [
+          1,
+          65
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeMediaInterceptor.kt",
+      "git_blob": "ce2e9f3c1fd698f755f3b073e397d5643d8be30c",
+      "sha256": "c6852d19e20e7b9530aad745656202e46187f8ff3fc49b8099ebb19236cc13fe",
+      "bytes": 4447,
+      "ranges": [
+        [
+          1,
+          138
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/cpp/native_network_jni.c",
+      "git_blob": "1185bce63e38219fea5198584e685213a4420941",
+      "sha256": "8a4338855e8ea0eaaa9ac868b9a608d9641ed2ffbc175b0e9427776b0712c603",
+      "bytes": 8921,
+      "ranges": [
+        [
+          1,
+          256
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/app/src/main/cpp/probe.c",
+      "git_blob": "f9f4e9cb4b541fea797dd679dbf7885b814e4832",
+      "sha256": "c673a6463c9636287c0a4d48916ebf33198f8d4248c117195856308ed36aaa5a",
+      "bytes": 491,
+      "ranges": [
+        [
+          1,
+          18
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/cmd/lib/interface_android.go",
+      "git_blob": "b1552e993f8909a165be35c56c1aeae77d8e9a50",
+      "sha256": "6c112f5917ace50f1d338147421e249862a5788d4e75e5a9a0fff9be6248f5c0",
+      "bytes": 1378,
+      "ranges": [
+        [
+          1,
+          54
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/cmd/lib/main.go",
+      "git_blob": "69d0d67db6b1098bc61bc01f03479d9bd15172e3",
+      "sha256": "d14b50bf639a671eae40485c718ddbb558bae4fba2c8271f455f0b69d8a80a57",
+      "bytes": 8153,
+      "ranges": [
+        [
+          1,
+          341
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/include/nanobot_network.h",
+      "git_blob": "c403b1427167a838744c2f83a516bcf8ac252db7",
+      "sha256": "6981e76d8d33426f920af1079edf1db0989f0ab7580f48055c01260d2654bdc2",
+      "bytes": 4062,
+      "ranges": [
+        [
+          1,
+          108
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/config.go",
+      "git_blob": "eaf8695973ee3d58fd7ee1e52ed35f429648242b",
+      "sha256": "cd65d94c8c9b6b05979dd861f887aa83cc75c252d441c47300a2e72887f64e5e",
+      "bytes": 3432,
+      "ranges": [
+        [
+          1,
+          103
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/core.go",
+      "git_blob": "53bd1545b46e6cee990c487d266b8fe30c100033",
+      "sha256": "6b65e91e131eebc58327b913337d48f4780cc359d16524e8e3b59df738581a45",
+      "bytes": 9775,
+      "ranges": [
+        [
+          1,
+          416
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/events.go",
+      "git_blob": "23b9d506550b59c57a9d3c88d4b180e8145c192a",
+      "sha256": "931cc30c5d2aae0ed38c20662316ccf872bb2859ec281ed27265924fa28a330a",
+      "bytes": 1070,
+      "ranges": [
+        [
+          1,
+          53
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/http.go",
+      "git_blob": "792679ed6468a8ebdb9f7bf7f528c725bcfdfaf7",
+      "sha256": "346ffb846605609d9ff9da86e993894a5ca5f524582719282436946995cf17fc",
+      "bytes": 5291,
+      "ranges": [
+        [
+          1,
+          216
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/media.go",
+      "git_blob": "0dc5b7440218395d7cd44bcfcb915771324c3461",
+      "sha256": "bc96bbdf52aa28e4833a04411a97e58293e2b4fe484e51069bb45c444d1b492c",
+      "bytes": 11055,
+      "ranges": [
+        [
+          1,
+          463
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/policy.go",
+      "git_blob": "b627f9e49024d7792c22d6f49e148e9d4636ddbe",
+      "sha256": "e0a4e699b916aa601c54304c8ec53abf8948268b042531867b7af9dd290b55b5",
+      "bytes": 8548,
+      "ranges": [
+        [
+          1,
+          286
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/state.go",
+      "git_blob": "48ab532a17fcf5f0c3a5244ef86513bbb6912614",
+      "sha256": "51607b812988844be51058d324c5b1272f94b0bea0a30de26814927dac5c4148",
+      "bytes": 4190,
+      "ranges": [
+        [
+          1,
+          183
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/native-network/internal/broker/ws.go",
+      "git_blob": "f97f49a4fb6a00958d58db2eec916c78f2c3651d",
+      "sha256": "44768eaeb7ae042511342fa43d156940fe8529eea6a9937aab58a69a4711a000",
+      "bytes": 5453,
+      "ranges": [
+        [
+          1,
+          244
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/capacitor.config.ts",
+      "git_blob": "824999a122eac925de7c0263c5ef6f5bae29081e",
+      "sha256": "496d39d1c88622fccda06dacd93e30641f3f254f3cddcf6d567fc2002a5116d4",
+      "bytes": 279,
+      "ranges": [
+        [
+          1,
+          13
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/index.html",
+      "git_blob": "078b2bf2b4cbc3a1d4311b6cf81dcd27a2a4fe4b",
+      "sha256": "322ee6b0d20f27cb57d53ae169077c14404183a221ade08284f0b70f5a6a2f1f",
+      "bytes": 578,
+      "ranges": [
+        [
+          1,
+          22
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/mobile-bootstrap.js",
+      "git_blob": "dc83c106b2a235688d6971fd2de70a8bd569deda",
+      "sha256": "fc39f097e9a6ad4d631afeb2c6e2087cc4e958ad02e1a6a5a91f124545defa36",
+      "bytes": 36209,
+      "ranges": [
+        [
+          1,
+          937
+        ]
+      ],
+      "inventory_change": "M",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/src/native-broker.ts",
+      "git_blob": "828ea6614d4215aaa9be3bf63005dc6c67596e13",
+      "sha256": "2db2d5c7f38f362b35c03fce310a326a073ce2dfcb85e070e8711283a002479b",
+      "bytes": 5761,
+      "ranges": [
+        [
+          1,
+          198
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/vite.config.ts",
+      "git_blob": "6a771581cdfd1a161af9064589602f8aea5ee3a9",
+      "sha256": "7180d5d97c5e4582bcb8a2a349f5038f58951f889be2d5726547ce22fb7fc619",
+      "bytes": 206,
+      "ranges": [
+        [
+          1,
+          14
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/gradlew",
+      "git_blob": "23d15a9367071145e9c79bb4ddf879d1fbe78b5d",
+      "sha256": "b187b4c52e749f5760afdd6fadc31b2a98ad35fb249bf0dff03b72650f320409",
+      "bytes": 8733,
+      "ranges": [
+        [
+          1,
+          252
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/android/gradlew.bat",
+      "git_blob": "5eed7ee8452842305a18a4eb967442683808226a",
+      "sha256": "1d297e00bd21de3ace22b4d7f2de1f9dfa858883d66bbf7c1ccbecccec8f4f3b",
+      "bytes": 2937,
+      "ranges": [
+        [
+          1,
+          95
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/bootstrap-toolchain.sh",
+      "git_blob": "d1e63ec5a254e658b8cbdf042f4c0adf0db84042",
+      "sha256": "8eba1731fd7e938c2c86ff8b65cbab63a0d4170c8330f58ac85f8ef051b8c406",
+      "bytes": 4736,
+      "ranges": [
+        [
+          1,
+          132
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/mobile-env.sh",
+      "git_blob": "4d1867fd90193245f42bb26ae484b4a94f51d9a4",
+      "sha256": "8c4c8b4d53a6ac05b22d375e1da48bbe948be31f755e9d3f775c190f006666b4",
+      "bytes": 1617,
+      "ranges": [
+        [
+          1,
+          43
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/build-native-network.sh",
+      "git_blob": "100a13b952258a23e910b24474d2b0b5e5b9b242",
+      "sha256": "4134dd1b22ee912b7fb6c53f4fbbdb2ee653cba228497dcb91f1298539bfd8b7",
+      "bytes": 1682,
+      "ranges": [
+        [
+          1,
+          49
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/build-shared-webui.sh",
+      "git_blob": "9ba7a28291164a839952eb5139a0a1185a6afd90",
+      "sha256": "b0293c813a36f0f8a288d90264ff958dbea4812029ebf3685c89916af3296250",
+      "bytes": 1206,
+      "ranges": [
+        [
+          1,
+          34
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/build-debug.sh",
+      "git_blob": "7abbc51aff091216e237b340f5b64510b0a23c6c",
+      "sha256": "916d8304901fbd1652438b3b0d3e82e0d8f36b3283b3daff6832b3f317106913",
+      "bytes": 994,
+      "ranges": [
+        [
+          1,
+          34
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/build-release.sh",
+      "git_blob": "ae68ef24e00f61ec50a221511ef884d139f49859",
+      "sha256": "19c763dfd74be831277ca6296f68009f7ca465f8217116212f4f55b1d8b9d8ff",
+      "bytes": 2366,
+      "ranges": [
+        [
+          1,
+          73
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/build-operations-contract.py",
+      "git_blob": "c42b6c8be813642ac178b6caa60f9dffa4b93e59",
+      "sha256": "9bdc671ad421ad2fcaac292437434dff385319b012c43c1e5ab11a9ce57991fc",
+      "bytes": 3326,
+      "ranges": [
+        [
+          1,
+          89
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/check-desktop-parity.py",
+      "git_blob": "a4507238e61aac76d274cfa273b028feef1dc146",
+      "sha256": "525fc4fbae9d5c21569446ba2fd2d237e23ce898b6190cf30ddf7639cd3083ef",
+      "bytes": 17343,
+      "ranges": [
+        [
+          1,
+          409
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/install-release-update.sh",
+      "git_blob": "056b2a9d6e8fc18af3810de90671cabe04746e44",
+      "sha256": "adceefc09f9931eec59c9db3b7b589a536363c02ae05ba50fbd92bc81029fe74",
+      "bytes": 918,
+      "ranges": [
+        [
+          1,
+          29
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/qualify-emulator.sh",
+      "git_blob": "819143ecc20d7094ef6ee667bde37d1fd571336f",
+      "sha256": "8f119cd31a3bfe7015b7d8179ce84ee3b74e17e70d9217be96ca682b523175da",
+      "bytes": 6505,
+      "ranges": [
+        [
+          1,
+          192
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/test-cabi.sh",
+      "git_blob": "953a4d26fe727cc86c0cd76ee8db2df0df3d8bc4",
+      "sha256": "27641a5fcd5e7ee719cefaaba0e847e620773be712e515d1233115ee7281d98f",
+      "bytes": 818,
+      "ranges": [
+        [
+          1,
+          24
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+      "path": "mobile/scripts/test-update-persistence.sh",
+      "git_blob": "757b92ac1a4f8957786d87c7c2700d787a785f1a",
+      "sha256": "6c0d83499a313aa1c1cd933a7be8211e87daf8b29df61a828fdc45fb322ff43f",
+      "bytes": 2140,
+      "ranges": [
+        [
+          1,
+          52
+        ]
+      ],
+      "inventory_change": "unchanged",
+      "prior_checkpoint_disposition": "full",
+      "final_disposition": "full",
+      "purpose": "Fresh R01 source-only primary body read preserved from staged R01-A through R01-K checkpoints.",
+      "evidence_origin": "ChatGPT web continuation coordinator"
+    }
+  ],
+  "caller_context_reads": [
+    {
+      "note": "Bounded production callers, Android/WebUI consumers and server-side support files are enumerated by substage in handoffs/R01.md and were used only for call-chain reconciliation; no primary credit."
+    }
+  ],
+  "search_only": [
+    {
+      "note": "Repository/history searches were used only for bounded discovery and change intent where recorded; pinned source bodies, not search snippets, support promoted findings."
+    }
+  ],
+  "test_source_reads": [
+    {
+      "note": "Targeted Python/Go/Android/WebUI tests listed in handoffs/R01.md were read as contract/counterevidence only; no tests were executed and no primary credit was added."
+    }
+  ],
+  "support_reads": [
+    {
+      "path": "handoffs/R01.md",
+      "purpose": "Source-complete staged evidence, qualifications, retained observations and substage ledger."
+    },
+    {
+      "path": "docs/audits/codebase-discovery/path-inventory.tsv",
+      "purpose": "Frozen R01 assignment, byte counts and SHA-256 provenance."
+    },
+    {
+      "path": "reports/E02.md",
+      "purpose": "Cross-stream reconciliation for shared WebUI route/typed command ownership."
+    },
+    {
+      "path": "reports/K01.md",
+      "purpose": "Cross-stream reconciliation for build/package subprocess trust and later K01 current-origin refresh obligation."
+    }
+  ],
+  "justified_exclusions": [],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "note": "Delegation/session controls are not like-for-like remote-device enrollment/credential-custody mechanisms; used only where authority concepts overlap."
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "note": "No remote-device parity requirement was inferred from Codex; reference evidence remains architectural comparison only."
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "note": "Relevant implementation history and historical mobile qualification claims are preserved per substage in handoffs/R01.md; publication did not refresh the frozen source pin or convert historical runs into current runtime evidence."
+    }
+  ],
+  "findings": [
+    {
+      "id": "R01-F01",
+      "priority": "P2",
+      "title": "Pairing can durably commit a device before credential custody is established",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F02",
+      "priority": "P1",
+      "title": "Mobile WebSocket commands bypass granted chat/media scopes",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F03",
+      "priority": "P2",
+      "title": "Refresh rotation can strand a paired device on ambiguous delivery",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F04",
+      "priority": "P2",
+      "title": "Versioned mobile route contract contradicts the production edge",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F05",
+      "priority": "P2",
+      "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F06",
+      "priority": "P2",
+      "title": "Systemd supervision reports applied success without checking command success",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F07",
+      "priority": "P2",
+      "title": "Pairing can proceed without a verified Tailscale Serve mapping",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F08",
+      "priority": "P2",
+      "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F09",
+      "priority": "P2",
+      "title": "Mobile HTTP completions can arrive before request correlation is armed",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F10",
+      "priority": "P2",
+      "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F11",
+      "priority": "P2",
+      "title": "Android logcat receives replayable signed-media bearer capabilities",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F12",
+      "priority": "P2",
+      "title": "Global native last_error storage is unsafe under concurrent Android calls",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F13",
+      "priority": "P2",
+      "title": "Bounded broker event pressure can silently drop admitted operation completions",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F14",
+      "priority": "P2",
+      "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F15",
+      "priority": "P2",
+      "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F16",
+      "priority": "P2",
+      "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
+      "conditional": true,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F17",
+      "priority": "P2",
+      "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F18",
+      "priority": "P2",
+      "title": "Gradle wrapper distribution is not cryptographically pinned",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F19",
+      "priority": "P2",
+      "title": "Desktop-parity checker silently skips async inbound-command and misc-route source coverage",
+      "conditional": false,
+      "state": "promoted-report"
+    },
+    {
+      "id": "R01-F20",
+      "priority": "P2",
+      "title": "Update-persistence qualification reinstalls the same APK instead of exercising an actual upgrade",
+      "conditional": false,
+      "state": "promoted-report"
+    }
+  ],
+  "final_discussion_questions": [
+    {
+      "id": "R01-Q1",
+      "question": "D2/D4: Is owner intended to imply every chat/media/attachment capability, or should reduced owner scopes remain an enforceable ceiling across HTTP and typed WebSocket commands?"
+    },
+    {
+      "id": "R01-Q2",
+      "question": "D5/D6: What common credential-handoff receipt should pairing and refresh use so issued/applied-but-not-received becomes retry-safe?"
+    },
+    {
+      "id": "R01-Q3",
+      "question": "D4/D6: What is the authoritative pairing lifecycle across QR/manual collection, Cancel, process restart, expiry, Tailscale readiness and desktop approval?"
+    },
+    {
+      "id": "R01-Q4",
+      "question": "D5/D6/D7: Should native HTTP/WS requests use one completion owner with atomic correlation, guaranteed terminal delivery and applied/not-applied/uncertain outcomes?"
+    },
+    {
+      "id": "R01-Q5",
+      "question": "D6/D7: What single frame/event-size budget should apply end-to-end across WebUI, Capacitor/Kotlin, JNI and the Go broker?"
+    },
+    {
+      "id": "R01-Q6",
+      "question": "D2/D7: What is the lifetime/secrecy model for signed media capabilities, and what hard persistent-storage budget should media streaming/cache enforce?"
+    },
+    {
+      "id": "R01-Q7",
+      "question": "D4/P01: Which artifact is the source of truth for mobile routes/operations/parity, and should production dispatch, generated contracts and parity tests derive from it?"
+    },
+    {
+      "id": "R01-Q8",
+      "question": "D2/Q01: What release-build trust boundary should receive signing credentials, and must every compiler/package manager/SDK/Gradle distribution be verified before signing?"
+    },
+    {
+      "id": "R01-Q9",
+      "question": "D4/D6/Q01: What baseline/candidate artifact policy should qualify real Android upgrades, custody schema evolution and embedded Tailscale-state migration?"
+    },
+    {
+      "id": "R01-Q10",
+      "question": "D4/D6: Should local systemd/Tailscale setup remain opt-in best-effort tooling or become product-owned lifecycle/readiness with exact success and Serve semantics?"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    "E02 owns shared WebUI route/settings/server contracts; R01 owns the paired-device/mobile authorization and transport consequence, especially F02/F04/F19.",
+    "D01/U01 own broader client/recovery lifecycle; R01 owns Android/native correlation, pairing and transport-state failures.",
+    "T01/A01 should share the final applied/not-applied/uncertain effect receipt model with remote credential/completion paths.",
+    "K01/Q01 overlap release subprocess/toolchain trust; R01 owns the concrete Android signing path in F16-F18.",
+    "P01 should reconcile route/operation contract generation and retirement of legacy or substitute mobile transport declarations.",
+    "M01/X01/Q01 remain queued and may own broader mobile ingress/package/performance concerns; R01 publication does not pre-empt those denominators."
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "coordinator": "ChatGPT web continuation coordinator",
+    "scope": "R01 source-review publication only",
+    "verified": {
+      "primary_full": 70,
+      "partial": 0,
+      "unread": 0,
+      "inventory_all_roles": 189,
+      "total_primary_bytes": 549841,
+      "total_primary_physical_lines": 15397,
+      "findings": 20,
+      "questions": 10,
+      "frozen_hashes": true,
+      "exact_primary_assignment": true,
+      "staging_r01_source_drift": false,
+      "conditional_findings": [
+        "R01-F01",
+        "R01-F02",
+        "R01-F03",
+        "R01-F06",
+        "R01-F07",
+        "R01-F08",
+        "R01-F09",
+        "R01-F10",
+        "R01-F11",
+        "R01-F12",
+        "R01-F13",
+        "R01-F14",
+        "R01-F15",
+        "R01-F16"
+      ],
+      "unconditional_findings": [
+        "R01-F04",
+        "R01-F05",
+        "R01-F17",
+        "R01-F18",
+        "R01-F19",
+        "R01-F20"
+      ],
+      "retained_distinct_pairs": [
+        "R01-F01/R01-F03",
+        "R01-F09/R01-F13",
+        "R01-F05/R01-F20",
+        "R01-F17/R01-F18"
+      ],
+      "inventory_marked_added_or_modified": [
+        "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveRegistry.kt",
+        "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveService.kt",
+        "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetworkPlugin.kt",
+        "mobile/mobile-bootstrap.js",
+        "nanobot/remote/ipc.py"
+      ],
+      "retained_observations_unpromoted": true
+    },
+    "integrated_review": "pending",
+    "decisions": "pending",
+    "note": "Coordinator reconciled all 70 R01 primary bodies against the immutable inventory and staged handoff, verified exact path/hash/byte agreement, confirmed current staging changes only K01 skill-display source/tests and no R01 primary, retained all twenty findings with explicit conditional boundaries, and preserved cross-stream ownership."
+  },
+  "integrated_review": null,
+  "git_checkpoint": null,
+  "limits": [
+    "Source-only review/publication; no tests, builds, parity checkers, imports, application/service/tool launches, package downloads/installs, external CLI/process execution, signing commands, emulator/device work, provider/network calls or benchmarks.",
+    "Runtime frequency, reduced-scope deployment prevalence, Android storage/log accessibility, supply-chain compromise and real upgrade migration behavior remain unmeasured.",
+    "DSH/Codex comparison evidence is non-parity architectural context only."
+  ],
+  "counts": {
+    "assigned_primary_paths": 70,
+    "full": 70,
+    "partial": 0,
+    "unread": 0,
+    "findings": 20,
+    "discussion_questions": 10
+  }
+}

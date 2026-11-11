@@ -1,0 +1,875 @@
+{
+  "schema_version": 1,
+  "review": "whole-project-module-source-review-2026-11-06",
+  "structural_status": "Historical foundation/S01/S02/H01 structural snapshots retained. User-pause handoffs/status saved; current stopping-point structural check pending coordinator.",
+  "coordinator_acceptance": "S01/S02 root PASS and pushed checkpoint recorded; H01 artifact acceptance and integrated review pending.",
+  "documentation_start": {
+    "commit": "f642ce44e8403450dfe7343f183c09435f74d921",
+    "tree": "877346e91366eecedd92049022996f22829afb85",
+    "branch": "codex/staging-audit",
+    "working_tree_clean_before": true,
+    "source_merge_included": true
+  },
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "allowed_writes": [
+    "docs/audits/module-review-2026-11-06/README.md",
+    "docs/audits/module-review-2026-11-06/coverage-template.json",
+    "docs/audits/module-review-2026-11-06/report-template.md",
+    "docs/audits/module-review-2026-11-06/scope.json",
+    "docs/audits/module-review-2026-11-06/status.json",
+    "docs/audits/module-review-2026-11-06/synthesis.md",
+    "docs/audits/module-review-2026-11-06/validation.json",
+    "docs/audits/project-audit-plan.md"
+  ],
+  "protected_scope": {
+    "tracked_set_basis": "git ls-tree -r --name-only at documentation_start.commit",
+    "exclusions": [
+      "docs/audits/project-audit-plan.md",
+      "docs/audits/module-review-2026-11-06/**"
+    ],
+    "aggregate_definition": "SHA256 of UTF-8 compact sorted-key JSON mapping relative tracked path to working-file-content SHA256.",
+    "before": {
+      "count": 2510,
+      "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+    },
+    "frozen_old_evidence_definition": "All tracked paths under codebase-discovery and architecture-review-2026-11-06 plus the full historical harness-architecture-2026-11-05.md, including its Decision payload. Living project plan excluded.",
+    "frozen_old_evidence_before": {
+      "count": 55,
+      "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+    },
+    "after": {
+      "count": 2510,
+      "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+    },
+    "frozen_old_evidence_after": {
+      "count": 55,
+      "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+    }
+  },
+  "test_first_substitute": {
+    "reason": "Docs-only publication under explicit source-only execution boundary; conventional product red/green tests do not apply.",
+    "pre_edit": {
+      "new_directory_exists": false,
+      "required_artifacts_exist": false,
+      "protected_and_frozen_hashes": "Recorded by standard-library pre-edit metadata check before writes."
+    },
+    "post_edit": "Required artifacts, exact assignments/current blobs, pins, status counts, local links, allowed writes and protected/frozen digests are checked structurally."
+  },
+  "staging_delta": {
+    "from_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+    "from_tree": "d49aca97c9a34a2d17eae53d672fa591652457f1",
+    "to_commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+    "to_tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93",
+    "changed_paths": [
+      {
+        "path": "nanobot/agent/runner.py",
+        "change": "M",
+        "role": "implementation-or-tooling-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": true,
+        "previous": {
+          "git_blob": "418b1966478ca0e292931f5a7655441ec597cbd8",
+          "sha256": "ad1abbdc1208dbb125ae154fd252721119bb540a763c4e4d9b2e1424b4e657a1",
+          "bytes": 117599
+        },
+        "current": {
+          "git_blob": "0000b3e96776518bb3383b243db74079dd432254",
+          "sha256": "2df2fc850cafc102426caea73ff2d10e8bf7fd7d9197c560a0cf977981d30f04",
+          "bytes": 117967
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "nanobot/providers/fallback_provider.py",
+        "change": "M",
+        "role": "implementation-or-tooling-source",
+        "primary_stream": "H03",
+        "in_primary_denominator": true,
+        "previous": {
+          "git_blob": "84a3f344c4347b124d3ef0c97aa98f647f9572c5",
+          "sha256": "3e327423dccd5ade0809e1aaf05e20cabe44540e96cc5b57bb1e5b0903d06847",
+          "bytes": 35414
+        },
+        "current": {
+          "git_blob": "4a1596fa87875beb1253fa535f0f452495357439",
+          "sha256": "b51eab69025eb6daa84bd1b1f387bfa87b3a6a925aa20fa5353905b6dda751cf",
+          "bytes": 35695
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "tests/agent/test_pre_dispatch_recovery.py",
+        "change": "M",
+        "role": "test-support-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": false,
+        "previous": {
+          "git_blob": "54f50ee1bac2e3d3a59674adb53039d6eaf3d595",
+          "sha256": "999b8b8e0257a8efbb148290b53fc1ccb53a4c1fee0207482f15b46971701c36",
+          "bytes": 9900
+        },
+        "current": {
+          "git_blob": "b8133cedc648b4b41c966cdbc8f6edf9709fdd47",
+          "sha256": "2f3440c961420f921bada7522e5731a9fc998e128220d3801b5cbcbc46950b95",
+          "bytes": 10289
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "tests/agent/test_runner_errors.py",
+        "change": "M",
+        "role": "test-support-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": false,
+        "previous": {
+          "git_blob": "eda120ad52a3c9bc91f0e2c6213a5a2469110360",
+          "sha256": "093da9eabf77080004a73767598563fd08bee0d8685ca914eb40329f38ba3202",
+          "bytes": 26090
+        },
+        "current": {
+          "git_blob": "0d94efce22edc9d4fbb410c9cdb27653250a3153",
+          "sha256": "055f6268dd1c1a8afe80eed8ffc49b4c84bab22ecb205d84a9490955e1cef34e",
+          "bytes": 26243
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      },
+      {
+        "path": "tests/agent/test_runner_fallback.py",
+        "change": "M",
+        "role": "test-support-source",
+        "primary_stream": "H01",
+        "in_primary_denominator": false,
+        "previous": {
+          "git_blob": "99af23f05eed888e50c048b20ae17c8905e1c82f",
+          "sha256": "9925ea29ebf176a45ce3a5278a714da60cffec6ff7199544a8046ef0145be618",
+          "bytes": 73923
+        },
+        "current": {
+          "git_blob": "c1186cbe60c4557c598638915c297168841913cb",
+          "sha256": "fafe0cb2e5f191e9a45e090ae41e5e51f0af564a1fd49b455fdf354aa489981a",
+          "bytes": 75298
+        },
+        "reason": "Explicit origin/staging advance from the frozen discovery/comparison pin; retain old evidence and reconcile current bodies/callers before semantic reuse."
+      }
+    ],
+    "changed_primary_targets": 2,
+    "byte_identical_primary_targets": 917,
+    "semantic_reuse": "No automatic deep-review credit. H01/H03 must reconcile changed source bodies and affected callers; changed tests are supplementary context."
+  },
+  "environment": {
+    "python": "3.9.21 (main, Jul 10 2025, 14:25:10) \n[Clang 16.0.0 (clang-1600.0.26.6)]",
+    "python_executable": "/Users/jaden/.pyenv/versions/3.9.21/bin/python3",
+    "git": "git version 2.53.0"
+  },
+  "documentation_consulted": [
+    "/Users/jaden/.codex/AGENTS.md (empty)",
+    "AGENTS.md",
+    ".agent/design.md",
+    ".agent/security.md",
+    ".agent/gotchas.md",
+    "CONTRIBUTING.md",
+    "docs/audits/project-audit-plan.md",
+    "docs/audits/architecture-review-2026-11-06/README.md",
+    "docs/audits/architecture-review-2026-11-06/audit-backlog.md",
+    "docs/audits/architecture-review-2026-11-06/decisions.md",
+    "docs/audits/architecture-review-2026-11-06/provenance.json (metadata fields)",
+    "docs/audits/architecture-review-2026-11-06/validation.json (metadata fields)",
+    "docs/audits/codebase-discovery/baseline.json",
+    "docs/audits/codebase-discovery/provenance/prior-baseline.json",
+    "docs/audits/codebase-discovery/path-inventory.tsv"
+  ],
+  "repository_skills": "No additional repository skill or nested AGENTS.md found under docs/ or .agent/; built-in runtime skills are outside this docs-publication task.",
+  "commands": [
+    {
+      "id": "M1-start",
+      "command": "git status --short\ngit branch --show-current\ngit rev-parse HEAD HEAD^{tree} origin/staging origin/staging^{tree}",
+      "exit_code": 0,
+      "result": {
+        "working_tree_status_before": "",
+        "branch": "codex/staging-audit",
+        "head": "f642ce44e8403450dfe7343f183c09435f74d921",
+        "head_tree": "877346e91366eecedd92049022996f22829afb85",
+        "staging_commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+        "staging_tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+      }
+    },
+    {
+      "id": "M2-delta",
+      "command": "git diff --name-status 27adced0aacd55d61791bb88a7240d7ad7bd5b75 9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "exit_code": 0,
+      "result": {
+        "modified_paths": [
+          "nanobot/agent/runner.py",
+          "nanobot/providers/fallback_provider.py",
+          "tests/agent/test_pre_dispatch_recovery.py",
+          "tests/agent/test_runner_errors.py",
+          "tests/agent/test_runner_fallback.py"
+        ]
+      }
+    },
+    {
+      "id": "M3-derivation",
+      "command_location": "scope.json:derivation_command",
+      "exit_code": 0,
+      "result": {
+        "status": "PASS",
+        "derived_assignments": 919,
+        "source_manifest_sha256": "ada12555a296e1c14db9840eafff8aedefdbab6a81739772225a7973f74430a6",
+        "assignment_manifest_sha256": "c441073cd8285b85233690273041f06a84506f765f79934c034b8663631c6a22",
+        "production_overrides": 2,
+        "semantic_body_credit": 0
+      }
+    },
+    {
+      "id": "V1-foundation",
+      "command": "python3 - <<'PY'\nfrom pathlib import Path\nfrom collections import Counter\nfrom urllib.parse import unquote,urlsplit\nimport csv,hashlib,json,re,subprocess\nroot=Path.cwd(); base=Path('docs/audits/module-review-2026-11-06')\nv=json.loads((base/'validation.json').read_text()); s=json.loads((base/'scope.json').read_text()); status=json.loads((base/'status.json').read_text())\nsha=lambda b:hashlib.sha256(b).hexdigest()\ncanon=lambda x:json.dumps(x,sort_keys=True,separators=(',',':')).encode()\ngit=lambda *args:subprocess.check_output(['git',*args])\nassert git('rev-parse','HEAD').decode().strip()==v['documentation_start']['commit']\nassert git('branch','--show-current').decode().strip()=='codex/staging-audit'\nassert git('rev-parse','origin/staging').decode().strip()==s['source_pins']['nanobot']['commit']\nrepos={'nanobot':str(root),'dsh':'/tmp/nanobot-harness-audit-20261105.EdrBP6/deepseek-harness','codex':'/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-codex-reference-20261105.czjcx5c9/codex'}\nfor name,pin in s['source_pins'].items():\n assert subprocess.check_output(['git','-C',repos[name],'rev-parse',pin['commit']+'^{tree}']).decode().strip()==pin['tree'],name\nassert s['source_pins']==v['source_pins']\ninv=s['inventory'];assert sha(Path(inv['path']).read_bytes())==inv['sha256']\nwith open(inv['path'],newline='') as f:\n reader=csv.DictReader(f,delimiter='\\t');assert reader.fieldnames==inv['columns'];rows=list(reader)\nprimary=[r for r in rows if r['role'] in s['selection']['primary_roles']]\nassert len(rows)==2455 and len(primary)==919 and len({r['path'] for r in primary})==919\nassert dict(Counter(r['workstream'] for r in primary))==s['primary_counts_by_stream']\nassert dict(Counter(r['role'] for r in primary))==s['primary_counts_by_role']\nassert s['supplementary_inventory']['path_count']==1536 and sum(s['supplementary_inventory']['counts_by_role'].values())==1536\ndef blobs(pin,paths):\n raw=subprocess.check_output(['git','cat-file','--batch'],input=''.join(pin+':'+p+'\\n' for p in paths).encode());out={};offset=0\n for path in paths:\n  end=raw.index(b'\\n',offset);header=raw[offset:end].decode().split();assert len(header)==3 and header[1]=='blob',path\n  size=int(header[2]);body=raw[end+1:end+1+size];assert raw[end+1+size:end+2+size]==b'\\n',path\n  out[path]={'git_blob':header[0],'sha256':sha(body),'bytes':size};offset=end+2+size\n assert offset==len(raw);return out\npaths=[r['path'] for r in primary];pin=s['source_pins']['nanobot']['commit'];old=s['staging_delta']['from_commit']\ncurrent=blobs(pin,paths);previous=blobs(old,paths);overrides={x['path']:x for x in s['production_hash_overrides']}\nassert set(overrides)=={'nanobot/agent/runner.py','nanobot/providers/fallback_provider.py'}\nfor r in primary:\n path=r['path'];assert previous[path]['sha256']==r['sha256'],path\n expected=overrides[path]['current']['sha256'] if path in overrides else r['sha256'];assert current[path]['sha256']==expected,path\n if path in overrides:assert current[path]==overrides[path]['current'] and previous[path]==overrides[path]['previous'],path\nassignments=[{'path':r['path'],'primary_stream':r['workstream'],'role':r['role'],**current[r['path']]} for r in sorted(primary,key=lambda x:x['path'])]\nassert sha(canon(assignments))==s['current_assignment_manifest_sha256']\nassert sha(canon({p:current[p]['sha256'] for p in sorted(paths)}))==s['current_source_manifest_sha256']\nactual_delta=[line.split('\\t')[1] for line in git('diff','--name-status',old,pin).decode().splitlines()]\nassert actual_delta==[x['path'] for x in s['staging_delta']['changed_paths']]\nfor d in s['staging_delta']['changed_paths']:\n assert blobs(old,[d['path']])[d['path']]==d['previous'] and blobs(pin,[d['path']])[d['path']]==d['current']\nassert len(actual_delta)==5 and len(overrides)==2 and s['staging_delta']['byte_identical_primary_targets']==917\nids=['C00','H01','H02','H03','S01','S02','T01','A01','K01','E01','E02','U01','M01','R01','D01','X01','Q01','P01']\nassert [x['id'] for x in status['streams']]==ids\nassert set(status['status_definitions'])=={'queued','in-progress','report-written','coordinator-checked','integrated-review-complete'}\nassert dict(Counter(x['status'] for x in status['streams']))=={'queued':15,'in-progress':3}\nassert {x['id'] for x in status['streams'] if x['status']=='in-progress'}=={'S01','S02','H01'}\nassert sum(x['primary_target_count'] for x in status['streams'])==919\nfor x in status['streams']:\n assert x['primary_target_count']==s['primary_counts_by_stream'].get(x['id'],0)\n assert x['report'] is None and x['coverage'] is None and x['findings_count'] is None and x['discussion_questions_count'] is None\n assert x['coordinator_check']['status']=='pending' and x['integrated_review']['status']=='pending' and x['git_checkpoint']['status']=='pending'\nassert status['counts']['supplied_primary_body_paths']==0 and status['counts']['primary_targets_without_new_body_evidence']==919\ntracked=git('ls-tree','-rz','--name-only',v['documentation_start']['commit']).decode().split('\\0')[:-1]\nprotected=[p for p in tracked if p!='docs/audits/project-audit-plan.md' and not p.startswith(str(base)+'/')]\nfrozen=[p for p in protected if p.startswith(('docs/audits/codebase-discovery/','docs/audits/architecture-review-2026-11-06/')) or p=='docs/audits/harness-architecture-2026-11-05.md']\naggregate=lambda ps:{'count':len(ps),'sha256':sha(canon({p:sha(Path(p).read_bytes()) for p in sorted(ps)}))}\nassert aggregate(protected)==v['protected_scope']['before']\nassert aggregate(frozen)==v['protected_scope']['frozen_old_evidence_before']\nallowed=set(v['allowed_writes']);actual_files={str(p) for p in base.rglob('*') if p.is_file()}|{'docs/audits/project-audit-plan.md'}\nassert actual_files==allowed,(actual_files,allowed)\nchanges=git('status','--porcelain=v1','--untracked-files=all').decode().splitlines();changed={x[3:] for x in changes}\nassert changed==allowed,(changed,allowed)\nfor path in allowed:\n assert all(line.rstrip()==line for line in Path(path).read_bytes().splitlines()),path\njson_paths=sorted(base.glob('*.json'))\nfor path in json_paths:json.loads(path.read_text())\nmarkdown=sorted(base.glob('*.md'))+[Path('docs/audits/project-audit-plan.md')];links=0;anchors=0\nfor path in markdown:\n for target in re.findall(r'\\[[^\\]]*\\]\\(([^)]+)\\)',path.read_text()):\n  target=target.strip().strip('<>');url=urlsplit(target)\n  if url.scheme or url.netloc:continue\n  local=(path.parent/unquote(url.path)).resolve() if url.path else path.resolve();assert local.exists(),(str(path),target);links+=1\n  if url.fragment and local.suffix=='.md':\n   body=local.read_text();explicit=re.findall(r'<a\\s+id=[\\\"\\']([^\\\"\\']+)',body);slugs=[]\n   for heading in re.findall(r'^#{1,6}\\s+(.+?)\\s*#*$',body,re.M):\n    heading=re.sub(r'<[^>]*>','',heading);slugs.append(re.sub(r'[^\\w\\- ]','',heading.lower()).replace(' ','-'))\n   assert unquote(url.fragment) in explicit+slugs,(str(path),target);anchors+=1\nsubprocess.run(['git','diff','--check'],check=True)\nresult={'status':'PASS','source_pin_trees_verified':3,'inventory_rows':2455,'primary_assignments_derived':919,'previous_primary_hashes_matched':919,'byte_identical_primary_hashes':917,'production_hash_overrides_verified':2,'staging_delta_paths_verified':5,'streams':18,'queued':15,'in_progress':3,'reports_published':0,'semantic_body_credit':0,'protected_after':aggregate(protected),'frozen_old_evidence_after':aggregate(frozen),'owned_files':len(allowed),'json_files_parsed':len(json_paths),'markdown_documents_checked':len(markdown),'relative_links_checked':links,'relative_anchors_checked':anchors,'git_diff_check_exit':0,'current_source_manifest_sha256':s['current_source_manifest_sha256'],'current_assignment_manifest_sha256':s['current_assignment_manifest_sha256'],'document_sha256':{p:sha(Path(p).read_bytes()) for p in sorted(allowed) if p!=str(base/'validation.json')}}\nprint(json.dumps(result,indent=2))\nPY",
+      "exit_code": 0,
+      "result_location": "structural_results"
+    },
+    {
+      "id": "V2-diff",
+      "command": "git diff --check",
+      "exit_code": 0,
+      "output": ""
+    }
+  ],
+  "structural_results": {
+    "status": "PASS",
+    "source_pin_trees_verified": 3,
+    "inventory_rows": 2455,
+    "primary_assignments_derived": 919,
+    "previous_primary_hashes_matched": 919,
+    "byte_identical_primary_hashes": 917,
+    "production_hash_overrides_verified": 2,
+    "staging_delta_paths_verified": 5,
+    "streams": 18,
+    "queued": 15,
+    "in_progress": 3,
+    "reports_published": 0,
+    "semantic_body_credit": 0,
+    "protected_after": {
+      "count": 2510,
+      "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+    },
+    "frozen_old_evidence_after": {
+      "count": 55,
+      "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+    },
+    "owned_files": 8,
+    "json_files_parsed": 4,
+    "markdown_documents_checked": 4,
+    "relative_links_checked": 54,
+    "relative_anchors_checked": 2,
+    "git_diff_check_exit": 0,
+    "current_source_manifest_sha256": "ada12555a296e1c14db9840eafff8aedefdbab6a81739772225a7973f74430a6",
+    "current_assignment_manifest_sha256": "c441073cd8285b85233690273041f06a84506f765f79934c034b8663631c6a22",
+    "document_sha256": {
+      "docs/audits/module-review-2026-11-06/README.md": "6d45c1f5b05b6e9f16dcb8a8911c925d4680c44effcf51c8dac8d57fc710a135",
+      "docs/audits/module-review-2026-11-06/coverage-template.json": "1b15ebc0974963fa9f83a5cb4f1269c888315d6f6f512b6b042ebd54688e74c8",
+      "docs/audits/module-review-2026-11-06/report-template.md": "3873284c5160ca049eb7facfbc249b8ed03fcc446496206eeed76e44d3500508",
+      "docs/audits/module-review-2026-11-06/scope.json": "9fedbfdd2515c1b35221c3895f74520c9334b41257d2a1adef9ea4e235252067",
+      "docs/audits/module-review-2026-11-06/status.json": "d4a9a957b86c2a0e679074264cd82cd0c2df03a6433349109de023af93a502ec",
+      "docs/audits/module-review-2026-11-06/synthesis.md": "c85bea0f8cbb20cbff4e91cd292b8463f189e7f9f41a39a5ff5dcf7a8af6cb77",
+      "docs/audits/project-audit-plan.md": "136823796db5fe20e296eae4cdb55638046cc22c85466e71b050c40529958561"
+    }
+  },
+  "raw_failures": [
+    {
+      "command": "rg --files --hidden -g AGENTS.md -g SKILL.md -g '!.git' docs .agent",
+      "exit_code": 1,
+      "output": "",
+      "meaning": "No matching nested instruction/skill files; expected rg no-match result, not an artifact validation failure."
+    }
+  ],
+  "application_execution": {
+    "repository_imports": false,
+    "repository_scripts": false,
+    "tests": false,
+    "builds": false,
+    "linters_or_type_checkers": false,
+    "dependency_operations": false,
+    "apps_services_or_providers": false,
+    "sandbox_or_process_exercises": false,
+    "probes_or_benchmarks": false
+  },
+  "limits": [
+    "Structural checks prove mechanical integrity only, not semantic support.",
+    "No module report or finding was supplied during foundation publication.",
+    "No coordinator acceptance or Git checkpoint is self-awarded.",
+    "No installed configuration/plugin/dependency, runtime stability, measured benefit, OS enforcement or delivery is attested.",
+    "validation.json self-hash is excluded from the document hash manifest."
+  ],
+  "final_metadata_check": {
+    "status": "PASS",
+    "document_hashes_checked": 7,
+    "json_files_parsed": 4,
+    "owned_files_whitespace_checked": 8,
+    "git_diff_check_exit": 0,
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,subprocess\nfolder=Path('docs/audits/module-review-2026-11-06');path=folder/'validation.json';data=json.loads(path.read_text())\nfor name,want in data['structural_results']['document_sha256'].items():\n assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==want,name\nfor name in data['allowed_writes']:\n assert all(line.rstrip()==line for line in Path(name).read_bytes().splitlines()),name\nfor file in folder.glob('*.json'):json.loads(file.read_text())\nsubprocess.run(['git','diff','--check'],check=True)\nresult={'status':'PASS','document_hashes_checked':7,'json_files_parsed':4,'owned_files_whitespace_checked':8,'git_diff_check_exit':0}\ndata['final_metadata_check']=result\npath.write_text(json.dumps(data,indent=2)+'\\n')\nprint(json.dumps(result))\nPY",
+    "exit_code": 0
+  },
+  "foundation_acceptance": {
+    "status": "coordinator-accepted foundation",
+    "coordinator": "/root",
+    "independent_verification": "PASS",
+    "checkpoint_commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+    "pushed": true,
+    "evidence": "Direct root continuation checkpoint: foundation independently verified PASS and committed/pushed; no module acceptance inferred."
+  },
+  "module_stages": [
+    {
+      "id": "S01-S02-publication",
+      "stage": "report-written; writer structural PASS; coordinator/integration/checkpoint pending",
+      "before_command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,subprocess\nbase=Path('docs/audits/module-review-2026-11-06');v=json.loads((base/'validation.json').read_text())\ncanon=lambda d:json.dumps(d,sort_keys=True,separators=(',',':')).encode();sha=lambda b:hashlib.sha256(b).hexdigest()\ntracked=subprocess.check_output(['git','ls-files','-z']).decode().split('\\0')[:-1]\nprotected=[p for p in tracked if p!='docs/audits/project-audit-plan.md' and not p.startswith(str(base)+'/')]\nfrozen=[p for p in protected if p.startswith(('docs/audits/codebase-discovery/','docs/audits/architecture-review-2026-11-06/')) or p=='docs/audits/harness-architecture-2026-11-05.md']\nagg=lambda paths:{'count':len(paths),'sha256':sha(canon({p:sha(Path(p).read_bytes()) for p in sorted(paths)}))}\nhistorical_fields=['documentation_start','allowed_writes','protected_scope','commands','structural_results','final_metadata_check']\nprint(json.dumps({'documentation_start':{'commit':subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),'tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}']).decode().strip(),'branch':subprocess.check_output(['git','branch','--show-current']).decode().strip(),'working_tree_status':subprocess.check_output(['git','status','--porcelain=v1','--untracked-files=all']).decode()},'protected_before':agg(protected),'frozen_old_evidence_before':agg(frozen),'historical_foundation_fields':historical_fields,'historical_foundation_fields_sha256':sha(canon({k:v[k] for k in historical_fields})),'stable_foundation_documents':{str(p):sha(p.read_bytes()) for p in [base/'scope.json',base/'report-template.md',base/'coverage-template.json']},'module_reports_absent_before':all(not (base/'reports'/name).exists() for name in ['S01.md','S02.md','S01-coverage.json','S02-coverage.json'])},indent=2))\nPY",
+      "before": {
+        "documentation_start": {
+          "commit": "5f0d14479b6ecd7a334ae72476a7c0ad5065be66",
+          "tree": "b11fe32824f31bab44d9d92038d539b198a5488a",
+          "branch": "codex/staging-audit",
+          "working_tree_status": ""
+        },
+        "protected_before": {
+          "count": 2510,
+          "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+        },
+        "frozen_old_evidence_before": {
+          "count": 55,
+          "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+        },
+        "historical_foundation_fields": [
+          "documentation_start",
+          "allowed_writes",
+          "protected_scope",
+          "commands",
+          "structural_results",
+          "final_metadata_check"
+        ],
+        "historical_foundation_fields_sha256": "0c31d344d33ccf1e2830dc215c81ea8ddd1b69a04bb2608a257d73fa88bf332a",
+        "stable_foundation_documents": {
+          "docs/audits/module-review-2026-11-06/scope.json": "9fedbfdd2515c1b35221c3895f74520c9334b41257d2a1adef9ea4e235252067",
+          "docs/audits/module-review-2026-11-06/report-template.md": "3873284c5160ca049eb7facfbc249b8ed03fcc446496206eeed76e44d3500508",
+          "docs/audits/module-review-2026-11-06/coverage-template.json": "1b15ebc0974963fa9f83a5cb4f1269c888315d6f6f512b6b042ebd54688e74c8"
+        },
+        "module_reports_absent_before": true
+      },
+      "allowed_writes": [
+        "docs/audits/module-review-2026-11-06/README.md",
+        "docs/audits/module-review-2026-11-06/reports/S01-coverage.json",
+        "docs/audits/module-review-2026-11-06/reports/S01.md",
+        "docs/audits/module-review-2026-11-06/reports/S02-coverage.json",
+        "docs/audits/module-review-2026-11-06/reports/S02.md",
+        "docs/audits/module-review-2026-11-06/status.json",
+        "docs/audits/module-review-2026-11-06/synthesis.md",
+        "docs/audits/module-review-2026-11-06/validation.json",
+        "docs/audits/project-audit-plan.md"
+      ],
+      "historical_foundation_rule": "Retain original V1-foundation command/results/documentation-start/status assumptions verbatim as historical evidence; module checks use the new stage start and current status.",
+      "coordinator_acceptance": "pending",
+      "integrated_review": "pending",
+      "module_git_checkpoint": "pending",
+      "supplied_evidence": {
+        "analyst": "/root/deep_sandbox_authority",
+        "packets": 3,
+        "S01_primary_paths": 15,
+        "S02_primary_paths": 6,
+        "fresh_primary_bodies": "1–EOF collectively for all 21",
+        "primary_gaps": 0,
+        "unique_findings": 6,
+        "discussion_questions": 6,
+        "H01": "All three packets received and queued for next publication; no current H01 body/completion credit."
+      },
+      "structural_results": {
+        "status": "PASS",
+        "source_pin_trees_verified": 3,
+        "primary_body_paths_verified": 21,
+        "S01_primary_bodies": 15,
+        "S02_primary_bodies": 6,
+        "primary_physical_lines": 14776,
+        "source_record_occurrences_verified": 82,
+        "unique_supplied_source_records_verified": 52,
+        "unique_metadata_records_including_audit_documents": 58,
+        "reference_body_paths": 13,
+        "distinct_findings": 6,
+        "discussion_questions": 6,
+        "primary_gaps": 0,
+        "protected_after": {
+          "count": 2510,
+          "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+        },
+        "frozen_old_evidence_after": {
+          "count": 55,
+          "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+        },
+        "historical_foundation_fields_sha256": "0c31d344d33ccf1e2830dc215c81ea8ddd1b69a04bb2608a257d73fa88bf332a",
+        "stable_foundation_documents_verified": 3,
+        "changed_paths": [
+          "docs/audits/module-review-2026-11-06/README.md",
+          "docs/audits/module-review-2026-11-06/reports/S01-coverage.json",
+          "docs/audits/module-review-2026-11-06/reports/S01.md",
+          "docs/audits/module-review-2026-11-06/reports/S02-coverage.json",
+          "docs/audits/module-review-2026-11-06/reports/S02.md",
+          "docs/audits/module-review-2026-11-06/status.json",
+          "docs/audits/module-review-2026-11-06/synthesis.md",
+          "docs/audits/module-review-2026-11-06/validation.json",
+          "docs/audits/project-audit-plan.md"
+        ],
+        "json_files_parsed": 6,
+        "markdown_documents_checked": 6,
+        "relative_links_checked": 67,
+        "relative_anchors_checked": 3,
+        "new_report_pinned_source_links_checked": 34,
+        "new_report_source_anchors_checked": 34,
+        "new_report_history_links_checked": 8,
+        "git_diff_check_exit": 0,
+        "document_sha256": {
+          "docs/audits/module-review-2026-11-06/README.md": "6d0031fee2479cd89f68b7184478cedcadcdb2c23b088dfe944d74bbc780a4f8",
+          "docs/audits/module-review-2026-11-06/reports/S01-coverage.json": "78277a3b7c711ecb54cb4d940dd2811f3877232a21f7f65c9db8c0c20cc627b8",
+          "docs/audits/module-review-2026-11-06/reports/S01.md": "c613252784ebbbc760a931aa5024f8a4ea0aecd376fb66450a196b38d051bb8e",
+          "docs/audits/module-review-2026-11-06/reports/S02-coverage.json": "229eb4b8cc606a9d9e28af924c11878b2e23e48c871fc02a9aa2c9d406a65674",
+          "docs/audits/module-review-2026-11-06/reports/S02.md": "22a9e52ffd61c64eeef4f859c0bf626b2dfd2b0919ba0022b649a136d6b0d95f",
+          "docs/audits/module-review-2026-11-06/status.json": "f655829830c2ecf692abe0e4fe9737bd863f6a7a71069af48e1f8990a53b2a36",
+          "docs/audits/module-review-2026-11-06/synthesis.md": "a2b150ae21be12c9654e27e41fe82314ef1c26ca2a230854f3227d19b5e5fae2",
+          "docs/audits/project-audit-plan.md": "3661fa4c370db8f3a144b9b6270f9c6e2428e4b7c33494aef1e1970153eb1c0b"
+        }
+      },
+      "commands": [
+        {
+          "id": "MS1-current-scope-derivation",
+          "command_location": "scope.json:derivation_command",
+          "exit_code": 0,
+          "result": {
+            "status": "PASS",
+            "derived_assignments": 919,
+            "source_manifest_sha256": "ada12555a296e1c14db9840eafff8aedefdbab6a81739772225a7973f74430a6",
+            "assignment_manifest_sha256": "c441073cd8285b85233690273041f06a84506f765f79934c034b8663631c6a22",
+            "production_overrides": 2,
+            "semantic_body_credit": 0
+          }
+        },
+        {
+          "id": "MS2-S01-S02-integrity",
+          "command": "python3 - <<'PY'\nfrom pathlib import Path\nfrom collections import Counter\nfrom urllib.parse import unquote,urlsplit\nimport csv,hashlib,json,re,subprocess\nroot=Path.cwd();base=Path('docs/audits/module-review-2026-11-06');v=json.loads((base/'validation.json').read_text());stage=v['module_stages'][0];before=stage['before'];scope=json.loads((base/'scope.json').read_text());status=json.loads((base/'status.json').read_text())\nsha=lambda b:hashlib.sha256(b).hexdigest();canon=lambda d:json.dumps(d,sort_keys=True,separators=(',',':')).encode()\ngit=lambda *args:subprocess.check_output(['git',*args])\nassert sha(canon({k:v[k] for k in before['historical_foundation_fields']}))==before['historical_foundation_fields_sha256']\nfor path,want in before['stable_foundation_documents'].items():assert sha(Path(path).read_bytes())==want,path\nassert status['foundation']==v['foundation_acceptance'] and status['foundation']['checkpoint_commit']=='5f0d14479b6ecd7a334ae72476a7c0ad5065be66' and status['foundation']['pushed']\nrepos={'nanobot':str(root),'dsh':'/tmp/nanobot-harness-audit-20261105.EdrBP6/deepseek-harness','codex':'/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-codex-reference-20261105.czjcx5c9/codex'}\nfor repo,pin in scope['source_pins'].items():assert subprocess.check_output(['git','-C',repos[repo],'rev-parse',pin['commit']+'^{tree}']).decode().strip()==pin['tree']\nwith open(scope['inventory']['path'],newline='') as f:inventory=list(csv.DictReader(f,delimiter='\\t'))\nassert sha(Path(scope['inventory']['path']).read_bytes())==scope['inventory']['sha256']\ncache={}\ndef blob(repo,commit,path):\n key=(repo,commit,path)\n if key not in cache:\n  raw=subprocess.check_output(['git','-C',repos[repo],'cat-file','--batch'],input=(commit+':'+path+'\\n').encode());header,body=raw.split(b'\\n',1);parts=header.decode().split();assert len(parts)==3 and parts[1]=='blob',key;size=int(parts[2]);assert body[size:]==b'\\n';body=body[:size]\n  cache[key]={'git_blob':parts[0],'sha256':sha(body),'bytes':size,'line_count':body.count(b'\\n')+int(bool(body) and not body.endswith(b'\\n'))}\n return cache[key]\ncoverage={};primary_paths=set();finding_ids=[];record_count=0\nfor sid,want in [('S01',15),('S02',6)]:\n c=json.loads((base/'reports'/(sid+'-coverage.json')).read_text());coverage[sid]=c;assert c['report']=='reports/'+sid+'.md' and (base/c['report']).is_file();assert c['source_pins']==scope['source_pins']\n assigned={r['path'] for r in inventory if r['workstream']==sid and r['role'] in scope['selection']['primary_roles']}\n assert set(c['assigned_primary_paths'])==assigned and len(assigned)==want\n assert {r['path'] for r in c['bounded_body_reads']}==assigned and not c['justified_exclusions'] and not c['material_unread_gaps']\n assert not primary_paths.intersection(assigned);primary_paths.update(assigned)\n for section in ['bounded_body_reads','caller_context_reads','test_source_reads','reference_mechanisms_or_nonapplicability','support_reads']:\n  for record in c[section]:\n   repo=record['repository'] if record['repository'] in repos else 'nanobot';commit=record.get('commit') or record['verified_content_commit'];m=blob(repo,commit,record['path']);record_count+=1\n   for k,val in m.items():assert record[k]==val,(sid,section,record['path'],k)\n   actual_tree=subprocess.check_output(['git','-C',repos[repo],'rev-parse',commit+'^{tree}']).decode().strip();assert record['tree']==actual_tree\n   assert all(1<=start<=end<=m['line_count'] for start,end in record['ranges']),record['path']\n   if section=='bounded_body_reads':assert record['ranges']==[[1,m['line_count']]] and record['commit']==scope['source_pins']['nanobot']['commit']\n assert len(c['findings'])==3 and len(c['final_discussion_questions'])==3 and c['coordinator_check'] is None and c['integrated_review'] is None and c['git_checkpoint'] is None\n finding_ids.extend(x['id'] for x in c['findings'])\n for event in c['prior_change_evidence']:subprocess.run(['git','cat-file','-e',event['commit']+'^{commit}'],check=True)\nassert len(primary_paths)==21 and len(set(finding_ids))==6\nassert [x['id'] for x in coverage['S02']['related_findings']]==['S01-F03'] and 'S01-F03' not in [x['id'] for x in coverage['S02']['findings']]\nassert status['counts']['supplied_primary_body_paths']==21 and status['counts']['primary_targets_without_new_body_evidence']==898\nassert status['counts']['published_findings']==6 and status['counts']['published_discussion_questions']==6\nassert Counter(x['status'] for x in status['streams'])==Counter({'queued':13,'in-progress':3,'report-written':2})\nassert {x['id'] for x in status['streams'] if x['status']=='in-progress'}=={'C00','H01','H02'}\nfor x in status['streams']:\n assert x['coordinator_check']['status']=='pending' and x['integrated_review']['status']=='pending' and x['git_checkpoint']['status']=='pending'\n if x['id'] in coverage:assert x['report']=='reports/'+x['id']+'.md' and x['supplied_primary_body_paths']==len(coverage[x['id']]['bounded_body_reads']) and x['material_primary_gaps_pending_evidence']==0\nassert status['pending_publication_packets'][0]['stream']=='H01' and status['pending_publication_packets'][0]['received_packets']==3 and status['pending_publication_packets'][0]['published_body_credit_in_this_package']==0\ntracked=git('ls-tree','-rz','--name-only',before['documentation_start']['commit']).decode().split('\\0')[:-1]\nprotected=[p for p in tracked if p!='docs/audits/project-audit-plan.md' and not p.startswith(str(base)+'/')]\nfrozen=[p for p in protected if p.startswith(('docs/audits/codebase-discovery/','docs/audits/architecture-review-2026-11-06/')) or p=='docs/audits/harness-architecture-2026-11-05.md']\nagg=lambda paths:{'count':len(paths),'sha256':sha(canon({p:sha(Path(p).read_bytes()) for p in sorted(paths)}))}\nassert agg(protected)==before['protected_before'] and agg(frozen)==before['frozen_old_evidence_before']\nallowed=set(stage['allowed_writes']);changed=set(git('diff','--name-only',before['documentation_start']['commit'],'--').decode().splitlines())|set(git('ls-files','--others','--exclude-standard').decode().splitlines());assert changed==allowed,(changed,allowed)\nfor path in allowed:assert all(line.rstrip()==line for line in Path(path).read_bytes().splitlines()),path\njson_files=list(base.rglob('*.json'))\nfor path in json_files:json.loads(path.read_text())\nmarkdown=list(base.rglob('*.md'))+[Path('docs/audits/project-audit-plan.md')];local_links=0;local_anchors=0;source_links=0;source_anchors=0;history_links=0\nrepos_by_url={'JadenChun/nanobot-custom':'nanobot','deepseek-ai/deepseek-harness':'dsh','openai/codex':'codex'}\nfor path in markdown:\n for target in re.findall(r'\\[[^\\]]*\\]\\(([^)]+)\\)',path.read_text()):\n  url=urlsplit(target.strip().strip('<>'))\n  if url.scheme or url.netloc:\n   if path.parent!=base/'reports':continue\n   match=re.fullmatch(r'/([^/]+/[^/]+)/blob/([0-9a-f]{40})/(.+)',url.path)\n   if match:\n    repo_name,commit,source_path=match.groups();repo=repos_by_url[repo_name];m=blob(repo,commit,unquote(source_path));source_links+=1\n    if url.fragment:\n     anchor=re.fullmatch(r'L(\\d+)(?:-L(\\d+))?',url.fragment);assert anchor,target;first=int(anchor.group(1));last=int(anchor.group(2) or first);assert 1<=first<=last<=m['line_count'],target;source_anchors+=1\n   else:\n    match=re.fullmatch(r'/JadenChun/nanobot-custom/commit/([0-9a-f]{40})',url.path)\n    if match:subprocess.run(['git','cat-file','-e',match.group(1)+'^{commit}'],check=True);history_links+=1\n   continue\n  local=(path.parent/unquote(url.path)).resolve() if url.path else path.resolve();assert local.exists(),(str(path),target);local_links+=1\n  if url.fragment and local.suffix=='.md':\n   body=local.read_text();anchors=re.findall(r'<a\\s+id=[\\\"\\']([^\\\"\\']+)',body)\n   for h in re.findall(r'^#{1,6}\\s+(.+?)\\s*#*$',body,re.M):anchors.append(re.sub(r'[^\\w\\- ]','',re.sub(r'<[^>]*>','',h).lower()).replace(' ','-'))\n   assert unquote(url.fragment) in anchors,(str(path),target);local_anchors+=1\nsubprocess.run(['git','diff','--check'],check=True)\nprint(json.dumps({'status':'PASS','source_pin_trees_verified':3,'primary_body_paths_verified':21,'S01_primary_bodies':15,'S02_primary_bodies':6,'primary_physical_lines':sum(r['line_count'] for c in coverage.values() for r in c['bounded_body_reads']),'source_record_occurrences_verified':record_count,'unique_supplied_source_records_verified':len({k for k in cache if not k[2].startswith('docs/audits/')}),'unique_metadata_records_including_audit_documents':len(cache),'reference_body_paths':13,'distinct_findings':6,'discussion_questions':6,'primary_gaps':0,'protected_after':agg(protected),'frozen_old_evidence_after':agg(frozen),'historical_foundation_fields_sha256':before['historical_foundation_fields_sha256'],'stable_foundation_documents_verified':3,'changed_paths':sorted(changed),'json_files_parsed':len(json_files),'markdown_documents_checked':len(markdown),'relative_links_checked':local_links,'relative_anchors_checked':local_anchors,'new_report_pinned_source_links_checked':source_links,'new_report_source_anchors_checked':source_anchors,'new_report_history_links_checked':history_links,'git_diff_check_exit':0,'document_sha256':{p:sha(Path(p).read_bytes()) for p in sorted(allowed) if p!=str(base/'validation.json')}},indent=2))\nPY",
+          "exit_code": 0,
+          "result_location": "module_stages[0].structural_results"
+        },
+        {
+          "id": "MS3-diff",
+          "command": "git diff --check",
+          "exit_code": 0,
+          "output": ""
+        }
+      ],
+      "writer_and_coordinator_raw_failures": [
+        {
+          "origin": "publisher",
+          "operation": "apply_patch current-status/navigation update",
+          "failure": "README expected paragraph did not match; apply_patch verification failed before any patch writes.",
+          "correction": "Read actual paragraph and reapplied exact bounded patch successfully.",
+          "product_execution": false
+        },
+        {
+          "origin": "root supplied precheck",
+          "operation": "Metadata checker expected report-root path",
+          "failure": "AssertionError S01 on coverage report S01.md versus expected reports/S01.md.",
+          "correction": "Tolerant root check passed; writer now standardizes both coverage report paths to root-relative reports/.",
+          "product_execution": false
+        },
+        {
+          "origin": "root supplied exploratory query",
+          "operation": "Status metadata lookup",
+          "failure": "KeyError source_pins; actual status key is source_pin.",
+          "correction": "Corrected root query passed.",
+          "product_execution": false
+        }
+      ],
+      "coordinator_precheck": {
+        "origin": "Direct root message; preliminary only",
+        "semantic_read": "Both full reports and core conditional call chains corroborated; no semantic conflict found.",
+        "metadata": "PASS after corrected checker assumption: 919 current primary hashes, 21 EOF primaries, 52 unique supplied source records, 55 frozen and 2510 protected unchanged, 25 then-present local links.",
+        "requested_schema_alignments": "Root-relative report fields and explicit per-record trees applied; no new read credit.",
+        "artifact_acceptance": "pending"
+      },
+      "remaining_criteria": [
+        "Coordinator artifact check/acceptance of S01/S02; preliminary source corroboration is not acceptance.",
+        "Coordinator-owned module Git checkpoints and later cross-module integrated review.",
+        "H01 complete evidence queued for a separate publication; H02/C00 remain dispatched."
+      ],
+      "final_metadata_check": {
+        "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,subprocess\nbase=Path('docs/audits/module-review-2026-11-06');v=json.loads((base/'validation.json').read_text());s=v['module_stages'][0]\nsha=lambda b:hashlib.sha256(b).hexdigest();canon=lambda d:json.dumps(d,sort_keys=True,separators=(',',':')).encode()\nfor path,want in s['structural_results']['document_sha256'].items():assert sha(Path(path).read_bytes())==want,path\nassert sha(canon({k:v[k] for k in s['before']['historical_foundation_fields']}))==s['before']['historical_foundation_fields_sha256']\nfor path in s['allowed_writes']:assert all(line.rstrip()==line for line in Path(path).read_bytes().splitlines()),path\nfiles=list(base.rglob('*.json'))\nfor path in files:json.loads(path.read_text())\nsubprocess.run(['git','diff','--check'],check=True)\nprint(json.dumps({'status':'PASS','module_document_hashes_checked':8,'historical_foundation_fields':'unchanged','json_files_parsed':len(files),'owned_files_whitespace_checked':9,'git_diff_check_exit':0}))\nPY",
+        "exit_code": 0,
+        "result": {
+          "status": "PASS",
+          "module_document_hashes_checked": 8,
+          "historical_foundation_fields": "unchanged",
+          "json_files_parsed": 6,
+          "owned_files_whitespace_checked": 9,
+          "git_diff_check_exit": 0
+        }
+      }
+    },
+    {
+      "id": "H01-publication",
+      "phase": "H01 report-written; writer structural PASS; coordinator/integrated/checkpoint pending",
+      "before": {
+        "documentation_start": {
+          "commit": "0972617c0e056b0214a9b9037f0ca43b1e5d1e4e",
+          "tree": "9ff54278fe5a48cfaf2fe2171336f21e717ac58d",
+          "working_tree_clean": true
+        },
+        "protected_before": {
+          "count": 2510,
+          "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+        },
+        "frozen_before": {
+          "count": 55,
+          "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+        },
+        "historical_foundation_fields": [
+          "documentation_start",
+          "allowed_writes",
+          "protected_scope",
+          "commands",
+          "structural_results",
+          "final_metadata_check"
+        ],
+        "historical_foundation_sha256": "0c31d344d33ccf1e2830dc215c81ea8ddd1b69a04bb2608a257d73fa88bf332a",
+        "historical_phase_sha256": {
+          "module_stages[0]": "48b4a1058341fd496850f870759f85293de6bf2d80f61c9b714bbc96e94de731",
+          "acceptance_phases[0]": "d2364f6614961ba52c29f355582d7c320c4aa93d4a34f95c86bc8a797262a182"
+        },
+        "S01_S02_technical_tail_sha256": {
+          "docs/audits/module-review-2026-11-06/reports/S01.md": "f91b13dc2471081ea6289b03f270e6a4f0b62dda501829336fb525486c3e7b7e",
+          "docs/audits/module-review-2026-11-06/reports/S02.md": "64e14ed52e06224aa9d5df450742c06fdcddacf2ebf1193dec2c9da76a3ea8d5"
+        },
+        "S01_S02_coverage_without_checkpoint_sha256": {
+          "docs/audits/module-review-2026-11-06/reports/S01-coverage.json": "0ca156e0d0c56caf6a70f5c8523fc369919f920f8f8578746f27e4ade5cc45c2",
+          "docs/audits/module-review-2026-11-06/reports/S02-coverage.json": "20d3dbd12a3c18bd55109f16f863b1a9d3555396a3ec2df787ca8ba97e9ceaac"
+        },
+        "scope_and_template_sha256": {
+          "docs/audits/module-review-2026-11-06/scope.json": "9fedbfdd2515c1b35221c3895f74520c9334b41257d2a1adef9ea4e235252067",
+          "docs/audits/module-review-2026-11-06/report-template.md": "3873284c5160ca049eb7facfbc249b8ed03fcc446496206eeed76e44d3500508",
+          "docs/audits/module-review-2026-11-06/coverage-template.json": "1b15ebc0974963fa9f83a5cb4f1269c888315d6f6f512b6b042ebd54688e74c8"
+        }
+      },
+      "before_command": "python3 - <<'PY'\nfrom pathlib import Path\nimport hashlib,json,subprocess\nbase=Path('docs/audits/module-review-2026-11-06');v=json.loads((base/'validation.json').read_text());sha=lambda b:hashlib.sha256(b).hexdigest();canon=lambda d:json.dumps(d,sort_keys=True,separators=(',',':')).encode()\ntracked=subprocess.check_output(['git','ls-files','-z']).decode().split('\\0')[:-1]\nprotected=[p for p in tracked if p!='docs/audits/project-audit-plan.md' and not p.startswith(str(base)+'/')]\nfrozen=[p for p in protected if p.startswith(('docs/audits/codebase-discovery/','docs/audits/architecture-review-2026-11-06/')) or p=='docs/audits/harness-architecture-2026-11-05.md']\nagg=lambda paths:{'count':len(paths),'sha256':sha(canon({p:sha(Path(p).read_bytes()) for p in sorted(paths)}))}\nold=[base/'reports/S01.md',base/'reports/S02.md'];tails={str(p):sha(p.read_text().split('Nanobot pin:',1)[1].encode()) for p in old};payloads={}\nfor sid in ['S01','S02']:\n p=base/'reports'/(sid+'-coverage.json');c=json.loads(p.read_text());payloads[str(p)]=sha(canon({k:val for k,val in c.items() if k!='git_checkpoint'}))\nprint(json.dumps({'documentation_start':{'commit':subprocess.check_output(['git','rev-parse','HEAD']).decode().strip(),'tree':subprocess.check_output(['git','rev-parse','HEAD^{tree}']).decode().strip(),'working_tree_clean':not subprocess.check_output(['git','status','--porcelain=v1','--untracked-files=all']).strip()},'protected_before':agg(protected),'frozen_before':agg(frozen),'historical_foundation_fields':v['module_stages'][0]['before']['historical_foundation_fields'],'historical_foundation_sha256':sha(canon({k:v[k] for k in v['module_stages'][0]['before']['historical_foundation_fields']})),'historical_phase_sha256':{'module_stages[0]':sha(canon(v['module_stages'][0])),'acceptance_phases[0]':sha(canon(v['acceptance_phases'][0]))},'S01_S02_technical_tail_sha256':tails,'S01_S02_coverage_without_checkpoint_sha256':payloads,'scope_and_template_sha256':v['module_stages'][0]['before']['stable_foundation_documents']},indent=2))\nPY",
+      "allowed_writes": [
+        "docs/audits/module-review-2026-11-06/README.md",
+        "docs/audits/module-review-2026-11-06/reports/H01-coverage.json",
+        "docs/audits/module-review-2026-11-06/reports/H01.md",
+        "docs/audits/module-review-2026-11-06/reports/S01-coverage.json",
+        "docs/audits/module-review-2026-11-06/reports/S01.md",
+        "docs/audits/module-review-2026-11-06/reports/S02-coverage.json",
+        "docs/audits/module-review-2026-11-06/reports/S02.md",
+        "docs/audits/module-review-2026-11-06/status.json",
+        "docs/audits/module-review-2026-11-06/synthesis.md",
+        "docs/audits/module-review-2026-11-06/validation.json",
+        "docs/audits/project-audit-plan.md"
+      ],
+      "S01_S02_checkpoint": {
+        "status": "recorded",
+        "commit": "0972617c0e056b0214a9b9037f0ca43b1e5d1e4e",
+        "pushed": true,
+        "evidence": "Direct root followup: S01/S02 PASS committed and pushed; exact AP1 rerun PASS before checkpoint."
+      },
+      "H01_supplied_evidence": {
+        "packets": 3,
+        "primary_bodies": 29,
+        "physical_lines": 13076,
+        "primary_gaps": 0,
+        "finding_entries": 8,
+        "open_contract_entries": 1,
+        "questions": 6
+      },
+      "historical_snapshot_rule": "Prior module_stages[0], acceptance_phases[0], foundation commands/results remain immutable phase snapshots. Their pre-checkpoint/pending assertions are not current-state checks.",
+      "parameterized_current_inputs": {
+        "stream": "H01",
+        "coverage": "reports/H01-coverage.json",
+        "report": "reports/H01.md",
+        "expected_primary_count": 29,
+        "expected_primary_lines": 13076,
+        "expected_status_counts": {
+          "queued": 12,
+          "in-progress": 3,
+          "report-written": 1,
+          "coordinator-checked": 2
+        }
+      },
+      "coordinator_acceptance": "pending",
+      "integrated_review": "pending",
+      "module_git_checkpoint": "pending",
+      "raw_failures": [
+        {
+          "command": "rg --files --hidden -g '!.git' | rg 'build-personal|guide/.*agent'",
+          "exit_code": 1,
+          "meaning": "No matching support locator; zero credit, not a primary-evidence conflict."
+        }
+      ],
+      "structural_results": {
+        "status": "PASS",
+        "stream": "H01",
+        "primary_bodies": 29,
+        "primary_physical_lines": 13076,
+        "metadata_record_occurrences": 81,
+        "unique_metadata_records": 81,
+        "caller_context_paths": 20,
+        "test_source_paths": 3,
+        "reference_paths": 11,
+        "finding_entries": 8,
+        "open_contract_entries": 1,
+        "questions": 6,
+        "primary_gaps": 0,
+        "source_pin_trees": 3,
+        "S01_S02_checkpoint": "0972617c0e056b0214a9b9037f0ca43b1e5d1e4e",
+        "prior_snapshots_and_technical_payloads": "unchanged",
+        "protected_after": {
+          "count": 2510,
+          "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+        },
+        "frozen_after": {
+          "count": 55,
+          "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+        },
+        "status_counts": {
+          "in-progress": 3,
+          "report-written": 1,
+          "coordinator-checked": 2,
+          "queued": 12
+        },
+        "local_links": 74,
+        "local_anchors": 3,
+        "H01_source_links": 16,
+        "H01_source_anchors": 16,
+        "H01_history_links": 6,
+        "json_files_parsed": 7,
+        "markdown_documents_checked": 7,
+        "owned_files": 11,
+        "git_diff_check_exit": 0,
+        "document_sha256": {
+          "docs/audits/module-review-2026-11-06/README.md": "0c82d3e04140c400421dc5c9bd69dc40d10f0466ea7ab7b899d11a74b184de5d",
+          "docs/audits/module-review-2026-11-06/reports/H01-coverage.json": "e1eae137b1cd4c68757dfb470e412e2283fa8b4e7c9f8d17341dbbf183061c0e",
+          "docs/audits/module-review-2026-11-06/reports/H01.md": "4918a6ebe4b7034f4e1774dde774d4eb0cc7179a093a612f769a5171ad917997",
+          "docs/audits/module-review-2026-11-06/reports/S01-coverage.json": "917361a90757109dc49115190db787b346dcf4d10cdc0fd0f3579d1acc33502e",
+          "docs/audits/module-review-2026-11-06/reports/S01.md": "5c8cf526cac1d559b21c3e46cb75f1a5d1be7266ee5fab1d16e090c50b1037b8",
+          "docs/audits/module-review-2026-11-06/reports/S02-coverage.json": "102bc7a60cfe8fec246e055e1bf40d2fa2fa3bb10ee5ca2a4420a247020c61af",
+          "docs/audits/module-review-2026-11-06/reports/S02.md": "4c4b7e123eba424eb06c3fc6f36254140ca494afa6a146372e3451da857b7906",
+          "docs/audits/module-review-2026-11-06/status.json": "7a61f01ea1745ff72abca84025018d11eeeb076e87e8792f52842ab83fe73b61",
+          "docs/audits/module-review-2026-11-06/synthesis.md": "39469552e5fef3ecb0bc7c43e2a9e56e895bfca827ab4fd30acb6ea236e58a60",
+          "docs/audits/project-audit-plan.md": "1b19d3fcf26be4b3a9dc5f8c4e65138839dd8bc43af3e6c0ded12b80f0d2037a"
+        }
+      },
+      "commands": [
+        {
+          "id": "H01-current-integrity",
+          "parameters_location": "module_stages[1].parameterized_current_inputs",
+          "command": "python3 - <<'PY'\nfrom pathlib import Path\nfrom collections import Counter\nfrom urllib.parse import unquote,urlsplit\nimport csv,hashlib,json,re,subprocess\nroot=Path.cwd();base=Path('docs/audits/module-review-2026-11-06');v=json.loads((base/'validation.json').read_text());stage=v['module_stages'][1];cfg=stage['parameterized_current_inputs'];before=stage['before'];c=json.loads((base/cfg['coverage']).read_text());scope=json.loads((base/'scope.json').read_text());status=json.loads((base/'status.json').read_text())\nsha=lambda b:hashlib.sha256(b).hexdigest();canon=lambda d:json.dumps(d,sort_keys=True,separators=(',',':')).encode();git=lambda *a:subprocess.check_output(['git',*a])\nassert sha(canon(v['module_stages'][0]))==before['historical_phase_sha256']['module_stages[0]'] and sha(canon(v['acceptance_phases'][0]))==before['historical_phase_sha256']['acceptance_phases[0]']\nassert sha(canon({k:v[k] for k in before['historical_foundation_fields']}))==before['historical_foundation_sha256']\nfor path,want in before['scope_and_template_sha256'].items():assert sha(Path(path).read_bytes())==want,path\nfor path,want in before['S01_S02_technical_tail_sha256'].items():assert sha(Path(path).read_text().split('Nanobot pin:',1)[1].encode())==want,path\nfor path,want in before['S01_S02_coverage_without_checkpoint_sha256'].items():\n old=json.loads(Path(path).read_text());assert sha(canon({k:x for k,x in old.items() if k!='git_checkpoint'}))==want and old['git_checkpoint']==stage['S01_S02_checkpoint']\nrepos={'nanobot':str(root),'dsh':'/tmp/nanobot-harness-audit-20261105.EdrBP6/deepseek-harness','codex':'/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-codex-reference-20261105.czjcx5c9/codex'};cache={}\ndef metadata(repo,commit,path):\n key=(repo,commit,path)\n if key not in cache:\n  raw=subprocess.check_output(['git','-C',repos[repo],'cat-file','--batch'],input=(commit+':'+path+'\\n').encode());h,b=raw.split(b'\\n',1);fields=h.decode().split();assert len(fields)==3 and fields[1]=='blob',key;n=int(fields[2]);assert b[n:]==b'\\n';b=b[:n]\n  cache[key]={'tree':subprocess.check_output(['git','-C',repos[repo],'rev-parse',commit+'^{tree}']).decode().strip(),'git_blob':fields[0],'sha256':sha(b),'bytes':n,'line_count':b.count(b'\\n')+int(bool(b) and not b.endswith(b'\\n'))}\n return cache[key]\ndef verify(r):\n m=metadata(r['repository'],r['commit'],r['path']);assert all(r[k]==value for k,value in m.items()),r['path'];assert all(1<=a<=b<=m['line_count'] for a,b in r['ranges']),r['path']\nfor name,p in scope['source_pins'].items():assert subprocess.check_output(['git','-C',repos[name],'rev-parse',p['commit']+'^{tree}']).decode().strip()==p['tree']\nassert c['source_pins']==scope['source_pins'] and c['report']==cfg['report'] and c['publication_state']=='report-written'\nwith open(scope['inventory']['path'],newline='') as f:rows=list(csv.DictReader(f,delimiter='\\t'))\nassigned={r['path'] for r in rows if r['workstream']==cfg['stream'] and r['role'] in scope['selection']['primary_roles']};assert set(c['assigned_primary_paths'])==assigned=={r['path'] for r in c['bounded_body_reads']} and len(assigned)==cfg['expected_primary_count']\nassert sum(r['line_count'] for r in c['bounded_body_reads'])==cfg['expected_primary_lines'];assert not c['material_unread_gaps'] and not c['justified_exclusions']\nrecords=[r for key in ['bounded_body_reads','caller_context_reads','test_source_reads','reference_mechanisms_or_nonapplicability','support_reads'] for r in c[key]]+[x['evidence'] for x in c['prior_change_evidence'] if x['kind']=='historical body']\nfor r in records:verify(r)\nfor r in c['bounded_body_reads']:assert r['ranges']==[[1,r['line_count']]] and r['commit']==scope['source_pins']['nanobot']['commit']\nfor event in c['prior_change_evidence']:\n if event['kind']=='complete file diff':assert sha(git('diff',event['commit']+'^',event['commit'],'--',event['path']))==event['diff_sha256']\nd=c['current_staging_delta'];assert sha(git('diff',d['from_commit'],d['to_commit'],'--',*d['paths']))==d['diff_sha256']\nassert len(c['findings'])==8 and len(c['final_discussion_questions'])==6 and c['findings'][-1]['asserted_defect'] is False\nassert c['coordinator_check'] is None and c['integrated_review'] is None and c['git_checkpoint'] is None\nassert Counter(x['status'] for x in status['streams'])==Counter(cfg['expected_status_counts'])\nassert status['counts']['supplied_primary_body_paths']==50 and status['counts']['primary_targets_without_new_body_evidence']==869 and status['counts']['published_findings']==14 and status['counts']['published_discussion_questions']==12\nfor s in status['streams']:\n assert s['integrated_review']['status']=='pending'\n if s['id'] in ['S01','S02']:assert s['git_checkpoint']==stage['S01_S02_checkpoint'] and s['coordinator_check']['status']=='PASS'\n elif s['id']=='H01':assert s['status']=='report-written' and s['coordinator_check']['status']=='pending' and s['git_checkpoint']['status']=='pending'\nfor packet in status['pending_publication_packets']:assert packet['stream'] in ['C00','H02'] and packet['published_body_credit_in_this_package']==0\ntracked=git('ls-tree','-rz','--name-only',before['documentation_start']['commit']).decode().split('\\0')[:-1];protected=[p for p in tracked if p!='docs/audits/project-audit-plan.md' and not p.startswith(str(base)+'/')];frozen=[p for p in protected if p.startswith(('docs/audits/codebase-discovery/','docs/audits/architecture-review-2026-11-06/')) or p=='docs/audits/harness-architecture-2026-11-05.md'];aggregate=lambda paths:{'count':len(paths),'sha256':sha(canon({p:sha(Path(p).read_bytes()) for p in sorted(paths)}))}\nassert aggregate(protected)==before['protected_before'] and aggregate(frozen)==before['frozen_before']\nallowed=set(stage['allowed_writes']);changed=set(git('diff','--name-only',before['documentation_start']['commit'],'--').decode().splitlines())|set(git('ls-files','--others','--exclude-standard').decode().splitlines());assert changed==allowed\nfor p in allowed:assert all(line.rstrip()==line for line in Path(p).read_bytes().splitlines()),p\njsons=list(base.rglob('*.json'))\nfor p in jsons:json.loads(p.read_text())\nmarkdown=list(base.rglob('*.md'))+[Path('docs/audits/project-audit-plan.md')];links=anchors=source_links=source_anchors=history_links=0;repo_urls={'JadenChun/nanobot-custom':'nanobot','deepseek-ai/deepseek-harness':'dsh','openai/codex':'codex'}\nfor p in markdown:\n for target in re.findall(r'\\[[^\\]]*\\]\\(([^)]+)\\)',p.read_text()):\n  u=urlsplit(target.strip().strip('<>'))\n  if u.scheme or u.netloc:\n   if p!=base/cfg['report']:continue\n   match=re.fullmatch(r'/([^/]+/[^/]+)/blob/([0-9a-f]{40})/(.+)',u.path)\n   if match:\n    repo,commit,path=match.groups();m=metadata(repo_urls[repo],commit,unquote(path));source_links+=1\n    if u.fragment:\n     a=re.fullmatch(r'L(\\d+)(?:-L(\\d+))?',u.fragment);assert a,target;first=int(a.group(1));last=int(a.group(2) or first);assert 1<=first<=last<=m['line_count'];source_anchors+=1\n   else:\n    match=re.fullmatch(r'/JadenChun/nanobot-custom/commit/([0-9a-f]{40})',u.path)\n    if match:subprocess.run(['git','cat-file','-e',match.group(1)+'^{commit}'],check=True);history_links+=1\n   continue\n  local=(p.parent/unquote(u.path)).resolve() if u.path else p.resolve();assert local.exists(),(str(p),target);links+=1\n  if u.fragment and local.suffix=='.md':\n   body=local.read_text();ids=re.findall(r'<a\\s+id=[\\\"\\']([^\\\"\\']+)',body)\n   ids += [re.sub(r'[^\\w\\- ]','',re.sub(r'<[^>]*>','',h).lower()).replace(' ','-') for h in re.findall(r'^#{1,6}\\s+(.+?)\\s*#*$',body,re.M)];assert unquote(u.fragment) in ids,(str(p),target);anchors+=1\nsubprocess.run(['git','diff','--check'],check=True)\nprint(json.dumps({'status':'PASS','stream':cfg['stream'],'primary_bodies':len(assigned),'primary_physical_lines':cfg['expected_primary_lines'],'metadata_record_occurrences':len(records),'unique_metadata_records':len(cache),'caller_context_paths':len(c['caller_context_reads']),'test_source_paths':len(c['test_source_reads']),'reference_paths':len(c['reference_mechanisms_or_nonapplicability']),'finding_entries':8,'open_contract_entries':1,'questions':6,'primary_gaps':0,'source_pin_trees':3,'S01_S02_checkpoint':stage['S01_S02_checkpoint']['commit'],'prior_snapshots_and_technical_payloads':'unchanged','protected_after':aggregate(protected),'frozen_after':aggregate(frozen),'status_counts':dict(Counter(x['status'] for x in status['streams'])),'local_links':links,'local_anchors':anchors,'H01_source_links':source_links,'H01_source_anchors':source_anchors,'H01_history_links':history_links,'json_files_parsed':len(jsons),'markdown_documents_checked':len(markdown),'owned_files':len(allowed),'git_diff_check_exit':0,'document_sha256':{p:sha(Path(p).read_bytes()) for p in sorted(allowed) if p!=str(base/'validation.json')}},indent=2))\nPY",
+          "exit_code": 0,
+          "result_location": "module_stages[1].structural_results"
+        },
+        {
+          "id": "H01-diff",
+          "command": "git diff --check",
+          "exit_code": 0,
+          "output": ""
+        }
+      ],
+      "queue_update": "C00 complete3 packets and H02 initial4+supplemental5A/5B retained without publication credit; H03 dispatched. Only H01 report published.",
+      "remaining_criteria": [
+        "Coordinator artifact acceptance of H01; root F1–F4 corroboration is preliminary only.",
+        "Coordinator H01 Git checkpoint and eventual all-module integrated review.",
+        "C00/H02 queued for separate publication; H03 remains dispatched."
+      ],
+      "final_metadata_check": {
+        "status": "PASS",
+        "document_hashes_checked": 10,
+        "json_files_parsed": 7,
+        "owned_files_whitespace_checked": 11,
+        "git_diff_check_exit": 0,
+        "prior_phase_hashes": "unchanged",
+        "validation_self_hash": "excluded"
+      }
+    }
+  ],
+  "acceptance_phases": [
+    {
+      "id": "S01-S02-coordinator-acceptance",
+      "coordinator_acceptance": {
+        "status": "PASS",
+        "coordinator": "/root",
+        "scope": "S01/S02 source-review publication only; no repair or product/design acceptance.",
+        "evidence_origin": "Direct root VERDICT message authorizing this narrow acceptance-record pass.",
+        "semantic_review": "Root read both complete reports and independently corroborated key enforcement/projection/count/deadline/reservation call chains and bounded reference mechanisms.",
+        "independent_metadata_check": {
+          "status": "PASS",
+          "current_primary_hashes": 919,
+          "primary_EOF_bodies": 21,
+          "unique_pinned_source_records": 52,
+          "missing_trees": 0,
+          "primary_gaps": 0,
+          "protected_files_unchanged": 2510,
+          "frozen_files_unchanged": 55
+        },
+        "exact_documented_command_rerun": {
+          "id": "MS2-S01-S02-integrity",
+          "phase": "Original publication snapshot, before coordinator-checked status updates.",
+          "command_location": "module_stages[0].commands[id=MS2-S01-S02-integrity].command",
+          "command_sha256": "2df2955520842241b5555801357b01aa8d0d963ac219535c9e792c8cb3340f5d",
+          "status": "PASS",
+          "primary_bodies": 21,
+          "physical_lines": 14776,
+          "record_occurrences": 82,
+          "unique_source_records": 52,
+          "pin_trees": 3,
+          "reference_paths": 13,
+          "distinct_findings": 6,
+          "discussion_questions": 6,
+          "local_links": 67,
+          "local_anchors": 3,
+          "source_links": 34,
+          "source_anchors": 34,
+          "history_links": 8,
+          "git_diff_check_exit": 0
+        },
+        "schema_alignments_resolved": [
+          "Root-relative coverage report paths",
+          "Explicit verified per-record trees"
+        ],
+        "integrated_review": "pending until all modules",
+        "module_git_checkpoint": "pending until coordinator commits",
+        "decisions": "D1–D7 remain deferred; all source-only/provisional limits retained."
+      },
+      "publication_snapshot": {
+        "location": "module_stages[0]",
+        "sha256": "48b4a1058341fd496850f870759f85293de6bf2d80f61c9b714bbc96e94de731",
+        "phase": "Historical report-written snapshot; pending-state assertions and original command/result are retained and are not current-status checks."
+      },
+      "historical_foundation_fields_sha256": "0c31d344d33ccf1e2830dc215c81ea8ddd1b69a04bb2608a257d73fa88bf332a",
+      "allowed_writes": [
+        "docs/audits/module-review-2026-11-06/README.md",
+        "docs/audits/module-review-2026-11-06/reports/S01-coverage.json",
+        "docs/audits/module-review-2026-11-06/reports/S01.md",
+        "docs/audits/module-review-2026-11-06/reports/S02-coverage.json",
+        "docs/audits/module-review-2026-11-06/reports/S02.md",
+        "docs/audits/module-review-2026-11-06/status.json",
+        "docs/audits/module-review-2026-11-06/synthesis.md",
+        "docs/audits/module-review-2026-11-06/validation.json",
+        "docs/audits/project-audit-plan.md"
+      ],
+      "before_document_sha256": {
+        "docs/audits/module-review-2026-11-06/README.md": "6d0031fee2479cd89f68b7184478cedcadcdb2c23b088dfe944d74bbc780a4f8",
+        "docs/audits/module-review-2026-11-06/reports/S01-coverage.json": "78277a3b7c711ecb54cb4d940dd2811f3877232a21f7f65c9db8c0c20cc627b8",
+        "docs/audits/module-review-2026-11-06/reports/S01.md": "c613252784ebbbc760a931aa5024f8a4ea0aecd376fb66450a196b38d051bb8e",
+        "docs/audits/module-review-2026-11-06/reports/S02-coverage.json": "229eb4b8cc606a9d9e28af924c11878b2e23e48c871fc02a9aa2c9d406a65674",
+        "docs/audits/module-review-2026-11-06/reports/S02.md": "22a9e52ffd61c64eeef4f859c0bf626b2dfd2b0919ba0022b649a136d6b0d95f",
+        "docs/audits/module-review-2026-11-06/status.json": "f655829830c2ecf692abe0e4fe9737bd863f6a7a71069af48e1f8990a53b2a36",
+        "docs/audits/module-review-2026-11-06/synthesis.md": "a2b150ae21be12c9654e27e41fe82314ef1c26ca2a230854f3227d19b5e5fae2",
+        "docs/audits/module-review-2026-11-06/validation.json": "223597e07de78e916bb17c239d6bcd4f81e8c57e4d9054c491c667ef76078267",
+        "docs/audits/project-audit-plan.md": "3661fa4c370db8f3a144b9b6270f9c6e2428e4b7c33494aef1e1970153eb1c0b"
+      },
+      "unchanged_report_technical_tail_sha256": {
+        "docs/audits/module-review-2026-11-06/reports/S01.md": "f91b13dc2471081ea6289b03f270e6a4f0b62dda501829336fb525486c3e7b7e",
+        "docs/audits/module-review-2026-11-06/reports/S02.md": "64e14ed52e06224aa9d5df450742c06fdcddacf2ebf1193dec2c9da76a3ea8d5"
+      },
+      "unchanged_coverage_technical_payload_sha256": {
+        "docs/audits/module-review-2026-11-06/reports/S01-coverage.json": "5f931edfb2bf382d78fbdfb060a1a741d5f6ffe2a759c44bc0d42e56956829a4",
+        "docs/audits/module-review-2026-11-06/reports/S02-coverage.json": "655c506dcb47aff24f702ea31328b1c1ac76776cbf3bad09972f52995823b994"
+      },
+      "structural_results": {
+        "status": "PASS",
+        "phase": "Coordinator acceptance bookkeeping only",
+        "coordinator_checked_streams": 2,
+        "report_written_state_count": 0,
+        "reports_published": 2,
+        "integrated_review_complete": 0,
+        "module_checkpoints": "pending",
+        "technical_report_tails_unchanged": 2,
+        "coverage_technical_payloads_unchanged": 2,
+        "original_publication_snapshot_sha256": "48b4a1058341fd496850f870759f85293de6bf2d80f61c9b714bbc96e94de731",
+        "historical_foundation_fields_sha256": "0c31d344d33ccf1e2830dc215c81ea8ddd1b69a04bb2608a257d73fa88bf332a",
+        "protected_after": {
+          "count": 2510,
+          "sha256": "db091ca48352da70ff17baa7cca1771a18ede9164352f75ff833bc9a0982e43b"
+        },
+        "frozen_old_evidence_after": {
+          "count": 55,
+          "sha256": "e257072e9488082fd80391f3100abd184faffefb3b3dfd420a2739722b0d0f51"
+        },
+        "json_files_parsed": 6,
+        "markdown_documents_checked": 6,
+        "current_local_links": 69,
+        "current_local_anchors": 3,
+        "unchanged_report_source_links": 34,
+        "unchanged_report_source_anchors": 34,
+        "unchanged_report_history_links": 8,
+        "owned_files": 9,
+        "git_diff_check_exit": 0,
+        "document_sha256": {
+          "docs/audits/module-review-2026-11-06/README.md": "8473869088c62b0a7bfbb8815a567343c7ce253e3f552e0bb460912e90977ff0",
+          "docs/audits/module-review-2026-11-06/reports/S01-coverage.json": "a3541775dd5251551c3f260f47109d70d63d932e0a40a82d6788097fac76aaae",
+          "docs/audits/module-review-2026-11-06/reports/S01.md": "9b704f90624395a2a048228b4b8eb35f1d6f385b6bc3a118abc428791733a6bd",
+          "docs/audits/module-review-2026-11-06/reports/S02-coverage.json": "100b74c96c1aa20017488ce10c7d720de99a6dd3be3f8f8f8f1952054eb735f3",
+          "docs/audits/module-review-2026-11-06/reports/S02.md": "1c60bdc6e6dd2a2b764e801c9ca5f2049edce65b60e0550696b371b385882240",
+          "docs/audits/module-review-2026-11-06/status.json": "47b20a97bf2a1546553b51268a5ead6844c99e468e14eca7dd53a98b99959cf3",
+          "docs/audits/module-review-2026-11-06/synthesis.md": "b4cdf465dca565d05f620d81daed704fbc4180512f6efa2d9c6a2e65cc04dc2c",
+          "docs/audits/project-audit-plan.md": "f0fcb9f811efedbb69e43782d5c5bcde5a0ce5645815e5898081778d8cc32145"
+        }
+      },
+      "commands": [
+        {
+          "id": "AP1-S01-S02-acceptance",
+          "command": "python3 - <<'PY'\nfrom pathlib import Path\nfrom collections import Counter\nfrom urllib.parse import unquote,urlsplit\nimport hashlib,json,re,subprocess\nbase=Path('docs/audits/module-review-2026-11-06');v=json.loads((base/'validation.json').read_text());phase=v['acceptance_phases'][0];publication=v['module_stages'][0];status=json.loads((base/'status.json').read_text())\nsha=lambda b:hashlib.sha256(b).hexdigest();canon=lambda d:json.dumps(d,sort_keys=True,separators=(',',':')).encode()\nassert sha(canon(publication))==phase['publication_snapshot']['sha256']=='48b4a1058341fd496850f870759f85293de6bf2d80f61c9b714bbc96e94de731'\nassert sha(canon({k:v[k] for k in publication['before']['historical_foundation_fields']}))==phase['historical_foundation_fields_sha256']=='0c31d344d33ccf1e2830dc215c81ea8ddd1b69a04bb2608a257d73fa88bf332a'\nfor path,want in phase['unchanged_report_technical_tail_sha256'].items():assert sha(Path(path).read_text().split('Nanobot pin:',1)[1].encode())==want,path\nfor path,want in phase['unchanged_coverage_technical_payload_sha256'].items():\n c=json.loads(Path(path).read_text());assert sha(canon({k:val for k,val in c.items() if k not in ['publication_state','coordinator_check']}))==want,path\n assert c['publication_state']=='coordinator-checked' and c['coordinator_check']==phase['coordinator_acceptance'];assert c['integrated_review'] is None and c['git_checkpoint'] is None\nassert phase['coordinator_acceptance']['status']=='PASS' and phase['coordinator_acceptance']['module_git_checkpoint']=='pending until coordinator commits'\nassert Counter(x['status'] for x in status['streams'])==Counter({'queued':13,'in-progress':3,'coordinator-checked':2})\nassert status['counts']['report_written']==0 and status['counts']['coordinator_checked']==2 and status['counts']['integrated_review_complete']==0 and status['counts']['reports_published']==2\nassert status['counts']['supplied_primary_body_paths']==21 and status['counts']['published_findings']==6 and status['counts']['primary_targets_without_new_body_evidence']==898\nfor stream in status['streams']:\n assert stream['integrated_review']['status']=='pending' and stream['git_checkpoint']['status']=='pending'\n if stream['id'] in ['S01','S02']:assert stream['coordinator_check']['status']=='PASS' and stream['status']=='coordinator-checked'\n else:assert stream['coordinator_check']['status']=='pending'\nassert status['pending_publication_packets'][0]['stream']=='H01' and status['pending_publication_packets'][0]['published_body_credit_in_this_package']==0\nfor path,want in publication['before']['stable_foundation_documents'].items():assert sha(Path(path).read_bytes())==want,path\ntracked=subprocess.check_output(['git','ls-tree','-rz','--name-only',publication['before']['documentation_start']['commit']]).decode().split('\\0')[:-1]\nprotected=[p for p in tracked if p!='docs/audits/project-audit-plan.md' and not p.startswith(str(base)+'/')]\nfrozen=[p for p in protected if p.startswith(('docs/audits/codebase-discovery/','docs/audits/architecture-review-2026-11-06/')) or p=='docs/audits/harness-architecture-2026-11-05.md']\nagg=lambda paths:{'count':len(paths),'sha256':sha(canon({p:sha(Path(p).read_bytes()) for p in sorted(paths)}))}\nassert agg(protected)==publication['before']['protected_before'] and agg(frozen)==publication['before']['frozen_old_evidence_before']\nallowed=set(phase['allowed_writes']);changed=set(subprocess.check_output(['git','diff','--name-only',publication['before']['documentation_start']['commit'],'--']).decode().splitlines())|set(subprocess.check_output(['git','ls-files','--others','--exclude-standard']).decode().splitlines());assert changed==allowed\nfor path in allowed:assert all(line.rstrip()==line for line in Path(path).read_bytes().splitlines()),path\nfiles=list(base.rglob('*.json'))\nfor path in files:json.loads(path.read_text())\nmarkdown=list(base.rglob('*.md'))+[Path('docs/audits/project-audit-plan.md')];links=0;anchors=0;source_links=0;source_anchors=0;history_links=0\nfor path in markdown:\n for target in re.findall(r'\\[[^\\]]*\\]\\(([^)]+)\\)',path.read_text()):\n  u=urlsplit(target.strip().strip('<>'))\n  if u.scheme or u.netloc:\n   if path.parent==base/'reports':\n    if '/blob/' in u.path:source_links+=1;source_anchors+=int(bool(u.fragment))\n    if '/commit/' in u.path:history_links+=1\n   continue\n  local=(path.parent/unquote(u.path)).resolve() if u.path else path.resolve();assert local.exists(),(str(path),target);links+=1\n  if u.fragment and local.suffix=='.md':\n   body=local.read_text();ids=re.findall(r'<a\\s+id=[\\\"\\']([^\\\"\\']+)',body)\n   for h in re.findall(r'^#{1,6}\\s+(.+?)\\s*#*$',body,re.M):ids.append(re.sub(r'[^\\w\\- ]','',re.sub(r'<[^>]*>','',h).lower()).replace(' ','-'))\n   assert unquote(u.fragment) in ids,(str(path),target);anchors+=1\nsubprocess.run(['git','diff','--check'],check=True)\nprint(json.dumps({'status':'PASS','phase':'Coordinator acceptance bookkeeping only','coordinator_checked_streams':2,'report_written_state_count':0,'reports_published':2,'integrated_review_complete':0,'module_checkpoints':'pending','technical_report_tails_unchanged':2,'coverage_technical_payloads_unchanged':2,'original_publication_snapshot_sha256':phase['publication_snapshot']['sha256'],'historical_foundation_fields_sha256':phase['historical_foundation_fields_sha256'],'protected_after':agg(protected),'frozen_old_evidence_after':agg(frozen),'json_files_parsed':len(files),'markdown_documents_checked':len(markdown),'current_local_links':links,'current_local_anchors':anchors,'unchanged_report_source_links':source_links,'unchanged_report_source_anchors':source_anchors,'unchanged_report_history_links':history_links,'owned_files':len(allowed),'git_diff_check_exit':0,'document_sha256':{p:sha(Path(p).read_bytes()) for p in sorted(allowed) if p!=str(base/'validation.json')}},indent=2))\nPY",
+          "exit_code": 0,
+          "result_location": "acceptance_phases[0].structural_results"
+        },
+        {
+          "id": "AP2-diff",
+          "command": "git diff --check",
+          "exit_code": 0,
+          "output": ""
+        }
+      ],
+      "limits": [
+        "Supplied coordinator verdict recorded; no new semantic findings or broad source rereads.",
+        "Integrated review awaits all modules; module Git checkpoint remains pending.",
+        "H01 remains queued for separate publication; no H01/H02 publication in this pass."
+      ],
+      "new_raw_failures": []
+    }
+  ],
+  "current_phase": "stopping_point",
+  "stopping_point": {
+    "id": "USER-PAUSE-2026-11-06",
+    "execution_state": "PAUSED",
+    "reason": "Explicit user request to wrap up and sync Git because quota is insufficient.",
+    "scope": "Save received handoffs and minimal current status/navigation only; no source rereads, report conversion, semantic acceptance or application execution.",
+    "handoff_index": "handoffs/index.json",
+    "source_of_status": "Direct root and stopped analyst messages; H03 confirms23 full/19 partial/3 unread.",
+    "historical_snapshot_rule": "All existing commands/results, module_stages and acceptance_phases retained unchanged as historical snapshots.",
+    "structural_verification": "Pending coordinator. Latest root instruction assigns the single bounded stopping-point structural check and Git sync to root; publisher ran no new check.",
+    "proposed_bounded_checks": [
+      "Parse saved JSON; verify handoff file SHA256 against handoffs/index.json.",
+      "Compare handoff ledger path selections/counts to frozen TSV and validate supplied range syntax/bounds without reading source blobs.",
+      "Verify local documentation links, unchanged historical snapshot hashes and protected scope via Git metadata.",
+      "git diff --check"
+    ],
+    "git_preservation": "Pending coordinator; publisher made no commit or push.",
+    "published_primary_body_credit_added": 0,
+    "application_execution": false
+  }
+}

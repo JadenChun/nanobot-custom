@@ -1,0 +1,954 @@
+{
+  "schema_version": 1,
+  "stream_id": "P01",
+  "report": "reports/P01.md",
+  "publication_state": "coordinator-checked",
+  "review_date": "2026-11-07",
+  "evidence_origin": {
+    "analyst": "ChatGPT cross-stream synthesis",
+    "handoff": "16 completed stream reports and coverage ledgers",
+    "published_by": "Same-assistant source coordinator, not peer validation"
+  },
+  "source_pins": {
+    "nanobot": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba"
+    }
+  },
+  "assigned_primary_paths": [],
+  "bounded_body_reads": [],
+  "caller_context_reads": [],
+  "test_source_reads": [],
+  "support_reads": [
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/C00.md",
+      "ranges": [
+        [
+          30,
+          206
+        ]
+      ],
+      "purpose": "Owner responsibilities, seven source findings and explicit smaller alternatives",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/H01.md",
+      "ranges": [
+        [
+          170,
+          239
+        ],
+        [
+          278,
+          299
+        ]
+      ],
+      "purpose": "Turn/result duplication, dispatch settlement, conditional retirements",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/H02.md",
+      "ranges": [
+        [
+          40,
+          139
+        ]
+      ],
+      "purpose": "Source writer, artifact store, history bounds, dormant feature candidates",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/H03.md",
+      "ranges": [
+        [
+          16,
+          101
+        ]
+      ],
+      "purpose": "Provider outcomes, credential generations, accounting and optional duplication",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/S01.md",
+      "ranges": [
+        [
+          25,
+          130
+        ],
+        [
+          132,
+          189
+        ]
+      ],
+      "purpose": "Effective path facts, private compatibility, native totals, security owners",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/S02.md",
+      "ranges": [
+        [
+          24,
+          174
+        ]
+      ],
+      "purpose": "Native process lifecycle, blocking awaits, reference mechanisms",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/T01.md",
+      "ranges": [
+        [
+          9,
+          69
+        ]
+      ],
+      "purpose": "Tool/MCP/approval/process owners, capabilities and dependencies",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/A01.md",
+      "ranges": [
+        [
+          13,
+          80
+        ]
+      ],
+      "purpose": "Cron and trigger durability, expiry, async persisted IO, capability mismatch",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/K01.md",
+      "ranges": [
+        [
+          9,
+          81
+        ]
+      ],
+      "purpose": "Skill/knowledge authoring validation, prompt routing, guidance drift, Dream ownership",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/E02.md",
+      "ranges": [
+        [
+          9,
+          116
+        ]
+      ],
+      "purpose": "Gateway/web state ownership, root scoping, authenticated mutations, transcript lifecycle",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/U01.md",
+      "ranges": [
+        [
+          11,
+          60
+        ]
+      ],
+      "purpose": "Web UI identity/generation, send queue and persistence state",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/D01.md",
+      "ranges": [
+        [
+          11,
+          56
+        ]
+      ],
+      "purpose": "TUI followup transactional dequeue and context request generation",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/R01.md",
+      "ranges": [
+        [
+          1,
+          155
+        ]
+      ],
+      "purpose": "Remote authority and custody, native completion, caches and release qualification",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/M01.md",
+      "ranges": [
+        [
+          1,
+          122
+        ]
+      ],
+      "purpose": "Attachment ownership, dry run, prune, byte/format limits",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/X01.md",
+      "ranges": [
+        [
+          1,
+          115
+        ]
+      ],
+      "purpose": "CLI Apps/native host child, crawler read-only vs click, catalog provenance",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/Q01.md",
+      "ranges": [
+        [
+          1,
+          110
+        ]
+      ],
+      "purpose": "Installer and deploy lifecycle, release reproducibility and trust",
+      "kind": "prior coordinator-checked report evidence; selected excerpts and headings, not entire new primary reads"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "AGENTS.md",
+      "extent": "read first project guidance, >5k chars",
+      "purpose": "Architecture and audit validation restrictions"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".agent/design.md",
+      "extent": "architecture constraints read",
+      "purpose": "Prefer edge-owned small changes, avoid premature shared provider/channel abstractions"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".agent/security.md",
+      "extent": "workspace/SSRF/sandbox boundary rules read",
+      "purpose": "Application policy is not process confinement"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": ".agent/gotchas.md",
+      "extent": "common migration/prompt/source-state constraints read",
+      "purpose": "Do not erase historical prompt/atomic write contracts"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/scope.json",
+      "extent": "primary/stream inventory metadata",
+      "purpose": "Verify P01 has zero new primary denominator"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/status.json",
+      "extent": "current 16 report/824 deep source status",
+      "purpose": "Avoid double counting findings or primary targets"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/synthesis.md",
+      "ranges": [
+        [
+          1,
+          59
+        ],
+        [
+          185,
+          201
+        ]
+      ],
+      "purpose": "D1–D7 sequencing and prior closures"
+    }
+  ],
+  "reviewed_coverage_ledgers": [
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    },
+    {
+      "repository": "nanobot",
+      "ref": "codex/staging-audit",
+      "path": "docs/audits/module-review-2026-11-06/reports/undefined-coverage.json",
+      "extent": "coordinator status, primary counts, finding IDs and retained-question counts; E02 uses promoted_findings not findings",
+      "purpose": "Mechanically avoid duplicate primary and finding credit"
+    }
+  ],
+  "search_only": [],
+  "justified_exclusions": [
+    {
+      "scope": "824 prior primary source bodies",
+      "reason": "P01 uses prior coordinator-checked source stream evidence and does not re-review or re-count it",
+      "impact": "No new source coverage; 824/824 unchanged"
+    },
+    {
+      "scope": "E01 95 channel-adapter primary paths",
+      "reason": "Explicit user choice to leave channel adapters limited-depth and nonpriority",
+      "impact": "40 earlier full/55 quick screen retained; no deep-PASS claim"
+    }
+  ],
+  "material_unread_gaps": [],
+  "reference_mechanisms_or_nonapplicability": [
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "packages/sandbox/sandbox-policy/src/index.ts",
+      "ranges": [
+        [
+          147,
+          217
+        ]
+      ],
+      "git_blob": "36fdc1f2e85b031bee52712bffe8f79e9500ecf7",
+      "mechanism": "One per-call effective workspace/session permission fact; Nanobot proof lifetime not imported"
+    },
+    {
+      "repository": "dsh",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0",
+      "path": "scripts/pre-merge-check.ts",
+      "ranges": [
+        [
+          21,
+          42
+        ],
+        [
+          90,
+          131
+        ]
+      ],
+      "git_blob": "576b6ee7f9b1bbd9afbc2391d83c2ffb2603d381",
+      "mechanism": "Explicit merged-tree fixed-lock install plus ordered release build checks, can be report-only"
+    },
+    {
+      "repository": "codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "path": "codex-rs/core/src/tools/orchestrator.rs",
+      "ranges": [
+        [
+          365,
+          435
+        ],
+        [
+          439,
+          510
+        ]
+      ],
+      "git_blob": "a1a88e445449e55f3f8038adef48e0457df9a534",
+      "mechanism": "Separate sandbox denial from external approval and retry; no unsandboxed fallback by default"
+    }
+  ],
+  "prior_change_evidence": [
+    {
+      "kind": "inherited source history from audited reports",
+      "source_streams": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "limit": "Historical commits described by corresponding stream reports at their own pins, not freshly diff-reviewed by P01"
+    },
+    {
+      "kind": "staging observation",
+      "from": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "to": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "paths": [
+        "nanobot/agent/skills.py",
+        "tests/agent/test_skills_loader.py"
+      ],
+      "action": "K01-only current-origin refresh next; P01 does not refresh frozen source"
+    }
+  ],
+  "synthesis_candidates": [
+    {
+      "id": "P01-C01",
+      "title": "Path/capability fact convergence and distinct enforcement planes",
+      "source_findings": [
+        "S01-F01",
+        "T01-F07",
+        "K01-F01",
+        "H01-F4",
+        "X01-F01",
+        "R01-F02",
+        "Q01-F01"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C02",
+      "title": "Gateway instance-root and credential/accounting scoping",
+      "source_findings": [
+        "C00-F06",
+        "E02-F11",
+        "E02-F13",
+        "E02-F15",
+        "E02-F16",
+        "E02-F17",
+        "E02-F18",
+        "H03-F4"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C03",
+      "title": "Typed outcome/settlement/ack vocabulary without one DB",
+      "source_findings": [
+        "E02-F20",
+        "H01-F1",
+        "H01-F2",
+        "H01-F6",
+        "H01-F7",
+        "H03-F3",
+        "H03-F5",
+        "A01-F08",
+        "R01-F01",
+        "R01-F03",
+        "R01-F09",
+        "R01-F13"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C04",
+      "title": "Client generation and queue admission",
+      "source_findings": [
+        "U01-F01",
+        "U01-F02",
+        "U01-F03",
+        "U01-F04",
+        "U01-F05",
+        "D01-F01",
+        "D01-F02"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C05",
+      "title": "Managed child lifetime, cancellation and bounded output",
+      "source_findings": [
+        "S02-F01",
+        "S02-F02",
+        "S02-F03",
+        "T01-F09",
+        "E02-F14",
+        "X01-F01",
+        "X01-F03"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C06",
+      "title": "Registered capability and route contracts as sources of truth",
+      "source_findings": [
+        "T01-F10",
+        "K01-F11",
+        "A01-F02",
+        "A01-F07",
+        "E02-F21",
+        "R01-F04",
+        "R01-F19"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C07",
+      "title": "Per-owner bounded histories, scans, and graceful admission",
+      "source_findings": [
+        "H02-CAP-SOURCE64",
+        "H02-CAP-JOURNAL4096",
+        "H02-IO",
+        "A01-F03",
+        "A01-F04",
+        "A01-F05",
+        "E02-F04",
+        "E02-F23",
+        "M01-F04",
+        "R01-F14"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C08",
+      "title": "Ordered async persistence for cron/process completion",
+      "source_findings": [
+        "A01-F01",
+        "A01-F03",
+        "H02-IO",
+        "S02-F03"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C09",
+      "title": "Immutable multi-package release provenance and deployment",
+      "source_findings": [
+        "Q01-F03",
+        "Q01-F04",
+        "Q01-F05",
+        "Q01-F06",
+        "Q01-F07",
+        "E02-F12",
+        "R01-F16",
+        "R01-F17",
+        "R01-F18",
+        "R01-F20"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    },
+    {
+      "id": "P01-C10",
+      "title": "Retirement with external/config/persisted compatibility proof",
+      "source_findings": [
+        "S01-F02",
+        "T01-F10",
+        "A01-F02",
+        "A01-F07",
+        "H02-IDLE-DORMANT",
+        "K01-F11"
+      ],
+      "classification": "cross-cutting candidate only; not a new counted finding",
+      "decision": "deferred D1–D7",
+      "source_benefit": "Removal of repeated authority, lookup, state handling or readiness projections in existing owners",
+      "runtime_benefit": "not measured"
+    }
+  ],
+  "do_not_merge": [
+    {
+      "left": "X01-F02",
+      "right": "Q01-F01",
+      "reason": "DOM event mutations vs loopback caller authentication",
+      "merge": false
+    },
+    {
+      "left": "R01-F09",
+      "right": "R01-F13",
+      "reason": "Unregistered waiter vs completion dropped due queue backpressure",
+      "merge": false
+    },
+    {
+      "left": "R01-F01",
+      "right": "R01-F03",
+      "reason": "Initial pairing vs refresh rotation distinct credential custody",
+      "merge": false
+    },
+    {
+      "left": "T01-F10",
+      "right": "K01-F11",
+      "reason": "Tool registration defect vs prompt/tool guidance drift",
+      "merge": false
+    },
+    {
+      "left": "H02-CAP-SOURCE64",
+      "right": "H02-CAP-JOURNAL4096",
+      "reason": "Different durable representations and thresholds",
+      "merge": false
+    },
+    {
+      "left": "M01-F02",
+      "right": "E02-F06",
+      "reason": "Attachment sidecar cleanup vs WebUI transcript deletion",
+      "merge": false
+    },
+    {
+      "left": "R01-F17",
+      "right": "R01-F18",
+      "reason": "Toolchain version enforcement vs exact Gradle binary digest",
+      "merge": false
+    }
+  ],
+  "findings": [],
+  "final_discussion_questions": [],
+  "discussion_groupings": [
+    {
+      "decision": "D1",
+      "meaning": "Supported client/executor/backend platform matrix"
+    },
+    {
+      "decision": "D2",
+      "meaning": "Authority, Full, private roots and credential/data scope"
+    },
+    {
+      "decision": "D3",
+      "meaning": "Managed session and delegation"
+    },
+    {
+      "decision": "D4",
+      "meaning": "Public and private compatibility/retirement"
+    },
+    {
+      "decision": "D5",
+      "meaning": "Registration, request and owner lifetime"
+    },
+    {
+      "decision": "D6",
+      "meaning": "Attempt, effects, durability and recovery"
+    },
+    {
+      "decision": "D7",
+      "meaning": "Completion and resource budgets"
+    }
+  ],
+  "cross_module_dependencies_and_conflicts": [
+    {
+      "candidate": "P01-C01",
+      "depends_on": [
+        "S01-F01",
+        "T01-F07",
+        "K01-F01",
+        "H01-F4",
+        "X01-F01",
+        "R01-F02",
+        "Q01-F01"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C02",
+      "depends_on": [
+        "C00-F06",
+        "E02-F11",
+        "E02-F13",
+        "E02-F15",
+        "E02-F16",
+        "E02-F17",
+        "E02-F18",
+        "H03-F4"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C03",
+      "depends_on": [
+        "E02-F20",
+        "H01-F1",
+        "H01-F2",
+        "H01-F6",
+        "H01-F7",
+        "H03-F3",
+        "H03-F5",
+        "A01-F08",
+        "R01-F01",
+        "R01-F03",
+        "R01-F09",
+        "R01-F13"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C04",
+      "depends_on": [
+        "U01-F01",
+        "U01-F02",
+        "U01-F03",
+        "U01-F04",
+        "U01-F05",
+        "D01-F01",
+        "D01-F02"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C05",
+      "depends_on": [
+        "S02-F01",
+        "S02-F02",
+        "S02-F03",
+        "T01-F09",
+        "E02-F14",
+        "X01-F01",
+        "X01-F03"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C06",
+      "depends_on": [
+        "T01-F10",
+        "K01-F11",
+        "A01-F02",
+        "A01-F07",
+        "E02-F21",
+        "R01-F04",
+        "R01-F19"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C07",
+      "depends_on": [
+        "H02-CAP-SOURCE64",
+        "H02-CAP-JOURNAL4096",
+        "H02-IO",
+        "A01-F03",
+        "A01-F04",
+        "A01-F05",
+        "E02-F04",
+        "E02-F23",
+        "M01-F04",
+        "R01-F14"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C08",
+      "depends_on": [
+        "A01-F01",
+        "A01-F03",
+        "H02-IO",
+        "S02-F03"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C09",
+      "depends_on": [
+        "Q01-F03",
+        "Q01-F04",
+        "Q01-F05",
+        "Q01-F06",
+        "Q01-F07",
+        "E02-F12",
+        "R01-F16",
+        "R01-F17",
+        "R01-F18",
+        "R01-F20"
+      ],
+      "decision": "deferred D1–D7"
+    },
+    {
+      "candidate": "P01-C10",
+      "depends_on": [
+        "S01-F02",
+        "T01-F10",
+        "A01-F02",
+        "A01-F07",
+        "H02-IDLE-DORMANT",
+        "K01-F11"
+      ],
+      "decision": "deferred D1–D7"
+    }
+  ],
+  "coordinator_check": {
+    "status": "PASS",
+    "checked_at": "2026-11-07",
+    "authority": "same-assistant source synthesis",
+    "evidence": "16 coordinator-checked report/ledger comparisons, 10 named simplification proposals, 7 explicit do-not-merge examples, frozen direct DSH/Codex snippets, zero P01 primary or additional counted findings/questions; D1–D7 deferred",
+    "counts_reconciled": true
+  },
+  "integrated_review": {
+    "status": "pending",
+    "evidence": null
+  },
+  "git_checkpoint": {
+    "status": "P01 report and coverage published; status/synthesis checkpoint follows",
+    "report_commit": "d32cebae8f1587b04463d0716841b070c2877380",
+    "coverage_commit": null
+  },
+  "limits": [
+    "P01 did not read 824 source bodies again, or upgrade E01; selected report excerpts/heads only",
+    "No runtime testing, code edits, package install, service launch, browser, performance benchmark or deployed configuration proof",
+    "Proposals do not accept contracts, retire interfaces or change original finding priorities/counts"
+  ],
+  "counts": {
+    "assigned_primary": 0,
+    "full": 0,
+    "partial": 0,
+    "unread": 0,
+    "source_body_addition": 0,
+    "input_primary_streams": 16,
+    "source_findings_retained": 136,
+    "source_questions_retained": 105,
+    "findings": 0,
+    "discussion_questions": 0,
+    "proposals": 10,
+    "do_not_merge_examples": 7,
+    "deep_required_prior_reviewed": 824,
+    "deep_required_total": 824,
+    "limited_depth_E01": 95
+  }
+}

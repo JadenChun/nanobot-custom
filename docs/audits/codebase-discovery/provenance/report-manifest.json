@@ -1,0 +1,216 @@
+{
+  "method": "Frozen input hashes and publication targets; coverage JSON is byte-identical. Markdown may receive readable prose and portable links without extending inspection.",
+  "reports": [
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/01-entrypoints-turns-coverage.json",
+      "input_sha256": "d60e373b08088c28cf9da3f5b48b6f4b8a977fe0081e67dae3b6d6b42c49a46f",
+      "published_sha256": "d60e373b08088c28cf9da3f5b48b6f4b8a977fe0081e67dae3b6d6b42c49a46f",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/01-entrypoints-turns.md",
+      "input_sha256": "bcef86b4c3cb14b283cd1edceb00b189a4bfff2c2f4f4f861b649f9489b4c503",
+      "published_sha256": "15bc327dc0d5b9b692f530f2eaa0c89fbc54df3f94e4b986e631b974f307df3c",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/02-state-context-coverage.json",
+      "input_sha256": "71c3d8dd37e884604a221df871c2952096f7e8f0a0766d91e5f8b2e0af48ad51",
+      "published_sha256": "71c3d8dd37e884604a221df871c2952096f7e8f0a0766d91e5f8b2e0af48ad51",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/02-state-context.md",
+      "input_sha256": "4878c6611be49d3ccef28e8cb976a7996fba0b327b0e1c06a4eba472f1ba128f",
+      "published_sha256": "9719e6f95a3de01408744bdf9b4fcadae312f6c5485d34f46d336bba44a63132",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/03-sandbox-authority-coverage.json",
+      "input_sha256": "2ad9650792153d744044f76f2b261cc1f9e1bbae934cf2af5917072ad4519c7b",
+      "published_sha256": "2ad9650792153d744044f76f2b261cc1f9e1bbae934cf2af5917072ad4519c7b",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/03-sandbox-authority.md",
+      "input_sha256": "f138991615cf5d0669db0a8c6bf3ceefd331fc84a6f24a6ad8ba28bbb00c8e86",
+      "published_sha256": "f4502c6814b1db1d5617a08024c479cb969c01fced61b69efe6c23ed298ed868",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/04-providers-media-coverage.json",
+      "input_sha256": "1c175a2f4e948fca69d039a8848f92b83334050a2cd2bc99a6ed9a3e7706012d",
+      "published_sha256": "1c175a2f4e948fca69d039a8848f92b83334050a2cd2bc99a6ed9a3e7706012d",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/04-providers-media.md",
+      "input_sha256": "5c745147998d3895caee062d990a7e32b2fd69779f467fad1e319f3bcba9064b",
+      "published_sha256": "005acbcbacca09ef4c27c63d4d81cef25667fb8c938c5d7015218bf8d2521457",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/05-tools-automation-coverage.json",
+      "input_sha256": "a0375b86f36448b1eeeb0b3b3b749614a06454bcdd2a08bc4b413493f995dac0",
+      "published_sha256": "a0375b86f36448b1eeeb0b3b3b749614a06454bcdd2a08bc4b413493f995dac0",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/05-tools-automation.md",
+      "input_sha256": "716a7f138deab18ab74b00c975aa70387f050849f958e492be4c6605d6df0ea3",
+      "published_sha256": "972e0a82888af576df13b019a60c255f7ac6cc78ce0f5884612169532ab2a3ae",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/06-channels-extensions-coverage.json",
+      "input_sha256": "aa634d8dc6e78b93c0c00e5e5f2a5600dd3796766ac0018775b097f4205cc762",
+      "published_sha256": "aa634d8dc6e78b93c0c00e5e5f2a5600dd3796766ac0018775b097f4205cc762",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/06-channels-extensions.md",
+      "input_sha256": "7a8f81baaf356292237ae6a9b61a26ed68102dcd20cb855cb176e55728a22859",
+      "published_sha256": "d280c2ddd51dfd261642c556db409db760e40777fb73f9942b0ea92992941ead",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/07-backend-remote-coverage.json",
+      "input_sha256": "9f17d7d3fc747852a6b5f871c9eb87f3c2deb30b9f9953ff4dfdd7290ca7f033",
+      "published_sha256": "9f17d7d3fc747852a6b5f871c9eb87f3c2deb30b9f9953ff4dfdd7290ca7f033",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/07-backend-remote.md",
+      "input_sha256": "9152de2b4b44ae52e31eaf2e363ea5b2131579ebb1e25463019224ade5127965",
+      "published_sha256": "477a20156e7f27dc0bb69a6a9d02aa04ea2b0f571cad4a7d740421286a32028a",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/08-clients-coverage.json",
+      "input_sha256": "c6318b6076fa9663fa400573e33e133ad63d9ea02ace8d23550b979221fbead7",
+      "published_sha256": "c6318b6076fa9663fa400573e33e133ad63d9ea02ace8d23550b979221fbead7",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/08-clients.md",
+      "input_sha256": "20681462489ac46309c9c974a29ef8f91ad3f13e5b88e2acc12c8755eceac6f4",
+      "published_sha256": "5fa920c3cfd77b5a76950fde3df0b35f7dc4e5a805a6d8cc5bfd28c40a0f885e",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/09-tooling-efficiency-coverage.json",
+      "input_sha256": "d6c9ab4327de8aa025aa78d920138240a042e4b89d9a4ea4bd193e93512470dc",
+      "published_sha256": "d6c9ab4327de8aa025aa78d920138240a042e4b89d9a4ea4bd193e93512470dc",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "prior-2026-11-05",
+      "path": "reports/prior-2026-11-05/09-tooling-efficiency.md",
+      "input_sha256": "71731e4f8341fce36aa9a737e3ee98c5a3bba6fbec963c30ecb31f0bcdc3617f",
+      "published_sha256": "fcd60b693253571f6769563b9a525a463720cb52a09532088260fb9268843a9f",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "refresh-2026-11-06",
+      "path": "reports/refresh-2026-11-06/01-core-automation-coverage.json",
+      "input_sha256": "d0082bdee9d257abc633dc92f2cfc25b331005dab7eb1431f2e5fbaa59e6904b",
+      "published_sha256": "d0082bdee9d257abc633dc92f2cfc25b331005dab7eb1431f2e5fbaa59e6904b",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "refresh-2026-11-06",
+      "path": "reports/refresh-2026-11-06/01-core-automation.md",
+      "input_sha256": "af58057d26cf51be8c7a5f3c7b43cac2849f30ffc5c95f2636207fbc17092320",
+      "published_sha256": "6427a338873e7ef32cbfdce05f51508347bf604dc17ce82e4507b0ed89e28797",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "refresh-2026-11-06",
+      "path": "reports/refresh-2026-11-06/02-backend-mobile-coverage.json",
+      "input_sha256": "fdd35a508a1f1b4151b20f030c8f80394fff9affa8265deb2d5456b564ae5683",
+      "published_sha256": "fdd35a508a1f1b4151b20f030c8f80394fff9affa8265deb2d5456b564ae5683",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "refresh-2026-11-06",
+      "path": "reports/refresh-2026-11-06/02-backend-mobile.md",
+      "input_sha256": "9458410585929294bed9ed5a004be065d69640dcaa2e26249901510f2e61386d",
+      "published_sha256": "103034765846de1a8257a91aa2b9796be8b1dae413bbb3a623d0bd5458724b62",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "refresh-2026-11-06",
+      "path": "reports/refresh-2026-11-06/03-webui-coverage.json",
+      "input_sha256": "4836995c0bb64d7b9c1502e2bb22895d476e9d416cd01fdb3a68286f2ef492a2",
+      "published_sha256": "4836995c0bb64d7b9c1502e2bb22895d476e9d416cd01fdb3a68286f2ef492a2",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "refresh-2026-11-06",
+      "path": "reports/refresh-2026-11-06/03-webui.md",
+      "input_sha256": "9346bf689a305700babe0f27facefe7d8252d69092bec252d3d59ebd655d9292",
+      "published_sha256": "afa47c42f84182113440d40f79d2c4b41c2db3c209595a40e435a2fd5115d494",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "completion-2026-11-06",
+      "path": "reports/completion-2026-11-06/01-startup-core-coverage.json",
+      "input_sha256": "e4f170a8dc4c68aff1b8b5b61e5fc6f6772cf00cfc13d2374514ec6d5f166f79",
+      "published_sha256": "e4f170a8dc4c68aff1b8b5b61e5fc6f6772cf00cfc13d2374514ec6d5f166f79",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "completion-2026-11-06",
+      "path": "reports/completion-2026-11-06/01-startup-core.md",
+      "input_sha256": "d927d615a76e2c44dec5779020474b382d1d9692ccc287f1ab9673ce6f644293",
+      "published_sha256": "5db91a5a98c248ee7a67518bce63fcb64230ab35eea17c543c2ba2d3854c3842",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "completion-2026-11-06",
+      "path": "reports/completion-2026-11-06/02-state-recovery-coverage.json",
+      "input_sha256": "e5b4d3e45d893cb3bd307aa8cc1708d4c89f0323fdec4bf95d4d68c3cd0ea551",
+      "published_sha256": "e5b4d3e45d893cb3bd307aa8cc1708d4c89f0323fdec4bf95d4d68c3cd0ea551",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "completion-2026-11-06",
+      "path": "reports/completion-2026-11-06/02-state-recovery.md",
+      "input_sha256": "0abd46c59f9995a2154684ef882c8dc1c290993a1e9f5319327776923e9caff1",
+      "published_sha256": "984805eeffe3d87c5214437fe5d04a7e140e34b8e928f9e7d92837b6119e8cb4",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    },
+    {
+      "kind": "completion-2026-11-06",
+      "path": "reports/completion-2026-11-06/03-knowledge-instructions-coverage.json",
+      "input_sha256": "91fbe84ad5aa8384a67beb0ebfaebbd54528bfbe0fa260eedd88b15b6087c73c",
+      "published_sha256": "91fbe84ad5aa8384a67beb0ebfaebbd54528bfbe0fa260eedd88b15b6087c73c",
+      "publication": "verbatim exact coverage JSON"
+    },
+    {
+      "kind": "completion-2026-11-06",
+      "path": "reports/completion-2026-11-06/03-knowledge-instructions.md",
+      "input_sha256": "d6fdfebefd686cb69c56ef3c161c60c5b0f6e9315a529202a422a5b873cbeff0",
+      "published_sha256": "6536ed979a6663d668d029517ca3fdac588181c4459cbc15e2166fafb9949504",
+      "publication": "readable prose and portable navigation; original inspection scope retained"
+    }
+  ],
+  "path_base": "discovery-root: docs/audits/codebase-discovery/ (one directory above this manifest)"
+}

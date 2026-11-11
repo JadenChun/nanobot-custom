@@ -1,0 +1,597 @@
+{
+  "checkpoint": "REF-COMPARE-2026-11-06",
+  "publication_status": "Accepted targeted source-comparison checkpoint: independent correction recheck PASS and coordinator content acceptance PASS; product decisions remain PENDING.",
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+      "tree": "d49aca97c9a34a2d17eae53d672fa591652457f1"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "documentation_start": {
+    "commit": "ae64bbec612a1a1af0a799dbfcdbdec423928f5e",
+    "branch": "codex/staging-discovery-20261106",
+    "working_tree_clean_before": true
+  },
+  "method": "Pinned source/document reads and standard-Git/Python standard-library document processing only; no application execution.",
+  "reference_policy": {
+    "dsh_codex": "Engineering examples, not identical products, feature-parity targets or operational reliability certification.",
+    "hermes": "Secondary product-direction awareness only; no code audit, source pin or mechanism evidence."
+  },
+  "scope": {
+    "comparison_rows": 33,
+    "references": [
+      "REF1",
+      "REF2",
+      "REF3",
+      "REF4",
+      "REF5",
+      "REF6"
+    ],
+    "discovery_counts_unchanged": {
+      "baseline_paths": 2455,
+      "source_targets": 919,
+      "current_reads": 224,
+      "identical_hash_carried": 695,
+      "mapped_only_source": 0
+    },
+    "depth": "Targeted mechanism/caller body reads; no exhaustive full-project semantic audit. Per-package search-only scope is not body coverage, even if another package read that path's body."
+  },
+  "guidance_and_discovery_inputs": [
+    "AGENTS.md",
+    ".agent/design.md",
+    ".agent/security.md",
+    ".agent/gotchas.md",
+    "CONTRIBUTING.md",
+    "docs/audits/project-audit-plan.md",
+    "docs/audits/codebase-discovery/README.md",
+    "docs/audits/codebase-discovery/continuation-plan.md",
+    "docs/audits/codebase-discovery/completion-2026-11-06.md",
+    "docs/audits/codebase-discovery/reports/README.md",
+    "docs/audits/codebase-discovery/methodology.md"
+  ],
+  "frozen_input_sha256": {
+    "docs/audits/codebase-discovery/baseline.json": "5df49a133421a689dc4055f2b7b3fffa36f5f1fc3cbe64429a74c0d925083f1e",
+    "docs/audits/codebase-discovery/coverage-summary.json": "beb84462fd0fbbf6457ef11bffe1ef4b4a8299908de1264f9f6be3647a639018",
+    "docs/audits/codebase-discovery/path-inventory.tsv": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
+    "docs/audits/codebase-discovery/provenance/report-manifest.json": "18f6e07077a9314de10961c263dcdd6737bfbe0f5e50fd2cfd1e6c0c0dab01da",
+    "docs/audits/codebase-discovery/provenance/source-reference-map.json": "2a1f612721ef74f0b75c2d542c2fd4780ff81d72cf618413640270f40a2f6908",
+    "docs/audits/harness-architecture-2026-11-05.md": "a6f53a218942836b2dbb102b43cb87a1d3a3f388ffcb42530cbc22b43fceea0e"
+  },
+  "integrity_baseline": {
+    "head": "ae64bbec612a1a1af0a799dbfcdbdec423928f5e",
+    "protected_tracked_count": 2499,
+    "protected_tracked_sha256": "687d1ce6549076dba16a7bd1317e26a0ff129292f83611e07a49e0d5c41965bb",
+    "frozen_discovery_count": 43,
+    "frozen_discovery_sha256": "445f3c586e41fca239a9d2fa53cce9d8d9ece2d24f1fc002201f961eba049c3f",
+    "source_pin_non_audit_differences": [],
+    "new_review_exists": false
+  },
+  "read_sets": {
+    "REF-ADMISSION": {
+      "report": "admission-requests.md",
+      "rows": [
+        "A1",
+        "A2",
+        "A3",
+        "A4",
+        "A5",
+        "A6",
+        "A7",
+        "A8"
+      ],
+      "targeted_body_paths": {
+        "nanobot": [
+          "nanobot/agent/loop.py",
+          "nanobot/agent/runner.py",
+          "nanobot/agent/context_governance.py",
+          "nanobot/agent/turn.py",
+          "nanobot/agent/hook.py",
+          "nanobot/agent/turn_hooks.py",
+          "nanobot/agent/progress_hook.py",
+          "nanobot/agent/tools/execution.py",
+          "nanobot/agent/tools/registry.py",
+          "nanobot/agent/tools/mcp.py",
+          "nanobot/session/execution_owner.py",
+          "nanobot/session/source_request.py",
+          "nanobot/session/turn_writer.py",
+          "nanobot/session/source_store.py",
+          "nanobot/session/manager.py",
+          "nanobot/session/artifact_reader.py",
+          "nanobot/session/workspace_access_recovery.py",
+          "nanobot/providers/request_budget.py",
+          "nanobot/config/schema.py",
+          "nanobot/cli/gateway_runtime.py",
+          "nanobot/webui/settings_routes.py"
+        ],
+        "dsh": [
+          "packages/core/agent-loop/src/agent.ts",
+          "packages/core/agent-loop/src/inbox.ts",
+          "packages/core/agent-loop/src/index.ts",
+          "packages/core/tools/src/index.ts",
+          "packages/core/tools/src/batch.ts",
+          "packages/core/tools/src/pipeline.ts",
+          "packages/core/tools/src/executor.ts",
+          "packages/core/session/src/repair.ts",
+          "packages/compaction/compaction-basic/src/index.ts",
+          "packages/compaction/compaction-basic/src/region.ts"
+        ],
+        "codex": [
+          "codex-rs/core/src/session/session.rs",
+          "codex-rs/core/src/session/input_queue.rs",
+          "codex-rs/core/src/session/turn.rs",
+          "codex-rs/core/src/session/turn_input.rs",
+          "codex-rs/core/src/session/mod.rs",
+          "codex-rs/core/src/session/step_context.rs",
+          "codex-rs/core/src/tools/parallel.rs"
+        ]
+      },
+      "test_source_excerpts": [
+        "tests/session/test_canonical_followups.py",
+        "tests/agent/test_runner_errors.py"
+      ],
+      "search_only_paths": {
+        "nanobot": [
+          "nanobot/providers/conversation_state.py",
+          "nanobot/runtime_composition.py",
+          "nanobot/bus/queue.py",
+          "nanobot/session/webui_turns.py",
+          "nanobot/agent/hooks/file_edit_activity.py",
+          "tests/agent/test_runner_injections.py",
+          "tests/agent/test_runner_tool_execution.py",
+          "tests/agent/test_pre_dispatch_recovery.py"
+        ],
+        "dsh": [
+          "packages/api/session-controller/src/agent.ts"
+        ],
+        "codex": [
+          "codex-rs/core/src/tools/registry.rs",
+          "codex-rs/core/src/tasks/regular.rs"
+        ]
+      },
+      "limits": [
+        "DSH tools pipeline.ts/executor.ts: targeted portions/outlines only.",
+        "Not every final provider transport adapter was audited."
+      ]
+    },
+    "REF-AUTHORITY": {
+      "report": "authority-sandbox.md",
+      "rows": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9"
+      ],
+      "targeted_body_paths": {
+        "nanobot": [
+          "nanobot/config/schema.py",
+          "nanobot/agent/foreground.py",
+          "nanobot/agent/delegation.py",
+          "nanobot/agent/loop.py",
+          "nanobot/agent/context.py",
+          "nanobot/agent/tools/fork_factories.py",
+          "nanobot/agent/tools/sandbox.py",
+          "nanobot/agent/tools/shell.py",
+          "nanobot/agent/tools/native_process.py",
+          "nanobot/agent/tools/exec_session.py",
+          "nanobot/agent/tools/filesystem.py",
+          "nanobot/agent/tools/registry.py",
+          "nanobot/agent/tools/execution.py",
+          "nanobot/context_repo/policy.py",
+          "nanobot/security/desktop_permissions.py",
+          "nanobot/security/folder_grants.py",
+          "nanobot/security/workspace_access.py",
+          "nanobot/security/native_admission.py",
+          "nanobot/session/workspace_focus.py",
+          "nanobot/session/manager.py",
+          "nanobot/session/workspace_access_recovery.py",
+          "nanobot/runtime_composition.py",
+          "nanobot/webui/workspaces.py",
+          "nanobot/webui/inbound_commands.py",
+          "nanobot/webui/ws_http.py",
+          "nanobot/remote/ipc.py",
+          "nanobot/remote/permissions.py",
+          "nanobot/remote/owner.py",
+          "nanobot/remote/client.py",
+          "nanobot/channels/manager.py",
+          "nanobot/cli/commands.py",
+          "webui/src/components/thread/WorkspaceControls.tsx"
+        ],
+        "dsh": [
+          "packages/sandbox/sandbox-local/src/index.ts",
+          "packages/sandbox/sandbox-local/src/profiles.ts",
+          "packages/sandbox/sandbox-policy/src/index.ts",
+          "packages/sandbox/sandbox-policy/src/session-mode.ts",
+          "packages/sandbox/sandbox/src/index.ts",
+          "packages/sandbox/sandbox/src/roots.ts",
+          "packages/sandbox/sandbox/src/escalation.ts",
+          "packages/sandbox/sandbox/src/diagnostics.ts",
+          "packages/sandbox/sandbox-windows-acl/src/runner.ts",
+          "packages/shell/bash-sandbox/src/index.ts",
+          "packages/shell/tool-bash/src/index.ts",
+          "packages/fs/fs-sandbox/src/index.ts",
+          "packages/terminal/terminal-bash/src/index.ts"
+        ],
+        "codex": [
+          "codex-rs/core/src/tools/orchestrator.rs",
+          "codex-rs/core/src/tools/sandboxing.rs",
+          "codex-rs/sandboxing/src/manager.rs",
+          "codex-rs/sandboxing/src/seatbelt.rs",
+          "codex-rs/sandboxing/src/spawn.rs",
+          "codex-rs/linux-sandbox/src/linux_run_main.rs",
+          "codex-rs/windows-sandbox-rs/src/unified_exec/mod.rs",
+          "codex-rs/core/src/tools/runtimes/unified_exec.rs",
+          "codex-rs/core/src/tools/runtimes/unified_exec/launch.rs",
+          "codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs",
+          "codex-rs/core/src/unified_exec/process_manager.rs"
+        ]
+      },
+      "test_source_excerpts": [],
+      "search_only_paths": {
+        "nanobot": [],
+        "dsh": [],
+        "codex": []
+      },
+      "limits": [
+        "Test names were mapped only; no test-body evidence or exact test-path coverage claimed.",
+        "Windows source scope was backend selection/launch, not a full native-isolation audit.",
+        "No source-established cause of the reported sandbox issue; host/client OS alone does not establish executor OS or incident cause. Prepare-to-spawn race hypothesis rejected for the reviewed synchronous owner contract."
+      ]
+    },
+    "REF-PERSISTENCE": {
+      "report": "persistence-lifecycle.md",
+      "rows": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P8",
+        "P9"
+      ],
+      "targeted_body_paths": {
+        "nanobot": [
+          "nanobot/agent/automation_turns.py",
+          "nanobot/agent/loop.py",
+          "nanobot/agent/memory.py",
+          "nanobot/agent/tools/exec_session.py",
+          "nanobot/agent/tools/native_process.py",
+          "nanobot/agent/tools/shell.py",
+          "nanobot/agent/turn_delivery.py",
+          "nanobot/channels/telegram/runtime.py",
+          "nanobot/cli/gateway_runtime.py",
+          "nanobot/command/builtin.py",
+          "nanobot/config/schema.py",
+          "nanobot/cron/canonical_result.py",
+          "nanobot/cron/channel_sender.py",
+          "nanobot/cron/completion.py",
+          "nanobot/cron/composition.py",
+          "nanobot/cron/delivery_runtime.py",
+          "nanobot/cron/gateway.py",
+          "nanobot/cron/runtime.py",
+          "nanobot/process_completion.py",
+          "nanobot/runtime_composition.py",
+          "nanobot/session/execution_owner.py",
+          "nanobot/session/manager.py",
+          "nanobot/session/mode_storage.py",
+          "nanobot/session/runtime_authority.py",
+          "nanobot/session/source_store.py",
+          "nanobot/session/turn_writer.py",
+          "nanobot/triggers/local_session_turns.py",
+          "nanobot/utils/git_sync.py",
+          "nanobot/utils/gitstore.py",
+          "nanobot/utils/helpers.py",
+          "nanobot/webui/transcript.py"
+        ],
+        "dsh": [
+          "packages/jobs/jobs-local/src/index.ts",
+          "packages/jobs/jobs-local/src/pump.ts",
+          "packages/jobs/jobs-local/src/ring.ts",
+          "packages/jobs/tool-jobs/src/index.ts",
+          "packages/session/session-persistence-jsonl/src/index.ts",
+          "packages/session/session-persistence-jsonl/src/lease.ts",
+          "packages/session/session-persistence-jsonl/src/storage.ts"
+        ],
+        "codex": [
+          "codex-rs/core/src/session/handlers.rs",
+          "codex-rs/core/src/session/mod.rs",
+          "codex-rs/core/src/unified_exec/async_watcher.rs",
+          "codex-rs/core/src/unified_exec/mod.rs",
+          "codex-rs/core/src/unified_exec/process.rs",
+          "codex-rs/core/src/unified_exec/process_manager.rs",
+          "codex-rs/rollout/src/recorder.rs",
+          "codex-rs/rollout/src/writer_lock.rs",
+          "codex-rs/thread-store/src/live_thread.rs",
+          "codex-rs/thread-store/src/local/live_writer.rs"
+        ]
+      },
+      "test_source_excerpts": [
+        "tests/tools/test_exec_session_tools.py",
+        "tests/tools/test_process_completion.py",
+        "tests/tools/test_shell_reap.py",
+        "tests/utils/test_gitstore.py"
+      ],
+      "search_only_paths": {
+        "nanobot": [
+          "nanobot/agent/run_store.py",
+          "nanobot/agent/subagent.py",
+          "nanobot/agent/tools/context.py",
+          "nanobot/agent/tools/native_process_supervisor.py",
+          "nanobot/cron/delivery_store.py",
+          "pyproject.toml",
+          "tests/agent/test_exec_session_isolation.py",
+          "tests/agent/test_native_process_io.py",
+          "tests/agent/test_process_completion_scope.py"
+        ],
+        "dsh": [],
+        "codex": []
+      },
+      "search_roots": [
+        "nanobot/",
+        "scripts/"
+      ],
+      "limits": [
+        "All body reads were bounded excerpts.",
+        "Dulwich porcelain/worktree evidence is pinned separately; supplemental local dulwich/repo.py was read but is not essential published evidence.",
+        "No deployed Dulwich version attested; no conversation-wide output-loss or universal exactly-once claim."
+      ]
+    },
+    "REF-DELEGATION": {
+      "report": "delegation-context.md",
+      "rows": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7"
+      ],
+      "targeted_body_paths": {
+        "nanobot": [
+          "nanobot/agent/__init__.py",
+          "nanobot/agent/delegation.py",
+          "nanobot/agent/foreground.py",
+          "nanobot/agent/capabilities.py",
+          "nanobot/agent/policy.py",
+          "nanobot/agent/write_guard.py",
+          "nanobot/agent/subagent.py",
+          "nanobot/agent/context.py",
+          "nanobot/agent/skills.py",
+          "nanobot/agent/runner.py",
+          "nanobot/agent/loop.py",
+          "nanobot/agent/tools/delegation.py",
+          "nanobot/agent/tools/explore.py",
+          "nanobot/agent/tools/fork_factories.py",
+          "nanobot/agent/tools/filesystem.py",
+          "nanobot/agent/tools/spawn.py",
+          "nanobot/agent/tools/loader.py",
+          "nanobot/security/workspace_access.py",
+          "nanobot/context_repo/policy.py",
+          "nanobot/cli/gateway_runtime.py",
+          "nanobot/nanobot.py"
+        ],
+        "dsh": [
+          "packages/subagent/subagent/src/manager.ts",
+          "packages/subagent/subagent/src/activation.ts",
+          "packages/subagent/subagent/src/child-agent.ts",
+          "packages/subagent/subagent/src/index.ts",
+          "packages/subagent/subagent-spawn-in-process/src/index.ts",
+          "packages/subagent/subagent-fork-in-process/src/index.ts"
+        ],
+        "codex": [
+          "codex-rs/core/src/agent/control/spawn.rs",
+          "codex-rs/core/src/agent/control/resume.rs",
+          "codex-rs/core/src/agent/control/api.rs",
+          "codex-rs/core/src/agent/control/interrupt.rs",
+          "codex-rs/core/src/agent/control/spawn_guard.rs",
+          "codex-rs/core/src/agent/control/execution.rs",
+          "codex-rs/core/src/agent/control/legacy.rs",
+          "codex-rs/core/src/agent/control/target.rs",
+          "codex-rs/core/src/agent/control/runtime.rs",
+          "codex-rs/core/src/agent/control/residency.rs",
+          "codex-rs/core/src/agent/control.rs",
+          "codex-rs/core/src/agent/child_config.rs",
+          "codex-rs/core/src/agent/role.rs",
+          "codex-rs/core/src/agent/history.rs",
+          "codex-rs/core/src/thread_manager.rs",
+          "codex-rs/core/src/thread_manager/shutdown.rs",
+          "codex-rs/core/src/thread_spawn.rs",
+          "codex-rs/core/src/tools/handlers/multi_agents_v2/spawn.rs",
+          "codex-rs/core/src/tools/handlers/multi_agents/resume_agent.rs"
+        ]
+      },
+      "test_source_excerpts": [
+        "tests/agent/test_subagent_lifecycle.py",
+        "tests/agent/test_migration_foreground.py"
+      ],
+      "search_only_paths": {
+        "nanobot": [
+          "nanobot/config/schema.py"
+        ],
+        "dsh": [],
+        "codex": [
+          "codex-rs/app-server/src/request_processors/thread_processor.rs"
+        ]
+      },
+      "search_only_patterns": [
+        "Codex registry/handler/spec candidate searches; no exact additional path/body coverage claimed."
+      ],
+      "limits": [
+        "DSH manager.ts:1-1348; activation.ts:1-184; child-agent.ts:1-280; index.ts:180-297,432-514; spawn-in-process index.ts:28-59; fork-in-process index.ts:1-83.",
+        "Codex runtime/residency were selected bodies; thread_manager.rs:2010-2174,2440-2478; thread_manager/shutdown.rs:1-171; sparse tracked callers read by git show.",
+        "Nanobot test excerpts: subagent_lifecycle.py:1-96; migration_foreground.py:71-98,128-140.",
+        "No equivalent DSH skill-loader audit, external Codex app-server human-auth attestation, persistent-session schema selection or Hermes audit.",
+        "Original host/{spawn.rs,mod.rs,invocation.rs} search operands cannot be confirmed from retained analyst evidence; the reported agent/control prefix was unsupported. Writer git ls-tree located actual tracked codex-rs/core/src/agent/host paths, but neither path set receives original read/search coverage credit. No substantive finding depends on them."
+      ]
+    }
+  },
+  "supplemental_dulwich": {
+    "repository": "https://github.com/jelmer/dulwich",
+    "tag": "0.25.2",
+    "annotated_tag_object": "a52415e639309c3beeb0085b5002288f4aef8aaf",
+    "commit": "287097f0514783d35e2a427bb4451ab3f804aee8",
+    "meaning": "Allowed-version source semantics only; no deployed-version attestation or essential cache dependency.",
+    "verified_blobs": [
+      {
+        "path": "dulwich/porcelain/__init__.py",
+        "sha256": "c418c7edf72a96b361c37ed6808e76e68c060651637ee9c8e7aa0460aa83f075",
+        "lines": 8166
+      },
+      {
+        "path": "dulwich/worktree.py",
+        "sha256": "874316e82be304fafb01309105e751397d9faa8e7117ec1207359b2075acb326",
+        "lines": 1440
+      }
+    ]
+  },
+  "retained_reference_manifest": "../codebase-discovery/provenance/source-reference-map.json",
+  "status_supersession": "The immutable reference index/discovery reports retain historical REF6-mapped and comparison-pending claims; this checkpoint supplies the targeted REF1-REF6 comparisons only.",
+  "product_acceptance": "Only review/reference policy is recorded as user-accepted. Retain-core direction is a recommendation; consequential decisions remain PENDING.",
+  "no_execution_declaration": {
+    "repository_imports": false,
+    "repository_scripts": false,
+    "tests": false,
+    "builds": false,
+    "linters_or_type_checkers": false,
+    "dependency_operations": false,
+    "applications_or_services": false,
+    "provider_calls": false,
+    "runtime_process_exercises": false,
+    "benchmarks": false
+  },
+  "fresh_review_events": [
+    {
+      "round": 1,
+      "initial_verdict": "CORRECT",
+      "failed_criteria": [
+        "AC1",
+        "AC2"
+      ],
+      "scope": "Bundled reference-accuracy and source/provenance precision correction; no product change or new decision.",
+      "writer_correction_status": "Applied",
+      "narrow_reviewer_recheck": "PASS",
+      "changes": [
+        {
+          "section": "admission-requests.md A3",
+          "correction": "DSH check is originating-step/request-hook provider/model/effort consistency, not a global active-work guard; AgentModel.select appends a selection without that guard."
+        },
+        {
+          "section": "authority-sandbox.md S3",
+          "correction": "Windows ACL rejection applies to nonempty additionalWritableRoots only in workspace-write mode; no read-root rejection equivalence."
+        },
+        {
+          "section": "admission-requests.md A3",
+          "correction": "registry.py:280-286 is context/parameter validation; execution invocation is execute_prepared:339-344 through execute:431-454."
+        },
+        {
+          "section": "persistence-lifecycle.md P7",
+          "correction": "Process-local Telegram lock serializes receipt-path bundles per target and cannot serialize ordinary channel sends or sends from another process."
+        },
+        {
+          "section": "authority-sandbox.md introduction; REF-AUTHORITY limits",
+          "correction": "Incident described only as reported sandbox issue; host/client OS does not establish executor OS or cause."
+        }
+      ],
+      "writer_targeted_pinned_source_rechecks": [
+        {
+          "repository": "dsh",
+          "path": "packages/core/agent-loop/src/agent.ts",
+          "lines": "626-644"
+        },
+        {
+          "repository": "dsh",
+          "path": "packages/core/agent/src/model-selection.ts",
+          "lines": "104-121"
+        },
+        {
+          "repository": "dsh",
+          "path": "packages/sandbox/sandbox-local/src/index.ts",
+          "lines": "360-378"
+        },
+        {
+          "repository": "nanobot",
+          "path": "nanobot/agent/tools/registry.py",
+          "lines": "277-292;331-347;425-457"
+        },
+        {
+          "repository": "nanobot",
+          "path": "nanobot/channels/telegram/runtime.py",
+          "lines": "1218-1230"
+        }
+      ],
+      "coverage_boundary": "These are correction source rechecks, separate from original per-package read inventories; no discovery count changes. Failed host-prefix provenance and uncredited search uncertainty remain intact.",
+      "coordinator_reacceptance": "PASS",
+      "recheck_result": {
+        "findings_resolved": 3,
+        "criteria_closed": [
+          "AC1",
+          "AC2",
+          "AC5"
+        ],
+        "prior_criteria_unchanged": [
+          "AC3",
+          "AC4",
+          "AC6"
+        ]
+      }
+    }
+  ],
+  "acceptance": {
+    "scope": "Targeted REF1-REF6 source-comparison checkpoint only; product decisions remain PENDING and no runtime or full semantic-audit acceptance is inferred.",
+    "evidence_origin": "Actual independent reviewer and coordinator outcomes supplied by the coordinator.",
+    "independent_semantic_review": {
+      "correction_round": 1,
+      "initial_verdict": "CORRECT",
+      "narrow_recheck": "PASS",
+      "findings_resolved": 3,
+      "criteria_closed": [
+        "AC1",
+        "AC2",
+        "AC5"
+      ],
+      "prior_criteria_unchanged": [
+        "AC3",
+        "AC4",
+        "AC6"
+      ]
+    },
+    "coordinator_content_acceptance": "PASS",
+    "coordinator_independent_structural_verification": {
+      "command": "V1-integrity",
+      "exit_code": 0,
+      "relative_links": 131,
+      "pinned_source_links": 126,
+      "pinned_source_anchors": 107,
+      "retained_reference_hashes_matched": 17,
+      "retained_report_manifest_entries_matched": 30,
+      "supplemental_dependency_blobs_matched": 2,
+      "protected_tracked_files": 2499,
+      "frozen_discovery_files": 43,
+      "protected_and_frozen_digests": "unchanged",
+      "document_hashes_checked": 11,
+      "json_files_parsed": 2,
+      "owned_files_whitespace_checked": 12,
+      "git_diff_check_exit": 0,
+      "stage": "Corrected package before acceptance bookkeeping; affected metadata hashes are refreshed separately by the writer."
+    }
+  }
+}

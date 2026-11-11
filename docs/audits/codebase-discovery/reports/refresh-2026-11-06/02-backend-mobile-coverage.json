@@ -1,0 +1,29 @@
+{
+  "source_commit": "27adced0aacd55d61791bb88a7240d7ad7bd5b75",
+  "origin_agent": "/root/refresh_backend_mobile",
+  "inspected_paths": [
+    "AGENTS.md", ".agent/design.md", ".agent/security.md", ".agent/gotchas.md", "CONTRIBUTING.md", "mobile/README.md",
+    "mobile/android/app/src/main/AndroidManifest.xml", "mobile/android/app/src/main/res/values/strings.xml",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveRegistry.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/RunKeepAliveService.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/network/NativeNetworkPlugin.kt",
+    "mobile/android/app/src/main/java/ai/nanobot/mobile/MainActivity.java", "mobile/mobile-bootstrap.js",
+    "nanobot/remote/ipc.py", "nanobot/remote/owner.py", "nanobot/remote/client.py", "nanobot/webui/file_preview.py",
+    "nanobot/webui/generated_asset_index.py", "nanobot/webui/generated_assets.py", "nanobot/webui/inbound_commands.py",
+    "nanobot/webui/session_automations.py", "nanobot/webui/settings_system.py", "nanobot/webui/settings_api.py",
+    "nanobot/webui/transcript.py", "nanobot/webui/workspaces.py", "nanobot/webui/ws_http.py", "nanobot/webui/session_access.py",
+    "nanobot/channels/websocket/runtime.py", "nanobot/security/desktop_permissions.py", "nanobot/context_repo/policy.py",
+    "nanobot/agent/tools/shell.py", "nanobot/agent/loop.py", "webui/src/App.tsx", "webui/src/lib/nanobot-client.ts",
+    "webui/src/lib/mobile-run-keep-alive.ts", "webui/src/lib/task-notifications.ts", "webui/src/hooks/useTaskNotifications.ts"
+  ],
+  "deleted_paths_accounted": ["tests/remote/test_peer_credentials.py"],
+  "mapped_only": [
+    "nanobot/channels/websocket/tests/test_websocket_channel.py", "tests/webui/test_file_preview.py",
+    "tests/webui/test_gateway_webui_smoke.py", "tests/webui/test_generated_assets.py", "tests/webui/test_mobile_commands.py",
+    "tests/webui/test_settings_system.py", "tests/webui/test_workspace_directories.py", "tests/utils/test_webui_transcript.py",
+    "webui/src/tests/nanobot-client.test.ts", "webui/src/tests/task-notifications.test.ts"
+  ],
+  "commands_run": ["git status --porcelain and rev-parse HEAD/tree before/after", "git diff --stat/--name-only/--unified old/current pins", "git show wake-lock removal/stale-tail commits and deleted peer-test declarations", "cat/rg/nl/sed and stdlib JSON scope reads"],
+  "runtime_tests_builds_run": false,
+  "report_retention": "Coordinator-faithful condensed final report; exact inspected list retained from analyst JSON."
+}

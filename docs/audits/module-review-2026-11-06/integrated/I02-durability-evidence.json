@@ -1,0 +1,756 @@
+{
+  "schema_version": 1,
+  "stage_id": "I02",
+  "report": "integrated/I02-durability.md",
+  "publication_state": "partial-integration source checkpoint, no final acceptance",
+  "reviewer": "ChatGPT same assistant source-reconciliation",
+  "date": "2026-11-07",
+  "pins": {
+    "frozen_nanobot": {
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "staging_current": {
+      "commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "changes_exclusive_to": "K01 skills.py and paired test",
+      "scope": "not re-audited by I02"
+    }
+  },
+  "groups": [
+    {
+      "id": "I02-A",
+      "title": "Canonical turn/source write and mutation result facts",
+      "original_finding_or_candidate_ids": [
+        "H01-F1",
+        "H01-F2",
+        "H01-F6",
+        "H01-F7",
+        "E02-F01",
+        "E02-F20"
+      ],
+      "owners": "H01/H02 canonical source; E02 WebUI mutation replay",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-B",
+      "title": "Canonical source and scheduler-history capacity",
+      "original_finding_or_candidate_ids": [
+        "H02-CAP-SOURCE64",
+        "H02-CAP-JOURNAL4096",
+        "H02-IO",
+        "A01-F04",
+        "E02-F07"
+      ],
+      "owners": "H02 source/mode, A01 scheduler proof and E02 transcript generation",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-C",
+      "title": "Provider stream terminal, credential intent and route identity",
+      "original_finding_or_candidate_ids": [
+        "H03-F1",
+        "H03-F2",
+        "H03-F3",
+        "H03-F5",
+        "H03-F7"
+      ],
+      "owners": "H03 transport/route/credential owners",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-D",
+      "title": "Native process, plugin and runtime close ownership",
+      "original_finding_or_candidate_ids": [
+        "S02-F01",
+        "S02-F02",
+        "S02-F03",
+        "C00-F01",
+        "C00-F02",
+        "C00-F03",
+        "E02-F14",
+        "R01-F06"
+      ],
+      "owners": "S02 native and session; C00 composition/CLI/SDK; E02 installer; R01 supervisor status",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-E",
+      "title": "Cron/process continuation and optional local-trigger delivery",
+      "original_finding_or_candidate_ids": [
+        "A01-F01",
+        "A01-F03",
+        "A01-F05",
+        "A01-F07",
+        "A01-F08"
+      ],
+      "owners": "A01 process/cron/trigger/submission owners",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-F",
+      "title": "Mobile credential custody and native completion",
+      "original_finding_or_candidate_ids": [
+        "R01-F01",
+        "R01-F03",
+        "R01-F08",
+        "R01-F09",
+        "R01-F10",
+        "R01-F12",
+        "R01-F13",
+        "R01-F15"
+      ],
+      "owners": "R01 remote pairing, Android custody, Go/C/JNI event owners",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-G",
+      "title": "Media/session identity, deletion and destructive maintenance",
+      "original_finding_or_candidate_ids": [
+        "M01-F01",
+        "M01-F02",
+        "M01-F04",
+        "E02-F03",
+        "E02-F05",
+        "E02-F06",
+        "E02-F09",
+        "E02-F10"
+      ],
+      "owners": "M01 canonical attachment store and prune; E02 transcript/temporary cleanup",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-H",
+      "title": "Model/client read and transfer resource budgets",
+      "original_finding_or_candidate_ids": [
+        "R01-F14",
+        "M01-F03",
+        "M01-F05",
+        "M01-F06",
+        "E02-F23"
+      ],
+      "owners": "R01 cache, M01 provider/model/parser, E02 response projection",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    },
+    {
+      "id": "I02-I",
+      "title": "Optional source-backed artifacts and legacy/idle compatibility",
+      "original_finding_or_candidate_ids": [
+        "H02-ART-SOURCE",
+        "H02-LEGACY-ISOLATE",
+        "H02-IDLE-DORMANT"
+      ],
+      "owners": "H02 optional archival/artifact/feature compatibility; do not promote production defect",
+      "disposition": "Cross-stream semantic grouping, original IDs preserved, no issue merging or implementation decision"
+    }
+  ],
+  "report_ledger_sources": [
+    {
+      "report": "reports/H01.md",
+      "coverage": "reports/H01-coverage.json",
+      "coverage_sha": "2ba982c44778afb314744ee1a1ca23a351ca5fa3",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "H01-F1",
+        "H01-F2",
+        "H01-F6",
+        "H01-F7"
+      ]
+    },
+    {
+      "report": "reports/E02.md",
+      "coverage": "reports/E02-coverage.json",
+      "coverage_sha": "b46651bb7dfbd0d6fc7a74fd805838f6cf6d669b",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "E02-F01",
+        "E02-F20",
+        "E02-F07",
+        "E02-F14",
+        "E02-F03",
+        "E02-F05",
+        "E02-F06",
+        "E02-F09",
+        "E02-F10",
+        "E02-F23"
+      ]
+    },
+    {
+      "report": "reports/H02.md",
+      "coverage": "reports/H02-coverage.json",
+      "coverage_sha": "edf1c2b01ae5e126182d2be25226d5aad6db65dc",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "H02-CAP-SOURCE64",
+        "H02-CAP-JOURNAL4096",
+        "H02-IO",
+        "H02-ART-SOURCE",
+        "H02-LEGACY-ISOLATE",
+        "H02-IDLE-DORMANT"
+      ]
+    },
+    {
+      "report": "reports/A01.md",
+      "coverage": "reports/A01-coverage.json",
+      "coverage_sha": "196a5755fa626077baa1e665a87a0715f36664cf",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "A01-F04",
+        "A01-F01",
+        "A01-F03",
+        "A01-F05",
+        "A01-F07",
+        "A01-F08"
+      ]
+    },
+    {
+      "report": "reports/H03.md",
+      "coverage": "reports/H03-coverage.json",
+      "coverage_sha": "51ca8abfa9f10776db3d0d51b2281142f3f9a497",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "H03-F1",
+        "H03-F2",
+        "H03-F3",
+        "H03-F5",
+        "H03-F7"
+      ]
+    },
+    {
+      "report": "reports/S02.md",
+      "coverage": "reports/S02-coverage.json",
+      "coverage_sha": "4d302094cc25b6453f1496b648d2254ad8687f01",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "S02-F01",
+        "S02-F02",
+        "S02-F03"
+      ]
+    },
+    {
+      "report": "reports/C00.md",
+      "coverage": "reports/C00-coverage.json",
+      "coverage_sha": "cae600b64c0df5dc8675d8cb3270cbebab648059",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "C00-F01",
+        "C00-F02",
+        "C00-F03"
+      ]
+    },
+    {
+      "report": "reports/R01.md",
+      "coverage": "reports/R01-coverage.json",
+      "coverage_sha": "0442ec59262de9f58e6115c9d22ed9eb3d059e0b",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "R01-F06",
+        "R01-F01",
+        "R01-F03",
+        "R01-F08",
+        "R01-F09",
+        "R01-F10",
+        "R01-F12",
+        "R01-F13",
+        "R01-F15",
+        "R01-F14"
+      ]
+    },
+    {
+      "report": "reports/M01.md",
+      "coverage": "reports/M01-coverage.json",
+      "coverage_sha": "a675c5e81dcf9fc72d3f56c662deb8cd122e9338",
+      "source": "previous coordinator checked finding/owner/limits evidence",
+      "original_ids_linked": [
+        "M01-F01",
+        "M01-F02",
+        "M01-F04",
+        "M01-F03",
+        "M01-F05",
+        "M01-F06"
+      ]
+    }
+  ],
+  "crosscutting_sources": [
+    {
+      "path": "reports/P01.md",
+      "purpose": "shared vocabulary and do-not-merge alternatives",
+      "crosscutting_source_credit": 0
+    },
+    {
+      "path": "integrated/I01-authority.md",
+      "purpose": "already reconciled authority constraints and S02-F02 dual-context use"
+    },
+    {
+      "path": "reports/K01.md",
+      "purpose": "separate staged K01 source delta, no I02 primary source change"
+    }
+  ],
+  "pinned_direct_source_reads": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/runner.py",
+      "ranges": [
+        [
+          493,
+          533
+        ],
+        [
+          1370,
+          1477
+        ]
+      ],
+      "purpose": "Mandatory vs optional drain and stale terminal fields",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/session/turn_writer.py",
+      "ranges": [
+        [
+          60,
+          180
+        ]
+      ],
+      "purpose": "Poisoned writer and atomic consumed followup",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/session/source_request.py",
+      "ranges": [
+        [
+          143,
+          187
+        ]
+      ],
+      "purpose": "Issue/ack/discard projection ticket",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/session/source_store.py",
+      "ranges": [
+        [
+          1185,
+          1240
+        ]
+      ],
+      "purpose": "Detached source persistence and write owner",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/session/mode_storage.py",
+      "ranges": [
+        [
+          1054,
+          1108
+        ]
+      ],
+      "purpose": "Directory proof and 4096 entries",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/cron/scheduler_store.py",
+      "ranges": [
+        [
+          45,
+          62
+        ],
+        [
+          570,
+          595
+        ]
+      ],
+      "purpose": "Cron classifications and 1MiB cap",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/process_completion.py",
+      "ranges": [
+        [
+          49,
+          88
+        ],
+        [
+          145,
+          212
+        ]
+      ],
+      "purpose": "Synchronous FULL SQLite and unknown interrupted continuation",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/cron/runtime.py",
+      "ranges": [
+        [
+          198,
+          255
+        ]
+      ],
+      "purpose": "Cron timer and scheduler/owner",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/triggers/local_runner.py",
+      "ranges": [
+        [
+          20,
+          97
+        ]
+      ],
+      "purpose": "Local trigger recovered processing and retry",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/cron/delivery_runtime.py",
+      "ranges": [
+        [
+          373,
+          430
+        ],
+        [
+          666,
+          763
+        ]
+      ],
+      "purpose": "Typed outbox known/not-sent/unknown results",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/replay_store.py",
+      "ranges": [
+        [
+          136,
+          224
+        ]
+      ],
+      "purpose": "Source-bound replay; completed versus uncertain and TTL",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/inbound_commands.py",
+      "ranges": [
+        [
+          1385,
+          1539
+        ],
+        [
+          1740,
+          1773
+        ]
+      ],
+      "purpose": "WebUI replay and mutation effect report",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/providers/openai_responses/parsing.py",
+      "ranges": [
+        [
+          34,
+          77
+        ]
+      ],
+      "purpose": "Terminal capture",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/providers/openai_codex_oauth.py",
+      "ranges": [
+        [
+          119,
+          151
+        ],
+        [
+          179,
+          211
+        ]
+      ],
+      "purpose": "Cancelled login future and continuing token worker",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/providers/base.py",
+      "ranges": [
+        [
+          60,
+          75
+        ]
+      ],
+      "purpose": "No retry after external delta proof",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/remote/auth.py",
+      "ranges": [
+        [
+          86,
+          150
+        ]
+      ],
+      "purpose": "Rotate hashed refresh credential before returned plaintext",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/native-network/internal/broker/events.go",
+      "ranges": [
+        [
+          1,
+          53
+        ]
+      ],
+      "purpose": "Nonblocking event queue and retained too-large head",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "mobile/src/native-broker.ts",
+      "ranges": [
+        [
+          110,
+          184
+        ]
+      ],
+      "purpose": "Native request creation and event registration contract",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/agent/tools/exec_session.py",
+      "ranges": [
+        [
+          385,
+          472
+        ]
+      ],
+      "purpose": "Deadline watcher coupled to completion sink",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/nanobot.py",
+      "ranges": [
+        [
+          380,
+          406
+        ]
+      ],
+      "purpose": "SDK closed latch before awaited composition close",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/runtime_composition.py",
+      "ranges": [
+        [
+          582,
+          633
+        ]
+      ],
+      "purpose": "Shielded join, FAILED retry, retained constructed graph closers",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/webui/transcript.py",
+      "ranges": [
+        [
+          678,
+          750
+        ]
+      ],
+      "purpose": "Append and fsync before rotating at turn_end",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    },
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "path": "nanobot/attachments/lifecycle.py",
+      "ranges": [
+        [
+          39,
+          116
+        ]
+      ],
+      "purpose": "Failed unreadable/invalid JSONL references; destructive prune",
+      "kind": "selected source range read in I02; no additional primary coverage credit"
+    }
+  ],
+  "other_source_body_title_searches": [
+    {
+      "repository": "nanobot",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "paths": [
+        "nanobot/cron/occurrence_store.py",
+        "nanobot/cron/scheduler_store.py",
+        "nanobot/cron/delivery_runtime.py",
+        "nanobot/webui/transcript.py",
+        "nanobot/providers/base.py",
+        "mobile/native-network/internal/broker/events.go"
+      ],
+      "purpose": "full text retrieval for method/range location; only explicit pinned excerpts counted above; no runtime imports or code execution"
+    }
+  ],
+  "cross_substage_overlap": {
+    "I01": [
+      "S02-F02"
+    ],
+    "reason": "The same unlaunched native reservation appears in I01 admission authority and I02 recovery lifecycle; one original finding, not duplicate; original frozen source count unchanged"
+  },
+  "false_merge_examples": [
+    {
+      "a": "H01-F1",
+      "b": "E02-F20",
+      "reason": "mandatory source write pre-effect vs committed mutation post-effect failure",
+      "merge": false
+    },
+    {
+      "a": "H01-F2",
+      "b": "H03-F1",
+      "reason": "stale terminal projection vs missing Responses terminal signal",
+      "merge": false
+    },
+    {
+      "a": "H02-CAP-JOURNAL4096",
+      "b": "A01-F04",
+      "reason": "different historical proof caps and store owners",
+      "merge": false
+    },
+    {
+      "a": "H03-F3",
+      "b": "A01-F08",
+      "reason": "provider fallback request vs committed local trigger effect replay",
+      "merge": false
+    },
+    {
+      "a": "H03-F2",
+      "b": "R01-F03",
+      "reason": "provider login generation vs mobile refresh client custody",
+      "merge": false
+    },
+    {
+      "a": "S02-F01",
+      "b": "S02-F02",
+      "reason": "deadline watcher absent vs prelaunch reservation cleanup",
+      "merge": false
+    },
+    {
+      "a": "C00-F02",
+      "b": "C00-F03",
+      "reason": "SDK closed latch vs partially constructed graph's lost closers",
+      "merge": false
+    },
+    {
+      "a": "R01-F09",
+      "b": "R01-F13",
+      "reason": "pre-waiter race vs post-admission queue-full terminal drop",
+      "merge": false
+    },
+    {
+      "a": "R01-F10",
+      "b": "R01-F13",
+      "reason": "JNI buffer-head stall vs queue-full drop",
+      "merge": false
+    },
+    {
+      "a": "M01-F02",
+      "b": "M01-F04",
+      "reason": "orphan sidecar vs wrong destructive reference proof",
+      "merge": false
+    },
+    {
+      "a": "E02-F06",
+      "b": "M01-F04",
+      "reason": "orphan readable transcript vs loss of referenced content blobs",
+      "merge": false
+    }
+  ],
+  "proposal_classifications": {
+    "H02_optional_candidate_ids": [
+      "H02-ART-SOURCE",
+      "H02-LEGACY-ISOLATE",
+      "H02-IDLE-DORMANT"
+    ],
+    "H02_IO_unmeasured_structure": true,
+    "S02_F03_unmeasured_lock_contention": true,
+    "no_universal_transaction_proposed": true,
+    "no_automatic_effect_replay_proposed": true
+  },
+  "non_promoted_context": [
+    "A01-F09: automation provenance/approval conditional inactive feature; future authority reconciliation, not counted I02",
+    "T01-F11: unbounded web_fetch response before truncation; later tool/resource integration, not counted I02",
+    "H02 title late write observation, M01 upload-grace/prune concurrency hypotheses: unpromoted retained challenge; no new IDs"
+  ],
+  "future_proof_only": {
+    "fault_windows": [
+      "before effect",
+      "after effect",
+      "before durable commit",
+      "after durable commit",
+      "before acknowledgement",
+      "after acknowledgement",
+      "cancellation",
+      "restart"
+    ],
+    "performed_tests": 0,
+    "performed_benchmarks": 0,
+    "performed_product_code_edits": 0,
+    "independent_peer_review": false
+  },
+  "limits": [
+    "No runtime execution or tests; source-based mechanism and conditional impact only",
+    "53 source-ledger entries are not 53 newly accepted defects; three H02 candidates are explicitly optional",
+    "Cross-substage repeated S02-F02 excluded from distinct project-wide tally",
+    "E01 95-file user-authorized limited-depth source exception retained",
+    "Full integrated review still pending, no D1-D7 choices accepted"
+  ],
+  "counts": {
+    "groups": 9,
+    "distinct_original_ledger_entries": 53,
+    "original_ledger_entries_overlap_I01": 1,
+    "original_findings_prior_total": 136,
+    "original_questions_prior_total": 105,
+    "source_body_credit_added": 0,
+    "prior_deep_source_coverage": 824,
+    "prior_deep_source_denominator": 824,
+    "limited_depth_E01": 95,
+    "new_promoted_findings": 0,
+    "new_discussion_questions": 0,
+    "full_integrated_review_complete": 0
+  },
+  "next": "I03 client/UI, capability registration, interface compatibility and feature exposure; keep other efficiency/release integration and D1–D7 separate"
+}

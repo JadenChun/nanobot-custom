@@ -1,0 +1,1657 @@
+{
+  "schema_version": 1,
+  "state": "ACTIVE",
+  "date": "2026-11-06",
+  "source_pins": {
+    "nanobot": {
+      "repository": "https://github.com/JadenChun/nanobot-custom",
+      "commit": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"
+    },
+    "dsh": {
+      "repository": "https://github.com/deepseek-ai/deepseek-harness",
+      "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+      "tree": "6cccb3ee8c1501c9d623258a660f7413761dd0f0"
+    },
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "tree": "03f3b46689faf274f126dc78508ed238564da8ba",
+      "release": "0.166.0 / rust-v0.166.0"
+    }
+  },
+  "frozen_inventory": {
+    "path": "docs/audits/codebase-discovery/path-inventory.tsv",
+    "sha256": "672d88f17fd379833089bf76bf28005ab8c74f8429f4d82064f798bae5973318",
+    "rule": "Select stream and implementation-or-tooling-source/runtime-instruction-source; reuse frozen hashes, do not duplicate source manifest."
+  },
+  "published_primary_body_credit_added": 704,
+  "handoffs": [
+    {
+      "stream": "C00",
+      "producer": "/root/review_startup_c00",
+      "path": "handoffs/C00.md",
+      "sha256": "e1d6894e41353fcf3ede912aa6a057137b9f800bdafcb22d20cfe65948d94934",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 70,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 70,
+      "packets": [
+        "1",
+        "2",
+        "3"
+      ],
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "85c59330c91e7982574d79f92602cc7e605acb4c",
+        "pushed": true
+      }
+    },
+    {
+      "stream": "H02",
+      "producer": "/root/deep_session_state",
+      "path": "handoffs/H02.md",
+      "sha256": "2c455b7ee88d714e9d4cbd00e1cd20a2834ad4a4046c0126dd20bb738fc6e7a1",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 74,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 74,
+      "packets": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5A",
+        "5B"
+      ],
+      "supersession": "5A/5B supersede initial F33/P4/R37 with current F74/P0/R0; initial uncertainty retained historically.",
+      "supplied_physical_splitlines": 47094,
+      "supplied_bytes": 1921930,
+      "supplied_metadata_sha256": "8111ae57bbe78437969d604056c5ebcf46915deaa70b9a246761ee7a0c187098",
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "08ba3c3d48c9c96c1d04c25f5815a5efd17e20f4",
+        "pushed": true
+      }
+    },
+    {
+      "stream": "H03",
+      "producer": "/root/review_providers_h03",
+      "path": "handoffs/H03.md",
+      "sha256": "afc4c6436ac1d47f5f444873e5aaa63502299b0c04f6d989951b8d3df838bdb4",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 23,
+        "partial": 19,
+        "unread": 3
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 45,
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 45,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "Continuation coordinator refilled all saved partial/unread ranges before publication."
+    },
+    {
+      "stream": "U01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/U01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 203,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 203,
+      "note": "U01 F203/P0/R0 report/coverage published and coordinator-checked PASS with six qualified P2 findings and six retained questions; integrated review remains pending.",
+      "last_checkpoint_commit": "b53644a2e20086a5d6a48e237e571d1720151270",
+      "provisional_findings": [
+        {
+          "id": "U01-F01",
+          "priority": "P2",
+          "title": "Attachment-only queued guidance is skipped by automatic FIFO flush",
+          "state": "promoted-report"
+        },
+        {
+          "id": "U01-F02",
+          "priority": "P2",
+          "title": "Session asset pagination can append an old session page after switching chats",
+          "state": "promoted-report"
+        },
+        {
+          "id": "U01-F03",
+          "priority": "P2",
+          "title": "Channel setup async results can bleed into a newly selected channel",
+          "state": "promoted-report"
+        },
+        {
+          "id": "U01-F04",
+          "priority": "P2",
+          "title": "Skill-detail mutation completions can corrupt or close a newly selected skill",
+          "state": "promoted-report"
+        },
+        {
+          "id": "U01-F05",
+          "priority": "P2",
+          "title": "Failed sidebar persistence can remain indefinitely optimistic and unsaved",
+          "state": "promoted-report"
+        },
+        {
+          "id": "U01-F06",
+          "priority": "P2",
+          "title": "Empty turn completion can stamp metadata onto an older legacy assistant row",
+          "state": "promoted-report"
+        }
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 203,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "All 203 U01 primary bodies are full; six findings promoted in report; coordinator PASS recorded."
+    },
+    {
+      "stream": "D01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/D01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 47,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 47,
+      "note": "D01 F47/P0/R0 report/coverage published and coordinator-checked PASS with two qualified P2 findings and five retained questions; integrated review remains pending.",
+      "last_checkpoint_commit": "9db80a30be08be3428ca33fda1532031dabd6a7f",
+      "provisional_findings": [
+        {
+          "id": "D01-F01",
+          "priority": "P2",
+          "title": "Automatic follow-up dequeue can lose a queued prompt when the send fails",
+          "state": "promoted-report"
+        },
+        {
+          "id": "D01-F02",
+          "priority": "P2",
+          "title": "Context-panel completion can overwrite a newly switched session",
+          "state": "promoted-report"
+        }
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 47,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "All 47 D01 primaries are full; two findings promoted; coordinator PASS recorded."
+    },
+    {
+      "stream": "T01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/T01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 44,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 44,
+      "note": "T01 F44/P0/R0 report/coverage published and coordinator-checked PASS with twelve promoted findings and eight retained questions; integrated review remains pending.",
+      "last_checkpoint_commit": "cc07d72f845df201ab07838c2bdda976f54619df",
+      "provisional_findings": [
+        {
+          "id": "T01-F01",
+          "priority": "P2",
+          "title": "Generic/external tool schemas can advertise constraints the local validator does not enforce",
+          "state": "promoted-report"
+        },
+        {
+          "id": "T01-F02",
+          "priority": "P2",
+          "title": "Loader registration is publication-atomic, not construction-lifetime atomic",
+          "state": "promoted-report",
+          "qualification": "conditional on generic/external tool construction owning resources or side effects; core foreground ownership is explicit"
+        },
+        {
+          "id": "T01-F03",
+          "priority": "P2",
+          "title": "Concurrent first-use foreground MCP initialization can silently omit configured tools",
+          "state": "promoted-report"
+        },
+        {
+          "id": "T01-F04",
+          "priority": "P1",
+          "title": "Remote MCP annotations can breach the delegated read-only authority boundary",
+          "state": "promoted-report",
+          "qualification": "requires a configured remote server with false/inaccurate readOnlyHint; final D2/D4 trust model still governs repair"
+        },
+        {
+          "id": "T01-F05",
+          "priority": "P2",
+          "title": "A failed MCP server setup can leave partially registered dead capabilities",
+          "state": "promoted-report"
+        },
+        {
+          "id": "T01-F06",
+          "priority": "P2",
+          "title": "Stdio MCP readiness has no deadline and serial startup can block the application indefinitely",
+          "state": "promoted-report"
+        },
+        {
+          "id": "T01-F07",
+          "priority": "P1",
+          "title": "Main browser/device file and working-directory authority bypasses workspace confinement",
+          "state": "promoted-report",
+          "qualification": "non-managed/full-host contexts with browser/device enabled and workspace confinement expected; delegated roles and managed WebUI are narrowed/blocked"
+        },
+        {
+          "id": "T01-F08",
+          "priority": "P1",
+          "title": "desktop_use global input bypasses the main risky-action approval boundary",
+          "state": "promoted-report",
+          "qualification": "requires tools.desktop_use.enabled=true; disabled by default and managed WebUI withholds the unconfined tool"
+        },
+        {
+          "id": "T01-F09",
+          "priority": "P2",
+          "title": "Generic owned-process cleanup does not prove descendant quiescence",
+          "state": "promoted-report"
+        },
+        {
+          "id": "T01-F10",
+          "priority": "P2",
+          "title": "Explicit foreground migration dropped the advertised apply_patch capability",
+          "state": "promoted-report"
+        },
+        {
+          "id": "T01-F11",
+          "priority": "P2",
+          "title": "web_fetch output limits do not bound downloaded response bytes",
+          "state": "promoted-report"
+        },
+        {
+          "id": "T01-F12",
+          "priority": "P2",
+          "title": "VPN session creation can outlive caller cancellation",
+          "state": "promoted-report",
+          "qualification": "conditional on the external broker completing a side-effecting request after the client task is cancelled"
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "T01-A",
+          "commit": "ed50e9e1b4044b87bf713f6cd2cce27ed88110da",
+          "coverage": {
+            "full": 6,
+            "partial": 0,
+            "unread": 38
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-B",
+          "commit": "eeb736a236b44654f7c3c22ce5474d5b4d9f28e2",
+          "coverage": {
+            "full": 12,
+            "partial": 0,
+            "unread": 32
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-C",
+          "commit": "60806f5e05f65300cd614ec129344f9b94ec782f",
+          "coverage": {
+            "full": 14,
+            "partial": 0,
+            "unread": 30
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-D",
+          "commit": "63d09ac2bcfed40b5de9e77ca4b4060847bde3d0",
+          "coverage": {
+            "full": 20,
+            "partial": 0,
+            "unread": 24
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-E",
+          "commit": "3b74ccf0935ea76107bd6a307945444ddce279b4",
+          "coverage": {
+            "full": 29,
+            "partial": 0,
+            "unread": 15
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-F",
+          "commit": "9ab2afd19e9ecf5337cbf9e6776174d89dfe9303",
+          "coverage": {
+            "full": 36,
+            "partial": 0,
+            "unread": 8
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "T01-G",
+          "commit": "95863da60d6f71b2950081c5b2f4d3231d7bae4a",
+          "coverage": {
+            "full": 44,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "source-complete-pre-publication",
+          "publication_credit_added": 0
+        }
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 44,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "All 44 T01 primary bodies are full; twelve findings promoted; two T01-G compatibility observations retained unpromoted; coordinator PASS recorded."
+    },
+    {
+      "stream": "A01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/A01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 47,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 47,
+      "note": "A01 F47/P0/R0 report/coverage published and coordinator-checked PASS with nine promoted findings and seven retained questions; integrated review remains pending.",
+      "last_checkpoint_commit": "9bdcc59a5938084e843b61509e64bfb745b984a7",
+      "provisional_findings": [
+        {
+          "id": "A01-F01",
+          "priority": "P1",
+          "title": "Process-completion persistence performs synchronous SQLite durability work on async gateway/exec paths",
+          "state": "promoted-report"
+        },
+        {
+          "id": "A01-F02",
+          "priority": "P2",
+          "title": "The shipped /goal command advertises sustained-goal behavior that default production composition cannot activate",
+          "state": "promoted-report"
+        },
+        {
+          "id": "A01-F03",
+          "priority": "P1",
+          "title": "Gateway cron polling performs synchronous full-history durable filesystem work on the event loop",
+          "state": "promoted-report"
+        },
+        {
+          "id": "A01-F04",
+          "priority": "P1",
+          "title": "Append-only scheduler evidence has a finite hard lifetime in the live timer path",
+          "state": "promoted-report",
+          "qualification": "Later A01 management/migration review found no scheduler-history rollover/archive owner; earlier provisional qualification resolved."
+        },
+        {
+          "id": "A01-F05",
+          "priority": "P2",
+          "title": "Completed delivery dispatch entries are retained for the lifetime of the outbox store",
+          "state": "promoted-report"
+        },
+        {
+          "id": "A01-F06",
+          "priority": "P1",
+          "title": "Model-facing cron list/remove authority is global across chats",
+          "state": "promoted-report",
+          "qualification": "Conditional on multiple mutually untrusted chats/users sharing one agent/service; single-owner instances may intentionally define one administration domain."
+        },
+        {
+          "id": "A01-F07",
+          "priority": "P2",
+          "title": "Shipped local-trigger commands queue work that the default gateway never consumes",
+          "state": "promoted-report"
+        },
+        {
+          "id": "A01-F08",
+          "priority": "P1",
+          "title": "Local-trigger restart recovery can replay an already committed turn and its effects",
+          "state": "promoted-report",
+          "qualification": "Conditional on local-trigger execution being activated; default foreground gateway does not start the runner."
+        },
+        {
+          "id": "A01-F09",
+          "priority": "P1",
+          "title": "Local-trigger automation can affirm a pending risky-action approval",
+          "state": "promoted-report",
+          "qualification": "Conditional on local-trigger execution being activated; approval admission is source-blind once automation shares the bound session/channel alias."
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "A01-A",
+          "commit": "f0f152b9c631b4a32de57a1a64eb5c792a43dc61",
+          "coverage": {
+            "full": 8,
+            "partial": 0,
+            "unread": 39
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "A01-B",
+          "commit": "9e7a3eb5c27c9a4aee5ccee1bc44f0209da33f82",
+          "coverage": {
+            "full": 16,
+            "partial": 0,
+            "unread": 31
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "A01-C",
+          "commit": "4162b04900edf8f43b62d45c3ee5226f40a32c7d",
+          "coverage": {
+            "full": 24,
+            "partial": 0,
+            "unread": 23
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "A01-D",
+          "commit": "cc8de895dfdc3d5562ea3883ba13254279c9b7cc",
+          "coverage": {
+            "full": 32,
+            "partial": 0,
+            "unread": 15
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "A01-E",
+          "commit": "4d242b829d54d33d8607e3c7ce54ee3438e9899c",
+          "coverage": {
+            "full": 40,
+            "partial": 0,
+            "unread": 7
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "A01-F",
+          "commit": "4b7c32e7b25542bdf386c46c89ad4020acfeb934",
+          "coverage": {
+            "full": 47,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "source-complete-unaccepted",
+          "publication_credit_added": 0
+        }
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 47,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "All 47 A01 primaries are full; nine findings promoted; seven final questions retained; coordinator PASS recorded.",
+      "git_checkpoint": {
+        "status": "recorded",
+        "commit": "9bdcc59a5938084e843b61509e64bfb745b984a7",
+        "pushed": true
+      }
+    },
+    {
+      "stream": "K01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/K01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 56,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 56,
+      "note": "K01 coordinator PASS at F56/P0/R0 with thirteen promoted findings and eight final questions. Seven conditional findings and T01/A01 cross-stream deduplication are preserved; integrated review, repairs and Git checkpoint remain pending.",
+      "last_checkpoint_commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
+      "provisional_findings": [
+        {
+          "id": "K01-F01",
+          "priority": "P1",
+          "title": "Prompt/skill loading has confinement gaps outside centralized resource-policy validation",
+          "state": "promoted-report",
+          "qualification": "Initially established for non-managed restricted bootstrap/skill reads; K01-E also found Dream/evaluator workspace prompt overrides read symlinked paths directly without ResourceAccessPolicy even in managed mode. Each trigger still requires a crafted/local prompt or skill path."
+        },
+        {
+          "id": "K01-F02",
+          "priority": "P2",
+          "title": "save_knowledge does not enforce the active project's knowledge_repos association",
+          "state": "promoted-report",
+          "qualification": "Conditional on project association being intended as an ownership boundary and multiple writable knowledge repos being visible."
+        },
+        {
+          "id": "K01-F03",
+          "priority": "P2",
+          "title": "Runtime skill discovery does not enforce the shipped skill validation contract before shadowing/activation",
+          "state": "promoted-report",
+          "qualification": "Shipped built-ins themselves demonstrate validator/runtime drift; reliability/configuration-integrity finding rather than arbitrary code execution."
+        },
+        {
+          "id": "K01-F04",
+          "priority": "P2",
+          "title": "The cron skill misdocuments reminder execution and default timezone semantics",
+          "state": "promoted-report",
+          "qualification": "Timezone statement happens to match only when timezone_mode=auto; reminder output still follows a fresh agent turn."
+        },
+        {
+          "id": "K01-F05",
+          "priority": "P2",
+          "title": "The ClawHub skill installs and manages skills in the default workspace instead of the effective agent workspace",
+          "state": "promoted-report",
+          "qualification": "Works when the configured workspace is the default ~/.nanobot/workspace; non-default workspaces are affected."
+        },
+        {
+          "id": "K01-F06",
+          "priority": "P1",
+          "title": "The tmux skill recommends launching Codex with its approvals and sandbox disabled",
+          "state": "promoted-report",
+          "qualification": "Conditional on using the coding-agent section without an already-proven external sandbox; pinned Codex defines --yolo as dangerously bypassing approvals and sandbox."
+        },
+        {
+          "id": "K01-F07",
+          "priority": "P2",
+          "title": "Mobile testing skills require both platform toolchains even though each supports either platform",
+          "state": "promoted-report",
+          "qualification": "Hosts with npx plus only one valid platform toolchain are affected; hosts with both Xcode/xcrun and adb installed are not."
+        },
+        {
+          "id": "K01-F08",
+          "priority": "P1",
+          "title": "video-understanding silently bypasses Nanobot provider routing for semantic frame analysis",
+          "state": "promoted-report",
+          "qualification": "Conditional on OPENAI_API_KEY and the OpenAI SDK being available with semantic mode enabled; no external semantic request occurs on the fallback/no-semantic path."
+        },
+        {
+          "id": "K01-F09",
+          "priority": "P2",
+          "title": "webapp-testing recommends a caller-supplied CDP mode that the live browser wrapper always blocks",
+          "state": "promoted-report",
+          "qualification": "Only the caller-supplied --cdp recommendation is proven broken; configured shared attachment and other browser paths remain separate."
+        },
+        {
+          "id": "K01-F10",
+          "priority": "P2",
+          "title": "Non-positive video max-gap values can spin forever before frame capping",
+          "state": "promoted-report",
+          "qualification": "Conditional on an explicit zero/negative --max-gap-seconds override; the shipped default 6.0 path is unaffected."
+        },
+        {
+          "id": "K01-F11",
+          "priority": "P2",
+          "title": "Live prompt guidance advertises retired search/edit tools absent from the default registry",
+          "state": "promoted-report",
+          "qualification": "Default production composition is affected; customized plugin deployments may supply compatible names. apply_patch overlaps T01-F10 and must be deduplicated in integrated review."
+        },
+        {
+          "id": "K01-F12",
+          "priority": "P1",
+          "title": "Degraded compaction can elevate raw transcript/tool text into the future system prompt",
+          "state": "promoted-report",
+          "qualification": "Conditional on a raw-fallback compaction condition plus instruction-like user/tool content in the archived chunk; tool policy still constrains side effects."
+        },
+        {
+          "id": "K01-F13",
+          "priority": "P1",
+          "title": "Dream can persist skill instructions outside its own audit and restore boundary",
+          "state": "promoted-report",
+          "qualification": "Conditional on a manual Dream run or enabled periodic Dream producing a skill edit; external VCS may independently record files but Dream log/restore does not."
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "K01-A",
+          "commit": "6aee06005c3249a3e107632da69d7bd4fcbee125",
+          "coverage": {
+            "full": 7,
+            "partial": 0,
+            "unread": 49
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "K01-B",
+          "commit": "783520f331ab1837276eea3809ea68ae591ac23d",
+          "coverage": {
+            "full": 14,
+            "partial": 0,
+            "unread": 42
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "K01-C",
+          "commit": "7ec1fd85bc2d5c935c45ee74fe465462cd53672c",
+          "coverage": {
+            "full": 26,
+            "partial": 0,
+            "unread": 30
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "K01-D",
+          "commit": "5c38c5c4036ec23f26d4c485c7536ae2ae795c14",
+          "coverage": {
+            "full": 32,
+            "partial": 0,
+            "unread": 24
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "K01-E",
+          "commit": "aafce9d1f0ec4bd312f5c13a66c337f27bcf57ac",
+          "coverage": {
+            "full": 56,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        }
+      ],
+      "completion": "All 56 K01 primaries are full; thirteen findings promoted; eight final questions retained; coordinator PASS recorded."
+    },
+    {
+      "stream": "E02",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/E02.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 68,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 68,
+      "note": "E02 F68/P0/R0 report/coverage published and coordinator-checked PASS with twenty-three promoted findings and nine retained questions; integrated review remains pending.",
+      "last_checkpoint_commit": "582a7eda1ac293d197a3ebab168dfb492cd203f0",
+      "provisional_findings": [
+        {
+          "id": "E02-F01",
+          "priority": "P2",
+          "title": "Failed SDK transcript ingestion can leave a partial live-session mutation",
+          "state": "promoted-report",
+          "qualification": "Conditional on unmanaged persistent ingest (default save=True) plus metadata or a valid message prefix before a later validation failure; managed persistent ingest is rejected before mutation and save=False is detached."
+        },
+        {
+          "id": "E02-F02",
+          "priority": "P1",
+          "title": "Non-loopback WebSocket configurations can admit unauthenticated agent clients",
+          "state": "promoted-report",
+          "qualification": "Conditional on a network-reachable listener whose effective client authentication is disabled or publicly self-serviceable. Defaults are loopback plus token-required; static-token and properly protected token/trusted-proxy deployments are excluded."
+        },
+        {
+          "id": "E02-F03",
+          "priority": "P2",
+          "title": "Windows media GC can delete generated assets that are still referenced",
+          "state": "promoted-report",
+          "qualification": "Conditional on Windows-style absolute paths plus execution of the media GC path. Default orphan grace is seven days; quota eviction can act earlier when enabled. POSIX reference discovery is unaffected."
+        },
+        {
+          "id": "E02-F04",
+          "priority": "P2",
+          "title": "Global generated-assets library silently omits sessions after the first 200",
+          "state": "promoted-report",
+          "qualification": "Conditional on more than 200 persisted WebUI sessions. Per-session asset routes are unaffected; the global endpoint truncates session discovery before group pagination and exposes no continuation."
+        },
+        {
+          "id": "E02-F05",
+          "priority": "P2",
+          "title": "Lossy WebUI transcript filenames collapse distinct valid chat IDs",
+          "state": "promoted-report",
+          "qualification": "Conditional on caller-supplied/imported/legacy chat IDs that differ only through characters collapsed by safe_key(), especially colon versus underscore. UUID-created chats do not naturally trigger it."
+        },
+        {
+          "id": "E02-F06",
+          "priority": "P2",
+          "title": "Session deletion can report success while readable WebUI transcript residue remains",
+          "state": "promoted-report",
+          "qualification": "Conditional on a filesystem deletion failure. Normal deletion removes both canonical and transcript state; transcript-only history is intentionally still listable/readable when canonical state is absent."
+        },
+        {
+          "id": "E02-F07",
+          "priority": "P2",
+          "title": "Transcript rotation can duplicate completed turns after a mid-rotation write failure",
+          "state": "promoted-report",
+          "qualification": "Conditional on a multi-turn transcript above the rotation threshold and a write/replace/manifest failure after segment commit but before active-tail replacement."
+        },
+        {
+          "id": "E02-F08",
+          "priority": "P2",
+          "title": "Session search can return transcript-only results that read_session rejects",
+          "state": "promoted-report",
+          "qualification": "Conditional on a WebUI transcript without canonical session metadata and a content query that matches it. Canonical and ordinary cross-channel persisted sessions are unaffected."
+        },
+        {
+          "id": "E02-F09",
+          "priority": "P2",
+          "title": "Failed Temporary Chat attachment deletion is forgotten instead of retried",
+          "state": "promoted-report",
+          "qualification": "Conditional on an unlink/filesystem failure during Temporary Chat cleanup. Normal disposal removes tracked media."
+        },
+        {
+          "id": "E02-F10",
+          "priority": "P2",
+          "title": "Discarded Temporary Chat tombstones grow without bound until gateway shutdown",
+          "state": "promoted-report",
+          "qualification": "Conditional on a large number of Temporary Chats during one long-lived gateway process. Restart clears the tombstones; ordinary low-volume use has small impact."
+        },
+        {
+          "id": "E02-F11",
+          "priority": "P2",
+          "title": "CLI-app WebUI state is not scoped to the gateway's explicit config path",
+          "state": "promoted-report",
+          "qualification": "Conditional on multiple explicit gateway/config instances in one process or embedding with a config path different from the process-global path. Common single-instance CLI startup normally aligns the paths."
+        },
+        {
+          "id": "E02-F12",
+          "priority": "P2",
+          "title": "Successful WebUI build commands can leave a stale/missing bundle without failing startup",
+          "state": "promoted-report",
+          "qualification": "Conditional on the frontend command returning zero while failing to refresh the expected bundle. The shipped Vite path normally writes the expected dist and ordinary write failures should usually return nonzero."
+        },
+        {
+          "id": "E02-F13",
+          "priority": "P2",
+          "title": "MCP WebUI credential/runtime state is not scoped to the gateway's explicit config path",
+          "state": "promoted-report",
+          "qualification": "Conditional on an explicit gateway/config path differing from the process-global config path. Normal single-instance CLI startup generally aligns those paths; OAuth store locking/generations and managed-path exact-match cleanup do not fix cross-instance root selection."
+        },
+        {
+          "id": "E02-F14",
+          "priority": "P2",
+          "title": "Cancelled skills.sh installs can outlive their WebUI owner",
+          "state": "promoted-report",
+          "qualification": "Conditional on cancellation after npx launch or timeout with surviving descendants. Normal successful installs are awaited; the SkillHub path does not create this child process, and remote installs remain separately package-policy gated."
+        },
+        {
+          "id": "E02-F15",
+          "priority": "P1",
+          "title": "WebUI folder-grant authority is not scoped to the gateway's explicit config path",
+          "state": "promoted-report",
+          "qualification": "Conditional on an explicit/multi-instance gateway whose config path differs from the process-global path. Normal single-instance CLI startup generally aligns those paths; conflicting live writers may fail closed, but stale/shared grants and private-root selection can cross instance authority."
+        },
+        {
+          "id": "E02-F16",
+          "priority": "P1",
+          "title": "Provider OAuth credential authority is shared across explicit gateway configs",
+          "qualification": "Conditional on explicit gateway config paths being independent instance/security boundaries. Single-instance CLI use is not claimed broken; current Codex/Copilot compatibility intentionally uses user-home auth paths and xAI uses the process-global data root.",
+          "state": "promoted-report"
+        },
+        {
+          "id": "E02-F17",
+          "priority": "P1",
+          "title": "Remote-access owner authority defaults to the process-global instance root",
+          "qualification": "Conditional on divergent explicit/global config paths with default remote-access state/socket paths. Explicit distinct state_dir/socket_path avoids the collision.",
+          "state": "promoted-report"
+        },
+        {
+          "id": "E02-F18",
+          "priority": "P2",
+          "title": "Settings usage accounting is not scoped to the explicit gateway config",
+          "qualification": "Conditional on multiple logical instances sharing the process-global data root. If usage is intentionally user-global, this becomes a product-contract/documentation question.",
+          "state": "promoted-report"
+        },
+        {
+          "id": "E02-F19",
+          "priority": "P2",
+          "title": "Truthy non-boolean remote-access disable values enable remote access",
+          "qualification": "Conditional on a non-boolean payload such as the string \"false\". The shipped UI is expected to send a JSON boolean and the enable route is local-browser-only.",
+          "state": "promoted-report"
+        },
+        {
+          "id": "E02-F20",
+          "priority": "P2",
+          "title": "Post-effect mutation failures are replayed as completed failures and suppress shared-state invalidation",
+          "qualification": "Conditional on a failure after the underlying mutation has committed. Pre-effect validation failures remain correctly cached as failures; timeout/cancellation are already uncertain.",
+          "state": "promoted-report"
+        },
+        {
+          "id": "E02-F21",
+          "priority": "P2",
+          "title": "Remote-access pairing renewal is implemented and called by the WebUI but omitted from settings routing",
+          "qualification": "Deterministic for the local WebUI renewal helper. The remote owner operation registry does not expose renewal, so this is a local product-route defect rather than missing owner permission.",
+          "state": "promoted-report"
+        },
+        {
+          "id": "E02-F22",
+          "priority": "P2",
+          "title": "Desktop notification GET has a tokenless cross-origin loopback side-effect surface",
+          "qualification": "Conditional on a browser/request form that sends the cross-origin loopback GET despite private-network/mixed-content protections. The fixed argv command prevents shell injection.",
+          "state": "promoted-report"
+        },
+        {
+          "id": "E02-F23",
+          "priority": "P2",
+          "title": "Legacy unpaginated WebUI thread reads bypass the response projection budget",
+          "qualification": "Conditional on using the no-query compatibility path with a large transcript. The paginated client path is bounded; remote post-build size checks do not prevent full projection allocation.",
+          "state": "promoted-report"
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "E02-A",
+          "commit": "d8fca02482a3d18b50030bea1d24a11f1d969a66",
+          "coverage": {
+            "full": 8,
+            "partial": 0,
+            "unread": 60
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-B",
+          "commit": "b9d8cdcd8e611de4563588f67ef224342e02afad",
+          "coverage": {
+            "full": 12,
+            "partial": 0,
+            "unread": 56
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-C",
+          "commit": "7e842500783bf399c9bcc9065c3c216bfa6d901d",
+          "coverage": {
+            "full": 26,
+            "partial": 0,
+            "unread": 42
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-D",
+          "commit": "34cf8ab9bf65c3fa5ed9174ed215b711e08ce759",
+          "coverage": {
+            "full": 33,
+            "partial": 0,
+            "unread": 35
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-E",
+          "commit": "e8407f661e580b5a72363bcb0faf9e20c27c37d2",
+          "coverage": {
+            "full": 35,
+            "partial": 0,
+            "unread": 33
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-F",
+          "commit": "96cee6ade663760a19ebc350b19c50e236a4b406",
+          "coverage": {
+            "full": 41,
+            "partial": 0,
+            "unread": 27
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-G",
+          "commit": "ec67092826146b045c9f254fcfc389b679beaa34",
+          "coverage": {
+            "full": 48,
+            "partial": 0,
+            "unread": 20
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-H",
+          "commit": "382f11df3b32fededa2c5b11ef8598ee48a557b0",
+          "coverage": {
+            "full": 51,
+            "partial": 0,
+            "unread": 17
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-I",
+          "commit": "d6f5b3b0a0b7d5d828bb969be7efe98fe9c82e8d",
+          "coverage": {
+            "full": 53,
+            "partial": 0,
+            "unread": 15
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-J",
+          "commit": "1b5691612ce23c912bb78ad23c1d911df0df7e77",
+          "coverage": {
+            "full": 55,
+            "partial": 0,
+            "unread": 13
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-K",
+          "commit": "8ee9d99b2c24551e4a44e44ad18eafb080450990",
+          "coverage": {
+            "full": 57,
+            "partial": 0,
+            "unread": 11
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-L",
+          "commit": "d36625dcab541008e6b3ff050b208b8e2833bdd4",
+          "coverage": {
+            "full": 64,
+            "partial": 0,
+            "unread": 4
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E02-M",
+          "commit": "fe32cf63fc847d44109b7da68075c94a2a500a6f",
+          "coverage": {
+            "full": 68,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "source-review-complete-unpublished-unaccepted",
+          "publication_credit_added": 0
+        }
+      ],
+      "reference_body_credit": 0,
+      "final_coverage": {
+        "full": 68,
+        "partial": 0,
+        "unread": 0
+      },
+      "completion": "All 68 E02 primaries are full; 23 findings promoted; coordinator PASS recorded.",
+      "report": "reports/E02.md",
+      "coverage": "reports/E02-coverage.json",
+      "final_discussion_questions": [
+        "E02-Q1 authority/effective non-loopback authentication",
+        "E02-Q2 canonical session artifact identity and transcript-only state",
+        "E02-Q3 mutation effect receipts and unknown/applied outcomes",
+        "E02-Q4 explicit gateway instance root versus deliberate shared profiles",
+        "E02-Q5 terminal lifetime ownership for cleanup/processes",
+        "E02-Q6 repository-wide response/scan budgets",
+        "E02-Q7 authenticated local host side effects",
+        "E02-Q8 one generated client/server route-operation contract",
+        "E02-Q9 package/build/install subprocess trust and environment policy"
+      ]
+    },
+    {
+      "stream": "E01",
+      "producer": "ChatGPT web continuation coordinator",
+      "path": "handoffs/E01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 40,
+        "partial": 0,
+        "unread": 55
+      },
+      "state": "scope-exception-limited-depth-closed",
+      "published_body_credit_added": 0,
+      "note": "E01-F Feishu control/setup/instance/UI completed at F40/P0/R55 with twenty-six provisional findings total and zero publication credit; next is E01-G Feishu runtime.py and websocket.py only.",
+      "last_checkpoint_commit": "93706841e16999f47b25ebfde4f8d8dd9796ee3a",
+      "provisional_findings": [
+        {
+          "id": "E01-F01",
+          "priority": "P2",
+          "title": "Failed outbound delivery can poison origin duplicate suppression",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on a source-bound fingerprint being inserted before an actual send failure and a later same-origin outbound carrying the same normalized content. Separate source IDs and the explicit receipt-capable cron path are excluded."
+        },
+        {
+          "id": "E01-F02",
+          "priority": "P1",
+          "title": "Shared channel runtime/validation/transcription can ignore the gateway's explicit config path",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on an explicit gateway/manager config path differing from the process-global path. Feishu E01-F adds a concrete QR-flow consequence: the path-scoped settings handler owns the request, but its connector persists registration credentials through the process-global Feishu helper before separately enabling the gateway-scoped target."
+        },
+        {
+          "id": "E01-F03",
+          "priority": "P2",
+          "title": "Truthy non-boolean enabled values activate packaged channels",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on malformed/manual packaged-channel config using a non-boolean truthy enabled value. Feishu's own multi-instance adapter independently applies bool(config['enabled']), so truthy strings also activate Feishu instances. Normal settings writers are expected to persist booleans."
+        },
+        {
+          "id": "E01-F04",
+          "priority": "P2",
+          "title": "Telegram enablement can persist a startup-invalid config and escape as SystemExit",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on enabling Telegram with an empty/missing effective allowFrom. WebUI feature enable is local-browser restricted; correctly configured allow lists are unaffected."
+        },
+        {
+          "id": "E01-F05",
+          "priority": "P1",
+          "title": "Inline-keyboard callbacks in Telegram forum topics lose topic session identity",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on Telegram forum/topic use with inline keyboards enabled. Private and non-topic chat-wide sessions are unaffected."
+        },
+        {
+          "id": "E01-F06",
+          "priority": "P2",
+          "title": "Telegram ordinary delivery hides retries beneath the manager attempt cap",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Ordinary best-effort Telegram delivery only; the qualified cron receipt path performs no hidden provider retries. Duplicate effects require an ambiguous timeout whose provider-side send completed."
+        },
+        {
+          "id": "E01-F07",
+          "priority": "P1",
+          "title": "DingTalk inbound filenames can escape the media root and overwrite arbitrary writable paths",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on DingTalk preserving sender-controlled absolute/parent-traversal filename syntax. If the provider canonicalizes safe basenames, the path-escape consequence does not activate."
+        },
+        {
+          "id": "E01-F08",
+          "priority": "P2",
+          "title": "Denied DingTalk senders can trigger unbounded inbound file download work before authorization",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Practical amplification depends on DingTalk attachment/rate limits. The download URL is provider-issued; this finding does not claim directly attacker-chosen SSRF."
+        },
+        {
+          "id": "E01-F09",
+          "priority": "P2",
+          "title": "Persistent DingTalk stream failures are reported as running",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on persistent/non-transient stream/setup failure. Temporary network loss may intentionally be represented by a live reconnecting supervisor."
+        },
+        {
+          "id": "E01-F10",
+          "priority": "P2",
+          "title": "DingTalk retries replay already-delivered text/media after later part failure",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on a multipart ordinary send and a retryable failure after at least one earlier part completed; single-part sends do not have this intra-message replay window."
+        },
+        {
+          "id": "E01-F11",
+          "priority": "P2",
+          "title": "DingTalk downloads inbound attachments but bypasses the canonical media/attachment pipeline",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "A sufficiently privileged agent may manually read the textual path; the defect is bypass of canonical adoption/multimodal projection, not guaranteed byte loss in every deployment."
+        },
+        {
+          "id": "E01-F12",
+          "priority": "P2",
+          "title": "Unauthorized Discord DMs can persist attachments before pairing authorization",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on an unauthorized DM carrying attachments. Each file is checked against the adapter's declared 20 MiB cap; guild messages rejected before download are unaffected."
+        },
+        {
+          "id": "E01-F13",
+          "priority": "P2",
+          "title": "Discord streaming silently loses deltas while the client is unready",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on a streaming-enabled turn while Discord client readiness is false. Non-streaming ordinary sends raise and are manager-retried."
+        },
+        {
+          "id": "E01-F14",
+          "priority": "P2",
+          "title": "Discord attachment upload failures can be hidden as successful message delivery",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Transport/provider file-send failures are hidden when text or another attachment succeeds. Media-only messages where all attachments fail receive a visible fallback."
+        },
+        {
+          "id": "E01-F15",
+          "priority": "P2",
+          "title": "Discord multipart retries can duplicate already-delivered files or text chunks",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on multipart ordinary or overflow-stream delivery and a retryable failure after an earlier part completed. Single-part sends are excluded."
+        },
+        {
+          "id": "E01-F16",
+          "priority": "P2",
+          "title": "Discord startup failures are swallowed before manager failure accounting",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Primarily startup failures not covered by the REST token probe, stale credentials after validation, proxy/client construction, or other gateway-start exceptions. Partial client cleanup itself is preserved."
+        },
+        {
+          "id": "E01-F17",
+          "priority": "P1",
+          "title": "Email anti-spoofing accepts SPF/DKIM pass results that are not bound to the allowed From identity",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on the upstream mailbox delivering mail whose visible From is allowlisted while the trusted/pass identities are unrelated, or preserving an untrusted Authentication-Results header. Strong upstream DMARC/authserv-id enforcement can prevent the trigger."
+        },
+        {
+          "id": "E01-F18",
+          "priority": "P2",
+          "title": "Email acknowledges mailbox messages before durable agent processing",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on failure after UID processing/Seen or queue admission but before durable turn processing. markSeen=false/no post-action preserves the source but changes replay semantics."
+        },
+        {
+          "id": "E01-F19",
+          "priority": "P2",
+          "title": "Email replies can attach to the wrong Message-ID when one sender has multiple in-flight emails",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on multiple source messages from the same sender before the earlier response is sent. Recipient identity remains the same; source-bound subject metadata is preserved."
+        },
+        {
+          "id": "E01-F20",
+          "priority": "P2",
+          "title": "Persistent IMAP failures are reported as a running Email channel",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on persistent/non-healing IMAP login/TLS/protocol/poll failure. Temporary reconnecting failures may intentionally retain a live supervisor."
+        },
+        {
+          "id": "E01-F21",
+          "priority": "P1",
+          "title": "A cancelled Email runtime does not own its in-flight IMAP worker",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on disable/replacement/shutdown during an active asyncio.to_thread IMAP poll. The old worker can continue mailbox/file side effects under stale config after coroutine cancellation."
+        },
+        {
+          "id": "E01-F22",
+          "priority": "P2",
+          "title": "Email body and attachment limits do not bound full-message fetch or decode memory",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Practical maximum depends on upstream provider message-size limits. Oversized attachments are skipped after decode; configured limits are not pre-materialization resource bounds."
+        },
+        {
+          "id": "E01-F23",
+          "priority": "P2",
+          "title": "Email can be enabled with no sender allow-list but cannot bootstrap pairing from inbound mail",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Explicit allowFrom, wildcard, or pre-existing pairing approval makes the channel usable. This is a setup/admission mismatch, not an authorization bypass."
+        },
+        {
+          "id": "E01-F24",
+          "priority": "P2",
+          "title": "Same-name Email attachments overwrite one another within a message",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on two accepted MIME parts in one message resolving to the same sanitized filename. Direct path traversal remains prevented."
+        },
+        {
+          "id": "E01-F25",
+          "priority": "P2",
+          "title": "Feishu validation reports Connection verified without verifying Feishu credentials",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional user-visible consequence on stale/mistyped/nonfunctional manual credentials. The default QR authorization path has stronger provider evidence; runtime startup remains a separate authority."
+        },
+        {
+          "id": "E01-F26",
+          "priority": "P2",
+          "title": "Feishu QR session storage is mutated concurrently without one session-map lock",
+          "state": "retained-deferred-channel-finding",
+          "qualification": "Conditional on overlapping local authenticated connect actions. Routes are local-browser restricted; the consequence is settings/connect failure or stale state, not unauthenticated remote memory corruption."
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "E01-A",
+          "commit": "68b4f0a5a5b9ae7ff87acbe6a571147d18676b2f",
+          "coverage": {
+            "full": 12,
+            "partial": 0,
+            "unread": 83
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-B",
+          "commit": "42acf7bd6443c771b417a3738d8ed4a9be3c53ed",
+          "coverage": {
+            "full": 17,
+            "partial": 0,
+            "unread": 78
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-C",
+          "commit": "c2dfd60ff7fb18d97c4c62ef9440dbfeb245e509",
+          "coverage": {
+            "full": 21,
+            "partial": 0,
+            "unread": 74
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-D",
+          "commit": "e8a5b408cbd1f132bcb2fbc875c2529140464fcd",
+          "coverage": {
+            "full": 26,
+            "partial": 0,
+            "unread": 69
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-E",
+          "commit": "1f42a8f8aaa80353c85180132972cebc72acd007",
+          "coverage": {
+            "full": 31,
+            "partial": 0,
+            "unread": 64
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-F",
+          "commit": "93706841e16999f47b25ebfde4f8d8dd9796ee3a",
+          "coverage": {
+            "full": 40,
+            "partial": 0,
+            "unread": 55
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "E01-scope-closure",
+          "coverage": {
+            "deep_full": 40,
+            "deep_partial": 0,
+            "not_deeply_reviewed": 55,
+            "quick_sanity_screened": 55
+          },
+          "state": "scope-exception-limited-depth-closed",
+          "publication_credit_added": 0,
+          "note": "User-directed 2026-11-07 channel deprioritization; former E01-G-and-later deep review cancelled."
+        }
+      ],
+      "final_coverage": {
+        "deep_full": 40,
+        "deep_partial": 0,
+        "not_deeply_reviewed": 55,
+        "quick_sanity_screened": 55
+      },
+      "scope_decision": {
+        "date": "2026-11-07",
+        "authority": "explicit user scope decision",
+        "disposition": "Chat channels are non-priority; stop per-adapter deep review, leave channel functionality untouched, retain prior E01-A..F evidence/findings, and quick-screen the remaining 55 primaries only.",
+        "deep_review_required": false,
+        "quick_screen_result": "55/55 remaining primaries screened at high signal; no new finding promoted; Weixin pathless load_config() corroborates E01-F02.",
+        "next_deep_stream": "R01"
+      }
+    },
+    {
+      "stream": "R01",
+      "producer": "web-continuation-coordinator",
+      "path": "handoffs/R01.md",
+      "source_pin": "9562e57f8333d7f14b6aaeae837660723a9b2650",
+      "supplied_coverage": {
+        "full": 70,
+        "partial": 0,
+        "unread": 0
+      },
+      "state": "published-coordinator-checked",
+      "published_body_credit_added": 70,
+      "provisional_findings": [
+        {
+          "id": "R01-F01",
+          "priority": "P2",
+          "title": "Pairing can durably commit a device before credential custody is established",
+          "state": "promoted-report",
+          "qualification": "Conditional on delivery/restart failure after durable approval but before client custody; local revoke/re-pair recovers."
+        },
+        {
+          "id": "R01-F02",
+          "priority": "P1",
+          "title": "Mobile WebSocket commands bypass granted chat/media scopes",
+          "state": "promoted-report",
+          "qualification": "Conditional on a valid owner credential whose durable scopes are narrower than the command; default owner pairing grants broad scopes."
+        },
+        {
+          "id": "R01-F03",
+          "priority": "P2",
+          "title": "Refresh rotation can strand a paired device on ambiguous delivery",
+          "state": "promoted-report",
+          "qualification": "Conditional on replacement-response loss after rotation invalidates old refresh/access state."
+        },
+        {
+          "id": "R01-F04",
+          "priority": "P2",
+          "title": "Versioned mobile route contract contradicts the production edge",
+          "state": "promoted-report",
+          "qualification": "Deterministic contract drift: declared HTTP bootstrap/mutation/attachment/logout routes are not served by the production edge."
+        },
+        {
+          "id": "R01-F05",
+          "priority": "P2",
+          "title": "Isolated mobile data server exercises materially different authorization and recovery semantics",
+          "state": "promoted-report",
+          "qualification": "Deterministic qualification mismatch; bounded to staging/fixture fidelity rather than an ordinary product caller."
+        },
+        {
+          "id": "R01-F06",
+          "priority": "P2",
+          "title": "Systemd supervision reports applied success without checking command success",
+          "state": "promoted-report",
+          "qualification": "Conditional on nonzero systemctl results in the explicit opt-in supervision CLI."
+        },
+        {
+          "id": "R01-F07",
+          "priority": "P2",
+          "title": "Pairing can proceed without a verified Tailscale Serve mapping",
+          "state": "promoted-report",
+          "qualification": "Conditional on negative/incorrect Serve readiness plus UI fallback; owner approval/token authorization remain required."
+        },
+        {
+          "id": "R01-F08",
+          "priority": "P2",
+          "title": "Manual 8-digit pairing cannot survive Android process/activity recreation after collection",
+          "state": "promoted-report",
+          "qualification": "Conditional on process/plugin recreation while manual approval is pending."
+        },
+        {
+          "id": "R01-F09",
+          "priority": "P2",
+          "title": "Mobile HTTP completions can arrive before request correlation is armed",
+          "state": "promoted-report",
+          "qualification": "Conditional timing race between native completion and request-ID waiter installation."
+        },
+        {
+          "id": "R01-F10",
+          "priority": "P2",
+          "title": "A valid large WebSocket frame can permanently wedge the JNI event pump",
+          "state": "promoted-report",
+          "qualification": "Conditional on an accepted frame whose encoded event exceeds JNI retrieval capacity."
+        },
+        {
+          "id": "R01-F11",
+          "priority": "P2",
+          "title": "Android logcat receives replayable signed-media bearer capabilities",
+          "state": "promoted-report",
+          "qualification": "Conditional on log access plus network reachability; signed URL has no embedded expiry/separate API token."
+        },
+        {
+          "id": "R01-F12",
+          "priority": "P2",
+          "title": "Global native last_error storage is unsafe under concurrent Android calls",
+          "state": "promoted-report",
+          "qualification": "Conditional on overlapping failing native/JNI calls."
+        },
+        {
+          "id": "R01-F13",
+          "priority": "P2",
+          "title": "Bounded broker event pressure can silently drop admitted operation completions",
+          "state": "promoted-report",
+          "qualification": "Conditional on post-admission event-queue saturation."
+        },
+        {
+          "id": "R01-F14",
+          "priority": "P2",
+          "title": "The 512 MiB native media-cache budget is enforced only after unbounded single-file writes",
+          "state": "promoted-report",
+          "qualification": "Conditional on sufficiently large/concurrent full media streams; completed entries are trimmed later."
+        },
+        {
+          "id": "R01-F15",
+          "priority": "P2",
+          "title": "Phone-side Pairing Cancel is not durable and can resume into approval after restart",
+          "state": "promoted-report",
+          "qualification": "Conditional on persisted QR/link pending pairing plus Cancel/restart and later owner approval."
+        },
+        {
+          "id": "R01-F16",
+          "priority": "P2",
+          "title": "Release signing material is exposed to dependency-rich pre-sign build steps",
+          "state": "promoted-report",
+          "qualification": "Conditional on compromised build-time dependency/process; exposure to unrelated pre-sign child processes is deterministic."
+        },
+        {
+          "id": "R01-F17",
+          "priority": "P2",
+          "title": "The pinned mobile toolchain accepts stale/unverified cached tools and an ambient Bun",
+          "state": "promoted-report",
+          "qualification": "Deterministic qualification gap: cached tool existence and ambient Bun can bypass the recorded lock."
+        },
+        {
+          "id": "R01-F18",
+          "priority": "P2",
+          "title": "Gradle wrapper distribution is not cryptographically pinned",
+          "state": "promoted-report",
+          "qualification": "Deterministic build-integrity gap: distributionSha256Sum is absent."
+        },
+        {
+          "id": "R01-F19",
+          "priority": "P2",
+          "title": "Desktop-parity checker silently skips async inbound-command and misc-route source coverage",
+          "state": "promoted-report",
+          "qualification": "Deterministic checker blind spot: AsyncFunctionDef production surfaces are not extracted."
+        },
+        {
+          "id": "R01-F20",
+          "priority": "P2",
+          "title": "Update-persistence qualification reinstalls the same APK instead of exercising an actual upgrade",
+          "state": "promoted-report",
+          "qualification": "Deterministic test-design gap: baseline and candidate are the same artifact."
+        }
+      ],
+      "substage_checkpoints": [
+        {
+          "stage": "R01-A",
+          "commit": "0ba1a24e001a9efa7dc9777cdbf414026b641424",
+          "coverage": {
+            "full": 14,
+            "partial": 0,
+            "unread": 56
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-B",
+          "commit": "ba338a3ed78923e1122e98788c38f794a6945fc0",
+          "coverage": {
+            "full": 21,
+            "partial": 0,
+            "unread": 49
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-C",
+          "commit": "773666969ecb852bae09bc09122df614eb2e6107",
+          "coverage": {
+            "full": 23,
+            "partial": 0,
+            "unread": 47
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-D",
+          "commit": "99a92dcc7092a3d96649f03f3e5b09ff468f0d65",
+          "coverage": {
+            "full": 30,
+            "partial": 0,
+            "unread": 40
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-E",
+          "commit": "327252adbcfa62106449a13d23c1c794aed8bd92",
+          "coverage": {
+            "full": 31,
+            "partial": 0,
+            "unread": 39
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-F",
+          "commit": "e99f71190c372f5b67cdf443caf5f634c313b7a8",
+          "coverage": {
+            "full": 38,
+            "partial": 0,
+            "unread": 32
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-G",
+          "commit": "785e87449a88b640657d44b0020a87b73da47979",
+          "coverage": {
+            "full": 43,
+            "partial": 0,
+            "unread": 27
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-H",
+          "commit": "074d475b92add3712d3c0f5e8cfed58e4efc2953",
+          "coverage": {
+            "full": 51,
+            "partial": 0,
+            "unread": 19
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-I",
+          "commit": "9b56b304a2d31dd297eb1e68ae5ddbac8c96f618",
+          "coverage": {
+            "full": 56,
+            "partial": 0,
+            "unread": 14
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-J",
+          "commit": "144cfb93031514984b55e2d523e0334c74c2cb2b",
+          "coverage": {
+            "full": 64,
+            "partial": 0,
+            "unread": 6
+          },
+          "state": "active-incomplete-unaccepted",
+          "publication_credit_added": 0
+        },
+        {
+          "stage": "R01-K",
+          "commit": "d158766b9606b9f22dffcfaf61806edc7e2ee38e",
+          "coverage": {
+            "full": 70,
+            "partial": 0,
+            "unread": 0
+          },
+          "state": "source-complete-unpublished-unaccepted",
+          "publication_credit_added": 0
+        }
+      ],
+      "staging_observation": {
+        "current_staging": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "changed_paths": [
+          "nanobot/agent/skills.py",
+          "tests/agent/test_skills_loader.py"
+        ],
+        "r01_impact": "none; K01 current-origin refresh deferred"
+      },
+      "note": "R01 coordinator PASS at F70/P0/R0 with twenty promoted findings and ten final discussion questions; integrated review remains pending.",
+      "last_checkpoint_commit": "a3ed5506040e5d9d09cd340bc844c0061a2369e2",
+      "completion": "All 70 R01 primaries are full; twenty findings promoted; ten final questions retained; coordinator PASS recorded.",
+      "report": "reports/R01.md",
+      "coverage": "reports/R01-coverage.json",
+      "final_coverage": {
+        "full": 70,
+        "partial": 0,
+        "unread": 0
+      },
+      "final_discussion_questions": [
+        "R01-Q1 owner scope implication versus enforceable reduced capability ceiling",
+        "R01-Q2 credential-handoff receipt for retry-safe pairing/refresh",
+        "R01-Q3 authoritative pairing lifecycle across QR/manual/cancel/restart/readiness/approval",
+        "R01-Q4 one atomic request/completion owner and effect-outcome contract",
+        "R01-Q5 one end-to-end frame/event size budget",
+        "R01-Q6 signed-media capability lifetime/secrecy and hard cache budget",
+        "R01-Q7 one source of truth for mobile routes/operations/parity",
+        "R01-Q8 release signing-secret/toolchain trust boundary",
+        "R01-Q9 real baseline/candidate Android upgrade qualification",
+        "R01-Q10 product ownership versus best-effort systemd/Tailscale lifecycle"
+      ]
+    }
+  ],
+  "resume_order": [
+    "M01 only: continue the next queued primary stream stage-by-stage; do not combine with X01/Q01/P01 or integrated review.",
+    "X01",
+    "Q01",
+    "P01",
+    "Refresh affected K01 current-origin evidence for staging 29612c3 before final integrated closure.",
+    "Fresh integrated review and final consolidated D1–D7 discussion, carrying E01 as a limited-depth/non-priority exception."
+  ],
+  "limits": "Historical handoffs remain preserved. E01 is an explicit 2026-11-07 limited-depth exception: 40 deep reads preserved, 55 remaining primaries quick-screened only, zero new deep body credit. D1–D7 and integrated review remain pending."
+}
