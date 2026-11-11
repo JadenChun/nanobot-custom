@@ -285,3 +285,5 @@ printf '%s\n' "JUnit: $run_dir/junit.xml"
 printf '%s\n' "Log: $run_dir/pytest.log"
 printf '%s\n' "pytest exit: $test_status"
 exit "$test_status"
+
+# Exercise the migration-only CI path for A3 release qualification.
