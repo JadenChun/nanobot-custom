@@ -672,5 +672,1160 @@
         }
       }
     }
+  },
+  "planning_review": {
+    "date": "2026-11-11",
+    "record": "plan-review.md",
+    "reference_record": "reference-design.md",
+    "baseline_staging": "ce8fb74f41e8d4fe7dcd1b5f7740ba29a68a2dff",
+    "scope": "Planning documents, intended architecture, rationale, alternatives, dependency order and product scope only.",
+    "method": "Coordinator planning/reference review and recording of the user's architectural-direction acceptance; documentation link/hash/structure checks. Prior bounded DSH/public Codex and official documentation research retains its original identities. No nanobot implementation source inspection or product-test execution in this planning phase.",
+    "direction": "USER_ACCEPTED_AT_DESIGN_LEVEL",
+    "plan_status": "FROZEN_FOR_IMPLEMENTATION_REVIEW",
+    "plan_final": true,
+    "newly_user_selected_decisions": [
+      "D1"
+    ],
+    "reference_recommendations": [
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7"
+    ],
+    "user_direction": {
+      "platform_scope": "Linux and macOS executors, with Android remote; Linux/Android already verified according to the user, macOS remaining.",
+      "reference_research": "The user authorized consulting DSH and Codex/ChatGPT desktop design to answer the remaining planning questions.",
+      "work_order": "Settle architecture and planning first; review implementation later.",
+      "architecture_acceptance": "The user accepted the recommended architectural direction; retain the existing Full-consent restart behavior. This does not select previously unspecified product parameters.",
+      "release_scope": "First version only; no legacy migration required.",
+      "subagent_interaction": "The user prefers controlling subagents through the original/main chat and questioned a separate direct child-control product surface.",
+      "subagent_client_ui": "The user approved the main-chat interaction direction and explicitly required reference-aligned client UI behavior. This does not select unrelated runtime, budget, initial device-proof or retention proposals.",
+      "future_extensibility": "Before freeze, account for future coding-harness and SuperAgent implementation through existing architectural extension points.",
+      "superagent_subagent_separation": "The user explicitly clarified that SuperAgent coordinates sessions and must not affect current ordinary subagent behavior.",
+      "default_selection": "The user chose step 1, explicitly selecting the complete four-default set already presented in the product contract. Formal document freeze/publication and implementation review remain subsequent numbered steps."
+    },
+    "platforms": [
+      {
+        "platform": "Linux",
+        "role": "Executor/gateway",
+        "verification": "USER_CONFIRMED_PREVIOUSLY_VERIFIED",
+        "qualification": "User-confirmed existing evidence, not a new matching-head receipt; later reuse requires matching source/environment/boundary."
+      },
+      {
+        "platform": "macOS",
+        "role": "Executor/gateway",
+        "verification": "PENDING_LATER_IMPLEMENTATION_VERIFICATION",
+        "planned_contracts": [
+          "Canonical session/source admission and restart history without uncertain replay",
+          "Selected workspace/Once/Full enforcement and explicit refusal",
+          "No-poll deadline and owned process-tree settlement",
+          "macOS-supported local owner authentication",
+          "Android remote against a macOS executor under the same authority/session rules"
+        ]
+      },
+      {
+        "platform": "Android",
+        "role": "Remote client of an admitted gateway, not an executor",
+        "verification": "USER_CONFIRMED_PREVIOUSLY_VERIFIED",
+        "qualification": "User-confirmed existing evidence retains its client/executor/artifact scope; existing Linux/Android evidence does not establish the macOS pairing."
+      }
+    ],
+    "windows_disposition": "Outside the required qualification matrix. Historical cancelled results remain historical; existing compatibility is preserved unless separately changed.",
+    "recommendations": [
+      {
+        "decision": "D2",
+        "contract": "Separate permission profile, Once/standing consent and actual enforcement; recheck live authority per prepared effect; state actual Full access/exclusions.",
+        "default": "Keep Full consent volatile. Loading persisted policy/history does not restore old runtime grants; reconstruct current admission after restart.",
+        "direction_status": "USER_ACCEPTED_DIRECTION"
+      },
+      {
+        "decision": "D3",
+        "contract": "Canonical subagent sessions/history and normal runner with separate run identity, narrowed live authority and bounded admission. Main-chat-mediated control through internal lifecycle tools; optional authorized read-only inspection.",
+        "remaining": "Implementation evidence against the frozen plan for the selected native parent-mediated lifecycle, awaited default, explicit background work and finite configurable child budgets. No separate public child management interface.",
+        "supersedes": "Earlier blanket recommendation to defer canonical child-session architecture.",
+        "direction_status": "USER_ACCEPTED_DIRECTION",
+        "product_default_status": "USER_SELECTED"
+      },
+      {
+        "decision": "D4",
+        "contract": "One current live owner with explicitly versioned initial wire/state formats; first release without legacy migration.",
+        "remaining": "Initial device-proof algorithm, encodings, challenge/revocation and recovery contract selected. Complete and pin the fixed schema/shared byte vectors before reviewing that implementation boundary; ordinary restart/recovery/revocation require later evidence.",
+        "direction_status": "USER_ACCEPTED_DIRECTION",
+        "default": "No v1-to-v2 cutover, forced re-pairing, historical-release reader or two-version upgrade requirement.",
+        "product_default_status": "USER_SELECTED"
+      },
+      {
+        "decision": "D5",
+        "contract": "A sampling request owns exact tool definitions, execution bindings and resource lifetime through settlement; new requests use ready replacements; revocation stays live.",
+        "default": "Original still-authorized binding or explicit refusal; never replacement merely by matching name. Safe-boundary reload deferral may implement the same contract without a global generation framework.",
+        "direction_status": "USER_ACCEPTED_DIRECTION"
+      },
+      {
+        "decision": "D6",
+        "contract": "Owner-local typed dispositions preserve compatible raw results; distinguish never-started/applied/partial/uncertain effects from delivery acknowledgement; reconcile uncertainty before replay.",
+        "default": "Bounded recovery for ordinary feedback; distinct cancellation/denial/mandatory-write handling; no implicit authority expansion.",
+        "direction_status": "USER_ACCEPTED_DIRECTION"
+      },
+      {
+        "decision": "D7",
+        "contract": "Separate bounded polling output, completion transcript, execution capacity and durable evidence retention; expose loss/truncation/provenance and preserve unresolved evidence.",
+        "default": "Preserve finite output/admission limits; regular conversation/child history has no automatic age expiry and remains until explicit deletion. Preserve unresolved proof and keep settled buffers separate. Child limits are explicitly selected independently of provider/backend capacity.",
+        "direction_status": "USER_ACCEPTED_DIRECTION",
+        "product_default_status": "USER_SELECTED"
+      }
+    ],
+    "references": {
+      "public_source_pins": [
+        {
+          "repository": "https://github.com/deepseek-ai/deepseek-harness",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159"
+        },
+        {
+          "repository": "https://github.com/openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "comparison_label": "0.166.0 / rust-v0.166.0"
+        }
+      ],
+      "pinned_source_files": [
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/subagent/subagent/src/manager.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/subagent/subagent/src/manager.ts",
+          "sha256": "49c0c13ec997970c2133994fedcfa8c76f8ba8d3288486fbebd16ac4ffb50566",
+          "bytes": 58693,
+          "matches_archived_hash": true,
+          "read_bounds_inclusive": [
+            [
+              302,
+              414
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/subagent/subagent/src/child-agent.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/subagent/subagent/src/child-agent.ts",
+          "sha256": "f632ef9e600a0508a4112e47f7862a3382ae5080d03353d04ed2449eda6f4fac",
+          "bytes": 13080,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              249,
+              279
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/core/tools/src/index.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/core/tools/src/index.ts",
+          "sha256": "020c566150cf82dd49d368f5585043c73c191aaeba9103fd77a3efde6ee909dd",
+          "bytes": 18227,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              264,
+              303
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/sandbox/sandbox-policy/src/session-mode.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/sandbox/sandbox-policy/src/session-mode.ts",
+          "sha256": "afe650fc43e87031eb7b50d9a1717b926906e4fcaab01199cd434235586714d7",
+          "bytes": 2616,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              1,
+              35
+            ],
+            [
+              53,
+              55
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/shell/bash-sandbox/src/index.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/shell/bash-sandbox/src/index.ts",
+          "sha256": "45dec72853eb9ab2f40697b7618dd922eefc7d5a5c7eb427dcd590898ab1ad9f",
+          "bytes": 8389,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              59,
+              105
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/core/session/src/repair.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/core/session/src/repair.ts",
+          "sha256": "c2835c920aba203c709e44686e55f43bb4d357ea59cfef3561c371b8ff115540",
+          "bytes": 9428,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              105,
+              196
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/jobs/jobs-local/src/ring.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/jobs/jobs-local/src/ring.ts",
+          "sha256": "ce5c351de29390a08cd459bf9b71194a1da6bcfceb6bbdf06ae4b8367528efc9",
+          "bytes": 4234,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              1,
+              45
+            ],
+            [
+              75,
+              112
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "dsh",
+          "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+          "path": "packages/session/session-persistence-jsonl/src/storage.ts",
+          "url": "https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/session/session-persistence-jsonl/src/storage.ts",
+          "sha256": "57d5fa1d7efd17789d6a223f6aa5e06b79092665bea13f8a23d3bab644d066c3",
+          "bytes": 24212,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              187,
+              211
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/session/step_context.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/session/step_context.rs",
+          "sha256": "a0a110311756ecebe4597d2283ad5abf7c7db1fe51b5fe4a50cb973661fbe331",
+          "bytes": 4220,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              22,
+              85
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/agent/control/spawn.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/agent/control/spawn.rs",
+          "sha256": "abfc6a33c6327805ce17e438d23eb9bf1af97a4b2c465fa4b72940d37466c94a",
+          "bytes": 47000,
+          "matches_archived_hash": true,
+          "read_bounds_inclusive": [
+            [
+              609,
+              633
+            ],
+            [
+              791,
+              868
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/agent/child_config.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/agent/child_config.rs",
+          "sha256": "ca8257ec568bc97f85c84f3ed54b38d9e3b43a96f252492ebba38cddb0aec232",
+          "bytes": 13723,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              65,
+              99
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/tools/parallel.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/parallel.rs",
+          "sha256": "7a096b14256318249d17bd879ad550b55653f1a5f01b2820d202786f2a2bbfe0",
+          "bytes": 43950,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              129,
+              143
+            ],
+            [
+              285,
+              304
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/unified_exec/process.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/unified_exec/process.rs",
+          "sha256": "f0ab4b32aae2c791f063e9f9180975fac749fddef62331a89576a0ea0904586f",
+          "bytes": 27710,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              34,
+              58
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        },
+        {
+          "repository": "codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/unified_exec/async_watcher.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/unified_exec/async_watcher.rs",
+          "sha256": "e038aafd4278303d61641bdfd2876ceb09153b3a2019e6254d214a8dd58667d3",
+          "bytes": 16019,
+          "matches_archived_hash": null,
+          "read_bounds_inclusive": [
+            [
+              327,
+              350
+            ]
+          ],
+          "inspection_scope": "Bounded reference-design source read; not a full repository audit."
+        }
+      ],
+      "official_documentation_snapshots": [
+        {
+          "name": "permissions",
+          "url": "https://learn.chatgpt.com/docs/permission-modes.md",
+          "bytes": 2289,
+          "sha256": "755f4d11d20f3f04311fab977e785164a152d5fbff48eb34a16a0f222e043550",
+          "method": "System curl with certificate verification",
+          "retrieved_on": "2026-11-11",
+          "inspection_scope": "Selected documented permission, sandbox, child-thread and client/server lifecycle contracts; not private desktop internals."
+        },
+        {
+          "name": "sandbox",
+          "url": "https://learn.chatgpt.com/docs/sandboxing.md",
+          "bytes": 13009,
+          "sha256": "4702d8590236260ca3e7e47b34f0402951153d9575b3d9b53df50116f2d3a8eb",
+          "method": "System curl with certificate verification",
+          "retrieved_on": "2026-11-11",
+          "inspection_scope": "Selected documented permission, sandbox, child-thread and client/server lifecycle contracts; not private desktop internals."
+        },
+        {
+          "name": "subagents",
+          "url": "https://learn.chatgpt.com/docs/agent-configuration/subagents.md",
+          "bytes": 22907,
+          "sha256": "e7469d41c5a18a4ee66ee40ca4a9a2617a697e42554a0198ac4481e1e597357f",
+          "method": "System curl with certificate verification",
+          "retrieved_on": "2026-11-11",
+          "inspection_scope": "Selected documented permission, sandbox, child-thread and client/server lifecycle contracts; not private desktop internals."
+        },
+        {
+          "name": "app-server",
+          "url": "https://learn.chatgpt.com/docs/app-server.md",
+          "bytes": 106105,
+          "sha256": "b9e75507755ba0be2ebc615ca1f4399a54a386125f3935f615405ea93efe77f2",
+          "method": "System curl with certificate verification",
+          "retrieved_on": "2026-11-11",
+          "inspection_scope": "Selected documented permission, sandbox, child-thread and client/server lifecycle contracts; not private desktop internals."
+        }
+      ],
+      "local_research_directory": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-reference-design-20261111-qi14y1sz",
+      "qualification": "Official documentation snapshots and pinned public source are distinct evidence. They do not expose private ChatGPT desktop internals, select nanobot product parameters or establish nanobot implementation conformance."
+    },
+    "sequence": "Use the frozen A3-PLAN-2026-11-11 documentation revision and latest staging for the subsequent review of the separate implementation; complete fixed protocol schema/shared byte vectors before reviewing that implementation boundary.",
+    "historical_ledger_policy": "All 24 previously published root fields are preserved. Original counts, including accepted D1-D7=0 at that checkpoint, and all 136 original UNVERIFIED implementation acceptance states remain historical. Current D1 platform selection and D2-D7 architectural-direction acceptance are recorded only in this planning overlay.",
+    "qualification": "The user accepted the architectural direction, volatile Full consent, first-release/no-legacy-migration scope, main-chat subagent/client UI interaction, future session/subagent separation and all four first-release defaults, then authorized the documentation freeze and direct publication to staging. The plan is frozen as A3-PLAN-2026-11-11. Implementation verification, fixed device-proof schema/shared byte vectors and macOS qualification remain later work. No runtime acceptance or finding closure is implied.",
+    "accepted_direction_decisions": [
+      "D1",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7"
+    ],
+    "direction_acceptance": {
+      "date": "2026-11-11",
+      "authority": "User in the current conversation",
+      "statement": "yes the recommendation direction is ok",
+      "status": "USER_ACCEPTED_ARCHITECTURAL_DIRECTION",
+      "applies_to": [
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6",
+        "D7"
+      ],
+      "scope": "The six preceding reference-backed architectural recommendations and retention of the existing volatile Full-consent restart behavior. D1 platform scope was selected earlier.",
+      "accepted_proposal_documents": {
+        "docs/architecture/a3/plan-review.md": "7acb3dd2d11b7f297b22582fea42b9e2d75fa2346a203863675336c9cc89fae0",
+        "docs/architecture/a3/reference-design.md": "adb870ed0e4dc564b32641c193a3fdd58f5e867b67560c458ca2b67cbe8a9939"
+      },
+      "preceding_document_validation_report": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-reference-plan-validation-20261111-zn49lnac/validation.json",
+      "does_not_select": [
+        "Exact new public child-control/steer/resume capabilities and new child budgets",
+        "Android algorithm/encoding/cutover/re-pair changes",
+        "New output/retention values or destructive retention policy"
+      ],
+      "implementation_acceptance": false,
+      "detailed_plan_frozen": false
+    },
+    "product_contract_record": "v1-product-contract.md",
+    "first_release_scope_selection": {
+      "date": "2026-11-11",
+      "authority": "User in the current conversation",
+      "statement": "for the migration, i think we probably dosent need it since we are developing the first version only",
+      "status": "USER_SELECTED_FIRST_RELEASE_WITHOUT_LEGACY_MIGRATION",
+      "selected": "One initial supported protocol/storage format with explicit versions and one live owner.",
+      "not_required": [
+        "Legacy v1-to-v2 device cutover or bearer coexistence",
+        "Forced re-pairing of a released installation population",
+        "Historical-release executable/readers",
+        "Two-version APK upgrade rehearsal",
+        "Legacy-data migration utilities solely for unreleased formats"
+      ],
+      "retained_requirements": [
+        "Initial device proof and normal pairing",
+        "Restart/reconnect, cancellation and lost-response recovery",
+        "Current revocation and uncertain-effect evidence",
+        "Current data integrity and one authoritative writer",
+        "Exact first-release source/dependency/artifact identity",
+        "Strict-type no-new-diagnostic regression checks"
+      ],
+      "data_reset_performed": false,
+      "qualification": "No released-version migration obligation is required by the selected product scope. This does not silently reset development data or close current security/recovery findings."
+    },
+    "detailed_product_proposals": {
+      "status": "USER_SELECTED_FOUR_FIRST_RELEASE_DEFAULTS",
+      "record": "v1-product-contract.md",
+      "child_controls": [
+        "Main agent starts bounded delegated assignments through the normal runner",
+        "Internal wait/result collection returns progress and outcomes to the parent",
+        "Main agent sends ordered follow-ups through normal child input admission; no separate public steer API",
+        "Existing parent Stop fences/cancels owned active subtree without waiting for the model; targeted cancellation through main-agent tools",
+        "Runtime releases settled execution resources and preserves canonical history; no user-facing close/archive operation required"
+      ],
+      "child_lifetime": "Awaited default selected; main agent may explicitly use internal background execution for independent parallel work, with completion returned to the same parent chat. A normal parent reply is not Stop. Parent Stop cancels the active subtree. Restart reconciles history/uncertainty without automatic replay or restored Full consent; continuation through the main chat requires fresh admission.",
+      "child_backend": "Native nanobot runner/history path; external backends outside the initial release contract.",
+      "child_admission_defaults": {
+        "root_depth": 0,
+        "maximum_depth": 2,
+        "active_immediate_child_runs_per_parent": 2,
+        "active_descendant_runs_per_root": 4,
+        "active_child_runs_per_gateway_excluding_primary": 4,
+        "configurable": true,
+        "uncertain_work_retains_ownership_and_reservation": true,
+        "idle_history_counts_as_active": false
+      },
+      "capacity_rationale": "Conservative initial personal-agent values allowing siblings and one nested level, with a global cap across roots. Not performance measurements or reference-imposed defaults.",
+      "initial_device_proof": {
+        "key": "Android Keystore non-exportable P-256",
+        "algorithm": "ECDSA/SHA-256",
+        "public_key_encoding": "X.509 SPKI DER",
+        "signature_encoding": "ASN.1 DER",
+        "binary_transport": "Unpadded base64url",
+        "fingerprint": "SHA-256 of exact public-key DER bytes",
+        "signed_claims": "Fixed typed UTF-8 JSON schema with sorted field names, compact separators, integer Unix-second expiry, no floating-point claims, and rejection of unknown/missing fields. Shared native/server byte vectors required.",
+        "challenge": "Fresh, expiring, scoped and consumed once before token issuance; bind protocol/purpose/instance/TLS origin/installation/device generation/nonce/expiry.",
+        "recovery": "Fresh proof for lost token delivery; persistent Cancel/revocation fences late responses and restart."
+      },
+      "output_limits": "Preserve the selected staging baseline's existing finite output/admission limits; separate live polling and retained completion view.",
+      "retention": "No automatic age-based deletion for regular conversations or child histories in the initial release; explicit deletion by the owner. Existing explicitly temporary-session behavior remains separate. Preserve unresolved effect/receipt/revocation evidence; refuse capacity before effects instead of silently trimming history.",
+      "selection_pending": false,
+      "child_interaction": "MAIN_CHAT_MEDIATED_PER_USER_PREFERENCE",
+      "public_child_management_required": false,
+      "optional_child_inspection": "Authorized read-only activity/history; no separate required composer or management panel.",
+      "selection_record": "planning_review.product_defaults_selection"
+    },
+    "subagent_control_review": {
+      "date": "2026-11-11",
+      "record": "reference-design.md#d3-follow-up-main-chat-control-in-codex-and-opencode",
+      "product_record": "v1-product-contract.md#subagents-controlled-through-the-main-chat",
+      "request": "The user questioned direct child controls, clarified that child means subagent, and named Codex/OpenCode implementation as references for control through the original/main chat.",
+      "user_interaction_preference": "MAIN_CHAT_MEDIATED_SUBAGENT_CONTROL",
+      "proposal_change": "Withdraw the separate direct child-management interface/public steer-close-resume requirement. Keep internal start, result collection/wait, ordered follow-up, cancellation and automatic resource cleanup under existing owners; optional authorized read-only activity inspection.",
+      "source_method": "Official-domain search and opened official Codex subagent documentation; bounded reads of pinned public Codex tool handlers/specifications and pinned OpenCode subagent-tool, parent-completion, documentation and app-composer bodies. No nanobot implementation source inspection or product execution.",
+      "official_documentation": {
+        "search_query": "site:developers.openai.com/codex subagents steer stop",
+        "resolved_url": "https://learn.chatgpt.com/docs/agent-configuration/subagents",
+        "markdown_url": "https://learn.chatgpt.com/docs/agent-configuration/subagents.md",
+        "sha256": "e7469d41c5a18a4ee66ee40ca4a9a2617a697e42554a0198ac4481e1e597357f",
+        "bytes": 22907,
+        "read_bounds_inclusive": [
+          [
+            196,
+            210
+          ],
+          [
+            231,
+            247
+          ]
+        ],
+        "matches_previous_snapshot": true
+      },
+      "public_source_pins": [
+        {
+          "repository": "https://github.com/openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "scope": "Public multi-agent tool specs/handlers; not private desktop code."
+        },
+        {
+          "repository": "https://github.com/anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "resolved_branch": "dev",
+          "commit_timestamp": "2026-11-11T07:41:50Z",
+          "scope": "Subagent tool, parent completion and app composer slice only; not a full OpenCode audit."
+        }
+      ],
+      "source_files": [
+        {
+          "repository": "openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/tools/handlers/multi_agents_v2.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/handlers/multi_agents_v2.rs",
+          "bytes": 2321,
+          "sha256": "ae414817a043502f54d313c03b1144d5c57fbbe6e69082c2295d99a636489b8a",
+          "local_repository_directory": "codex",
+          "read_bounds_inclusive": [
+            [
+              1,
+              67
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS"
+        },
+        {
+          "repository": "openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/followup_task.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/handlers/multi_agents_v2/followup_task.rs",
+          "bytes": 1722,
+          "sha256": "d6b3542f063401a614fcda05fd598be22477dfabee6a26e7fac6e09b4976b8c2",
+          "local_repository_directory": "codex",
+          "read_bounds_inclusive": [
+            [
+              1,
+              57
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS"
+        },
+        {
+          "repository": "openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/interrupt_agent.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/handlers/multi_agents_v2/interrupt_agent.rs",
+          "bytes": 3335,
+          "sha256": "634687e8d0616e71c43fa736ad4fcb4bbbc73018186322d6aa29e37736d5b877",
+          "local_repository_directory": "codex",
+          "read_bounds_inclusive": [
+            [
+              1,
+              112
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS"
+        },
+        {
+          "repository": "openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs",
+          "bytes": 7343,
+          "sha256": "6ea6b484878aa9ee812a860cdc4147124c0453c6f7bc3f9a43eb0b50e60d993e",
+          "local_repository_directory": "codex",
+          "read_bounds_inclusive": [
+            [
+              15,
+              75
+            ],
+            [
+              120,
+              180
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS"
+        },
+        {
+          "repository": "openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/send_message.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/handlers/multi_agents_v2/send_message.rs",
+          "bytes": 1714,
+          "sha256": "4c45adff32a96519dfaa3ff36c02ddc9ce300bfe0f9039b449f2ac9dd30f3e86",
+          "local_repository_directory": "codex",
+          "read_bounds_inclusive": [
+            [
+              9,
+              57
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS"
+        },
+        {
+          "repository": "openai/codex",
+          "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+          "path": "codex-rs/core/src/tools/handlers/multi_agents_spec.rs",
+          "url": "https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core/src/tools/handlers/multi_agents_spec.rs",
+          "bytes": 37769,
+          "sha256": "e24132911b9da01e84691dd8e3ae1179f8b9a53b6653adc703dee2250abc9d0b",
+          "local_repository_directory": "codex",
+          "read_bounds_inclusive": [
+            [
+              204,
+              263
+            ],
+            [
+              336,
+              382
+            ],
+            [
+              741,
+              766
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS"
+        },
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "packages/core/src/tool/plugin/subagent.ts",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/packages/core/src/tool/plugin/subagent.ts",
+          "bytes": 14576,
+          "sha256": "e96b37f19a04a0fbd2ec4c895c6c8aa235d25defb23b40320d771957333d9244",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [
+            [
+              17,
+              63
+            ],
+            [
+              153,
+              168
+            ],
+            [
+              184,
+              268
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS",
+          "git_blob_sha1": "669711d8aed8a9cfc2b1cab48a39abfa256a5bce"
+        },
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "packages/core/src/session/subagent-job.ts",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/packages/core/src/session/subagent-job.ts",
+          "bytes": 3309,
+          "sha256": "c4804d3d18316a3214dec80b4c589832cdad309ebed59a5af0e6d1e1dc7a8570",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [],
+          "inspection": "SEARCH_ONLY_NOT_BODY_REVIEWED",
+          "git_blob_sha1": "708b1637f208dc414321399b62a199a0bbe33edb"
+        },
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "packages/core/src/session/subagent-completion.ts",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/packages/core/src/session/subagent-completion.ts",
+          "bytes": 1778,
+          "sha256": "76fd1bc8cde61470d79aa5144c05d08537b32aa2fd75980b5067270e8d364b03",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [
+            [
+              19,
+              46
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS",
+          "git_blob_sha1": "79a00e112aa2f7b6141cef08efd83e3d14fb69d1"
+        },
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "packages/core/src/session/prompt.ts",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/packages/core/src/session/prompt.ts",
+          "bytes": 9993,
+          "sha256": "e829ad71c25cb43f48935245bf797bde6e3a490b4217cade2e99cb158db59c3d",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [],
+          "inspection": "RETRIEVED_AND_HASHED_NOT_INSPECTED",
+          "git_blob_sha1": "1ce940e793b99be6f9488c80da5f2e420ebfe0b1"
+        },
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "packages/app/src/session/composer/subagent-bar.tsx",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/packages/app/src/session/composer/subagent-bar.tsx",
+          "bytes": 5157,
+          "sha256": "069f1d6be93c425fd48cf4f385fdfad3c3981520e50f84eb8c5289c539a4b7b6",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [
+            [
+              1,
+              20
+            ],
+            [
+              95,
+              112
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS",
+          "git_blob_sha1": "65201332a53b0b6caae06c5a2499b7a03a43d922"
+        },
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "services/site/src/docs/content/agents.mdx",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/services/site/src/docs/content/agents.mdx",
+          "bytes": 8780,
+          "sha256": "09e557be4717fd1323df12276dbd659f0ffaa075c418dbfbc66cd997567f2db4",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [
+            [
+              20,
+              29
+            ],
+            [
+              109,
+              119
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS",
+          "git_blob_sha1": "5fe770b51ce450581e6bf8a7e87cc6c292ad4c90"
+        },
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "packages/app/src/session/composer/session-composer-region.tsx",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/packages/app/src/session/composer/session-composer-region.tsx",
+          "bytes": 4574,
+          "sha256": "3e903a7744148dc4ce2b11ef0af8318e85ffdba0dba5d28fffe9782c1a12890f",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [
+            [
+              34,
+              44
+            ],
+            [
+              93,
+              111
+            ]
+          ],
+          "inspection": "BOUNDED_BODY_EXCERPTS",
+          "git_blob_sha1": "90acc061d82b93a8903b4f9d5fd5c5ce81550a17"
+        }
+      ],
+      "source_files_retrieved_and_hashed": 13,
+      "bounded_body_files": 11,
+      "search_only_files": 1,
+      "retrieved_only_files": 1,
+      "local_research_directory": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-subagent-references-20261111-1suj_2io",
+      "qualifications": [
+        "Codex documentation offers optional inspection and some client controls; parent-mediated interaction does not mean all clients lack direct controls.",
+        "OpenCode composer observation applies to the inspected app component, not every client or API.",
+        "Codex v1 close and v2 interrupt have different lifecycle/capacity semantics; neither establishes a nanobot user-facing archive feature.",
+        "Reference permissions, numeric budgets and restart guarantees are not copied. Nanobot retains its accepted exact-effect consent, live authority and uncertainty contracts."
+      ],
+      "nanobot_implementation_accepted": false,
+      "subsequent_product_selection_record": "planning_review.product_defaults_selection"
+    },
+    "client_ui_review": {
+      "date": "2026-11-11",
+      "authority": "User in the current conversation",
+      "statement": "ok, and make sure the client ui for this part is also align with the reference harness ui design behaviour as well",
+      "status": "USER_SELECTED_MAIN_CHAT_INTERACTION_AND_REFERENCE_UI_ALIGNMENT",
+      "record": "v1-product-contract.md#client-ui-behavior-for-subagents",
+      "reference_record": "reference-design.md#d3-client-ui-behavior",
+      "acceptance_record": "v1-product-contract.md#later-ui-acceptance",
+      "stages": [
+        "A3-4",
+        "A3-5",
+        "A3-7"
+      ],
+      "selected_behavior": [
+        "Original conversation shows compact subagent task/status/results; main agent integrates the answer without duplicating every child message",
+        "Optional authorized read-only child detail replaces the child composer with status/return navigation and preserves parent context/draft",
+        "Follow-ups use the original composer and main-agent tools; accepted/queued is distinct from applied",
+        "Original-chat Stop remains available for owned active work, reaches the runtime without another model response and shows stopping/uncertainty until settlement",
+        "Existing main-chat approval flow identifies and authorizes one actual child effect under live authority",
+        "Reconnect/reopen merges canonical activity/results without duplicate work, stale-run updates, replay or restored Full consent",
+        "Desktop/WebUI, TUI and Android remote share interaction semantics in existing layouts, with keyboard/touch-accessible status and navigation"
+      ],
+      "reference_basis": [
+        "Previously searched/opened official Codex subagent documentation, desktop activity/inspection and main-agent control section",
+        "Previously inspected pinned OpenCode child composer gate and back-to-parent component",
+        "Additional complete body read of the same pinned OpenCode child status component; original read records retained"
+      ],
+      "local_research_directory": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-subagent-references-20261111-1suj_2io",
+      "source_files": [
+        {
+          "repository": "anomalyco/opencode",
+          "commit": "e56eff2bc01649b3aa21224876b8874e77dea4b0",
+          "path": "packages/app/src/session/composer/subagent-bar.tsx",
+          "url": "https://github.com/anomalyco/opencode/blob/e56eff2bc01649b3aa21224876b8874e77dea4b0/packages/app/src/session/composer/subagent-bar.tsx",
+          "bytes": 5157,
+          "sha256": "069f1d6be93c425fd48cf4f385fdfad3c3981520e50f84eb8c5289c539a4b7b6",
+          "git_blob_sha1": "65201332a53b0b6caae06c5a2499b7a03a43d922",
+          "local_repository_directory": "opencode",
+          "read_bounds_inclusive": [
+            [
+              1,
+              116
+            ]
+          ],
+          "inspection": "COMPLETE_COMPONENT_BODY_READ_ADDITIONAL_TO_PRIOR_EXCERPTS"
+        }
+      ],
+      "additional_source_files_retrieved": 0,
+      "existing_reference_components_read_further": 1,
+      "qualifications": [
+        "Codex desktop behavior is documented; private desktop source was not inspected",
+        "OpenCode observations concern the pinned app components, not all APIs or clients",
+        "Exact child-effect approval, stopping/uncertainty and canonical reconnect are nanobot adaptations of accepted owner contracts, not reference-component crash-safety claims",
+        "No separate child composer, task-sidebar product, per-child control panel or manual archive/close/resume UI is required",
+        "Lifetime/budget, initial device-proof and output/retention recommendations remain unselected"
+      ],
+      "nanobot_implementation_source_inspected": false,
+      "nanobot_client_executed": false,
+      "nanobot_implementation_accepted": false,
+      "detailed_plan_frozen": false,
+      "subsequent_product_selection_record": "planning_review.product_defaults_selection"
+    },
+    "plan_readiness_review": {
+      "date": "2026-11-11",
+      "request": "ok, so do we have the plan able to settle now?",
+      "scope": "Readiness of the architectural plan only; not implementation acceptance.",
+      "record": "v1-product-contract.md#final-selections-for-plan-freeze",
+      "walkthrough_record": "v1-product-contract.md#owner-and-failure-walkthroughs",
+      "status": "READY_FOR_FINAL_DEFAULT_SELECTION_NOT_FROZEN",
+      "architectural_direction": "Already selected, including first-release/no-legacy-migration scope and main-chat subagent/client UI interaction.",
+      "additional_architectural_direction_gaps_identified": 0,
+      "remaining_selections": [
+        "Awaited default with explicit main-agent background work, parent Stop and no automatic restart/replay",
+        "Finite configurable child admission: depth 2, two immediate children per parent, four descendants per root and four gateway-wide child runs excluding primary runs",
+        "Initial Android Keystore P-256/ECDSA-SHA256 device proof with the proposed exact encoding/challenge/revocation contract",
+        "Existing finite output/admission limits and regular history retained until explicit deletion, with unresolved proof preserved"
+      ],
+      "recommendation": "Adopt the complete four-default set, record its selection and freeze the document revision before implementation review.",
+      "paper_walkthrough_scenarios": [
+        "Duplicate/late approval and revocation",
+        "Parent Stop racing spawn/execution",
+        "Ordinary parent reply during explicit background work",
+        "Gateway restart with unfinished child work",
+        "MCP reload/revocation during a sampled request",
+        "Required source-write failure",
+        "Applied effect with lost response",
+        "Capacity exhaustion and uncertain launch",
+        "Client reconnect and old-run events",
+        "Storage pressure and evidence cleanup",
+        "Unsupported pre-release rollback"
+      ],
+      "paper_walkthrough_qualification": "Owner, precondition, permitted effect, durable/visible outcome and forbidden replay are recorded as design reasoning and later acceptance criteria, not executed runtime evidence.",
+      "initial_protocol_deliverable": "Complete and pin the fixed initial schema and shared canonical byte vectors before reviewing that implementation boundary.",
+      "request_selects_proposed_defaults": false,
+      "plan_final": false,
+      "nanobot_implementation_source_inspected": false,
+      "product_tests_executed": false,
+      "macos_verification": "Later implementation phase; reuse earlier matching Linux/Android evidence within its original scope.",
+      "publication": "Local planning amendment; no merge or push performed by this readiness review.",
+      "subsequent_product_selection_record": "planning_review.product_defaults_selection"
+    },
+    "future_extension_review": {
+      "date": "2026-11-11",
+      "authority": "User in the current conversation",
+      "request": "ok before we set it freeze, we should also make sure it is having awareness for the future implementation of the coding harness and the superagent direction, so we still having the plan have these included and ready to extend when we do the implementation in future for these directions",
+      "clarification": "for the future super agent design it should not affecting our current subagent behaviour becasue it is based on session instead of the subagent, so the subagent is suppose to be just working normally as it is now",
+      "status": "FUTURE_EXTENSION_BOUNDARIES_RECORDED",
+      "record": "future-harness-extension.md",
+      "stage_mapping": "future-harness-extension.md#mapping-to-a3-and-later-review",
+      "acceptance_record": "future-harness-extension.md#future-implementation-acceptance-scenarios",
+      "method": "Bounded reads of existing repository direction/planning documents and repository design/security guidance; no nanobot implementation source inspection or new external prototype audit.",
+      "source_inputs": [
+        {
+          "path": "docs/harness-prototype-direction.md",
+          "repository_revision": "ce8fb74f41e8d4fe7dcd1b5f7740ba29a68a2dff",
+          "sha256": "c418317a9d46bad05f1d70f76b49045f8494801f75e5abe397eefba40b2f1114",
+          "git_blob_sha1": "1e6c8c67eceabef7b0661fc20f2a0a1b2cbe0b89",
+          "bytes": 17046,
+          "read_bounds_inclusive": [
+            [
+              1,
+              276
+            ]
+          ],
+          "qualification": "Bounded planning-document read. Historical source, test and deployment claims retain their original dates and are not reverified here."
+        },
+        {
+          "path": "docs/ORCHESTRATOR_HARNESS_IMPLEMENTATION_PLAN.md",
+          "repository_revision": "ce8fb74f41e8d4fe7dcd1b5f7740ba29a68a2dff",
+          "sha256": "fb0f8bc75cf12e2351faf24cfcdcd2151f8261066822a4131ddf71f71447cf1b",
+          "git_blob_sha1": "b9ccce70449c5c152a1ebfb0453dc02717fbf6bf",
+          "bytes": 22402,
+          "read_bounds_inclusive": [
+            [
+              1,
+              245
+            ],
+            [
+              430,
+              469
+            ]
+          ],
+          "qualification": "Bounded planning-document read. Historical source, test and deployment claims retain their original dates and are not reverified here."
+        },
+        {
+          "path": "docs/superagent-research-and-session-direction.md",
+          "repository_revision": "ce8fb74f41e8d4fe7dcd1b5f7740ba29a68a2dff",
+          "sha256": "f8b919320eccd57ac8fbfbaf955acda552408107957793cf0c3f58780b1ca04b",
+          "git_blob_sha1": "63e02d5b89a725dad7e58e76424abf952e8e5a8c",
+          "bytes": 41895,
+          "read_bounds_inclusive": [
+            [
+              1,
+              115
+            ],
+            [
+              210,
+              562
+            ]
+          ],
+          "qualification": "Bounded planning-document read. Historical source, test and deployment claims retain their original dates and are not reverified here."
+        },
+        {
+          "path": "docs/nanobot-remaining-work.md",
+          "repository_revision": "ce8fb74f41e8d4fe7dcd1b5f7740ba29a68a2dff",
+          "sha256": "2c65d1201c31c926d7d72bffc887b8d2cf8d0ecf963899b593adf084178ad7bc",
+          "git_blob_sha1": "fcfb59f72accdc56998d05e5b8039e465270fafe",
+          "bytes": 18202,
+          "read_bounds_inclusive": [
+            [
+              1,
+              76
+            ],
+            [
+              100,
+              112
+            ]
+          ],
+          "qualification": "Bounded planning-document read. Historical source, test and deployment claims retain their original dates and are not reverified here."
+        }
+      ],
+      "selected_boundary": [
+        "Future SuperAgent coordinates normal task sessions independently of ordinary subagent execution inside those sessions",
+        "Ordinary subagents retain their existing controls, permissions, budgets, depth and behavior; session routing adds no new subagent requirement",
+        "Normal task-session association grants no authority, consumes no subagent-depth level or child reservation by itself, and does not suppress a normal session composer",
+        "Actual subagents launched in any normal session continue using ordinary delegation admission and owned subtree semantics",
+        "Future task lifecycle, routing, direct collaboration and admission have their own explicit session-level contract before activation",
+        "Coding-harness work preserves existing repositories, on-demand context, knowledge/runtime separation and normal tool/runner policies",
+        "Keep canonical session/input/source owners, project/process provenance, exact consent, request-local bindings, provider capacity and client projections as extension points"
+      ],
+      "planning_gaps_addressed": [
+        "Distinguish helper-only read-only inspection from direct access to a future normal managed task session",
+        "Separate task/session coordination and lifetime from subagent ancestry, child-run budgets and current Stop behavior",
+        "Clarify that preserving active provider/backend controls does not restore a retired all-provider turn semaphore",
+        "Map future-extension foundation checks to current A3 stages without requiring deferred features for current release acceptance"
+      ],
+      "future_acceptance_scenarios": 6,
+      "future_features_added_to_current_release": false,
+      "subagent_behavior_change_required_by_future_direction": false,
+      "new_task_schema_or_scheduler_selected": false,
+      "coordinator_activated": false,
+      "new_subagent_backend_framework_required": false,
+      "pending_v1_default_selections_unchanged": true,
+      "detailed_plan_frozen": false,
+      "nanobot_implementation_source_inspected": false,
+      "product_tests_executed": false,
+      "qualification": "Extension compatibility is assessed on paper. Current implementation seams and future workflows require their own later evidence. Historical root ledger and audit packets are unchanged.",
+      "publication": "Local planning documents only; no merge or push.",
+      "subsequent_product_selection_record": "planning_review.product_defaults_selection"
+    },
+    "product_selection_complete": true,
+    "remaining_current_product_choices": [],
+    "planning_record_history": "Earlier planning/research and selection records retain their at-the-time proposal, unselected or unfrozen statuses. Current first-release default authority is product_defaults_selection; current freeze authority is document_freeze. The original 24 published historical ledger fields are unchanged.",
+    "product_defaults_selection": {
+      "date": "2026-11-11",
+      "authority": "User in the current conversation",
+      "statement": "ok lets do 1",
+      "preceding_numbered_step": "1. Settle the four proposed defaults, which are still marked pending.",
+      "status": "USER_SELECTED_FOUR_FIRST_RELEASE_DEFAULTS",
+      "record": "v1-product-contract.md#final-selections-for-plan-freeze",
+      "accepted_proposal_document": "docs/architecture/a3/v1-product-contract.md",
+      "accepted_proposal_document_sha256": "2a9b62e01544f49e8e82f82366c8a63c17c64125ed9e990d0a2091837a73c42e",
+      "preceding_ledger_sha256": "5627d3851ff3547c7d81fbfb3eb58ec99b676f33fb33354b616fbd721f347b1d",
+      "preceding_selection_state": "PROPOSED_FOR_DISCUSSION_NOT_USER_SELECTED",
+      "selections": [
+        {
+          "id": "SUBAGENT_LIFETIME",
+          "summary": "Awaited by default; explicit main-agent background work returns to the original chat. Stop covers owned work; restart reconciles without automatic replay or restored Full consent.",
+          "value_fields": [
+            "child_lifetime"
+          ]
+        },
+        {
+          "id": "CHILD_ADMISSION_LIMITS",
+          "summary": "Configurable depth 2; two immediate child runs per parent; four descendants per root; four gateway-wide child runs excluding primary runs. Reserve before launch and retain uncertain reservations.",
+          "value_fields": [
+            "child_admission_defaults"
+          ]
+        },
+        {
+          "id": "ANDROID_DEVICE_PROOF",
+          "summary": "Initial Android Keystore P-256/ECDSA-SHA256 proof with SPKI/DER/base64url, typed canonical claims, fresh one-use challenge, live revocation and recovery.",
+          "value_fields": [
+            "initial_device_proof"
+          ]
+        },
+        {
+          "id": "HISTORY_OUTPUT_RETENTION",
+          "summary": "Keep finite output/admission limits and regular history until explicit deletion. Reclaim settled buffers separately and preserve unresolved proof; temporary sessions remain separate.",
+          "value_fields": [
+            "output_limits",
+            "retention"
+          ]
+        }
+      ],
+      "selected_values": {
+        "child_lifetime": "Awaited default selected; main agent may explicitly use internal background execution for independent parallel work, with completion returned to the same parent chat. A normal parent reply is not Stop. Parent Stop cancels the active subtree. Restart reconciles history/uncertainty without automatic replay or restored Full consent; continuation through the main chat requires fresh admission.",
+        "child_admission_defaults": {
+          "root_depth": 0,
+          "maximum_depth": 2,
+          "active_immediate_child_runs_per_parent": 2,
+          "active_descendant_runs_per_root": 4,
+          "active_child_runs_per_gateway_excluding_primary": 4,
+          "configurable": true,
+          "uncertain_work_retains_ownership_and_reservation": true,
+          "idle_history_counts_as_active": false
+        },
+        "initial_device_proof": {
+          "key": "Android Keystore non-exportable P-256",
+          "algorithm": "ECDSA/SHA-256",
+          "public_key_encoding": "X.509 SPKI DER",
+          "signature_encoding": "ASN.1 DER",
+          "binary_transport": "Unpadded base64url",
+          "fingerprint": "SHA-256 of exact public-key DER bytes",
+          "signed_claims": "Fixed typed UTF-8 JSON schema with sorted field names, compact separators, integer Unix-second expiry, no floating-point claims, and rejection of unknown/missing fields. Shared native/server byte vectors required.",
+          "challenge": "Fresh, expiring, scoped and consumed once before token issuance; bind protocol/purpose/instance/TLS origin/installation/device generation/nonce/expiry.",
+          "recovery": "Fresh proof for lost token delivery; persistent Cancel/revocation fences late responses and restart."
+        },
+        "output_limits": "Preserve the selected staging baseline's existing finite output/admission limits; separate live polling and retained completion view.",
+        "retention": "No automatic age-based deletion for regular conversations or child histories in the initial release; explicit deletion by the owner. Existing explicitly temporary-session behavior remains separate. Preserve unresolved effect/receipt/revocation evidence; refuse capacity before effects instead of silently trimming history."
+      },
+      "numeric_crypto_and_retention_values_changed_from_proposal": false,
+      "future_superagent_layer": "Coordination between normal sessions; ordinary subagents retain their normal behavior inside each session.",
+      "current_product_selection_complete": true,
+      "remaining_current_product_choices": [],
+      "next_step": "Step 2: record/publish the frozen documentation revision and merge the docs into staging, then step 3 implementation review against that baseline and latest staging.",
+      "initial_protocol_deliverable": "Complete and pin fixed schema/shared byte vectors before reviewing the device-proof implementation boundary.",
+      "formal_document_freeze_performed": false,
+      "publication_performed": false,
+      "implementation_review_started": false,
+      "product_tests_executed": false,
+      "nanobot_implementation_source_inspected": false,
+      "historical_root_ledger_and_audit_packets_unchanged": true,
+      "local_before_snapshot": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-default-selection-20261111-irvplhrf/before.json",
+      "qualification": "Selection attests the product requirements only. It does not establish implementation conformance, macOS qualification or closure of any historical finding.",
+      "subsequent_document_freeze_record": "planning_review.document_freeze"
+    },
+    "document_freeze": {
+      "date": "2026-11-11",
+      "authority": "User in the current conversation",
+      "statement": "ok lets do it",
+      "authorized_step": "Step 2: freeze and commit the architecture documentation, then merge and push it directly to staging without a documentation PR. Implementation review remains subsequent work.",
+      "baseline_id": "A3-PLAN-2026-11-11",
+      "status": "FROZEN_FOR_IMPLEMENTATION_REVIEW",
+      "record": "plan-review.md#frozen-baseline-and-subsequent-work",
+      "revision_identity": "The Git commit that first introduces this document_freeze record into staging is the exact frozen documentation revision.",
+      "pre_refactor_staging_commit": "ce8fb74f41e8d4fe7dcd1b5f7740ba29a68a2dff",
+      "separate_implementation_commit": "0518de5f5013b77cbc20d2c5b456e973f33c68f5",
+      "preceding_selection_ledger_sha256": "0d309e847450a7879511aad51c19f8cb21d9c5945968116e474ec75121488fc9",
+      "selected_defaults_record": "planning_review.product_defaults_selection",
+      "selected_defaults_unchanged": true,
+      "product_selection_complete": true,
+      "remaining_current_product_choices": [],
+      "frozen_document_paths": [
+        "docs/architecture/a3/README.md",
+        "docs/architecture/a3/decisions.md",
+        "docs/architecture/a3/design.md",
+        "docs/architecture/a3/evidence.json",
+        "docs/architecture/a3/future-harness-extension.md",
+        "docs/architecture/a3/implementation-plan.md",
+        "docs/architecture/a3/plan-review.md",
+        "docs/architecture/a3/reference-design.md",
+        "docs/architecture/a3/review.md",
+        "docs/architecture/a3/v1-product-contract.md"
+      ],
+      "frozen_scope": [
+        "Accepted D1-D7 architecture, first-release scope and four product defaults",
+        "Original-chat subagent control and reference-aligned client UI contract",
+        "Owner/failure walkthroughs and A3 stage order, owner boundaries and acceptance criteria",
+        "Future coding-harness extension points and SuperAgent coordination between normal sessions, preserving ordinary subagent behavior"
+      ],
+      "publication": {
+        "destination": "origin/staging",
+        "method": "Direct fast-forward merge and ordinary non-force push; no documentation PR.",
+        "scope": "Architecture documentation only; keep the refactor implementation branch separate.",
+        "verification": "Verify the committed tree and remote destination after merge/push. This record attests the plan freeze and publication authorization; Git history and destination refs establish publication."
+      },
+      "git_identity": {
+        "name": "Jaden",
+        "email": "changherng.jc@gmail.com",
+        "scope": "Repository-local author and committer"
+      },
+      "validation_method": "Documentation-only JSON, local-link/anchor, reference-source hash, immutable-archive, scope, whitespace and read-only Git checks before commit; verify committed contents and publication refs afterward.",
+      "formal_document_freeze_performed": true,
+      "implementation_review_started": false,
+      "nanobot_implementation_source_inspected": false,
+      "product_tests_executed": false,
+      "implementation_merge": "HOLD",
+      "remaining_technical_deliverables": [
+        "Complete and pin the initial fixed device-proof schema/shared native-server byte vectors before reviewing that implementation boundary.",
+        "Review the separate refactor against this frozen plan and latest staging, including pre-refactor repairs.",
+        "Verify selected contracts on macOS; reuse matching Linux/Android evidence only within its original scope."
+      ],
+      "historical_root_ledger_and_audit_packets_unchanged": true,
+      "change_policy": "Changes to selected architectural contracts require an explicit decision update and a new documentation baseline.",
+      "qualification": "This is a planning freeze. It does not establish implementation conformance, runtime qualification or closure of historical findings."
+    }
   }
 }

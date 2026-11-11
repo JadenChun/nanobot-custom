@@ -1,6 +1,24 @@
 # A3 review and merge gates
 
-**Documentation package: structural validation PASS. Architecture/implementation merge: HOLD.**
+**Architecture plan: frozen as `A3-PLAN-2026-11-11`. Documentation structural validation PASS. Historical candidate implementation merge: HOLD.**
+
+The [architectural direction](plan-review.md#user-acceptance) is now user-accepted.
+The user also selected a [first release without legacy migration](v1-product-contract.md#selected-first-release-without-legacy-migration).
+Legacy cutover/re-pairing, historical executable readers and two-version upgrade evidence
+are outside that current scope. The findings below remain historical observations, not
+newly closed items. A migration-only tool is not required for v1; any retained executable
+dry-run/maintenance path still has to obey its advertised read-only/data-integrity contract.
+The user also selected main-chat-mediated subagents and
+[reference-aligned client UI behavior](v1-product-contract.md#client-ui-behavior-for-subagents).
+The UI scenarios are later acceptance obligations, without claiming current UI conformance.
+The user subsequently selected all four lifetime, budget, initial-proof and retention
+defaults by choosing step 1, then authorized the
+[formal document freeze](plan-review.md#frozen-baseline-and-subsequent-work) and direct publication to staging.
+The [future extension contract](future-harness-extension.md) records coding-harness
+and session-based SuperAgent compatibility. Future coordination must preserve ordinary
+subagent behavior. Its task-routing/direct-session UI features remain later work;
+only the mapped foundation contracts belong to current A3 implementation review.
+
 Two independent reviews judge the small-core, edge-owned direction viable, but require
 corrections before the candidate can meet its own authority, canonical-history and
 durability contracts. This is not an all-architecture PASS. The nine findings below
@@ -253,12 +271,13 @@ finding or architectural decision gate.
 
 | Gate | Missing proof or choice | Required acceptance condition |
 | --- | --- | --- |
-| G1: platform matrix | Full Windows cancelled; no macOS native/source-writer/owner IPC qualification; Linux-specific paths remain | Name supported client/executor/mode combinations, qualify actual hosts and preserve refusal for unavailable proof. Do not equate generic process success with managed confinement. |
-| G2: physical mobile and cutover | Physical waiver's human provenance unknown; approved-but-unissued challenge persistence and retained/revoked v1 installation re-pair path unqualified | Record an authorized waiver's exact scope or provide AC7.4 evidence. Prove restart and old-installation re-pair through real owner/edge/native custody; no v1 revival. |
-| G3: historical executable and artifacts | Existing rollback tests use current readers; PR installed-prior-reader and Android claims uninspected | Inspect source/dependency/artifact/previous-executable digests and exact upgrade/rollback receipts, including post-cutover history, scheduler once-only and device revocation. |
-| G4: consequential choices | Historical D1–D7 pending; implemented values do not establish human acceptance | Add durable acceptance or explicit deferral for supported scope, Full semantics, children/budgets, P-256/cutover, request lifetime, outcomes, retention and compatibility changes. |
+| G1: selected platforms | Linux/Android previously verified per user; macOS remains | Later verify the selected macOS native/source-writer/owner IPC contracts. Reuse matching Linux/Android evidence. Windows is outside the required matrix. |
+| G2: initial mobile contract | Historical physical-waiver/proof gaps retain their original scope | Later qualify the initial proof, pending restart, lost-response recovery, Cancel/revoke and production scopes. Reuse matching user-confirmed Android evidence; no old-device cutover or re-pair path is required. |
+| G3: first-release artifacts | Exact final installed artifacts must match the reviewed source | Inspect source/dependency/executable/bundle/APK/signer identities and clean-install/restart recovery. Preserve current revocation/uncertainty or refuse unsupported rollback. No historical-release executable or two-version upgrade evidence required. |
+| G4: detailed product choices | Architecture, scope, UI direction and all four v1 defaults selected by the user; plan frozen | Use `A3-PLAN-2026-11-11` and latest staging for implementation review. Fixed device-proof schema/vectors remain a technical deliverable before that boundary review. UI scenarios remain later A3-4/A3-5/A3-7 acceptance criteria. |
 | G5: complete traceability | 136 original IDs default unverified; E01 remains limited-depth | Attach criterion-specific proof or an explicit qualified disposition for each relevant finding and retain all remaining IDs/gaps. A full passing suite does not close the partition. |
 | G6: updated staging baseline | Six feature-repair commits are included in pre-refactor staging; their semantic preservation in the candidate is unverified | Compare the refactor with the latest staging, record a semantic disposition per repair, port only a proven missing invariant through the current owner and rerun its closest check. |
+| G7: future extension boundaries | Coding-harness and SuperAgent session directions recorded; no current implementation qualification implied | Later inspect the mapped A3 foundation contracts. Preserve normal sessions, ordinary subagent behavior, project/process provenance, canonical input/source and provider capacity boundaries. Future task routing/UI is not a current release feature gate. |
 
 The source review retained the independent hard deadline and shielded termination,
 tree-quiescence distinction, durable intent/unknown restart, writer lease/source CAS/
@@ -268,9 +287,10 @@ read-only policy/scopes/locks, MCP readiness and executing-call leases/reconnect
 strict P-256/SPKI/DER/canonical claims and current HTTP scope checks. Corrections should
 complete these boundaries rather than replace them with another framework.
 
-Native-child mid-run send/steer is explicitly unavailable in the candidate backend.
-This and the mobile restart/re-pair source gaps are qualification/contracts to resolve,
-not additional demonstrated runtime defects. The `7fbb00c2a` inode-reuse theory was not
+Native-child mid-run send/steer was explicitly unavailable in the pinned candidate.
+That observation does not establish conformance to the selected first-release control contract. Initial
+mobile restart remains required; old-installation re-pairing is outside scope. These
+are qualification/contracts, not additional demonstrated runtime defects. The `7fbb00c2a` inode-reuse theory was not
 confirmed: changed validated content plus extension proof is a reasonable source
 mechanism, with no new finding inferred here.
 

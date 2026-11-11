@@ -1,5 +1,19 @@
 # A3 design, invariants and alternatives
 
+This design belongs to the [frozen `A3-PLAN-2026-11-11` baseline](plan-review.md#frozen-baseline-and-subsequent-work).
+
+The user accepted the [reference-based architectural direction](plan-review.md#user-acceptance)
+on 2026-11-11. The selected scope is Linux/macOS execution with Android remote; canonical
+child sessions, separated consent/enforcement, request-owned tool bindings, owner-local
+recovery and separate output/retention lifetimes govern the current design. Full consent
+remains volatile; restart does not restore prior consent. The user subsequently selected
+the four defaults for internal subagent lifetime/budgets, initial device proof and retention.
+The user selected a first release without legacy migration; the
+[first-release contract](v1-product-contract.md) defines that scope and the selected defaults.
+The user's subagent clarification keeps orchestration in the original chat/main agent.
+Canonical child history is an internal ownership contract; a separate public child chat
+or management interface is not required.
+
 The candidate retains `AgentLoop` for session and channel coordination and `AgentRunner`
 for provider/tool iteration. It adds explicit facts at existing ownership boundaries:
 which instance and session own work, which effect was approved, which generation supplied
@@ -7,7 +21,8 @@ a tool, and which receipt proves a completed effect. This follows the repository
 [small-core constraints](../../../.agent/design.md) and
 [separate security boundaries](../../../.agent/security.md).
 
-This is a design under review at `0518de5f5013b77cbc20d2c5b456e973f33c68f5`.
+The implementation observations below remain pinned to
+`0518de5f5013b77cbc20d2c5b456e973f33c68f5`; they are historical context for later review.
 **Required invariants below are acceptance obligations drawn from the A3 packets; source
 observations describe mechanisms, not a certification that every obligation holds.**
 [Independent counterexamples and remaining gates](review.md) qualify the record.
@@ -53,7 +68,7 @@ acknowledgement cannot create that fact.
 | Approved effect | `ApprovalAdmission` and risky-action policy | Authorize the selected effect once while live authority still holds. |
 | Tool binding and readiness | Tool registry plus MCP connection owner | Use the originating definition and connection, or refuse on live revocation. |
 | Process lifetime | Exec session/native admission owner | Observe root exit separately from tree quiescence; join Stop and shutdown. |
-| Delegated child | `DelegationTree` with canonical session storage | Navigate, wait or stop an admitted child by identity and current generation. |
+| Delegated subagent | `DelegationTree` with canonical session storage | The main agent starts, follows up, waits or cancels through current owner admission. Clients may optionally inspect authorized activity/history. |
 | Delivery or external effect | The specific mutation, occurrence, process or sender owner | Reconcile the receipt; never infer replay permission from a timeout. |
 
 One typed fact can cross owners; enforcement remains local. A filesystem grant is not
@@ -145,10 +160,11 @@ separately from the stronger unrestricted-native proof path.
 | Durable session writer | The lifetime writer lease uses a [POSIX descriptor proof boundary][session-lease]. | Startup and read-only compatibility are distinct from managed writer admission. |
 | Private remote owner IPC | [`OwnerIPCServer._check_peer`][ipc-peer] uses `SO_PEERCRED` and otherwise refuses. | A Darwin `LOCAL_PEERCRED` repair exists separately and needs reconciliation. |
 
-The smaller alternative to widening platforms is to retain an explicit supported executor
-matrix and fail closed elsewhere, or use a selected Linux executor for another client OS.
-Adding another sandbox backend would require its own native isolation and process-owner
-proof; text path checks cannot provide it. See [S3/S9](../../audits/architecture-review-2026-11-06/authority-sandbox.md),
+The historical alternative was a smaller executor matrix or a Linux executor serving
+another client OS. The selected direction requires Linux and macOS executors, with
+Android remote. Each native adapter needs its own isolation, owner-authentication and
+process-lifetime proof; missing guarantees refuse explicitly. macOS is the remaining
+verification target. Text path checks cannot supply that proof. See [S3/S9](../../audits/architecture-review-2026-11-06/authority-sandbox.md),
 [P2–P6](../../audits/architecture-review-2026-11-06/persistence-lifecycle.md),
 [D1](decisions.md#d1-platform-and-executor-scope) and [A3-2](../../audits/implementation-packets/A3-2-runtime-process-ownership.md).
 
@@ -176,6 +192,21 @@ Historical rationale and alternatives: [A1–A8](../../audits/architecture-revie
 [R06/R07/R09](../../audits/module-review-2026-11-06/integrated/I02-durability.md),
 [A3-3](../../audits/implementation-packets/A3-3-durable-session-runtime.md).
 
+## Future coding harness and session coordination
+
+The user required the current plan to preserve both future directions and clarified that
+SuperAgent coordinates normal sessions, while ordinary subagents work normally inside
+each session. The [extension contract](future-harness-extension.md) keeps session
+coordination outside the subagent execution tree. A task-session link does not consume
+helper depth, grant authority, suppress a normal composer or change subtree Stop.
+Future task lifecycle and budgets need their own explicit contract.
+
+Preserve normal canonical execution, source and input ordering; effective repository
+targets; process completion provenance; request-owned tools; separate provider capacity;
+and client projections. Coding and later session coordination extend existing tool/
+session/channel edges. The future direction introduces no new subagent behavior, task
+database, coordinator activation or replacement loop in the current release.
+
 ## Durable recursive children
 
 **Invariant.** Reserve bounded capacity and persist one child session before launch.
@@ -190,19 +221,30 @@ parent identity, checks limits and persists metadata before returning admission.
 not separate topology owners. The inspected `DelegationTreePolicy` defaults are depth 2,
 two live children per parent and four live descendants. These are observed candidate
 values from [`DelegationTreePolicy`][child-policy]; [D3](decisions.md#d3-durable-delegation)
-records their missing human acceptance.
+distinguishes that original observation from the user's later explicit default selection.
 
 [`stop_subtree`][child-stop] distinguishes settled cancellation from uncertainty.
 [`_restore`][child-restore] turns unresolved live child records into uncertain records.
 [`NativeChildBackend.resume`][child-resume] refuses replay after restart. A background
-child may outlive ordinary parent completion under its admitted scope, which differs
+child may outlive an ordinary parent reply under its admitted scope, which differs
 from the lifetime of a bounded foreground role. Typed client references must retain
-authorization and the child's current generation at reads and controls.
+authorization and the child's current generation. Main-chat orchestration routes internal
+controls; optional read-only child inspection does not require a separate composer or
+manual close/archive/resume interface. Resource release remains the runtime owner's job.
 
-This is a material expansion beyond the original recommendation to keep bounded roles.
-Keeping only awaited roles is the smaller viable alternative if durable/addressable
-children are not required. If they are required, reuse canonical sessions and the normal
-runner, rather than maintaining both an old subagent topology and a new session topology.
+The selected [client UI contract](v1-product-contract.md#client-ui-behavior-for-subagents)
+projects subagent task/status/results into the original conversation. Optional authorized
+detail is read-only, replaces the child composer with status/return navigation and
+preserves the parent draft/context. Main-chat approvals identify the actual child effect;
+the parent Stop stays usable while owned work is active and shows stopping or uncertainty
+until settlement. Reconnect merges canonical state without duplicate work or stale-run
+updates. Desktop/WebUI, TUI and Android remote share these meanings in existing layouts.
+This adds no second task-state authority or new lifecycle management surface.
+
+The original bounded-role-only recommendation remains a historical alternative. The
+accepted direction includes canonical child-session architecture using existing sessions
+and the normal runner, with separate identity for each active run. Awaited helpers can
+share that execution path without every helper requiring a public persistent task.
 External Codex/Claude child backends are future work, not a capability supplied by this
 native interface. See [G1–G7](../../audits/architecture-review-2026-11-06/delegation-context.md)
 and [A3-5](../../audits/implementation-packets/A3-5-delegation-cutover.md).
@@ -226,10 +268,12 @@ on a replacement connection. These mechanisms preserve useful execution lifetime
 the independent runner/reload counterexample in [review](review.md) exposes a gap before
 execution begins: a request may already have captured the old definitions.
 
-Two smaller viable rules were explicitly retained in historical [D5](../../audits/architecture-review-2026-11-06/decisions.md#d5-request-tool-registration-lifetime):
-defer reload until a safe request boundary, or bind the request to the originating
-registration and retain its lease from definition capture. Either must keep live
-revocation. A larger shared generation service would not repair this missing boundary.
+Historical [D5](../../audits/architecture-review-2026-11-06/decisions.md#d5-request-tool-registration-lifetime)
+retained safe-boundary reload deferral and request-owned bindings as alternatives. The
+accepted direction requires the originating definition, registration and resource lifetime
+from capture through settlement, with live revocation. Safe-boundary deferral is a valid
+implementation strategy when it satisfies that same contract. A global generation
+service has no established requirement here.
 
 Capability presentation also separates declared, configured, registered, ready and
 authorized. The same admitted skill candidate must supply its displayed provenance and
@@ -265,6 +309,11 @@ retry service. References: [R04/R08/R17](../../audits/module-review-2026-11-06/i
 
 ## P-256 mobile cutover
 
+**Current scope:** device-key pairing is an initial-release design. The historical
+candidate's legacy cutover below does not create a current migration requirement.
+No forced re-pairing or released-version compatibility path is required; see
+[the first-release decision](v1-product-contract.md#selected-first-release-without-legacy-migration).
+
 **Invariant.** The approved device, instance, TLS origin and current device generation
 must match a fresh, expiring one-use challenge. Native custody owns the private key,
 signing and tokens. Access scopes are checked at production dispatch. Revoke prevents
@@ -285,7 +334,9 @@ The smaller original option was to repair bearer custody through explicit recove
 rotation. The candidate instead chooses a device-key cutover with legacy v1 revocation
 and re-pairing. That changes wire and persisted-state compatibility. The historical
 packet proposed P-256 and required algorithm/encoding/consumption approval before
-implementation; [D2/D4](decisions.md) retain the missing human decision provenance.
+implementation. The user's later four-default selection now supplies that product
+decision provenance in [D2/D4](decisions.md); implementation conformance and shared
+schema/byte-vector evidence remain later work.
 Emulator or host fixtures cannot substitute for the physical Android/desktop-owner
 criterion in [A3-7](../../audits/implementation-packets/A3-7-mobile-pairing.md).
 

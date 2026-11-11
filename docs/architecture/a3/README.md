@@ -2,13 +2,41 @@
 
 This is the current, reviewable record of the A3 audit and candidate refactor, as of
 2026-11-11. It collects the design, reasons, implementation order and evidence in the
-repository. **The implementation merge is on HOLD.** Documentation integrity can pass
-while architecture, security and release acceptance remain open.
+repository. **The plan is frozen as `A3-PLAN-2026-11-11`; the implementation merge is on HOLD.**
+The [freeze record](plan-review.md#frozen-baseline-and-subsequent-work) identifies the
+documentation baseline. Implementation and release acceptance remain open.
+
+The product decisions and plan are settled. Start with
+the [planning review and accepted D1–D7 direction](plan-review.md). The user selected Linux and
+macOS executors plus Android remote; Linux/Android are previously verified according to
+the user, and macOS is the remaining verification target. The
+[reference answers](reference-design.md) supply the D2–D7 direction from DSH, public
+Codex source and official desktop documentation, accepted by the user on 2026-11-11.
+The user also selected a first-release baseline without legacy migration and explicitly
+accepted the [four final defaults](v1-product-contract.md#final-selections-for-plan-freeze)
+by choosing step 1 on 2026-11-11. Lifetime, finite child budgets, initial device proof
+and output/retention policy are selected. The owner/failure walkthroughs are recorded;
+the document package is frozen for implementation review against latest staging.
+Subagents are controlled through the original chat/main agent; the separate direct
+child-management proposal has been narrowed following the Codex/OpenCode source comparison.
+The [client UI contract](v1-product-contract.md#client-ui-behavior-for-subagents) records
+the selected original-chat activity, optional detail/return, approval, Stop and reconnect
+behavior across clients, with later observable acceptance scenarios.
+The [future extension contract](future-harness-extension.md) preserves the coding-harness
+and SuperAgent directions. SuperAgent coordinates normal sessions; ordinary subagents
+continue working normally inside each session. Future task routing/UI does not redefine
+their behavior or become a first-release coordinator requirement.
+Candidate-code findings and runtime qualification are later work and do not select
+planning requirements.
 
 | Read | Purpose |
 | --- | --- |
+| [Planning review and accepted direction](plan-review.md) | User acceptance, selected scope/defaults and the frozen documentation baseline for implementation review. |
+| [First-release product contract](v1-product-contract.md) | Selected no-migration scope, main-chat-mediated subagents/client UI behavior and accepted runtime/budget, device-proof and retention defaults. |
+| [Future coding harness and SuperAgent sessions](future-harness-extension.md) | Preserved extension points, the separation between session coordination and ordinary subagents, stage mapping and later feature acceptance scenarios. |
+| [Reference answers](reference-design.md) | DSH/Codex mechanisms, documented desktop behavior, accepted architectural adaptations and product choices the references cannot settle. |
 | [Design and alternatives](design.md) | Ownership, data flow, required invariants, observed mechanisms and smaller options. |
-| [D1–D7 decisions](decisions.md) | Historical pending choices, observed candidate choices and missing acceptance provenance. |
+| [D1–D7 decisions](decisions.md) | Accepted architectural direction/defaults and historical candidate observations. |
 | [Implementation plan](implementation-plan.md) | A3-0 plus ten stages, dependencies, owner boundaries, acceptance and rollback. |
 | [Review and merge gates](review.md) | Independent findings, inspected evidence, reported claims and conditions for acceptance. |
 | [Evidence and finding ledger](evidence.json) | Machine-readable pins, 136 finding/package/stage assignments, qualifications and evidence states. |
@@ -71,10 +99,10 @@ the coverage basis; [the original audit plan](../../audits/project-audit-plan.md
 the earlier sequencing.
 
 Their dates, pending states, source pins, historical links and claims are preserved.
-This A3 record supersedes their planning status **for current navigation only**. It does
-not rewrite their contents, validate old links or turn historical recommendations into
-accepted product requirements. The linked ChatGPT roadmap is supplemental; this record
-and the repository packets contain the reviewable plan.
+Current planning decisions, including the user's direction acceptance, are recorded in
+[the planning review](plan-review.md), without backdating them into those packets or
+adding implementation acceptance. The linked ChatGPT roadmap is supplemental; this
+record and the repository packets contain the reviewable plan.
 
 I05 preserves 136 original findings assigned exactly once to 22 repair packages, 105
 module questions, zero whole-finding deduplications and one partial factual overlap.
