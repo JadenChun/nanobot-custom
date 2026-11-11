@@ -106,3 +106,52 @@ def test_approved_result_is_not_replayed_after_restart(tmp_path: Path) -> None:
     restarted = PairingService(store, tokens, clock=clock)
     with pytest.raises(PairingNotFoundError):
         restarted.status(created.pairing_id)
+
+
+def test_approved_unissued_survives_restart_with_fresh_proof(tmp_path: Path) -> None:
+    from nanobot.remote.device_proof import DeviceProofClaims
+    from tests.remote.proof_helpers import new_device_key, sign_claims
+
+    store, tokens, pairing, clock = setup(tmp_path)
+    created = offer(pairing)
+    key, public = new_device_key()
+    pairing.collect(pairing_id=created.pairing_id, nonce=created.nonce, collector_secret=created.collector_secret, installation_id="install-0001", label="phone", device_public_key_der=public)
+    pairing.approve(pairing_id=created.pairing_id, comparison_code=created.comparison_code)
+    before = pairing.proof_challenge_claims(created.pairing_id)
+    assert store.get_device("install-0001") is None
+    restarted = PairingService(store, TokenService(store, clock=clock), clock=clock)
+    assert restarted.status(created.pairing_id).state == "approved"
+    after = restarted.proof_challenge_claims(created.pairing_id)
+    assert after["nonce"] != before["nonce"]
+    claims = DeviceProofClaims.from_payload(after)
+    issued = restarted.complete_device_proof(pairing_id=created.pairing_id, claims=claims, signature_der=sign_claims(key, claims))
+    saved = restarted._state_path.read_text()
+    assert issued.access_token not in saved
+    assert "access_token" not in saved
+    assert PairingService(store, tokens, clock=clock).pending() == []
+
+
+@pytest.mark.parametrize("disposition", ["cancel", "expired", "revoked"])
+def test_approved_restart_does_not_revive_cancel_expiry_or_revocation(tmp_path, disposition):
+    from nanobot.remote.device_proof import DeviceProofClaims
+    from nanobot.remote.pairing import PairingError
+    from tests.remote.proof_helpers import new_device_key, sign_claims
+
+    store, tokens, pairing, clock = setup(tmp_path)
+    created = offer(pairing)
+    key, public = new_device_key()
+    pairing.collect(pairing_id=created.pairing_id, nonce=created.nonce, collector_secret=created.collector_secret, installation_id="install-0001", label="phone", device_public_key_der=public)
+    pairing.approve(pairing_id=created.pairing_id, comparison_code=created.comparison_code)
+    if disposition == "cancel":
+        pairing.cancel(created.pairing_id)
+    elif disposition == "expired":
+        clock.now = created.expires_at
+    else:
+        # A separately current device revocation must also fence a pending approval.
+        tokens.issue_device("install-0001", ("chat.read",), device_fingerprint="a" * 64, device_generation=1, origin=ORIGIN)
+        tokens.revoke("install-0001")
+    restarted = PairingService(store, tokens, clock=clock)
+    with pytest.raises(PairingError):
+        raw = restarted.proof_challenge_claims(created.pairing_id)
+        claims = DeviceProofClaims.from_payload(raw)
+        restarted.complete_device_proof(pairing_id=created.pairing_id, claims=claims, signature_der=sign_claims(key, claims))

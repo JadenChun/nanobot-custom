@@ -60,7 +60,7 @@ class NativeNetworkPlugin : Plugin() {
     @Volatile private var transportHandle: Long = 0L
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val operationExecutor = Executors.newCachedThreadPool()
-    private val pendingNative = ConcurrentHashMap<Long, CompletableFuture<JSONObject>>()
+    @Volatile private var requests = NativeRequestCorrelator<JSONObject>()
     private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
     private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
     @Volatile private var activePairing: PairingChallenge? = null
@@ -192,6 +192,7 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     private fun performRefresh(): CustodyRecord {
+        val generation = custody.attemptGeneration()
         var active = custody.load() ?: throw CustodyException("no refresh credential")
         if (active.refreshToken.isBlank() || active.revocationPending) {
             throw CustodyException("no refresh credential")
@@ -214,6 +215,7 @@ class NativeNetworkPlugin : Plugin() {
             refreshed.getString("refresh_token"),
             refreshed.optInt("expires_in", 600),
             refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
+            expectedGeneration = generation,
         )
         val current = transportHandle
         if (current != 0L) {
@@ -303,6 +305,12 @@ class NativeNetworkPlugin : Plugin() {
             call.reject(exception.message ?: "pairing challenge is invalid")
             return
         }
+        val generation = try {
+            custody.beginPairing(origin, installationId, challenge = PairingChallengeCodec.encode(challenge), label = label)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing could not be persisted")
+            return
+        }
         operationExecutor.execute {
             try {
                 val existing = custody.load()
@@ -312,9 +320,10 @@ class NativeNetworkPlugin : Plugin() {
                     existing.origin != origin ||
                     existing.installationId != installationId
                 ) {
-                    startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6))
+                    startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6), generation)
                 }
                 waitUntilReady()
+                custody.requirePairing(generation)
                 val collected = jsonRequest(
                     "mobile_pair_collect",
                     "/mobile/v1/pair/collect",
@@ -325,22 +334,13 @@ class NativeNetworkPlugin : Plugin() {
                         "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
                         "X-Nanobot-Installation" to installationId,
                         "X-Nanobot-Label" to label,
-                        "X-Nanobot-Device-Key" to Base64.encodeToString(
-                            custody.deviceProofPublicKey(),
-                            Base64.NO_WRAP,
-                        ),
+                        "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
                     ),
                 )
-                try {
-                    custody.savePendingPairing(
-                        origin,
-                        installationId,
-                        challenge.pairingId,
-                        PairingChallengeCodec.encode(challenge),
-                    )
-                } catch (exception: Exception) {
-                    // Pairing itself is still valid; native custody is retried on
-                    // the next foreground/poll boundary.
+                custody.withPairing(generation) {
+                    custody.savePendingPairing(origin, installationId, challenge.pairingId,
+                        PairingChallengeCodec.encode(challenge), generation)
+                    activePairing = challenge
                 }
                 val result = JSObject(collected.toString())
                     .put("origin", origin)
@@ -375,50 +375,42 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("pairing code must be 8 digits")
             return
         }
+        val generation = try {
+            custody.beginPairing(origin, installationId, code = code, label = label)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing could not be persisted")
+            return
+        }
         operationExecutor.execute {
             try {
-                val existing = custody.load()
-                if (
-                    transportHandle == 0L ||
-                    existing == null ||
-                    existing.origin != origin ||
-                    existing.installationId != installationId
-                ) {
-                    startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6))
-                }
-                waitUntilReady()
-                val collected = jsonRequest(
-                    "mobile_pair_code",
-                    "/mobile/v1/pair/code",
-                    body = null,
-                    headers = mapOf(
-                        "X-Nanobot-Pairing-Code" to code,
-                        "X-Nanobot-Installation" to installationId,
-                        "X-Nanobot-Label" to label,
-                        "X-Nanobot-Device-Key" to Base64.encodeToString(
-                            custody.deviceProofPublicKey(),
-                            Base64.NO_WRAP,
-                        ),
-                    ),
-                )
-                val rawChallenge = collected.optString("challenge")
-                activePairing = if (rawChallenge.isNotBlank()) {
-                    PairingChallengeCodec.decode(rawChallenge)
-                } else {
-                    PairingChallenge(
-                        collected.getString("pairing_id"),
-                        collected.getString("nonce"),
-                        collected.getString("collector_secret"),
-                    )
-                }
-                val result = JSObject(collected.toString())
-                    .put("origin", origin)
-                    .put("installationId", installationId)
+                val collected = collectPairingCode(origin, installationId, code, label, generation)
+                val result = JSObject(collected.toString()).put("origin", origin).put("installationId", installationId)
                 mainHandler.post { call.resolve(result) }
             } catch (exception: Exception) {
                 mainHandler.post { call.reject(exception.message ?: "pairing code failed") }
             }
         }
+    }
+
+    private fun collectPairingCode(origin: String, installationId: String, code: String, label: String, generation: Long): JSONObject {
+        custody.requirePairing(generation)
+        val existing = custody.load()
+        if (transportHandle == 0L || existing == null || existing.origin != origin || existing.installationId != installationId) {
+            startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6), generation)
+        }
+        waitUntilReady()
+        custody.requirePairing(generation)
+        val collected = jsonRequest("mobile_pair_code", "/mobile/v1/pair/code", body = null,
+            headers = mapOf("X-Nanobot-Pairing-Code" to code, "X-Nanobot-Installation" to installationId,
+                "X-Nanobot-Label" to label, "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey())))
+        val rawChallenge = collected.optString("challenge")
+        val challenge = if (rawChallenge.isNotBlank()) PairingChallengeCodec.decode(rawChallenge) else PairingChallenge(
+            collected.getString("pairing_id"), collected.getString("nonce"), collected.getString("collector_secret"))
+        custody.withPairing(generation) {
+            custody.savePendingPairing(origin, installationId, challenge.pairingId, PairingChallengeCodec.encode(challenge), generation)
+            activePairing = challenge
+        }
+        return collected
     }
 
     @PluginMethod
@@ -461,35 +453,38 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun pairCancel(call: PluginCall) {
+        try {
+            custody.cancelPairing()
+            activePairing = null
+            call.resolve(JSObject().put("status", "cancelled"))
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing cancellation could not be persisted")
+        }
+    }
+
+    @PluginMethod
     fun pendingPairing(call: PluginCall) {
-        val pending = try {
-            custody.loadPendingPairing()
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "pending pairing is unavailable")
-            return
+        val pending = try { custody.loadPendingPairing() } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable"); return
         }
-        if (pending == null) {
-            call.resolve(JSObject().put("pending", false))
-            return
-        }
-        val challenge = try {
-            PairingChallengeCodec.decode(pending.challenge).also { activePairing = it }
-        } catch (exception: Exception) {
+        if (pending == null) { call.resolve(JSObject().put("pending", false)); return }
+        operationExecutor.execute {
             try {
-                custody.clearPendingPairing()
-            } catch (_: Exception) {
-                // Corrupt pending state is discarded; a new scan is required.
+                if (pending.challenge.isBlank() && pending.code.isNotBlank()) {
+                    val record = custody.load() ?: throw IllegalStateException("custody target is missing")
+                    collectPairingCode(pending.origin, record.installationId, pending.code, pending.label, pending.generation)
+                }
+                val current = custody.loadPendingPairing() ?: throw IllegalStateException("pairing attempt was cancelled")
+                val challenge = PairingChallengeCodec.decode(current.challenge)
+                custody.withPairing(current.generation) { activePairing = challenge }
+                val result = JSObject().put("pending", true).put("origin", current.origin)
+                    .put("pairingId", challenge.pairingId).put("challenge", current.challenge)
+                mainHandler.post { call.resolve(result) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "pending pairing is unavailable") }
             }
-            call.resolve(JSObject().put("pending", false))
-            return
         }
-        call.resolve(
-            JSObject()
-                .put("pending", true)
-                .put("origin", pending.origin)
-                .put("pairingId", challenge.pairingId)
-                .put("challenge", pending.challenge)
-        )
     }
 
     @PluginMethod
@@ -504,8 +499,14 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("pairing challenge is not active")
             return
         }
+        val pending = try { custody.loadPendingPairing() } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable"); return
+        }
+        if (pending == null || pending.pairingId != pairingId) { call.reject("pairing attempt is not current"); return }
+        val generation = pending.generation
         operationExecutor.execute {
             try {
+                custody.requirePairing(generation)
                 val polled = jsonRequest(
                     "mobile_pair_poll",
                     "/mobile/v1/pair/poll",
@@ -522,7 +523,7 @@ class NativeNetworkPlugin : Plugin() {
                     proofChallenge != null &&
                     !polled.has("access_token")
                 ) {
-                    provePairing(challenge.pairingId, proofChallenge)
+                    provePairing(challenge.pairingId, proofChallenge, generation)
                 } else {
                     polled
                 }
@@ -532,19 +533,9 @@ class NativeNetworkPlugin : Plugin() {
                 }
                 val record = custody.load()
                     ?: throw IllegalStateException("custody target is missing")
-                custody.saveRefreshedTokens(
-                    record.origin,
-                    record.installationId,
-                    approved.getString("access_token"),
-                    approved.getString("refresh_token"),
-                    approved.optInt("expires_in", 600),
-                    approved.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
-                )
-                activePairing = null
-                try {
-                    custody.clearPendingPairing()
-                } catch (_: Exception) {
-                    // Approved credentials are already persisted.
+                custody.withPairing(generation) {
+                    custody.savePairingTokens(generation, record, approved)
+                    activePairing = null
                 }
                 mainHandler.post {
                     call.resolve(
@@ -580,6 +571,7 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     private fun recoverAccess(record: CustodyRecord): Boolean {
+        val generation = custody.attemptGeneration()
         val installationId = record.installationId
         val begun = jsonRequest(
             "mobile_pair_recover",
@@ -587,25 +579,24 @@ class NativeNetworkPlugin : Plugin() {
             body = null,
             headers = mapOf(
                 "X-Nanobot-Installation" to installationId,
-                "X-Nanobot-Device-Key" to Base64.encodeToString(
-                    custody.deviceProofPublicKey(),
-                    Base64.NO_WRAP,
-                ),
+                "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
             ),
         )
         val claims = begun.getJSONObject("proof_challenge")
         val canonical = DeviceProofCanonicalizer.canonicalBytes(
             DeviceProofCanonicalizer.fromJson(claims)
         )
+        validateProofBinding(claims, record, generation)
         val signature = custody.signDeviceProof(canonical)
+        custody.requireAuthority(generation)
         val completed = jsonRequest(
             "mobile_pair_recover_complete",
             "/mobile/v1/pair/recover/complete",
             body = null,
             headers = mapOf(
                 "X-Nanobot-Installation" to installationId,
-                "X-Nanobot-Device-Signature" to Base64.encodeToString(signature, Base64.NO_WRAP),
-                "X-Nanobot-Proof-Claims" to Base64.encodeToString(canonical, Base64.NO_WRAP),
+                "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
+                "X-Nanobot-Proof-Claims" to DeviceProofCanonicalizer.encode(canonical),
             ),
         )
         custody.saveRefreshedTokens(
@@ -615,6 +606,7 @@ class NativeNetworkPlugin : Plugin() {
             completed.optString("refresh_token"),
             completed.optInt("expires_in", 600),
             completed.optInt("refresh_expires_in", 0),
+            expectedGeneration = generation,
         )
         return true
     }
@@ -784,10 +776,15 @@ class NativeNetworkPlugin : Plugin() {
         val encodedRequest = request.toString()
         val refusal = NativeRequestLimits.refusal(
             encodedRequest.toByteArray(Charsets.UTF_8).size,
-            pendingNative.size,
+            requests.pendingCount(),
         )
         if (refusal != null) throw IllegalArgumentException(refusal)
-        val requestId = NativeNetwork.http(current, encodedRequest)
+        val requestId = try {
+            requests.launch(false) { NativeNetwork.http(current, encodedRequest) }.id
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "native request was not admitted")
+            return
+        }
         if (requestId == 0L) {
             call.reject(NativeNetwork.lastError())
             return
@@ -1218,6 +1215,9 @@ class NativeNetworkPlugin : Plugin() {
     fun logout(call: PluginCall) {
         RunKeepAliveRegistry.clear()
         RunKeepAliveService.stop(context.applicationContext)
+        try { custody.cancelPairing(); activePairing = null } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody cancellation fence failed"); return
+        }
         val serverReachable = call.getBoolean("serverReachable") ?: false
         val current = transportHandle
         if (current != 0L) {
@@ -1257,13 +1257,10 @@ class NativeNetworkPlugin : Plugin() {
                 val bytes = NativeNetwork.pollEvent(current) ?: return@scheduleWithFixedDelay
                 val event = JSONObject(String(bytes, StandardCharsets.UTF_8))
                 logTransportEvent(event)
+                if (current != transportHandle) return@scheduleWithFixedDelay
                 val requestId = event.optLong("request_id", 0L)
-                if (requestId > 0L) {
-                    val pending = pendingNative.remove(requestId)
-                    if (pending != null) {
-                        pending.complete(event)
-                        return@scheduleWithFixedDelay
-                    }
+                if (event.optString("type") in setOf("http_response", "http_error")) {
+                    if (!requests.receive(requestId, event)) return@scheduleWithFixedDelay
                 }
                 mainHandler.post { notifyListeners("networkEvent", JSObject(event, event.keys().asSequence().toList().toTypedArray())) }
             },
@@ -1324,10 +1321,12 @@ class NativeNetworkPlugin : Plugin() {
         return match.groupValues.getOrNull(1)?.toIntOrNull() ?: 0
     }
 
-    private fun startTransport(origin: String, installationId: String, hostname: String): CustodyRecord {
+    private fun startTransport(origin: String, installationId: String, hostname: String, generation: Long? = null): CustodyRecord {
         stopInternal()
+        requests = NativeRequestCorrelator()
         val stateRoot = context.filesDir.resolve("network-state")
-        val record = custody.loadOrCreate(origin, installationId, hostname)
+        val record = if (generation == null) custody.loadOrCreate(origin, installationId, hostname) else
+            custody.withPairing(generation) { custody.loadOrCreate(origin, installationId, hostname) }
         val safeInstallation = record.installationId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
         val stateDir = stateRoot.resolve(safeInstallation)
         if (!stateDir.exists() && !stateDir.mkdirs()) {
@@ -1372,21 +1371,34 @@ class NativeNetworkPlugin : Plugin() {
         throw IllegalStateException("native transport readiness timeout")
     }
 
-    private fun provePairing(pairingId: String, claims: JSONObject): JSONObject {
+    private fun provePairing(pairingId: String, claims: JSONObject, generation: Long): JSONObject {
+        custody.requirePairing(generation)
+        val record = custody.load() ?: throw IllegalStateException("custody target is missing")
+        validateProofBinding(claims, record, generation)
         val canonical = DeviceProofCanonicalizer.canonicalBytes(
             DeviceProofCanonicalizer.fromJson(claims)
         )
         val signature = custody.signDeviceProof(canonical)
+        custody.requirePairing(generation)
         return jsonRequest(
             "mobile_pair_prove",
             "/mobile/v1/pair/prove",
             body = null,
             headers = mapOf(
                 "X-Nanobot-Pairing-Id" to pairingId,
-                "X-Nanobot-Device-Signature" to Base64.encodeToString(signature, Base64.NO_WRAP),
-                "X-Nanobot-Proof-Claims" to Base64.encodeToString(canonical, Base64.NO_WRAP),
+                "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
+                "X-Nanobot-Proof-Claims" to DeviceProofCanonicalizer.encode(canonical),
             ),
         )
+    }
+
+    private fun validateProofBinding(claims: JSONObject, record: CustodyRecord, generation: Long) {
+        custody.requireAuthority(generation)
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(custody.deviceProofPublicKey())
+            .joinToString("") { "%02x".format(it) }
+        require(claims.getString("origin") == record.origin && claims.getString("installation_id") == record.installationId
+            && claims.getString("device_fingerprint") == fingerprint) { "device proof binding changed" }
+        require(claims.getLong("expires_at") > System.currentTimeMillis() / 1000L) { "device proof expired" }
     }
 
     private fun jsonRequest(
@@ -1413,10 +1425,10 @@ class NativeNetworkPlugin : Plugin() {
                 Base64.encodeToString(body.toString().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             )
         }
-        val requestId = NativeNetwork.http(current, request.toString())
-        if (requestId == 0L) throw IllegalStateException(NativeNetwork.lastError())
-        val future = CompletableFuture<JSONObject>()
-        pendingNative[requestId] = future
+        val requestOwner = requests
+        val admission = requestOwner.launch(true) { NativeNetwork.http(current, request.toString()) }
+        val requestId = admission.id
+        val future = admission.future
         try {
             val event = future.get(timeoutSeconds, TimeUnit.SECONDS)
             if (event.optString("type") == "http_error") {
@@ -1434,11 +1446,13 @@ class NativeNetworkPlugin : Plugin() {
             val payload = Base64.decode(event.getString("body_base64"), Base64.DEFAULT)
             return JSONObject(String(payload, Charsets.UTF_8))
         } finally {
-            pendingNative.remove(requestId)
+            requestOwner.abandon(requestId)
+            NativeNetwork.cancel(current, requestId)
         }
     }
 
     private fun stopInternal() {
+        requests.close()
         pollTask?.cancel(false)
         pollTask = null
         pendingWsFrames.clear()

@@ -11,6 +11,7 @@ from typing import Any, cast
 from loguru import logger
 
 from nanobot.agent.tools.execution import KnownToolResult
+from nanobot.agent.tools.filesystem_effect import FilesystemEffectFact
 from nanobot.agent.turn import ToolOutcome
 from nanobot.session.execution_owner import ExecutionOwner
 from nanobot.session.pending_followups import PendingFollowupRecord
@@ -94,13 +95,14 @@ class SourceTurnWriter:
 
     def _append(self, payload: dict[str, Any], *, execution_ids: list[str] | None = None,
                 execution_id: str | None = None, source_origin: dict[str, Any] | None = None,
-                 artifact_read: dict[str, Any] | None = None) -> dict[str, Any]:
+                 artifact_read: dict[str, Any] | None = None,
+                 filesystem_effects: tuple[FilesystemEffectFact, ...] = ()) -> dict[str, Any]:
         if self._writes.failed:
             raise SourceValidationError('Source turn recording failed')
         try:
             self.owner.validate_dispatch()
             clean = deepcopy(payload)
-            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin', '_artifact_read', '_busy_input_id', '_pending_followup_id'):
+            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin', '_artifact_read', '_busy_input_id', '_pending_followup_id', '_filesystem_effects'):
                 clean.pop(key, None)
             if 'content' in clean:
                 clean['content'] = _persisted_content(clean['content'])
@@ -116,6 +118,8 @@ class SourceTurnWriter:
                 event['_execution_ids'] = execution_ids
             if execution_id is not None:
                 event['_execution_id'] = execution_id
+                if filesystem_effects:
+                    event['_filesystem_effects'] = [fact.to_dict(execution_id) for fact in filesystem_effects]
             self._writes.pending = event
             current = self.owner.read_snapshot()
             # Metadata may advance independently. Source changes must belong to
@@ -283,8 +287,12 @@ class SourceTurnWriter:
                 if not value.dispatched and preparation_error_kind in {'unknown_tool', 'withheld_tool'}:
                     tool_event['_prepare_error_kind'] = preparation_error_kind
                 committed = self._append(tool_event, execution_id=ids[index],
-                                         source_origin=origin, artifact_read=retrieval)
+                                         source_origin=origin, artifact_read=retrieval,
+                                         filesystem_effects=value.filesystem_effects)
                 completed.add(index)
+                if any(fact.reconciliation_required for fact in value.filesystem_effects):
+                    self.owner.recovery_required = True
+                    self._writes.failed = True
                 return committed['_event_id']
             except BaseException:
                 self._writes.failed = True

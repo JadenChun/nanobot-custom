@@ -314,18 +314,12 @@ def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
     identity = _typed_mobile_identity(connection)
     if identity is None:
         return False
-    scopes = identity.scopes
-    if action in _MOBILE_MUTATION_ACTIONS:
-        return True
-    if "owner" not in scopes:
-        return False
     try:
-        from nanobot.remote.operations import load_registry
+        from nanobot.remote.operations import mobile_mutation_allowed
 
-        spec = load_registry().mutations.get(action)
+        return mobile_mutation_allowed(identity.scopes, action)
     except Exception:
         return False
-    return spec is not None and spec.enabled
 
 
 class WebUICommandRouter:
@@ -638,6 +632,12 @@ class WebUICommandRouter:
                     await connection.close(1008, "access expired")
                 except Exception:
                     pass
+                return
+            from nanobot.remote.operations import mobile_frame_allowed
+
+            identity = _typed_mobile_identity(connection)
+            if identity is None or not mobile_frame_allowed(identity.scopes, envelope):
+                await self._transport.webui_send_event(connection, "error", detail="scope_denied")
                 return
         command_type = envelope.get("type")
         if command_type == "attachment":
@@ -1875,6 +1875,9 @@ class WebUICommandRouter:
         result: WebUIRequestResult,
         source_binding: dict[str, object] | None,
     ) -> None:
+        if _typed_mobile_identity(connection) is not None:
+            if not await self._transport.revalidate_mobile_connection(connection):
+                return
         if connection not in self._webui_connections and not _mobile_mutation_allowed(
             connection, action
         ):

@@ -16,6 +16,10 @@ from nanobot.agent.tools.base import (
     ToolResult,
 )
 from nanobot.agent.tools.context import ContextAware, current_request_context
+from nanobot.agent.tools.filesystem_effect import (
+    FilesystemEffectCancelled,
+    accepted_filesystem_effects,
+)
 from nanobot.agent.tools.producer_adapters import accepted_producer_receipt
 from nanobot.security.folder_grants import FolderGrantView
 
@@ -340,14 +344,24 @@ class ToolRegistry:
         """Execute a validated call once, retaining terminal fork metadata."""
         from nanobot.agent.turn import ToolOutcome
 
-        result = (await tool.execute_with_context(context, **params)
-                  if context is not None else await tool.execute(**params))
+        try:
+            result = (await tool.execute_with_context(context, **params)
+                      if context is not None else await tool.execute(**params))
+        except FilesystemEffectCancelled as exc:
+            if not accepted_filesystem_effects(tool, exc.facts):
+                # Plugin envelopes and cancellation text cannot create effect evidence.
+                import asyncio
+
+                raise asyncio.CancelledError(str(exc)) from exc
+            raise
         if isinstance(result, ToolOutcome):
             outcome = result
         elif isinstance(result, ToolResult) and result.media_artifacts:
             outcome = ToolOutcome(content=result, media_artifacts=result.media_artifacts)
         else:
             outcome = ToolOutcome(content=result)
+        if outcome.filesystem_effects and not accepted_filesystem_effects(tool, outcome.filesystem_effects):
+            outcome = replace(outcome, filesystem_effects=())
         if outcome.recovery_kind is not None:
             # Recovery classification is owned by the registry/executor, never
             # by a tool's returned envelope.
@@ -365,35 +379,17 @@ class ToolRegistry:
             receipt = outcome.retrieval_receipt
             if (type(tool) is not ReadArtifactTool or type(receipt) is not ArtifactRetrievalReceipt
                     or not receipt.matches(outcome.content)):
-                outcome = ToolOutcome(
-                    outcome.content,
-                    outcome.stop_reason,
-                    outcome.policy_metadata,
-                    media_artifacts=outcome.media_artifacts,
-                    producer_receipt=outcome.producer_receipt,
-                )
+                outcome = replace(outcome, retrieval_receipt=None)
         if outcome.handoff_receipt is not None:
             receipt = outcome.handoff_receipt
             if not ToolRegistry._accepts_handoff_receipt(tool, receipt, context):
-                outcome = ToolOutcome(
-                    outcome.content,
-                    outcome.stop_reason,
-                    outcome.policy_metadata,
-                    media_artifacts=outcome.media_artifacts,
-                    producer_receipt=outcome.producer_receipt,
-                    retrieval_receipt=outcome.retrieval_receipt,
-                )
+                outcome = replace(outcome, handoff_receipt=None)
         # Tool output is opaque text.  In particular, command-like tools can
         # successfully report a payload that starts with ``Error``.  Only the
         # structured result marker (or an explicit ToolOutcome stop state
         # supplied by the tool) establishes terminal semantics.
         if is_tool_error_result(outcome.content):
-            return ToolOutcome(
-                content=outcome.content,
-                stop_reason=outcome.stop_reason or "tool_error",
-                policy_metadata=outcome.policy_metadata,
-                media_artifacts=outcome.media_artifacts,
-            )
+            return replace(outcome, stop_reason=outcome.stop_reason or "tool_error")
         return outcome
 
     @staticmethod
@@ -452,13 +448,9 @@ class ToolRegistry:
                         )
                     else:
                         outcome = await self.execute_prepared(tool, params, context)
-                        if outcome.stop_reason == "tool_error" and isinstance(outcome.content, str):
-                            outcome = ToolOutcome(
-                                content=ToolResult.error(outcome.content + hint),
-                                stop_reason=outcome.stop_reason,
-                                policy_metadata=outcome.policy_metadata,
-                                media_artifacts=outcome.media_artifacts,
-                            )
+                        if (outcome.stop_reason == "tool_error" and isinstance(outcome.content, str)
+                                and not outcome.filesystem_effects):
+                            outcome = replace(outcome, content=ToolResult.error(outcome.content + hint))
         except Exception as exc:
             outcome = ToolOutcome(content=ToolResult.error(f"Error executing {name}: {exc}" + hint),
                                   stop_reason="tool_error")

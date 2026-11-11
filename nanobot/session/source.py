@@ -66,7 +66,7 @@ def new_source_event(payload: object, *, run_id: object) -> dict[str, Any]:
     canonical_events([payload_values])
     # Recursive canonical validation established string keys for this JSON object.
     event = deepcopy(cast(dict[str, Any], payload_values))
-    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin", "_artifact_read", "_busy_input_id"):
+    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin", "_artifact_read", "_busy_input_id", "_filesystem_effects"):
         event.pop(key, None)
     event.update(_event_id=secrets.token_hex(16), _run_id=run_id)
     canonical_events([event])
@@ -133,6 +133,7 @@ def validate_execution_links(events: Sequence[object]) -> frozenset[str]:
     """Validate committed call/result evidence, permitting unresolved tail calls."""
     canonical_events(events)
     pending: dict[str, tuple[str, object]] = {}
+    unresolved_effects: set[str] = set()
     used: set[str] = set()
     for raw_event in events:
         if not isinstance(raw_event, dict):
@@ -168,5 +169,20 @@ def validate_execution_links(events: Sequence[object]) -> frozenset[str]:
                 run_id is not None and event.get("_run_id") is not None and event["_run_id"] != run_id
             ):
                 raise SourceValidationError("Invalid source result provenance")
+            if "_filesystem_effects" in event:
+                from nanobot.agent.tools.filesystem_effect import validate_persisted_filesystem_effects
+
+                try:
+                    unresolved = validate_persisted_filesystem_effects(
+                        event["_filesystem_effects"], execution_id=identity, name=event.get("name"),
+                    )
+                except (ValueError, TypeError):
+                    raise SourceValidationError("Invalid filesystem effect evidence") from None
+                if event.get("_dispatched") is not True:
+                    raise SourceValidationError("Invalid filesystem effect provenance")
+                if unresolved:
+                    unresolved_effects.add(identity)
             del pending[identity]
-    return frozenset(pending)
+        elif "_filesystem_effects" in event:
+            raise SourceValidationError("Invalid filesystem effect provenance")
+    return frozenset(pending) | frozenset(unresolved_effects)

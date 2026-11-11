@@ -625,6 +625,7 @@ class GatewayHTTPHandler:
         self._runtime_surface = runtime_surface
         self.owner_permission_adapter: Any | None = None
         self.owner_audit_client: Any | None = None
+        self.mobile_revalidator: Callable[[Any], Awaitable[bool]] | None = None
 
         from nanobot.webui.settings_api import runtime_capabilities as _rc
         from nanobot.webui.settings_routes import WebUISettingsRouter
@@ -893,6 +894,13 @@ class GatewayHTTPHandler:
         payload: dict[str, Any],
     ) -> WebUIMutationAuthorizationFailure | None:
         """Authorize the current socket for this action before cache admission or replay."""
+        identity = getattr(connection, "mobile_identity", None)
+        if identity is not None and isinstance(getattr(identity, "installation_id", None), str):
+            from nanobot.remote.operations import mobile_mutation_allowed
+
+            scopes = getattr(identity, "scopes", ())
+            if not isinstance(scopes, (tuple, list, set, frozenset)) or not mobile_mutation_allowed(scopes, action):
+                return WebUIMutationAuthorizationFailure(403, "scope_denied")
         path = self._webui_mutation_path(action, payload)
         if not isinstance(path, str):
             return None
@@ -943,6 +951,11 @@ class GatewayHTTPHandler:
         check_expected_source_binding: bool = False,
     ) -> Response:
         """Run one explicitly allowlisted mutation for an authenticated WebUI socket."""
+        identity = getattr(connection, "mobile_identity", None)
+        if isinstance(getattr(identity, "installation_id", None), str):
+            revalidate = getattr(self, "mobile_revalidator", None)
+            if revalidate is None or not await revalidate(connection):
+                return _http_error(403, "scope_denied")
         authorization = self.authorize_webui_mutation(connection, action, payload)
         if authorization is not None:
             return _http_error(authorization.status, authorization.message)
@@ -997,6 +1010,13 @@ class GatewayHTTPHandler:
                 self._log.exception("owner audit pre-effect write failed")
                 return _http_error(503, "audit_unavailable")
         try:
+            if isinstance(audit_installation, str) and audit_installation:
+                revalidate = getattr(self, "mobile_revalidator", None)
+                if revalidate is None or not await revalidate(connection):
+                    return _http_error(403, "scope_denied")
+                authorization = self.authorize_webui_mutation(connection, action, payload)
+                if authorization is not None:
+                    return _http_error(authorization.status, authorization.message)
             response = await self._dispatch_resolved(connection, request, path)
         except asyncio.CancelledError:
             if (

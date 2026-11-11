@@ -22,6 +22,7 @@ from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
 from nanobot.remote.client import OwnerRequestError, OwnerUnavailableError, RemoteAccessClient
+from nanobot.remote.device_proof import decode_proof_base64url
 from nanobot.remote.operations import OperationRegistryError, load_registry
 from nanobot.remote.protocol import (
     BRIDGE_VERSION,
@@ -105,6 +106,7 @@ class AccessIdentity:
     scopes: tuple[str, ...]
     expires_at: float
     generation: int
+    origin: str = ""
 
     def allows(self, scope: str) -> bool:
         return scope in self.scopes
@@ -180,6 +182,7 @@ class OwnerAccessValidator:
             scopes=scopes,
             expires_at=float(result.get("expires_at", 0)),
             generation=int(result.get("generation", 1)),
+            origin=str(result.get("origin", "")),
         )
         if not identity.installation_id:
             raise EdgeAuthError(401, "invalid_access")
@@ -260,7 +263,10 @@ class MobileGatewayEdge:
         if not token:
             return http_json_response({"error": "missing_access"}, status=401)
         try:
-            identity = await self.validator.validate(token)
+            identity = await self.validator.validate_uncached(token)
+            self._authorize_target(request, identity.origin)
+            if not identity.allows("chat.read"):
+                raise EdgeAuthError(403, "scope_denied")
         except EdgeAuthError as exc:
             return http_json_response({"error": exc.code}, status=exc.status)
         setattr(connection, "mobile_identity", identity)
@@ -277,10 +283,31 @@ class MobileGatewayEdge:
             raise EdgeAuthError(401, "access_expired")
         if not access_token:
             raise EdgeAuthError(401, "missing_access")
-        fresh = await self.validator.validate(access_token)
+        fresh = await self.validator.validate_uncached(access_token)
         if fresh.installation_id != identity.installation_id:
             raise EdgeAuthError(403, "installation_mismatch")
+        if not fresh.origin or fresh.origin != identity.origin:
+            raise EdgeAuthError(403, "origin_mismatch")
+        if not fresh.allows("chat.read"):
+            raise EdgeAuthError(403, "scope_denied")
         return fresh
+
+    @staticmethod
+    def _authorize_target(request: WsRequest, origin: str) -> None:
+        """The owner-bound HTTPS target proves native requests without Origin."""
+        try:
+            expected = urlsplit(origin)
+            host = request.headers.get("Host", "")
+            supplied = request.headers.get("Origin")
+            if (
+                expected.scheme != "https" or not expected.netloc
+                or expected.path or expected.query or expected.fragment
+                or not host or host.lower() != expected.netloc.lower()
+                or (supplied is not None and supplied != origin)
+            ):
+                raise EdgeAuthError(403, "origin_mismatch")
+        except (ValueError, KeyError):
+            raise EdgeAuthError(403, "origin_mismatch") from None
 
     async def _authorized_delivery(
         self,
@@ -297,6 +324,8 @@ class MobileGatewayEdge:
             return http_json_response({"error": exc.code}, status=exc.status)
         if fresh.installation_id != identity.installation_id:
             return http_json_response({"error": "installation_mismatch"}, status=403)
+        if not fresh.origin or fresh.origin != identity.origin:
+            return http_json_response({"error": "origin_mismatch"}, status=403)
         if scope is not None and not fresh.allows(scope):
             return http_json_response({"error": "scope_denied"}, status=403)
         return response
@@ -306,14 +335,18 @@ class MobileGatewayEdge:
         if path != "/mobile/v1" and not path.startswith("/mobile/v1/"):
             return None
         if path in _PAIRING_ROUTES:
-            return await self._handle_pairing(request, path)
+            try:
+                return await self._handle_pairing(request, path)
+            except EdgeAuthError as exc:
+                return http_json_response({"error": exc.code}, status=exc.status)
         if path == _REFRESH_ROUTE:
             return await self._handle_refresh(request)
         token = bearer_token(request.headers)
         if not token:
             return http_json_response({"error": "missing_access"}, status=401)
         try:
-            identity = await self.validator.validate(token)
+            identity = await self.validator.validate_uncached(token)
+            self._authorize_target(request, identity.origin)
         except EdgeAuthError as exc:
             return http_json_response({"error": exc.code}, status=exc.status)
 
@@ -373,6 +406,9 @@ class MobileGatewayEdge:
             if self.standard_handler is None:
                 return http_json_response({"error": "dispatch_unavailable"}, status=503)
             raw_path = (query.get("path") or [""])[0]
+            spec = load_registry().match_read(raw_path)
+            if spec is None or not spec.enabled or not identity.allows(spec.scope):
+                return http_json_response({"error": "scope_denied"}, status=403)
             try:
                 status, payload = await asyncio.wait_for(
                     self.standard_handler(identity, "GET", raw_path),
@@ -545,7 +581,7 @@ class MobileGatewayEdge:
             except OwnerRequestError as exc:
                 status = _PAIRING_STATUS.get(exc.code, 400)
                 return http_json_response({"error": exc.code}, status=status)
-            return http_json_response(result)
+            return await self._pairing_delivery(request, result)
         if path.endswith("/recover/complete"):
             installation_id = header("X-Nanobot-Installation")
             signature = header("X-Nanobot-Device-Signature")
@@ -553,12 +589,13 @@ class MobileGatewayEdge:
             if not installation_id or not signature or not encoded_claims:
                 return http_json_response({"error": "bad_request"}, status=400)
             try:
-                decoded = base64.b64decode(encoded_claims, validate=True)
+                decoded = decode_proof_base64url(encoded_claims)
                 parsed = json.loads(decoded.decode("utf-8"))
             except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
                 return http_json_response({"error": "bad_request"}, status=400)
             if not isinstance(parsed, dict):
                 return http_json_response({"error": "bad_request"}, status=400)
+            self._authorize_target(request, str(parsed.get("origin", "")))
             try:
                 result = await asyncio.to_thread(
                     self.validator.client.complete_pairing_recovery,
@@ -571,7 +608,7 @@ class MobileGatewayEdge:
             except OwnerRequestError as exc:
                 status = _PAIRING_STATUS.get(exc.code, 400)
                 return http_json_response({"error": exc.code}, status=status)
-            return http_json_response(result)
+            return await self._pairing_delivery(request, result)
         if path.endswith("/prove"):
             pairing_id = header("X-Nanobot-Pairing-Id")
             signature = header("X-Nanobot-Device-Signature")
@@ -579,7 +616,7 @@ class MobileGatewayEdge:
             claims: dict[str, object] | None = None
             if encoded_claims:
                 try:
-                    decoded = base64.b64decode(encoded_claims, validate=True)
+                    decoded = decode_proof_base64url(encoded_claims)
                     parsed = json.loads(decoded.decode("utf-8"))
                 except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
                     return http_json_response({"error": "bad_request"}, status=400)
@@ -606,6 +643,7 @@ class MobileGatewayEdge:
                 or not signature
             ):
                 return http_json_response({"error": "bad_request"}, status=400)
+            self._authorize_target(request, str(claims.get("origin", "")))
             try:
                 result = await asyncio.to_thread(
                     self.validator.client.prove_pairing,
@@ -618,15 +656,13 @@ class MobileGatewayEdge:
             except OwnerRequestError as exc:
                 status = _PAIRING_STATUS.get(exc.code, 400)
                 return http_json_response({"error": exc.code}, status=status)
-            return http_json_response(result)
+            return await self._pairing_delivery(request, result)
         if path.endswith("/code"):
-            origin = header("X-Nanobot-Origin")
-            if not origin:
-                # The phone reaches this edge through the owner origin; native
-                # clients do not send the origin twice. Derive it from Host.
-                host = header("Host")
-                if host:
-                    origin = f"https://{host}"
+            origin = "https://" + header("Host")
+            self._authorize_target(request, origin)
+            forwarded_origin = header("X-Nanobot-Origin")
+            if forwarded_origin and forwarded_origin != origin:
+                raise EdgeAuthError(403, "origin_mismatch")
             pairing_code = header("X-Nanobot-Pairing-Code") or header("X-Nanobot-Code")
             if not origin or not pairing_code or not installation_id:
                 return http_json_response({"error": "bad_request"}, status=400)
@@ -646,7 +682,7 @@ class MobileGatewayEdge:
             except OwnerRequestError as exc:
                 status = _PAIRING_STATUS.get(exc.code, 400)
                 return http_json_response({"error": exc.code}, status=status)
-            return http_json_response(result)
+            return await self._pairing_delivery(request, result)
         pairing_id = header("X-Nanobot-Pairing-Id")
         nonce = header("X-Nanobot-Pairing-Nonce")
         collector_secret = header("X-Nanobot-Pairing-Secret")
@@ -679,6 +715,18 @@ class MobileGatewayEdge:
         except OwnerRequestError as exc:
             status = _PAIRING_STATUS.get(exc.code, 400)
             return http_json_response({"error": exc.code}, status=status)
+        return await self._pairing_delivery(request, result)
+
+    async def _pairing_delivery(self, request: WsRequest, result: dict[str, Any]) -> Response:
+        origin = result.get("origin")
+        token = result.get("access_token")
+        if isinstance(token, str) and token:
+            fresh = await self.validator.validate_uncached(token)
+            origin = fresh.origin
+        if not isinstance(origin, str) or not origin:
+            proof = result.get("proof_challenge")
+            origin = proof.get("origin") if isinstance(proof, dict) else ""
+        self._authorize_target(request, origin if isinstance(origin, str) else "")
         return http_json_response(result)
 
     def _handshake(self, identity: AccessIdentity) -> dict[str, Any]:

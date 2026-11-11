@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import base64
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 PROOF_PROTOCOL_VERSION = 2
 PROOF_PURPOSE = "remote.access"
 DEVICE_PROOF_TTL_SECONDS = 120
+MAX_PROOF_INTEGER = (1 << 63) - 1
 PROOF_CLAIM_KEYS = frozenset(
     {
         "version",
@@ -37,11 +40,15 @@ class DeviceProofError(ValueError):
 def _require_text(value: object, reason: str) -> str:
     if not isinstance(value, str) or not value:
         raise DeviceProofError(reason)
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        raise DeviceProofError(reason) from None
     return value
 
 
 def _require_int(value: object, reason: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+    if type(value) is not int or not 0 < value <= MAX_PROOF_INTEGER:
         raise DeviceProofError(reason)
     return value
 
@@ -62,6 +69,7 @@ class DeviceProofClaims:
     purpose: str = PROOF_PURPOSE
 
     def __post_init__(self) -> None:
+        _require_int(self.version, "unsupported_proof_version")
         if self.version != PROOF_PROTOCOL_VERSION:
             raise DeviceProofError("unsupported_proof_version")
         if self.purpose != PROOF_PURPOSE:
@@ -141,7 +149,22 @@ def device_proof_fingerprint(public_key_der: bytes) -> str:
         raise DeviceProofError("invalid_device_key") from None
     if not isinstance(key, ec.EllipticCurvePublicKey) or key.curve.name != "secp256r1":
         raise DeviceProofError("unsupported_device_key")
+    if key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo) != public_key_der:
+        raise DeviceProofError("invalid_device_key")
     return hashlib.sha256(bytes(public_key_der)).hexdigest()
+
+
+def decode_proof_base64url(value: str) -> bytes:
+    """Decode only the canonical unpadded base64url representation."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+        raise DeviceProofError("invalid_proof_encoding")
+    try:
+        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except ValueError:
+        raise DeviceProofError("invalid_proof_encoding") from None
+    if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != value:
+        raise DeviceProofError("invalid_proof_encoding")
+    return decoded
 
 
 def verify_device_proof(
@@ -160,7 +183,7 @@ def verify_device_proof(
     """Verify one P-256/SHA-256 DER proof and return the device fingerprint."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
 
     if claims.instance_id != expected_instance_id:
         raise DeviceProofError("wrong_instance")
@@ -182,6 +205,12 @@ def verify_device_proof(
         raise DeviceProofError("expired_proof")
     if not signature_der:
         raise DeviceProofError("invalid_signature")
+    try:
+        r, s = utils.decode_dss_signature(signature_der)
+        if r <= 0 or s <= 0 or utils.encode_dss_signature(r, s) != signature_der:
+            raise ValueError("non-canonical signature")
+    except ValueError:
+        raise DeviceProofError("invalid_signature") from None
 
     try:
         key = serialization.load_der_public_key(bytes(public_key_der))

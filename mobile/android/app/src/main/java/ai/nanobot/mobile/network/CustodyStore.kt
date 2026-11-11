@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
 import java.io.FileOutputStream
 import java.security.GeneralSecurityException
@@ -33,6 +35,9 @@ data class PendingPairingSetup(
     val origin: String,
     val pairingId: String,
     val challenge: String,
+    val generation: Long,
+    val code: String = "",
+    val label: String = "",
 )
 
 data class CustodyRecord(
@@ -50,6 +55,9 @@ data class CustodyRecord(
     val pendingPairingId: String = "",
     val pendingPairingOrigin: String = "",
     val pendingPairingChallenge: String = "",
+    val pendingPairingGeneration: Long = 0,
+    val pendingPairingCode: String = "",
+    val pendingPairingLabel: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("version", version)
@@ -66,6 +74,9 @@ data class CustodyRecord(
         .put("pending_pairing_id", pendingPairingId)
         .put("pending_pairing_origin", pendingPairingOrigin)
         .put("pending_pairing_challenge", pendingPairingChallenge)
+        .put("pending_pairing_generation", pendingPairingGeneration)
+        .put("pending_pairing_code", pendingPairingCode)
+        .put("pending_pairing_label", pendingPairingLabel)
 
     companion object {
         fun fromJson(json: JSONObject): CustodyRecord {
@@ -98,6 +109,9 @@ data class CustodyRecord(
                 pendingPairingId = json.optString("pending_pairing_id"),
                 pendingPairingOrigin = json.optString("pending_pairing_origin"),
                 pendingPairingChallenge = json.optString("pending_pairing_challenge"),
+                pendingPairingGeneration = json.optLong("pending_pairing_generation"),
+                pendingPairingCode = json.optString("pending_pairing_code"),
+                pendingPairingLabel = json.optString("pending_pairing_label"),
             )
         }
     }
@@ -113,6 +127,46 @@ class CustodyStore(context: Context) {
     private val custodyDir = File(appContext.filesDir, "custody")
     private val recordFile = File(custodyDir, "record.enc")
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+
+    private val attemptFence = PendingAttemptFence(
+        read = {
+            val file = File(custodyDir, "attempt.generation")
+            if (!file.exists()) PendingAttemptFence.State(0, false) else {
+                val pieces = file.readText(Charsets.US_ASCII).split(":")
+                require(pieces.size == 3 && pieces[0] == "1" && pieces[2] in setOf("0", "1")) { "invalid pending attempt fence" }
+                val generation = pieces[1].toLong()
+                require(generation >= 0) { "invalid pending generation" }
+                PendingAttemptFence.State(generation, pieces[2] == "1")
+            }
+        },
+        persist = { state ->
+            ensureDirectory()
+            val temporary = File(custodyDir, "attempt.generation.tmp")
+            FileOutputStream(temporary).use { stream ->
+                stream.write("1:${state.generation}:${if (state.active) 1 else 0}".toByteArray(Charsets.US_ASCII))
+                stream.fd.sync()
+            }
+            check(temporary.renameTo(File(custodyDir, "attempt.generation"))) { "pending fence could not be persisted" }
+            syncDirectory()
+        },
+    )
+
+    fun attemptGeneration(): Long = attemptFence.generation()
+    fun cancelPairing() { attemptFence.cancel() }
+    fun requirePairing(generation: Long) { attemptFence.withCurrent(generation) {} }
+    fun requireAuthority(generation: Long) { attemptFence.withCurrent(generation, requireActive = false) {} }
+    fun <T> withPairing(generation: Long, action: () -> T): T = attemptFence.withCurrent(generation, write = action)
+
+    fun beginPairing(origin: String, installationId: String, challenge: String = "", code: String = "", label: String = ""): Long {
+        val generation = attemptFence.begin()
+        attemptFence.withCurrent(generation) {
+            val current = loadOrCreate(origin, installationId)
+            save(current.copy(pendingPairingId = "", pendingPairingOrigin = origin,
+                pendingPairingChallenge = challenge, pendingPairingGeneration = generation,
+                pendingPairingCode = code, pendingPairingLabel = label))
+        }
+        return generation
+    }
 
     @Synchronized
     fun loadOrCreate(origin: String, installationId: String?, hostname: String = "nanobot-android"): CustodyRecord {
@@ -201,6 +255,7 @@ class CustodyStore(context: Context) {
             temp.delete()
             throw CustodyException("custody record could not be replaced atomically")
         }
+        syncDirectory()
     }
 
     @Synchronized
@@ -233,13 +288,14 @@ class CustodyStore(context: Context) {
         return updated
     }
 
-    @Synchronized
     fun savePendingPairing(
         origin: String,
         installationId: String,
         pairingId: String,
         challenge: String,
-    ): CustodyRecord {
+        generation: Long,
+    ): CustodyRecord = attemptFence.withCurrent(generation) {
+        synchronized(this) {
         if (origin.isBlank() || pairingId.isBlank() || challenge.isBlank()) {
             throw CustodyException("pending pairing is incomplete")
         }
@@ -254,19 +310,21 @@ class CustodyStore(context: Context) {
             pendingPairingId = pairingId,
             pendingPairingOrigin = origin,
             pendingPairingChallenge = challenge,
+            pendingPairingGeneration = generation,
+            pendingPairingCode = "",
             updatedAt = System.currentTimeMillis(),
         )
         save(updated)
-        return updated
+        updated
+        }
     }
 
-    @Synchronized
     fun loadPendingPairing(): PendingPairingSetup? {
         val record = load() ?: return null
         if (
-            record.pendingPairingId.isBlank() ||
+            !attemptFence.isCurrent(record.pendingPairingGeneration) ||
             record.pendingPairingOrigin.isBlank() ||
-            record.pendingPairingChallenge.isBlank()
+            (record.pendingPairingChallenge.isBlank() && record.pendingPairingCode.isBlank())
         ) {
             return null
         }
@@ -274,6 +332,9 @@ class CustodyStore(context: Context) {
             origin = record.pendingPairingOrigin,
             pairingId = record.pendingPairingId,
             challenge = record.pendingPairingChallenge,
+            generation = record.pendingPairingGeneration,
+            code = record.pendingPairingCode,
+            label = record.pendingPairingLabel,
         )
     }
 
@@ -301,7 +362,6 @@ class CustodyStore(context: Context) {
      * A logout/revoke that cleared or fenced custody must win over an older
      * in-flight refresh completion.
      */
-    @Synchronized
     fun saveRefreshedTokens(
         origin: String,
         installationId: String,
@@ -309,7 +369,9 @@ class CustodyStore(context: Context) {
         refreshToken: String,
         accessExpiresIn: Int = 600,
         refreshExpiresIn: Int = 30 * 24 * 60 * 60,
-    ): CustodyRecord {
+        expectedGeneration: Long = attemptGeneration(),
+    ): CustodyRecord = attemptFence.withCurrent(expectedGeneration, requireActive = false) {
+        synchronized(this) {
         if (accessToken.isBlank()) {
             throw CustodyException("refreshed credentials are empty")
         }
@@ -336,8 +398,21 @@ class CustodyStore(context: Context) {
             updatedAt = now,
         )
         save(updated)
-        return updated
+        updated
+        }
     }
+
+    fun savePairingTokens(generation: Long, record: CustodyRecord, approved: JSONObject): CustodyRecord =
+        attemptFence.withCurrent(generation) {
+            val saved = saveRefreshedTokens(record.origin, record.installationId,
+                approved.getString("access_token"), approved.optString("refresh_token"),
+                approved.optInt("expires_in", 600), approved.optInt("refresh_expires_in", 0),
+                expectedGeneration = generation)
+            val settled = saved.copy(pendingPairingId = "", pendingPairingOrigin = "",
+                pendingPairingChallenge = "", pendingPairingCode = "", pendingPairingLabel = "")
+            save(settled)
+            settled
+        }
 
     /**
      * Return the installation identity used for pairing. Before the first
@@ -497,6 +572,11 @@ class CustodyStore(context: Context) {
     internal fun recordFileForTest(): File = recordFile
 
     private fun pendingInstallationFile(): File = File(custodyDir, "installation.id")
+
+    private fun syncDirectory() {
+        val descriptor = Os.open(custodyDir.absolutePath, OsConstants.O_RDONLY or OsConstants.O_DIRECTORY, 0)
+        try { Os.fsync(descriptor) } finally { Os.close(descriptor) }
+    }
 
     private fun ensureDirectory() {
         if (!custodyDir.exists() && !custodyDir.mkdirs()) {

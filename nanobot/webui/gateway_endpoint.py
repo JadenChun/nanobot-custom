@@ -50,6 +50,8 @@ class WebUIGatewayEndpoint:
         self._http = http
         self._tokens = tokens
         self._mobile_edge = mobile_edge
+        if http is not None:
+            http.mobile_revalidator = self.revalidate_mobile_connection
         self.webui_connections: set[ServerConnection] = set()
         # Every accepted WebUI-protocol socket, desktop and mobile. Kept apart
         # from ``webui_connections`` (a trust/local-authority set) so broadcasts
@@ -139,12 +141,19 @@ class WebUIGatewayEndpoint:
         identity = getattr(connection, "mobile_identity", None)
         if identity is None:
             return True
+        from nanobot.remote.edge import AccessIdentity
+
+        if not isinstance(identity, AccessIdentity):
+            return False
         token = getattr(connection, "mobile_access_token", None)
         if self._mobile_edge is None or not isinstance(token, str) or not token:
             return False
         try:
             fresh = await self._mobile_edge.revalidate_mobile_access(identity, token)
         except Exception:
+            from dataclasses import replace
+
+            setattr(connection, "mobile_identity", replace(identity, scopes=()))
             return False
         setattr(connection, "mobile_identity", fresh)
         return True

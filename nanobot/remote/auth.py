@@ -40,6 +40,7 @@ class AccessGrant:
     installation_id: str
     scopes: tuple[str, ...]
     expires_at: float
+    origin: str = ""
 
 
 @dataclass(frozen=True)
@@ -195,6 +196,7 @@ class TokenService:
                 installation_id=grant.installation_id,
                 scopes=tuple(device.scopes),
                 expires_at=grant.expires_at,
+                origin=(binding[2] if (binding := self.store.get_device_proof(device.installation_id)) else ""),
             )
 
     def refresh(self, installation_id: str, refresh_token: str) -> IssuedPair:

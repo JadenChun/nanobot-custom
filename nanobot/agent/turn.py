@@ -21,6 +21,7 @@ from nanobot.attachments.models import AttachmentRecord
 if TYPE_CHECKING:
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.base import ToolDenialKind
+    from nanobot.agent.tools.filesystem_effect import FilesystemEffectFact
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.providers.base import LLMUsage
     from nanobot.security.desktop_permissions import (
@@ -913,6 +914,7 @@ class ToolOutcome:
     # Private recovery classification.  It is never persisted, serialized, or
     # exposed as policy authority; message text alone cannot set it.
     recovery_kind: ToolDenialKind | None = field(default=None, repr=False, compare=False)
+    filesystem_effects: tuple[FilesystemEffectFact, ...] = field(default=(), repr=False)
 
     @property
     def result(self) -> Any:

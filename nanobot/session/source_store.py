@@ -1313,6 +1313,10 @@ class SourceSessionStore:
                 return self._snapshot(header, committed)
             if any(event.get("role") == "user" for event in events):
                 _invalidate_workspace_access_request(header["metadata"])
+            # The result and its recovery fence are one atomic source replacement.
+            # A matching call/result link does not settle an unresolved effect.
+            if any("_filesystem_effects" in event for event in events) and validate_execution_links(merged):
+                header["metadata"]["execution_recovery_required"] = True
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             return self._write(header, merged)

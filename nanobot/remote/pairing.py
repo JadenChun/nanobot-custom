@@ -875,7 +875,7 @@ class PairingService:
                 self._code_attempts.pop(origin, None)
 
     def _load_state(self) -> None:
-        """Restore unexpired, unapproved collection state after a restart."""
+        """Restore unexpired collections and non-bearer initial approvals."""
         try:
             raw: object = json.loads(self._state_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -964,18 +964,36 @@ class PairingService:
                         shared_history_consent=offer.shared_history_consent,
                         transport=offer.transport,
                     )
-                # Approved results hold bearer tokens and are never replayed.
-                if challenge.state == "approved" or challenge.proof_consumed:
+                # Issued results are never persisted or replayed. An approval
+                # without issuance retains only its device binding and deadline.
+                if challenge.proof_consumed:
                     continue
+                challenge.denied = challenge.state == "denied"
+                if challenge.state == "approved":
+                    device = self.store.get_device(challenge.pending_installation or "")
+                    if device is not None and device.revoked:
+                        continue
+                    if (
+                        challenge.device_public_key_der is None
+                        or challenge.pending_installation is None
+                        or device_proof_fingerprint(challenge.device_public_key_der) != challenge.device_fingerprint
+                        or not set(challenge.scopes).issubset(offer.scopes)
+                    ):
+                        continue
+                    challenge.approved = True
+                    # No challenge admitted before a restart can be replayed.
+                    challenge.proof_challenge_id = uuid.uuid4().hex
+                    challenge.proof_nonce = secrets.token_urlsafe(32)
+                    challenge.proof_expires_at = min(int(now) + DEVICE_PROOF_TTL_SECONDS, offer.expires_at)
                 self._challenges[offer.pairing_id] = challenge
             except (KeyError, TypeError, ValueError):
                 continue
 
     def _save_locked(self) -> None:
-        """Persist only pending collections; never write issued bearer tokens."""
+        """Persist pending bindings/approvals; never write issued bearer tokens."""
         entries: list[dict[str, object]] = []
         for challenge in self._challenges.values():
-            if challenge.state == "approved" or challenge.proof_consumed or challenge.result:
+            if challenge.proof_consumed or challenge.result:
                 continue
             entries.append({
                 "offer": {

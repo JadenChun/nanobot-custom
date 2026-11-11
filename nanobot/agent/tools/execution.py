@@ -25,6 +25,11 @@ from nanobot.agent.tools.filesystem import (
     reset_assessed_write_target,
     set_assessed_write_target,
 )
+from nanobot.agent.tools.filesystem_effect import (
+    FilesystemEffectCancelled,
+    FilesystemEffectFact,
+    FilesystemEffectReconciliationRequired,
+)
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
@@ -54,6 +59,7 @@ class KnownToolResult:
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
     handoff_receipt: ArtifactHandoffReceipt | None = None
+    filesystem_effects: tuple[FilesystemEffectFact, ...] = ()
 
 
 ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
@@ -70,6 +76,8 @@ def _copy_recorded_value(value: Any) -> Any:
             producer_receipt=value.producer_receipt,
             retrieval_receipt=value.retrieval_receipt,
             handoff_receipt=value.handoff_receipt,
+            recovery_kind=value.recovery_kind,
+            filesystem_effects=value.filesystem_effects,
         )
     return deepcopy(value)
 
@@ -89,10 +97,13 @@ async def _record_result(callback: ToolResultCallback | None, ordinal: int,
                          producer_receipt: FilesystemReadReceipt | None = None,
                          retrieval_receipt: ArtifactRetrievalReceipt | None = None,
     handoff_receipt: ArtifactHandoffReceipt | None = None) -> None:
+    effects = raw.filesystem_effects if isinstance(raw, ToolOutcome) else ()
     if callback is not None:
         await callback(KnownToolResult(ordinal, call.id, call.name, _copy_recorded_value(raw),
                                        _copy_recorded_value(result), deepcopy(event), dispatched, producer_receipt,
-                                       retrieval_receipt, handoff_receipt))
+                                       retrieval_receipt, handoff_receipt, effects))
+    if any(fact.reconciliation_required for fact in effects):
+        raise FilesystemEffectReconciliationRequired()
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
 # SSRF is a hard security block at the tool boundary, but the agent turn
@@ -400,6 +411,18 @@ async def _execute_tool_call(
                     result = await tools.execute(tool_call.name, params)
             finally:
                 reset_assessed_write_target(binding_token)
+        except FilesystemEffectCancelled as exc:
+            raw = ToolOutcome(
+                content={"exception_type": "CancelledError", "message": str(exc)},
+                filesystem_effects=exc.facts,
+            )
+            event = {"name": tool_call.name, "status": "cancelled", "detail": "cancelled"}
+            try:
+                await _record_result(tool_result_callback, ordinal, tool_call, raw, raw,
+                                     event, dispatched=True)
+            except FilesystemEffectReconciliationRequired:
+                pass
+            raise
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -441,7 +464,7 @@ async def _execute_tool_call(
     if is_tool_error_result(result) or (outcome is not None and outcome.stop_reason == "tool_error"):
         recovery_kind = _trusted_exec_denial_kind(tool, result)
         result = str(result)
-        payload = _with_retry_hint(result)
+        payload = result if outcome is not None and outcome.filesystem_effects else _with_retry_hint(result)
         event = {
             "name": tool_call.name,
             "status": "error",
@@ -462,6 +485,7 @@ async def _execute_tool_call(
             outcome.policy_metadata if outcome else {},
             media_artifacts=outcome.media_artifacts if outcome else (),
             recovery_kind=recovery_kind,
+            filesystem_effects=outcome.filesystem_effects if outcome else (),
         )
         _attach_media_artifacts(event, classified)
         await _record_result(tool_result_callback, ordinal, tool_call, raw_result,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import socket
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from nanobot.remote.auth import AuthRejectedError, AuthUpgradeRequiredError, TokenService
+from nanobot.remote.device_proof import DeviceProofError, decode_proof_base64url
 from nanobot.remote.delegation import (
     DelegatedAdminOperation,
     DelegationError,
@@ -443,6 +443,7 @@ class OwnerIPCServer:
                     "installation_id": grant.installation_id,
                     "scopes": list(grant.scopes),
                     "expires_at": grant.expires_at,
+                    "origin": grant.origin,
                     "generation": revision,
                 },
             }
@@ -917,8 +918,8 @@ def _base64_param(params: dict[str, Any], key: str) -> bytes | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return base64.b64decode(value, validate=True)
-    except (ValueError, TypeError):
+        return decode_proof_base64url(value)
+    except (DeviceProofError, TypeError):
         return None
 
 

@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false, reportUnusedFunction=false
 
+import asyncio
 import contextvars
 import difflib
 import mimetypes
@@ -16,6 +17,10 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast
 from nanobot.agent.tools.base import Tool, ToolDenialKind, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.file_state import FileStates, _hash_file, current_file_states
+from nanobot.agent.tools.filesystem_effect import (
+    FilesystemEffectCancelled,
+    _FilesystemEffectAttempt,
+)
 from nanobot.agent.tools.path_utils import resolve_workspace_path
 from nanobot.agent.tools.schema import (
     BooleanSchema,
@@ -1108,6 +1113,7 @@ class WriteFileTool(_FsTool):
     async def execute(
         self, path: str | None = None, content: str | None = None, **kwargs: Any,
     ) -> "str | ToolOutcome":
+        effect: _FilesystemEffectAttempt | None = None
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -1115,17 +1121,31 @@ class WriteFileTool(_FsTool):
                 raise ValueError("Unknown content")
             fp = self._resolve_write(path)
             async with self._mutation_guard(fp):
+                effect = _FilesystemEffectAttempt.enter(self.name, fp, content.encode("utf-8"))
                 fp.parent.mkdir(parents=True, exist_ok=True)
                 fp.write_text(content, encoding="utf-8")
+                effect.applied = True
                 self._file_states.record_write(fp)
                 self._record_touch(fp)
                 return f"Successfully wrote {len(content)} characters to {fp}"
+        except asyncio.CancelledError as e:
+            if effect is not None:
+                raise FilesystemEffectCancelled(str(e), (effect.failed(),)) from e
+            raise
         except FolderAccessNeededError as e:
             return self._folder_access_result(e)
         except PermissionError as e:
-            return ToolResult.error(f"Error: {e}")
+            return _mutation_error(ToolResult.error(f"Error: {e}"), effect)
         except Exception as e:
-            return ToolResult.error(f"Error writing file: {e}")
+            return _mutation_error(ToolResult.error(f"Error writing file: {e}"), effect)
+
+
+def _mutation_error(result: str, effect: _FilesystemEffectAttempt | None) -> "str | ToolOutcome":
+    if effect is None:
+        return result
+    from nanobot.agent.turn import ToolOutcome
+
+    return ToolOutcome(content=result, filesystem_effects=(effect.failed(),))
 
 
 # ---------------------------------------------------------------------------
@@ -1450,6 +1470,7 @@ class EditFileTool(_FsTool):
         replace_all: bool = False, occurrence: int | None = None,
         line_hint: int | None = None, expected_replacements: int | None = None, **kwargs: Any,
     ) -> "str | ToolOutcome":
+        effect: _FilesystemEffectAttempt | None = None
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -1473,8 +1494,10 @@ class EditFileTool(_FsTool):
                 # Create-file semantics: old_text='' + file doesn't exist → create
                 if not file_exists:
                     if old_text == "":
+                        effect = _FilesystemEffectAttempt.enter(self.name, fp, new_text.encode("utf-8"))
                         fp.parent.mkdir(parents=True, exist_ok=True)
                         fp.write_text(new_text, encoding="utf-8")
+                        effect.applied = True
                         self._file_states.record_write(fp)
                         self._record_touch(fp)
                         return f"Successfully created {fp}"
@@ -1494,7 +1517,9 @@ class EditFileTool(_FsTool):
                     content = raw.decode("utf-8")
                     if content.strip():
                         return ToolResult.error(f"Error: Cannot create file — {path} already exists and is not empty.")
+                    effect = _FilesystemEffectAttempt.enter(self.name, fp, new_text.encode("utf-8"))
                     fp.write_text(new_text, encoding="utf-8")
+                    effect.applied = True
                     self._file_states.record_write(fp)
                     self._record_touch(fp)
                     return f"Successfully edited {fp}"
@@ -1583,19 +1608,26 @@ class EditFileTool(_FsTool):
                 if uses_crlf:
                     new_content = new_content.replace("\n", "\r\n")
 
-                fp.write_bytes(new_content.encode("utf-8"))
+                intended = new_content.encode("utf-8")
+                effect = _FilesystemEffectAttempt.enter(self.name, fp, intended)
+                fp.write_bytes(intended)
+                effect.applied = True
                 self._file_states.record_write(fp)
                 self._record_touch(fp)
                 msg = f"Successfully edited {fp}"
                 if warning:
                     msg = f"{warning}\n{msg}"
                 return msg
+        except asyncio.CancelledError as e:
+            if effect is not None:
+                raise FilesystemEffectCancelled(str(e), (effect.failed(),)) from e
+            raise
         except FolderAccessNeededError as e:
             return self._folder_access_result(e)
         except PermissionError as e:
-            return ToolResult.error(f"Error: {e}")
+            return _mutation_error(ToolResult.error(f"Error: {e}"), effect)
         except Exception as e:
-            return ToolResult.error(f"Error editing file: {e}")
+            return _mutation_error(ToolResult.error(f"Error editing file: {e}"), effect)
 
     def _file_not_found_msg(self, path: str, fp: Path) -> str:
         """Build an error message with 'Did you mean ...?' suggestions."""

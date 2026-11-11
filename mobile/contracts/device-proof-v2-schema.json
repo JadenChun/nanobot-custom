@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "nanobot device proof v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "challenge_id",
+    "device_fingerprint",
+    "device_generation",
+    "expires_at",
+    "installation_id",
+    "instance_id",
+    "nonce",
+    "origin",
+    "purpose",
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807,
+      "const": 2
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "unicode": "scalar-values-only",
+      "const": "remote.access"
+    },
+    "instance_id": {
+      "type": "string",
+      "minLength": 1,
+      "unicode": "scalar-values-only"
+    },
+    "origin": {
+      "type": "string",
+      "minLength": 1,
+      "unicode": "scalar-values-only"
+    },
+    "installation_id": {
+      "type": "string",
+      "minLength": 1,
+      "unicode": "scalar-values-only"
+    },
+    "device_fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "unicode": "scalar-values-only"
+    },
+    "device_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "challenge_id": {
+      "type": "string",
+      "minLength": 1,
+      "unicode": "scalar-values-only"
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 1,
+      "unicode": "scalar-values-only"
+    },
+    "expires_at": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    }
+  },
+  "encoding": {
+    "claims": "UTF-8 JSON sorted keys, compact separators; non-ASCII literal; short escapes for backspace/formfeed/newline/carriage-return/tab; lowercase u00xx for remaining C0 controls; no escaped slash",
+    "binary": "strict unpadded base64url, canonical trailing bits",
+    "public_key": "P-256 X.509 SPKI DER; exact encoding without trailing bytes",
+    "signature": "ECDSA-SHA256 strict ASN.1 DER positive minimally encoded r and s; no trailing bytes",
+    "fingerprint": "lowercase SHA-256 hex of exact SPKI DER"
+  },
+  "replay": "one-use challenge consumed by pairing/recovery owner before scoped access issuance"
+}
