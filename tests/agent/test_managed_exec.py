@@ -805,7 +805,7 @@ os._exit(0)
             )
 
         for _attempt in range(100):
-            if marker.exists():
+            if marker.exists() and marker.read_text(encoding="utf-8") == "finished":
                 break
             await asyncio.sleep(0.02)
         assert marker.read_text(encoding="utf-8") == "finished"
