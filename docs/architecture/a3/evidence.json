@@ -6,6 +6,7 @@
   "documentation_validation": "PASS",
   "pins": {
     "staging_base": {"commit": "29612c3df01dc3dce3501fe349bcf555cd6c58b6"},
+    "pre_refactor_staging": {"commit": "ab9598217f7bfe230466bc4c5513f188e869fced", "tree": "74ba3b4f3183dc8e735f7e0a423a86893b839b54", "integration_commit": "cea61e0598fba5784237fdaab21c448fb9b2a9bf", "previous_remote": "29612c3df01dc3dce3501fe349bcf555cd6c58b6", "previous_local": "4e2bf4d8d0b34f133c01591b67826ca956fed384", "feature_repairs": "d3380eb69d3c8416a9ca72522001234ce30a8eeb", "scope": "Updated pre-refactor baseline including the architecture records and a bounded cancellation/recovery correction. The refactor implementation remains outside staging and needs comparison against this baseline and later staging updates."},
     "audit_source": {"commit": "9562e57f8333d7f14b6aaeae837660723a9b2650", "tree": "bbe2f237efe0cd7b935946b533f66ed0097a3c93"},
     "audit_archive": {"commit": "a14aefab0235dd49ed2b579d448e2c47c75e3860", "tree": "9a2d0c5ef834bd06cc95dd22c9e9724eb7740524", "paths": 138, "manifest": "audit-manifest.json"},
     "implementation": {"commit": "0518de5f5013b77cbc20d2c5b456e973f33c68f5", "tree": "26fae6f933d1dad3e8ae586c847b3168a4571a28", "pull_request": "https://github.com/JadenChun/nanobot-custom/pull/27", "reported_commits": 78, "reported_changed_paths": 324, "reported_additions": 22445, "reported_deletions": 2055},
@@ -351,5 +352,325 @@
     {"id": "android-key", "commit": "0518de5f5013b77cbc20d2c5b456e973f33c68f5", "path": "mobile/android/app/src/main/java/ai/nanobot/mobile/network/CustodyStore.kt", "symbol": "fun generateDeviceProofKey", "start_line": 437, "end_line": 490, "git_blob_sha1": "4bc23d90e1372dc08646bf7e6e1a1fd29d3b6e19", "url": "https://github.com/JadenChun/nanobot-custom/blob/0518de5f5013b77cbc20d2c5b456e973f33c68f5/mobile/android/app/src/main/java/ai/nanobot/mobile/network/CustodyStore.kt#L437-L490"},
     {"id": "rollback-runbook", "commit": "0518de5f5013b77cbc20d2c5b456e973f33c68f5", "path": "docs/migration/a3-release-rollback.md", "symbol": "# A3 rollback on a stopped copy", "start_line": 1, "end_line": 33, "git_blob_sha1": "cc441ec0c7097638344c4c790fb00af20d067168", "url": "https://github.com/JadenChun/nanobot-custom/blob/0518de5f5013b77cbc20d2c5b456e973f33c68f5/docs/migration/a3-release-rollback.md#L1-L33"}
   ],
-  "documentation_validation_evidence": {"date": "2026-11-11", "method": "Python standard-library JSON/AST/hash/link checks and read-only Git object/diff checks; no product tests/build/install.", "archive_paths": 138, "archive_byte_gitblob_sha256_exact": 138, "json_documents_parsed": 54, "original_findings": 136, "unique_findings": 136, "packages": 22, "stages_including_baseline": 11, "all_original_acceptance": "UNVERIFIED", "source_references_verified": 57, "pinned_source_files": 32, "curated_local_link_failures": 0, "historical_local_link_failures": 0, "historical_link_policy": "Checked separately with fenced/inline code excluded; preserve imported bytes even if a historical link later breaks.", "changed_paths": 147, "changed_path_allowlist": "PASS", "implementation_merge": "HOLD", "initial_unstaged_whitespace_check": {"command": "git diff --check", "exit": 0, "scope_limitation": "Checked tracked unstaged navigation changes only; omitted the then-untracked canonical and archive files. This was not a full-package check."}, "curated_whitespace": {"result": "PASS", "paths": ["docs/architecture/a3/README.md", "docs/architecture/a3/design.md", "docs/architecture/a3/decisions.md", "docs/architecture/a3/implementation-plan.md", "docs/architecture/a3/review.md", "docs/architecture/a3/evidence.json", "docs/architecture/a3/audit-manifest.json", "docs/README.md", "docs/architecture.md"], "git_diff_check_exit": 0, "direct_filesystem_paths_checked": 9, "direct_filesystem_checks": ["trailing spaces or tabs", "extra blank line at EOF"]}, "full_package_whitespace": {"command": "git diff 29612c3df01dc3dce3501fe349bcf555cd6c58b6 --check", "exit": 2, "scope": "Tracked changes against the pinned staging base, supplemented by direct filesystem checks of all nine curated/navigation files, including the seven untracked canonical files.", "classification": "IMMUTABLE_ARCHIVE_WHITESPACE_EXCEPTION", "unexcepted_diagnostics": 0}, "archive_whitespace_exception": {"classification": "IMMUTABLE_ARCHIVE_WHITESPACE_EXCEPTION", "full_staged_import_check_exit": 2, "command": "git diff 29612c3df01dc3dce3501fe349bcf555cd6c58b6 HEAD --check -- docs/audits/", "exit": 2, "diagnostics": [{"path": "docs/audits/module-review-2026-11-06/chatgpt-web-handoff.md", "line": 144, "diagnostic": "new blank line at EOF."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/A01.md", "line": 713, "diagnostic": "new blank line at EOF."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/D01.md", "line": 222, "diagnostic": "new blank line at EOF."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/T01.md", "line": 751, "diagnostic": "trailing whitespace."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/U01.md", "line": 819, "diagnostic": "new blank line at EOF."}], "archive_byte_gitblob_sha256_integrity": "PASS", "archive_paths_unchanged": 138}, "structural_validation": "PASS", "structural_validation_qualification": "Includes the named immutable-archive whitespace exception; does not claim a clean full-package whitespace check."}
+  "documentation_validation_evidence": {"scope_commit": "a8f97ff4a1ade44ababeb249990db5ffee8e09db", "scope": "Original 147-path architecture documentation package; subsequent pre-refactor staging integration has separate evidence below.", "date": "2026-11-11", "method": "Python standard-library JSON/AST/hash/link checks and read-only Git object/diff checks; no product tests/build/install.", "archive_paths": 138, "archive_byte_gitblob_sha256_exact": 138, "json_documents_parsed": 54, "original_findings": 136, "unique_findings": 136, "packages": 22, "stages_including_baseline": 11, "all_original_acceptance": "UNVERIFIED", "source_references_verified": 57, "pinned_source_files": 32, "curated_local_link_failures": 0, "historical_local_link_failures": 0, "historical_link_policy": "Checked separately with fenced/inline code excluded; preserve imported bytes even if a historical link later breaks.", "changed_paths": 147, "changed_path_allowlist": "PASS", "implementation_merge": "HOLD", "initial_unstaged_whitespace_check": {"command": "git diff --check", "exit": 0, "scope_limitation": "Checked tracked unstaged navigation changes only; omitted the then-untracked canonical and archive files. This was not a full-package check."}, "curated_whitespace": {"result": "PASS", "paths": ["docs/architecture/a3/README.md", "docs/architecture/a3/design.md", "docs/architecture/a3/decisions.md", "docs/architecture/a3/implementation-plan.md", "docs/architecture/a3/review.md", "docs/architecture/a3/evidence.json", "docs/architecture/a3/audit-manifest.json", "docs/README.md", "docs/architecture.md"], "git_diff_check_exit": 0, "direct_filesystem_paths_checked": 9, "direct_filesystem_checks": ["trailing spaces or tabs", "extra blank line at EOF"]}, "full_package_whitespace": {"command": "git diff 29612c3df01dc3dce3501fe349bcf555cd6c58b6 --check", "exit": 2, "scope": "Tracked changes against the pinned staging base, supplemented by direct filesystem checks of all nine curated/navigation files, including the seven untracked canonical files.", "classification": "IMMUTABLE_ARCHIVE_WHITESPACE_EXCEPTION", "unexcepted_diagnostics": 0}, "archive_whitespace_exception": {"classification": "IMMUTABLE_ARCHIVE_WHITESPACE_EXCEPTION", "full_staged_import_check_exit": 2, "command": "git diff 29612c3df01dc3dce3501fe349bcf555cd6c58b6 HEAD --check -- docs/audits/", "exit": 2, "diagnostics": [{"path": "docs/audits/module-review-2026-11-06/chatgpt-web-handoff.md", "line": 144, "diagnostic": "new blank line at EOF."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/A01.md", "line": 713, "diagnostic": "new blank line at EOF."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/D01.md", "line": 222, "diagnostic": "new blank line at EOF."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/T01.md", "line": 751, "diagnostic": "trailing whitespace."}, {"path": "docs/audits/module-review-2026-11-06/handoffs/U01.md", "line": 819, "diagnostic": "new blank line at EOF."}], "archive_byte_gitblob_sha256_integrity": "PASS", "archive_paths_unchanged": 138}, "structural_validation": "PASS", "structural_validation_qualification": "Includes the named immutable-archive whitespace exception; does not claim a clean full-package whitespace check."},
+  "staging_sync": {
+    "date": "2026-11-11",
+    "scope": "Direct pre-refactor staging integration authorized by the user; preserve local repairs and architecture records while excluding the refactor implementation.",
+    "runtime_source": "ab9598217f7bfe230466bc4c5513f188e869fced",
+    "runtime_tree": "74ba3b4f3183dc8e735f7e0a423a86893b839b54",
+    "parents_preserved": {
+      "previous_remote": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "previous_local": "4e2bf4d8d0b34f133c01591b67826ca956fed384",
+      "architecture_records": "a8f97ff4a1ade44ababeb249990db5ffee8e09db"
+    },
+    "integration_commits": {
+      "pre_refactor_code_merge": "cea61e0598fba5784237fdaab21c448fb9b2a9bf",
+      "architecture_record_merge": "39fb4648c3f759810a4820eba9ff9fb8366222f6",
+      "cancellation_correction": "ab9598217f7bfe230466bc4c5513f188e869fced"
+    },
+    "git_identity": {
+      "name": "Jaden",
+      "email": "changherng.jc@gmail.com",
+      "scope": "Repository-local author and committer; overrides the global work identity."
+    },
+    "implementation": {
+      "branch": "codex/staging-audit-implementation",
+      "head_unchanged": "0518de5f5013b77cbc20d2c5b456e973f33c68f5",
+      "included_in_staging": false,
+      "merge": "HOLD",
+      "future_review_base": "Latest staging, including these pre-refactor repairs and cancellation correction."
+    },
+    "scope_validation": {
+      "changed_paths_against_previous_remote": 230,
+      "local_repair_paths": 82,
+      "original_architecture_record_paths": 147,
+      "shared_navigation_paths": 1,
+      "bounded_correction_paths": [
+        "nanobot/agent/runner.py",
+        "tests/agent/test_managed_mcp_access.py"
+      ],
+      "archive_paths_byte_exact": 138,
+      "feature_repair_archive_paths_preserved": 11,
+      "json_documents": 57,
+      "original_findings_unchanged": 136,
+      "source_references_verified": 57,
+      "pinned_source_files": 32,
+      "curated_links": "PASS",
+      "curated_whitespace": "PASS",
+      "full_whitespace_exit": 2,
+      "full_whitespace_qualification": "Only the five original immutable-archive diagnostics; bytes intentionally preserved."
+    },
+    "bounded_integration_review": {
+      "result": "PASS",
+      "reviewer_role": "development_analysis_medium",
+      "scope": "Reconstructed all four shared automatic merge paths from both parents; verified other runtime paths match the changed parent; reviewed the cancellation correction and closest tests. Does not attest a passing full suite or refactor acceptance.",
+      "additional_probe": "Real API repeated cancellation plus cleanup failure and a queued second tool: one active execution, no queued execution or recovery call, successful same-session successor."
+    },
+    "baseline_correction": {
+      "paths": [
+        "nanobot/agent/runner.py",
+        "tests/agent/test_managed_mcp_access.py"
+      ],
+      "reason": "A cleanup exception could hide pending API cancellation and trigger ordinary-error recovery/model work. The runner now raises pending cancellation before recovery; managed-MCP recovery assertions follow the existing portable internal user note.",
+      "pre_correction_failures": "Both reproduced on original remote staging before correction.",
+      "affected_test_command": "python -B -m pytest -q -p no:cacheprovider tests/agent/test_managed_mcp_access.py tests/agent/test_migration_api_engine.py tests/agent/test_runner_errors.py tests/agent/test_pre_dispatch_recovery.py --basetemp=<short-temporary-directory>",
+      "affected_tests": 45,
+      "affected_test_exit": 0,
+      "python_lint": "PASS: ruff check nanobot/ and tests/agent/test_managed_mcp_access.py"
+    },
+    "environment": {
+      "python": "3.13.2 (v3.13.2:4f8bb3947cf, Feb  4 2025, 11:51:10) [Clang 15.0.0 (clang-1500.3.9.4)]",
+      "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+      "basedpyright": "1.40.1",
+      "installed_packages": 183,
+      "dependencies_changed": false,
+      "source_files_hashed": 538,
+      "source_unchanged_after_final_checks": true,
+      "source_manifest_before_sha256": "25195a8b909c22bde51f39e43459b543bd6f7da37e29cf66517840df450a5778",
+      "source_manifest_final_sha256": "60d8ac725f10292291db1272802cafa3cba0a5b2e11651b703af89b7fc3953d2",
+      "environment_before_and_after_sha256": "8fb2308119127ec8e998d855f67d8bd88884a64a52d44855531cede42f72f8fd"
+    },
+    "strict_types": {
+      "before_source": "a8f97ff4a1ade44ababeb249990db5ffee8e09db",
+      "before_runtime_equivalent_to": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+      "after_source": "ab9598217f7bfe230466bc4c5513f188e869fced",
+      "command": "basedpyright --outputjson --pythonpath <same-environment-python>",
+      "comparator_command": "python scripts/check_type_regressions.py <frozen-before-report> <frozen-final-report> --baseline-root <original-report-checkout> --current-root <validated-checkout>",
+      "files_analyzed": 538,
+      "before_errors": 1001,
+      "after_errors": 1001,
+      "introduced_signatures": 0,
+      "resolved_signatures": 0,
+      "comparison": "PASS_NO_NEW_DIAGNOSTICS",
+      "strict_checker_exit_before": 1,
+      "strict_checker_exit_after": 1,
+      "strict_clean": false,
+      "p6_complete": false,
+      "qualification": "Comparator establishes diagnostic equivalence only. Same-environment snapshots, source hashes and test evidence are separately retained; no baseline refresh."
+    },
+    "frontend": {
+      "commands": [
+        "bun run build",
+        "bun run test",
+        "bun run lint"
+      ],
+      "cwd": "webui",
+      "all_exits": 0,
+      "test_files": 95,
+      "tests_passed": 1481
+    },
+    "backend": {
+      "full_suite_result": "FAIL",
+      "method": "Complete CI-style selection split into four-worker/loadfile run excluding tests/cli/test_commands.py and that module run serially.",
+      "parallel_command": "python -B -m pytest -q -p no:cacheprovider --disable-warnings --durations=10 -n 4 --dist loadfile --ignore=tests/cli/test_commands.py --basetemp=<temporary-directory>/p",
+      "serial_cli_command": "python -B -m pytest -q -p no:cacheprovider --disable-warnings --durations=10 tests/cli/test_commands.py --basetemp=<temporary-directory>/c",
+      "parallel": {
+        "exit": 1,
+        "passed": 16853,
+        "failed": 9,
+        "skipped": 76,
+        "errors": 15,
+        "subtests_passed": 6
+      },
+      "serial_cli": {
+        "exit": 0,
+        "passed": 129
+      },
+      "short_serial_replay_command": "python -B -m pytest -q -p no:cacheprovider <all-24-failed-or-error-nodeids> --basetemp=<short-temporary-directory>",
+      "short_serial_replay": {
+        "selected": 24,
+        "passed": 16,
+        "failed": 8,
+        "exit": 1
+      },
+      "execution_condition_failures": {
+        "resolved_in_short_serial_replay": 16,
+        "unix_socket_path_too_long": 15,
+        "rich_wrapped_cli_log_path": 1
+      },
+      "remaining_failures": [
+        {
+          "nodeid": "tests/session/test_artifact_grants.py::test_runner_adopts_handoff_after_parent_result_and_adds_runtime_notice",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "Expected system notice absent; existing portable internal notice uses user role.",
+          "qualification": "Same failing assertion on unmodified original staging runtime and tests.",
+          "baseline_artifact": "remote-existing-failures.log"
+        },
+        {
+          "nodeid": "tests/session/test_p5_stage2_temporary_sessions.py::test_real_channel_temporary_lifecycle_and_late_events[discard-False]",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "Temporary lifecycle envelope publishes no inbound message; await_args_list[0] raises IndexError.",
+          "qualification": "Same failing assertion on unmodified original staging runtime and tests.",
+          "baseline_artifact": "remote-temporary-failures.log"
+        },
+        {
+          "nodeid": "tests/session/test_p5_stage2_temporary_sessions.py::test_real_channel_temporary_lifecycle_and_late_events[discard-True]",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "Temporary lifecycle envelope publishes no inbound message; await_args_list[0] raises IndexError.",
+          "qualification": "Same failing assertion on unmodified original staging runtime and tests.",
+          "baseline_artifact": "remote-temporary-failures.log"
+        },
+        {
+          "nodeid": "tests/session/test_p5_stage2_temporary_sessions.py::test_real_channel_temporary_lifecycle_and_late_events[disconnect-False]",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "Temporary lifecycle envelope publishes no inbound message; await_args_list[0] raises IndexError.",
+          "qualification": "Same failing assertion on unmodified original staging runtime and tests.",
+          "baseline_artifact": "remote-temporary-failures.log"
+        },
+        {
+          "nodeid": "tests/session/test_p5_stage2_temporary_sessions.py::test_real_channel_temporary_lifecycle_and_late_events[disconnect-True]",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "Temporary lifecycle envelope publishes no inbound message; await_args_list[0] raises IndexError.",
+          "qualification": "Same failing assertion on unmodified original staging runtime and tests.",
+          "baseline_artifact": "remote-temporary-failures.log"
+        },
+        {
+          "nodeid": "tests/session/test_p5_stage2_temporary_sessions.py::test_temporary_submitted_sandbox_wins_when_full_is_enabled",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "No inbound publication after submitted sandbox envelope; await_args is None.",
+          "qualification": "Original test first fails full_access_unavailable on this host. An external pytest fixture sets native_supervisor_available=True, matching the local test-only fixture; the original runtime then reaches the same AttributeError. No runtime source changes.",
+          "baseline_artifact": "remote-temporary-matched-fixture.log"
+        },
+        {
+          "nodeid": "tests/agent/test_subagent.py::test_foreground_tool_error_stops_without_extra_model_call",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "Foreground tool-error expectation differs from existing ordinary-error recovery; observed completed.",
+          "qualification": "Same failing assertion on unmodified original staging runtime and tests.",
+          "baseline_artifact": "remote-existing-failures.log"
+        },
+        {
+          "nodeid": "tests/migration/test_workspace_access_continue_ingress.py::test_canonical_turn_finalizes_terminal_configured_write_without_recovery",
+          "classification": "PRE_EXISTING_ON_PREVIOUS_REMOTE_STAGING",
+          "observed_failure": "Configured protected write stays blocked but existing recovery returns COMPLETED instead of TOOL_ERROR.",
+          "qualification": "Same failing assertion on unmodified original staging runtime and tests.",
+          "baseline_artifact": "remote-existing-failures.log"
+        }
+      ],
+      "baseline_reproduction": {
+        "source": "29612c3df01dc3dce3501fe349bcf555cd6c58b6",
+        "method": "Frozen tracked export with explicit PYTHONPATH, same interpreter and dependencies; unmodified runtime source. The final temporary-sandbox comparison adds only the disclosed pytest fixture matching the local test.",
+        "unmodified_runtime_and_tests_same_assertion": 7,
+        "matched_existing_test_fixture_same_assertion": 1
+      },
+      "initial_serial_run": "INTERRUPTED_INCOMPLETE; not a full-suite pass.",
+      "qualification": "Observed remaining failures are inherited under the stated conditions. Serial replays overlap the complete run and do not add independent coverage. This does not establish a passing backend suite or release qualification."
+    },
+    "raw_artifacts": {
+      "storage": "Frozen local validation run; payloads are not committed. Basenames and SHA-256 below identify retained reports/logs; hashes alone do not attest their contents or make them available remotely.",
+      "files": {
+        "source-before.json": {
+          "sha256": "25195a8b909c22bde51f39e43459b543bd6f7da37e29cf66517840df450a5778",
+          "bytes": 56898
+        },
+        "source-final.json": {
+          "sha256": "60d8ac725f10292291db1272802cafa3cba0a5b2e11651b703af89b7fc3953d2",
+          "bytes": 56898
+        },
+        "environment-before.json": {
+          "sha256": "8fb2308119127ec8e998d855f67d8bd88884a64a52d44855531cede42f72f8fd",
+          "bytes": 12404
+        },
+        "environment-after.json": {
+          "sha256": "8fb2308119127ec8e998d855f67d8bd88884a64a52d44855531cede42f72f8fd",
+          "bytes": 12404
+        },
+        "strict-before.json": {
+          "sha256": "2105bc3003c745736557c875e97da468895487fb7a84e17b7bbf57060616d8fd",
+          "bytes": 583037
+        },
+        "strict-final.json": {
+          "sha256": "0497c4e58c42a950e9f449d1113ab17b4032866747160e3350bcca4d8030b459",
+          "bytes": 583037
+        },
+        "strict-final-result.json": {
+          "sha256": "88b82f40346108947187a7a5cd00e8aced432442bd55efc31b96fe6e11eff2b3",
+          "bytes": 466
+        },
+        "strict-final-comparison.json": {
+          "sha256": "06f87afe2a7a6003f5595794545176ef00b60459d3908af13e1b3174d2a5eb4d",
+          "bytes": 291
+        },
+        "backend-result.json": {
+          "sha256": "c56b182aa83421a4fce493451c4c9c437e394cbcddd29df5a891b42d161ff283",
+          "bytes": 1025
+        },
+        "backend-parallel-command.json": {
+          "sha256": "fdc07301450742703c5a2a5d3216b0324c73dcb979a3840d6dec66bcf27d114d",
+          "bytes": 683
+        },
+        "backend-serial-cli-command.json": {
+          "sha256": "cdb8816b6bd01b266c50bacd14c8d77e024a13e976ada4b09adb9cc72ad8c7b2",
+          "bytes": 627
+        },
+        "backend-parallel.log": {
+          "sha256": "77bab3f5fb6212405bd7fe157d9b31b85481cfb7860b76618f47a1c0f019ed19",
+          "bytes": 75330
+        },
+        "backend-serial-cli.log": {
+          "sha256": "729f86b222fa3e248646ae1e6c5417c90014bddc8a9dea63549a6310963bddf6",
+          "bytes": 1201
+        },
+        "serial-qualification-result.json": {
+          "sha256": "57f091e47c9741eb7c0bd5daedf910053942cc21a61fd20527b3afff830f09ea",
+          "bytes": 2940
+        },
+        "serial-qualification.log": {
+          "sha256": "e467b3a728e1b66812203d21d5c0462d1046870f6f8046c335945199bc28ee2f",
+          "bytes": 26953
+        },
+        "remote-existing-failures.log": {
+          "sha256": "2e6d7c7fbccedd52604059ab4d73108511fb0ed7be204f490a5627554bb23714",
+          "bytes": 12643
+        },
+        "remote-temporary-failures-result.json": {
+          "sha256": "ec1dead2f9abf67b612e351fbdd480059a33469383634e022ab17523b89adde4",
+          "bytes": 971
+        },
+        "remote-temporary-failures.log": {
+          "sha256": "5087010652ba9c1a1b5ea8cabfabcd9cb1687f2b1aca4173b463d394e33d5384",
+          "bytes": 22909
+        },
+        "remote-temporary-matched-fixture-result.json": {
+          "sha256": "19288b7ff911e88449cba3cc8566d30fa1d39b8cb102e16ff2d0287bc4308d8d",
+          "bytes": 610
+        },
+        "remote-temporary-matched-fixture.log": {
+          "sha256": "aafe81aae4bacb6cad355e55839cfd78f94222674ebacaf6a109b110501a8054",
+          "bytes": 3004
+        },
+        "remote_native_availability_probe.py": {
+          "sha256": "b79adf8b72b001a0b614e21ef7c1dd2acf371da8830d19de2f4bc9809b84a7b3",
+          "bytes": 212
+        },
+        "backend-attribution.json": {
+          "sha256": "b045697eb6dd69a23bbc49e55ed4145a3b29952ee6080ae2ad18e07a6fd53496",
+          "bytes": 4685
+        },
+        "recovery-fixed-result.json": {
+          "sha256": "8a1fb13591f1e6a5d6188f6f571a20552a30d613747e287e4774d9e105364e21",
+          "bytes": 417
+        },
+        "recovery-fixed.log": {
+          "sha256": "da2c93805a4dc9093b208e786ff678763ca756bd970ae1281e515727ee1e4fae",
+          "bytes": 99
+        },
+        "frontend-results.json": {
+          "sha256": "1b7ce35f3ce6e2e64dee911361e2af3d5b3143986ab8f8a5263979467fe1c34d",
+          "bytes": 660
+        },
+        "frontend-build.log": {
+          "sha256": "11ace05cc57aedade6688329102f235e15cec741ff254d8d1c0f8ff0cc9ee891",
+          "bytes": 51687
+        },
+        "frontend-test.log": {
+          "sha256": "ee462c9f8a3e77a5c7268b90edcefe06475c2943154bdcf913293f55852aa9ef",
+          "bytes": 181090
+        },
+        "frontend-lint.log": {
+          "sha256": "7c1979025cac23454028571a1c026151977bfc38b6c467b39e68b2247ba92c88",
+          "bytes": 118
+        }
+      }
+    }
+  }
 }

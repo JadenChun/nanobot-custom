@@ -197,6 +197,58 @@ A3-8/R12. **Acceptance:** full filesystem snapshots before/after dry run and dec
 confirmation match for source, blob, sidecar, staging and backup paths. A committed
 migration remains atomic/readable; checking transcript bytes alone is insufficient.
 
+## Pre-refactor staging validation
+
+The updated baseline is
+[`ab9598217f7bfe230466bc4c5513f188e869fced`](https://github.com/JadenChun/nanobot-custom/tree/ab9598217f7bfe230466bc4c5513f188e869fced).
+It preserves both remote staging `29612c3d` and local staging `4e2bf4d8`, the six
+feature-repair commits, and the architecture documentation. A fresh review reconstructed
+all four shared merge paths from both parents and matched every byte of the integration.
+The refactor candidate and its branch remain separate at `0518de5f`; the nine findings
+above continue to describe that candidate.
+
+Two checks failed on both the original remote staging and the initial integrated source.
+One still expected managed-tool recovery guidance in a system message, although the
+existing portable format uses an internal user note. Its assertions now require exactly
+one such note and retain the safe-tool execution checks. The other exposed a pending
+cancellation being converted into an ordinary tool error when cleanup raised, allowing
+another model call after API timeout. The runner now honours pending cancellation before
+recovery. All 45 tests in the four affected modules pass. A fresh real-API probe also
+passed repeated cancellation, cleanup failure and a queued second tool: one active
+execution, no queued execution or recovery call, and successful same-session succession.
+
+The full frontend suite passes 1,481 tests in 95 files; lint and the production build pass.
+Frozen full-source type checking retains 1,001 existing errors across 538 files with
+zero introduced diagnostic signatures in the same 183-package environment. This does not
+close migration P6.
+
+The complete backend selection is **not green**. The parallel portion recorded 16,853
+passed, 76 skipped, nine failed and 15 setup errors; the separately selected CLI module
+passed all 129 tests. Replaying all 24 failed/error cases serially with a short temporary
+path passed 16: 15 Unix socket paths exceeded the host limit under the nested parallel
+paths, and Rich wrapped one CLI log path. Eight tests still fail:
+
+| Remaining failures | Previous-staging comparison |
+| --- | --- |
+| Artifact handoff notice (one) | The same system-role assertion fails against the existing portable user notice. |
+| Temporary-session lifecycle (four) | The same missing inbound publication raises `IndexError`. |
+| Temporary-session sandbox submission (one) | The previous test first fails native availability on this host. Matching the local test's mocked availability reaches the same missing inbound publication and `AttributeError`, without runtime source edits. |
+| Foreground ordinary tool error (one) | The same existing recovery completes instead of the expected terminal tool error. |
+| Configured protected-write continuation (one) | The write stays blocked, but the same existing recovery completes instead of the expected terminal tool error. |
+
+All eight were reproduced against previous remote staging `29612c3d`, subject to the
+explicit fixture qualification above. They remain recorded baseline failures; this sync
+does not certify a passing full backend suite. These replays overlap the complete run
+and must not be added to its coverage totals. Exact node IDs, commands, source/environment
+hashes and local raw-artifact hashes are recorded in `staging_sync` in
+[the evidence ledger](evidence.json). The raw logs and full checker reports remain local
+validation artifacts, rather than committed evidence payloads. The initial serial backend
+run was interrupted after confirming the first failures and is not a complete-suite pass.
+
+This baseline correction must be included in later semantic reconciliation with the
+refactor, alongside the six feature-repair commits. It does not close any candidate
+finding or architectural decision gate.
+
 ## Qualification and decision gates
 
 | Gate | Missing proof or choice | Required acceptance condition |
@@ -206,7 +258,7 @@ migration remains atomic/readable; checking transcript bytes alone is insufficie
 | G3: historical executable and artifacts | Existing rollback tests use current readers; PR installed-prior-reader and Android claims uninspected | Inspect source/dependency/artifact/previous-executable digests and exact upgrade/rollback receipts, including post-cutover history, scheduler once-only and device revocation. |
 | G4: consequential choices | Historical D1–D7 pending; implemented values do not establish human acceptance | Add durable acceptance or explicit deferral for supported scope, Full semantics, children/budgets, P-256/cutover, request lifetime, outcomes, retention and compatibility changes. |
 | G5: complete traceability | 136 original IDs default unverified; E01 remains limited-depth | Attach criterion-specific proof or an explicit qualified disposition for each relevant finding and retain all remaining IDs/gaps. A full passing suite does not close the partition. |
-| G6: repair branch | Six separately published fixes overlap but are not ancestor proof of inclusion | Record a semantic disposition per commit; port only a proven missing invariant through the current owner and rerun its closest check. |
+| G6: updated staging baseline | Six feature-repair commits are included in pre-refactor staging; their semantic preservation in the candidate is unverified | Compare the refactor with the latest staging, record a semantic disposition per repair, port only a proven missing invariant through the current owner and rerun its closest check. |
 
 The source review retained the independent hard deadline and shielded termination,
 tree-quiescence distinction, durable intent/unknown restart, writer lease/source CAS/
@@ -226,8 +278,10 @@ mechanism, with no new finding inferred here.
 
 The six commits are now durable on the separately published repair branch ending at
 [`d3380eb69d3c8416a9ca72522001234ce30a8eeb`](https://github.com/JadenChun/nanobot-custom/tree/d3380eb69d3c8416a9ca72522001234ce30a8eeb).
-They require semantic reconciliation before code merge, rather than wholesale
-cherry-picking. Absence from ancestry does not mean a correction is absent semantically.
+They are also included in the [updated pre-refactor staging baseline](README.md#version-boundary).
+The separate refactor still requires semantic reconciliation before code merge, rather
+than wholesale cherry-picking. Absence from its ancestry does not mean a correction is
+absent semantically. The dispositions below describe the pinned refactor candidate.
 
 | Repair commit | Current disposition | Evidence required before code merge |
 | --- | --- | --- |
@@ -238,8 +292,8 @@ cherry-picking. Absence from ancestry does not mean a correction is absent seman
 | [`b45519af2`](https://github.com/JadenChun/nanobot-custom/commit/b45519af243ce6bdbd634e025aac633d9b215472) | TEST_RECONCILIATION_REQUIRED: portability and optional-installer isolation | Compare test/environment isolation with the candidate, then run the affected platform checks if a change is needed. This is test-only work. |
 | [`d3380eb69`](https://github.com/JadenChun/nanobot-custom/commit/d3380eb69d3c8416a9ca72522001234ce30a8eeb) | RETAIN_HISTORICAL_PROVENANCE: audit documentation only | Preserve the durable repair narrative and reconcile its claims with the current record; there is no runtime fix to port or product test to rerun from this commit. |
 
-No disposition authorizes a live deployment. Preserve the separate local staging work
-and review the candidate against the remote staging base named in the [version record](README.md).
+No disposition authorizes a live deployment. Review the candidate against the latest
+staging, including the preserved pre-refactor repairs named in the [version record](README.md).
 
 ## Review commands and evidence discipline
 
@@ -286,7 +340,7 @@ part of this documentation work.
 | Traceability | 136/136 unique original IDs, exactly one I05 package and primary stage each; 22 packages, A3-0 plus ten stages; all finding acceptance remains `UNVERIFIED`. Original qualifications and E01/overlay exclusions match I05. |
 | Pinned sources | 57 bounded file/symbol excerpts across 32 source files match `0518de5f` Git blobs; curated GitHub source paths resolve in the object database. |
 | Navigation and local anchors | Zero curated failures. Historical links checked separately: zero unresolved local links after excluding fenced/inline code; archival bytes remain untouched. This does not attest remote website availability. |
-| Scope | 147 changed paths: 138 archive files, seven canonical files and two navigation files; allowlist passes against the pinned staging base. |
+| Original documentation scope | At `a8f97ff4a1ade44ababeb249990db5ffee8e09db`, 147 changed paths: 138 archive files, seven canonical files and two navigation files; allowlist passes against the original pinned staging base. Later staging integration also preserves the separately recorded feature repairs. |
 | Curated whitespace | The seven canonical files and two navigation files pass whitespace checks. The initial `git diff --check` exited 0 for tracked unstaged changes; it omitted the archive files while they were untracked. |
 | Archive whitespace exception | The full staged import check exited 2 with the five inherited diagnostics below. After the archive commit, `git diff 29612c3df01dc3dce3501fe349bcf555cd6c58b6 HEAD --check -- docs/audits/` reproduces them. All archive blobs still match the frozen source, so immutable history is preserved with an explicit whitespace exception. |
 

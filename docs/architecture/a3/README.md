@@ -23,16 +23,26 @@ does not make that candidate merged behavior.
 | Identity | Durable reference and meaning |
 | --- | --- |
 | Frozen deep-source audit | [`9562e57f8333d7f14b6aaeae837660723a9b2650`](https://github.com/JadenChun/nanobot-custom/tree/9562e57f8333d7f14b6aaeae837660723a9b2650), tree `bbe2f237efe0cd7b935946b533f66ed0097a3c93`. Findings describe this source and their stated conditions. |
-| Staging and packet base | [`29612c3df01dc3dce3501fe349bcf555cd6c58b6`](https://github.com/JadenChun/nanobot-custom/tree/29612c3df01dc3dce3501fe349bcf555cd6c58b6). The audit records the bundled skill-path delta separately as K01-STG-F01. |
+| Original staging and packet base | [`29612c3df01dc3dce3501fe349bcf555cd6c58b6`](https://github.com/JadenChun/nanobot-custom/tree/29612c3df01dc3dce3501fe349bcf555cd6c58b6). The audit records the bundled skill-path delta separately as K01-STG-F01. |
+| Updated pre-refactor code baseline | [`ab9598217f7bfe230466bc4c5513f188e869fced`](https://github.com/JadenChun/nanobot-custom/tree/ab9598217f7bfe230466bc4c5513f188e869fced), tree `74ba3b4f3183dc8e735f7e0a423a86893b839b54`. Includes integration `cea61e0598fba5784237fdaab21c448fb9b2a9bf` of the original remote staging and local staging `4e2bf4d8d0b34f133c01591b67826ca956fed384`, all six feature-repair commits, the architecture records, and a bounded cancellation/recovery correction. No refactor implementation is included. |
 | Immutable documentation archive | [`a14aefab0235dd49ed2b579d448e2c47c75e3860`](https://github.com/JadenChun/nanobot-custom/tree/a14aefab0235dd49ed2b579d448e2c47c75e3860/docs/audits), tree `9a2d0c5ef834bd06cc95dd22c9e9724eb7740524`. The 138 files under `docs/audits/` are copied byte for byte from this revision. |
 | Reviewed implementation | [`0518de5f5013b77cbc20d2c5b456e973f33c68f5`](https://github.com/JadenChun/nanobot-custom/tree/0518de5f5013b77cbc20d2c5b456e973f33c68f5), tree `26fae6f933d1dad3e8ae586c847b3168a4571a28`; [PR #27 into staging](https://github.com/JadenChun/nanobot-custom/pull/27). Source links in this record use this full SHA. |
 | CI snapshot | [Run 42972763133](https://github.com/JadenChun/nanobot-custom/actions/runs/42972763133) at the implementation SHA completed with overall conclusion **cancelled**. Several jobs passed; full Windows Python 3.14 was cancelled. |
 | Migration CI exercise | [`dee68697157dccb0b49a6782c8dd13a594c9cf92`](https://github.com/JadenChun/nanobot-custom/commit/dee68697157dccb0b49a6782c8dd13a594c9cf92) descends from `980b491d01cdf308041bd9ba7a2ccdd5998d6a99` and adds only two lines/comment to the baseline script. It lacks the later `7fbb00c2a` and `0518de5f` fixes and is a CI exercise, not a separate architectural implementation. |
 
 The six repairs ending at [`d3380eb69d3c8416a9ca72522001234ce30a8eeb`](https://github.com/JadenChun/nanobot-custom/tree/d3380eb69d3c8416a9ca72522001234ce30a8eeb)
-are separately published for comparison. Their [reconciliation dispositions](review.md#repair-branch-reconciliation)
-are required before a code merge. Commit ancestry alone does not establish whether a fix
-is present semantically.
+are included in the updated pre-refactor staging baseline. Their
+[reconciliation dispositions](review.md#repair-branch-reconciliation) still apply to the
+separate refactor candidate. Commit ancestry alone does not establish whether that
+candidate preserves each correction semantically.
+
+Future refactor acceptance must compare against the latest `staging`, including these
+pre-refactor repairs and the [integration validation](review.md#pre-refactor-staging-validation).
+The existing refactor review and its source links remain pinned to
+`0518de5f5013b77cbc20d2c5b456e973f33c68f5`; they do not attest reconciliation with the
+updated baseline. The implementation branch and PR #27 remain separate. The immutable
+138-file manifest covers the architecture audit history; the feature-repair records
+under `docs/audits/feature-implementation-2026-11-05/` retain their separate provenance.
 
 ## Evidence vocabulary
 

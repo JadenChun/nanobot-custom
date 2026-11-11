@@ -4,7 +4,13 @@ This page maps nanobot's runtime behavior to source files. Use it when you are d
 
 For the product-level mental model, read [`concepts.md`](./concepts.md) first.
 
-This page is the staging architecture baseline at `29612c3df01dc3dce3501fe349bcf555cd6c58b6`.
+This page describes the pre-refactor staging architecture. Its updated code baseline is
+`ab9598217f7bfe230466bc4c5513f188e869fced`, which combines remote staging
+`29612c3df01dc3dce3501fe349bcf555cd6c58b6` with the local feature repairs and a
+validated cancellation/recovery correction. The
+[feature repair results](./audits/feature-implementation-2026-11-05/repair-results.md)
+and [macOS follow-up](./audits/feature-implementation-2026-11-05/macos-repair-results.md)
+record those changes and their original validation limits.
 The separately pinned A3 candidate is documented in the [A3 architecture record](./architecture/a3/README.md),
 with its design, alternatives, decision status, ordered plan and review gates. Publishing that
 record does not make the candidate merged behavior; its implementation merge remains on hold.
