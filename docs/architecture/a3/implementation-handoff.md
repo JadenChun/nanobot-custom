@@ -1,5 +1,38 @@
 # A3 implementation correction handoff
 
+## Combined backend review corrections (2026-11-13)
+
+Resume from `bc95f779` on `codex/staging-audit-implementation`. An independent
+combined review of `225ea3f9..8652b8b1` returned **CORRECT** with two P1 and four
+P2 findings. This checkpoint closes them.
+
+- A cancelled follow-up claim before dispatch now settles the child as stopped and
+  releases capacity. Follow-up tool bindings also release when the backend task
+  settles.
+- Uncertain-child settlement is wired into startup and turn reconciliation. Valid
+  terminal runs settle; missing or mismatched evidence retains capacity.
+- Missing failed background results are rebuilt from a matching terminal run and
+  healthy source, not only completed runs.
+- Crawler override prompts skip runtime-context providers and task skill blocks, so
+  no ambient context reaches the crawler provider or source.
+- Hydration filters on the exact parent and child source lifetimes and orders rows
+  by numeric timestamps.
+- Background result disposition changes re-emit the child event. Reconcile does not
+  republish a result that already has a durable parent journal row.
+- Result reconciliation is serialized on the shared tree across AgentLoop instances.
+
+Verification:
+
+| Check | Result |
+| --- | --- |
+| Affected follow-up, background, uncertain, crawler, hydration, projection suites | **146 passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+The remaining work is the combined release review, mobile/detail client work, and
+release qualification.
+
 ## Crawler isolation and uncertain settlement checkpoint (2026-11-12)
 
 Resume from `20437dd3` on `codex/staging-audit-implementation`. This checkpoint
