@@ -1,5 +1,36 @@
 # A3 implementation correction handoff
 
+## Crawler isolation and uncertain settlement checkpoint (2026-11-12)
+
+Resume from `20437dd3` on `codex/staging-audit-implementation`. This checkpoint
+closes the crawler prompt-isolation gap and adds an evidence-based uncertain-child
+settlement path. Staging is at `f1a6bb85`.
+
+- The crawler receives one self-contained system prompt. It no longer receives the
+  workspace path, context repository summary, long-term memory, skill catalog, or
+  task-triggered skill context.
+- The crawler still uses its own provider, model, token budget, iteration limit,
+  serialized browser gate, and role-owned `social_crawl` tool.
+- `ForegroundAgentManager.settle_uncertain_child` closes an uncertain child only
+  from a matching terminal `RunRecord`, a healthy closed child source, and no
+  unresolved execution links. Missing or mismatched evidence leaves the child
+  uncertain with its capacity retained.
+- Two `AgentLoop` instances with one `SessionManager` share one delegation tree and
+  one gateway-wide child budget.
+
+Verification:
+
+| Check | Result |
+| --- | --- |
+| Crawler, context, uncertain recovery, gateway, child session, foreground suites | **137 passed**. |
+| Uncertain-child recovery cases | **3 passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+The fresh combined backend review, remaining mobile/detail client work, and release
+qualification remain open.
+
 ## Canonical child projection checkpoint (2026-11-12)
 
 Resume from `b5119be1` on `codex/staging-audit-implementation`. This checkpoint
