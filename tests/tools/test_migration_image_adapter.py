@@ -1,6 +1,8 @@
 """Legacy image requests reach the canonical artifact-producing tool."""
 import base64
 import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -85,9 +87,16 @@ async def test_denied_destination_and_publication_failure_do_not_regenerate(tmp_
     destination = workspace / 'generated_images' / 'out.png'
     destination.parent.mkdir()
     destination.write_bytes(b'previous')
-    monkeypatch.setattr('nanobot.agent.tools.image_generation.os.replace', lambda *_: (_ for _ in ()).throw(OSError('publication failed')))
+    original_replace = os.replace
+    def fail_destination_publication(source, target, **kwargs):
+        if not kwargs and Path(target) == destination:
+            raise OSError('publication failed')
+        return original_replace(source, target, **kwargs)
+    monkeypatch.setattr('nanobot.agent.tools.image_generation.os.replace', fail_destination_publication)
     result = await tool.execute('test', output_path='out.png')
     assert result.is_error and 'retained artifacts' in result
+    retained = json.loads(str(result).split('retained artifacts: ', 1)[1])
+    assert retained and Path(retained[0]['path']).read_bytes() == RAW
     assert destination.read_bytes() == b'previous'
     assert client.generate.await_count == 1
 

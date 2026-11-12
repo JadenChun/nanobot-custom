@@ -1640,6 +1640,7 @@ class GatewayHTTPHandler:
                     text,
                     workspace_path=scope.project_path,
                     allow_folder_grants=allow_folder_grants,
+                    publication=False,
                 ),
                 session_messages_loader=load_session_messages,
                 active_turn_started_at=active_turn_started_at,
@@ -1853,7 +1854,7 @@ class GatewayHTTPHandler:
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
                     restrict_to_root=None if full_preview_access else scope.project_path,
-                    image_url=lambda target: self.media.sign_or_stage_media_path(
+                    image_url=lambda target: self.media.sign_media_read(
                         target,
                         allow_folder_grants=full_preview_access,
                     ),
@@ -1886,7 +1887,7 @@ class GatewayHTTPHandler:
                 build_generated_asset_library_page,
                 get_webui_dir(),
                 media_root=get_media_dir(),
-                sign_path=lambda path: self.media.sign_or_stage_media_path(
+                sign_path=lambda path: self.media.sign_media_read(
                     path,
                     allow_folder_grants=False,
                 ),
@@ -1939,7 +1940,7 @@ class GatewayHTTPHandler:
                 groups,
                 session_key=decoded_key,
                 media_root=get_media_dir(),
-                sign_path=lambda path: self.media.sign_or_stage_media_path(
+                sign_path=lambda path: self.media.sign_media_read(
                     path,
                     allow_folder_grants=False,
                 ),

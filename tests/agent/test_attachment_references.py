@@ -20,7 +20,6 @@ from nanobot.agent.turn import (
     TurnSource,
 )
 from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ChannelsConfig
@@ -229,17 +228,13 @@ async def test_attachment_record_survives_session_reload(tmp_path: Path, admitte
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9kAAAAASUVORK5CYII="
         )
     )
-    record = AttachmentRecord(
-        id="att_fixture",
-        sha256="a" * 64,
-        mime="image/png",
-        bytes=image_path.stat().st_size,
-        name="photo.png",
-        source="mobile",
-        created_at=1_793_803_728.0,
-    )
-
     loop = await _make_loop(tmp_path, admitted_async)
+    from nanobot.attachments.store import AttachmentStore
+    from nanobot.config.paths import get_media_dir
+
+    media_root = get_media_dir()
+    store = AttachmentStore(media_root / "attachments", media_root=media_root)
+    record = store.commit(store.stage_path(image_path, source="mobile"))
     loop._run_agent_loop = AsyncMock(side_effect=RuntimeError("interrupt"))  # type: ignore[method-assign]
     msg = InboundMessage(
         channel="websocket",

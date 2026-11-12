@@ -117,6 +117,19 @@ class SourceState:
     checkpoint_id: str | None
     checkpoint_fingerprint: str
 
+    def same_origin(self, other: SourceState) -> bool:
+        """Revisions/checkpoints advance within one source lifetime."""
+        return (self.store_identity, self.session_key, self.incarnation, self.generation) == (
+            other.store_identity, other.session_key, other.incarnation, other.generation,
+        )
+
+
+class SourceOriginMismatchError(RuntimeError):
+    """Delayed work no longer targets its original canonical source."""
+
+    def __init__(self) -> None:
+        super().__init__("The original session source is no longer available")
+
 
 @dataclass(frozen=True)
 class SourceSnapshot:

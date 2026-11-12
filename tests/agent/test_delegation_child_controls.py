@@ -25,9 +25,18 @@ def _manager(tmp_path):
 
 
 def _parent(manager, key="websocket:parent"):
-    parent = manager._delegation_tree.sessions.get_or_create(key)
-    manager._delegation_tree.sessions.save(parent)
-    return parent
+    sessions = manager._delegation_tree.sessions
+    parent = sessions.get_or_create(key)
+    sessions.save(parent)
+    backend = sessions._jsonl_store
+    backend.source.upgrade_source_session(
+        key,
+        expected_revision=parent.revision,
+        expected_generation=parent.generation,
+        expected_incarnation=parent.incarnation,
+    )
+    sessions.invalidate(key)
+    return sessions.get_or_create(key)
 
 
 async def _live_child(manager, parent, *, assignment, attempt_id):

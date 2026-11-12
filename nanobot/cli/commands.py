@@ -213,9 +213,9 @@ def attachments_prune(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Remove attachment blobs no live session references."""
-    from nanobot.attachments.lifecycle import prune_unreferenced
+    from nanobot.attachments.lifecycle import prune_unreferenced_result
     from nanobot.attachments.store import AttachmentStore
-    from nanobot.config.paths import get_attachments_dir, get_default_sessions_root, get_media_dir
+    from nanobot.config.paths import get_default_sessions_root, inspect_media_dir
 
     runtime_config = _load_runtime_config(config, workspace)
     if runtime_config.runtime_data_dir is not None:
@@ -224,14 +224,21 @@ def attachments_prune(
         sessions_root = Path(config).expanduser().resolve(strict=False).parent / "sessions"
     else:
         sessions_root = get_default_sessions_root()
-    store = AttachmentStore(get_attachments_dir(), media_root=get_media_dir())
+    media_root = inspect_media_dir()
+    store = AttachmentStore(media_root / "attachments", media_root=media_root)
     grace_seconds = max(0, grace_days) * 24 * 60 * 60
-    preview = prune_unreferenced(
+    preview_result = prune_unreferenced_result(
         store,
         sessions_root,
         grace_seconds=grace_seconds,
         dry_run=True,
     )
+    if not preview_result.evidence_complete:
+        console.print("[yellow]Attachment pruning refused: reference coverage is incomplete.[/yellow]")
+        for reason in preview_result.reasons:
+            console.print(f"  {reason}")
+        return
+    preview = preview_result.removed
     if not preview:
         console.print("No unreferenced attachment blobs to remove.")
         return
@@ -245,53 +252,18 @@ def attachments_prune(
     ):
         console.print("Cancelled.")
         raise typer.Exit(1)
-    removed = prune_unreferenced(
+    result = prune_unreferenced_result(
         store,
         sessions_root,
         grace_seconds=grace_seconds,
         dry_run=False,
     )
-    console.print(f"Removed {len(removed)} unreferenced attachment blob(s).")
+    console.print(f"Removed {len(result.removed)} unreferenced attachment blob(s).")
+    if result.retry_required:
+        console.print("[yellow]Some attachment deletions require retry.[/yellow]")
+    for reason in result.reasons:
+        console.print(f"[yellow]{reason}[/yellow]")
 
-
-@attachments_app.command("migrate")
-def attachments_migrate(
-    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
-    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Report migrations without writing"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
-) -> None:
-    """Rewrite legacy media paths in session history as attachment records."""
-    from nanobot.attachments.lifecycle import migrate_legacy_media
-    from nanobot.attachments.store import AttachmentStore
-    from nanobot.config.paths import get_attachments_dir, get_default_sessions_root, get_media_dir
-
-    runtime_config = _load_runtime_config(config, workspace)
-    if runtime_config.runtime_data_dir is not None:
-        sessions_root = runtime_config.runtime_data_dir / "sessions"
-    elif config:
-        sessions_root = Path(config).expanduser().resolve(strict=False).parent / "sessions"
-    else:
-        sessions_root = get_default_sessions_root()
-    store = AttachmentStore(get_attachments_dir(), media_root=get_media_dir())
-    preview = migrate_legacy_media(sessions_root, store, dry_run=True)
-    if preview.events_migrated == 0:
-        console.print("No legacy media events need migration.")
-        return
-    console.print(
-        f"Would migrate {preview.events_migrated} event(s) in "
-        f"{preview.files_changed} file(s); {preview.events_skipped} skipped."
-    )
-    if dry_run:
-        return
-    if not yes and not typer.confirm("Apply attachment migration?", default=False):
-        console.print("Cancelled.")
-        raise typer.Exit(1)
-    report = migrate_legacy_media(sessions_root, store, dry_run=False)
-    console.print(
-        f"Migrated {report.events_migrated} event(s) in {report.files_changed} file(s); "
-        f"{report.records_created} record(s) created, {report.events_skipped} skipped."
-    )
 
 
 def version_callback(value: bool):
@@ -1343,6 +1315,16 @@ def media_gc(
     from nanobot.webui.media_maintenance import run_generated_media_gc
 
     result = run_generated_media_gc(loaded, dry_run=dry_run)
+    if not result["evidence_complete"]:
+        console.print("[yellow]Generated media deletion refused: reference coverage is incomplete.[/yellow]")
+        for reason in result["reasons"]:
+            console.print(f"  {reason}")
+    if result["quota_unknown"]:
+        console.print("[yellow]Quota remains unverified because asset enumeration is incomplete.[/yellow]")
+    if result["retry_required"]:
+        console.print("[yellow]Some generated media deletions require retry.[/yellow]")
+        for failure in result["failed"]:
+            console.print(f"  {failure['path']}: {failure['reason']}")
     mode = "Would delete" if dry_run else "Deleted"
     console.print(
         f"Generated media: scanned {result['scanned']}, {mode.lower()} "
@@ -1352,7 +1334,7 @@ def media_gc(
     if result["quota_unmet_bytes"]:
         console.print(
             f"[yellow]{result['quota_unmet_bytes']} bytes remain over quota because "
-            "the remaining assets are referenced.[/yellow]"
+            "reference coverage is incomplete or the remaining assets are protected.[/yellow]"
         )
 
 

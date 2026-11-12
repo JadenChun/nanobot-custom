@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import RequestContext, ToolContext, current_request_session_key
+from nanobot.agent.tools.context import (
+    RequestContext,
+    ToolContext,
+    current_request_context,
+    current_request_session_key,
+)
 from nanobot.agent.tools.native_process import NativeProcessHandle
 from nanobot.agent.tools.schema import (
     BooleanSchema,
@@ -31,6 +36,7 @@ if TYPE_CHECKING:
         DesktopPermissionOwner,
         WorkspacePermissionReference,
     )
+    from nanobot.session.source_store import SourceState
 
 DEFAULT_YIELD_MS = 1000
 MAX_YIELD_MS = 30_000
@@ -56,7 +62,8 @@ class ExecCompletionSink(Protocol):
     def inline_completed(self, session_id: str) -> None: ...
     def finished(self, session_id: str, result: ExecCompletion) -> None: ...
     def cancelled(self, session_id: str, reason: str) -> None: ...
-    def result(self, session_id: str, owner_session_key: str | None) -> ExecCompletion | None: ...
+    def result(self, session_id: str, owner_session_key: str | None, *,
+               source_state: SourceState | None = None) -> ExecCompletion | None: ...
 
 
 @dataclass(slots=True)
@@ -602,7 +609,9 @@ class ExecSessionManager:
             session = self._sessions.get(session_id)
         if session is None:
             if self._completion_sink is not None and not (chars or close_stdin or terminate):
-                completed = self._completion_sink.result(session_id, owner_session_key)
+                request = current_request_context()
+                completed = self._completion_sink.result(session_id, owner_session_key,
+                    source_state=request.source_state if request is not None else None)
                 if completed is not None:
                     return _SessionPoll(completed.output, True, completed.exit_code, timed_out=completed.timed_out,
                                         terminated=completed.terminated, completion_state=completed.state)

@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any, cast
 
+from nanobot.agent.tools.filesystem_effect import validate_persisted_filesystem_effects
+
 
 class SourceValidationError(ValueError):
     """Content-free rejection of invalid persisted source evidence."""
@@ -170,8 +172,6 @@ def validate_execution_links(events: Sequence[object]) -> frozenset[str]:
             ):
                 raise SourceValidationError("Invalid source result provenance")
             if "_filesystem_effects" in event:
-                from nanobot.agent.tools.filesystem_effect import validate_persisted_filesystem_effects
-
                 try:
                     unresolved = validate_persisted_filesystem_effects(
                         event["_filesystem_effects"], execution_id=identity, name=event.get("name"),
@@ -182,6 +182,10 @@ def validate_execution_links(events: Sequence[object]) -> frozenset[str]:
                     raise SourceValidationError("Invalid filesystem effect provenance")
                 if unresolved:
                     unresolved_effects.add(identity)
+            elif (event.get("_dispatched") is True and event.get("_outcome_status") in {"error", "cancelled"}
+                  and event.get("name") in {"write_file", "edit_file", "apply_patch", "generate_image", "save_knowledge"}):
+                # Older error rows cannot prove that mutation never started.
+                unresolved_effects.add(identity)
             del pending[identity]
         elif "_filesystem_effects" in event:
             raise SourceValidationError("Invalid filesystem effect provenance")

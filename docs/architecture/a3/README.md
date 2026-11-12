@@ -29,6 +29,13 @@ their behavior or become a first-release coordinator requirement.
 Candidate-code findings and runtime qualification are later work and do not select
 planning requirements.
 
+**Implementation correction status (2026-11-12): user-requested pause.** The
+[latest handoff](implementation-handoff.md#latest-handoff-stopped-with-unfinished-backend-work-2026-11-12)
+records accepted foundations, the isolated Dream verification, unfinished canonical-child
+and artifact integration, current failing checks and backend-first continuation order.
+The WIP remains on `codex/staging-audit-implementation`, separate from staging; no combined
+backend or A3 acceptance is claimed.
+
 | Read | Purpose |
 | --- | --- |
 | [Planning review and accepted direction](plan-review.md) | User acceptance, selected scope/defaults and the frozen documentation baseline for implementation review. |
@@ -38,6 +45,7 @@ planning requirements.
 | [Design and alternatives](design.md) | Ownership, data flow, required invariants, observed mechanisms and smaller options. |
 | [D1–D7 decisions](decisions.md) | Accepted architectural direction/defaults and historical candidate observations. |
 | [Implementation plan](implementation-plan.md) | A3-0 plus ten stages, dependencies, owner boundaries, acceptance and rollback. |
+| [Implementation correction handoff](implementation-handoff.md) | Latest paused work, verification limits, unfinished acceptance criteria and continuation order; earlier checkpoints remain historical. |
 | [Review and merge gates](review.md) | Independent findings, inspected evidence, reported claims and conditions for acceptance. |
 | [Evidence and finding ledger](evidence.json) | Machine-readable pins, 136 finding/package/stage assignments, qualifications and evidence states. |
 | [Archive manifest](audit-manifest.json) | Exact Git blob and SHA-256 identities for the 138 imported audit files. |

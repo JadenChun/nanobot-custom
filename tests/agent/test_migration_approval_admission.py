@@ -57,8 +57,8 @@ async def test_clear_old_identity_preserves_new_visible_alias():
     admission = ApprovalAdmission()
     old = await store(admission)
     newer = await admission.store(session_key='cron:other', channel='telegram', chat_id='42', summary='new')
-    assert not await admission.clear('telegram:42', old)
-    assert await admission.clear('cron:job', old)
+    assert await admission.clear('telegram:42', old)
+    assert (await admission.snapshot('cron:job', 'yes')).pending is None
     assert (await admission.snapshot('telegram:42', 'yes')).pending is newer
 
 

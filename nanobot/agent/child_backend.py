@@ -13,6 +13,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from nanobot.agent.child_sessions import ChildAdmission
+from nanobot.agent.hook import AgentHook
+from nanobot.agent.policy import ToolPolicy
+from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import ApprovalDecision, DeliveryTarget, TurnResult
+from nanobot.security.desktop_permissions import WorkspaceTaskAccessReference
+from nanobot.utils.llm_runtime import LLMRuntime
 
 
 class ChildBackendError(RuntimeError):
@@ -47,6 +53,46 @@ class ChildBackendHandle:
     child_id: str
     runtime_generation: int
     task: asyncio.Task[Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ChildTurnRequest:
+    """Trusted, scoped inputs for one canonical child turn."""
+
+    admission: ChildAdmission
+    run_id: str
+    role: str
+    instructions: str
+    assignment: str
+    tools: ToolRegistry
+    runtime: LLMRuntime
+    max_iterations: int
+    hook: AgentHook
+    policy: ToolPolicy | None = None
+    approval_target: DeliveryTarget | None = None
+    workspace_task_reference: WorkspaceTaskAccessReference | None = None
+    approval_decision: ApprovalDecision | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ChildApprovalResume:
+    """One typed approval decision bound to a new child run."""
+
+    request: ChildTurnRequest
+    approval_id: str
+    blocked_run_id: str
+    decision: ApprovalDecision
+
+
+class ChildTurnExecutor(Protocol):
+    """AgentLoop adapter that admits child work through execute_turn."""
+
+    async def execute_child_turn(
+        self,
+        request: ChildTurnRequest,
+        *,
+        approval_resume: ChildApprovalResume | None = None,
+    ) -> TurnResult: ...
 
 
 RunCall = Callable[[], Coroutine[Any, Any, Any]]
@@ -186,5 +232,8 @@ __all__ = [
     "ChildBackendHandle",
     "ChildBackendRegistry",
     "ChildBackendUnavailableError",
+    "ChildApprovalResume",
+    "ChildTurnExecutor",
+    "ChildTurnRequest",
     "NativeChildBackend",
 ]

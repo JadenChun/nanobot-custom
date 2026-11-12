@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from nanobot.providers.factory import ProviderSnapshot
     from nanobot.security.workspace_access import WorkspaceSandboxStatus, WorkspaceScope
     from nanobot.session.manager import SessionManager
+    from nanobot.session.source_store import SourceState
     from nanobot.session.workspace_focus import WorkspaceFocusOwner
     from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -46,6 +47,7 @@ class RequestContext:
     attributes: dict[str, Any] = field(default_factory=dict)
     workspace_scope: WorkspaceScope | None = None
     persistent_session: bool = True
+    source_state: SourceState | None = None
 
 
 @runtime_checkable

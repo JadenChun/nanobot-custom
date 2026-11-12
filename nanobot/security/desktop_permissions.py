@@ -236,6 +236,7 @@ class DesktopPermissionOwner:
         self._lock = threading.RLock()
         self._tasks: dict[_TaskIdentity, WorkspaceTaskAccessReference] = {}
         self._task_retirements: dict[_TaskIdentity, _Retirement] = {}
+        self._task_child_holds: dict[_TaskIdentity, int] = {}
         self._full: dict[_SourceIdentity, WorkspaceFullAccessReference] = {}
         self._full_retirements: dict[_SourceIdentity, _Retirement] = {}
         self._remote_full_consents: dict[tuple[str, _SourceIdentity], bool] = {}
@@ -406,8 +407,15 @@ class DesktopPermissionOwner:
         except (TypeError, ValueError):
             return False
         with self._lock:
+            retirement = self._task_retirements.get(identity)
+            deferred = bool(
+                retirement is not None
+                and retirement.reason == "task_ended"
+                and retirement.private_reference is typed
+                and self._task_child_holds.get(identity, 0) > 0
+            )
             return (
-                self._tasks.get(identity) is typed
+                (self._tasks.get(identity) is typed or deferred)
                 and typed.session_key == identity.session_key
                 and typed.source_binding == _binding_from_identity(identity)
                 and typed.task_turn_id == identity.task_turn_id
@@ -438,6 +446,64 @@ class DesktopPermissionOwner:
             task_turn_id=identity.task_turn_id,
             task_input_event_id=identity.task_input_event_id,
         )
+
+    def retain_task_reference(self, reference: object) -> bool:
+        """Hold a live Once reference for a child task in this process."""
+        if type(reference) is not WorkspaceTaskAccessReference or not reference.is_owner_issued():
+            return False
+        try:
+            identity = _task_identity(
+                reference.session_key,
+                reference.source_binding,
+                reference.task_turn_id,
+                reference.task_input_event_id,
+            )
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            if not self.is_current_task_reference(reference):
+                return False
+            retirement = self._task_retirements.get(identity)
+            if retirement is not None and retirement.reason != "task_ended":
+                return False
+            self._task_child_holds[identity] = self._task_child_holds.get(identity, 0) + 1
+            return True
+
+    def release_task_reference(self, reference: object) -> bool:
+        """Release one child hold and finish deferred ordinary retirement."""
+        if type(reference) is not WorkspaceTaskAccessReference or not reference.is_owner_issued():
+            return False
+        try:
+            identity = _task_identity(
+                reference.session_key,
+                reference.source_binding,
+                reference.task_turn_id,
+                reference.task_input_event_id,
+            )
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            holds = self._task_child_holds.get(identity, 0)
+            if holds <= 0:
+                return False
+            if holds == 1:
+                self._task_child_holds.pop(identity, None)
+            else:
+                self._task_child_holds[identity] = holds - 1
+            retirement = self._task_retirements.get(identity)
+            if (
+                holds == 1
+                and retirement is not None
+                and retirement.reason == "task_ended"
+            ):
+                retirement.active_turn = False
+                self._refresh_retirement_counts_unlocked(retirement)
+                if not retirement.active_processes and not retirement.unknown_processes:
+                    self._task_retirements.pop(identity, None)
+                    if retirement.private_reference is not None:
+                        self._native_process_counts.pop(retirement.private_reference, None)
+                    self._changed()
+            return True
 
     def once_roots(
         self,
@@ -829,9 +895,12 @@ class DesktopPermissionOwner:
                 active_processes = max(active_processes, owned_active)
                 unknown_processes = max(unknown_processes, owned_unknown)
             unknown_processes = _count(unknown_processes + close_failures)
+            deferred_child_hold = (
+                reason == "task_ended" and self._task_child_holds.get(identity, 0) > 0
+            )
             retirement = _Retirement(
                 reason,
-                bool(active_turn),
+                bool(active_turn or deferred_child_hold),
                 _count(active_processes),
                 _count(unknown_processes),
                 reference,
@@ -1442,6 +1511,7 @@ class DesktopPermissionOwner:
                 if reference is not None:
                     self._close_native_stdin_unlocked(reference)
                 self._task_retirements.pop(identity, None)
+                self._task_child_holds.pop(identity, None)
 
     def _next_epoch(self) -> int:
         self._epoch += 1

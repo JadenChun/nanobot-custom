@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from nanobot.agent.tools.base import ToolResult, tool_parameters
 from nanobot.agent.tools.filesystem import _FsTool  # pyright: ignore[reportPrivateUsage]
+from nanobot.agent.tools.filesystem_effect import FilesystemEffectAttempt
 from nanobot.agent.tools.schema import (
     ArraySchema,
     BooleanSchema,
@@ -267,12 +268,17 @@ class ApplyPatchTool(_FsTool):
             for path in writes:
                 backups[path] = path.read_bytes() if path.exists() else None
 
+            attempted: list[Path] = []
             try:
                 for path, content in writes.items():
+                    effect = FilesystemEffectAttempt.enter(self.name, path, content.encode("utf-8"))
+                    attempted.append(path)
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(content, encoding="utf-8", newline="")
+                    effect.applied = True
             except Exception:
-                for path, data in backups.items():
+                for path in reversed(attempted):
+                    data = backups[path]
                     if data is None:
                         if path.exists():
                             path.unlink()

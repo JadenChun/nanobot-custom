@@ -9,9 +9,12 @@ import os
 import shutil
 import time
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from nanobot.attachments._media import MediaCustody, MediaRetentionError
 from nanobot.attachments.models import ATTACHMENT_SCHEMA_VERSION, AttachmentRecord, StagedAttachment
 from nanobot.utils.helpers import detect_image_mime, safe_filename
 from nanobot.utils.media_decode import FileSizeExceeded, mime_extension
@@ -70,12 +73,13 @@ class AttachmentStore:
         staging_root: Path | None = None,
         logger: Any = None,
     ) -> None:
-        self.root = Path(root).expanduser().resolve(strict=False)
-        self.media_root = Path(media_root or self.root).expanduser().resolve(strict=False)
+        self.root = Path(root).expanduser().absolute()
+        self.media_root = Path(media_root or self.root).expanduser().absolute()
         self.staging_root = Path(
             staging_root or (self.media_root / ".staging")
-        ).expanduser().resolve(strict=False)
+        ).expanduser().absolute()
         self.logger = logger
+        self.custody = MediaCustody(self.media_root)
 
     def stage_bytes(
         self,
@@ -172,6 +176,20 @@ class AttachmentStore:
     def commit(self, staged: StagedAttachment) -> AttachmentRecord:
         """Move a staged attachment into the content-addressed store."""
         extension = mime_extension(staged.mime)
+        display_name = safe_filename(staged.name or "")[:128] or f"attachment{extension}"
+        record = AttachmentRecord(
+            id=f"att_{uuid.uuid4().hex}", sha256=staged.sha256, mime=staged.mime,
+            bytes=staged.bytes, name=display_name, source=staged.source, created_at=time.time(),
+        )
+        with self.custody.fence(create=True) as gate:
+            self.custody.pin(gate, publication_id=record.id, path=self.path_for(record),
+                              sha256=record.sha256, token=staged.token)
+            self._commit_bytes(staged)
+        return record
+
+    def _commit_bytes(self, staged: StagedAttachment) -> None:
+        """Install bytes while the store's publication fence is held."""
+        extension = mime_extension(staged.mime)
         target_dir = _ensure_private_dir(self.root / staged.sha256[:2])
         target = target_dir / f"{staged.sha256}{extension}"
         if target.is_file():
@@ -196,18 +214,54 @@ class AttachmentStore:
             _fsync_directory(target_dir)
         self._write_sidecar(target_dir, staged)
         self._maybe_remove_staging_root()
-        display_name = safe_filename(staged.name or "")[:128]
-        if not display_name:
-            display_name = f"attachment{extension}"
-        return AttachmentRecord(
-            id=f"att_{uuid.uuid4().hex}",
-            sha256=staged.sha256,
-            mime=staged.mime,
-            bytes=staged.bytes,
-            name=display_name,
-            source=staged.source,
-            created_at=time.time(),
-        )
+
+    def retain_record(self, record: AttachmentRecord) -> None:
+        """Take independent custody when an owner actually adopts an existing path."""
+        path = self.path_for(record)
+        if not path.is_relative_to(self.media_root):
+            return
+        with self.custody.fence(create=True) as gate:
+            from nanobot.attachments._media import read_bytes
+
+            data = read_bytes(path)
+            if hashlib.sha256(data).hexdigest() != record.sha256:
+                raise MediaRetentionError("adopted media is missing or changed")
+            self.custody.pin(gate, publication_id=record.id, path=path, sha256=record.sha256)
+
+    @contextmanager
+    def publication(self, value: object) -> Generator[None, None, None]:
+        """Fence an actual durable owner's write, then transfer its exact pins.
+
+        IDs select pins only inside this write scope. They are never deletion
+        authority, and neither paths nor hashes acknowledge unrelated pins.
+        """
+        from nanobot.attachments._inventory import References
+        from nanobot.attachments._media import read_bytes
+
+        references = References(self.media_root)
+        references.scan(value)
+        if not references.paths and not references.hashes:
+            yield
+            return
+        with self.custody.fence(create=True) as gate:
+            selected: list[str] = []
+            pending = self.custody.records("pending")
+            for path in references.paths:
+                read_bytes(path)
+            for row in pending:
+                if row["publication_id"] not in references.publications:
+                    continue
+                path = Path(str(row["path"]))
+                if path not in references.paths and row["sha256"] not in references.hashes:
+                    continue
+                data = read_bytes(path)
+                if hashlib.sha256(data).hexdigest() != row["sha256"]:
+                    raise MediaRetentionError("publication media is missing or changed")
+                selected.append(str(row["token"]))
+            gate.require(self.custody)
+            yield
+            gate.require(self.custody)
+            self.custody.acknowledge(gate, selected)
 
     def discard(self, staged: StagedAttachment) -> None:
         """Remove a staged attachment that never reached a turn."""

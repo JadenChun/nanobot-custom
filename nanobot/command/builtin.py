@@ -529,55 +529,95 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
         content = ""
         resp = None
         diff_body = ""
+        operation_id: str | None = None
+        finalization_started = False
+        settled = False
         t0 = time.monotonic()
         try:
+            store.reconcile_dream_operation()
+            cursor_before = store.get_last_dream_cursor()
             result = store.build_dream_prompt()
             if result is None:
-                await loop.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content=_format_dream_no_input_message(),
-                    metadata={"render_as": "text"},
-                ))
-                return
-            prompt, last_cursor = result
-            key = dream_session_key()
-            dream_runtime = loop.dream_runtime()
-            resp = await loop.process_direct(
-                prompt,
-                session_key=key,
-                ephemeral=True,
-                tools=store.build_dream_tools(),
-                on_progress=_silent,
-                runtime=dream_runtime,
-            )
-            elapsed = time.monotonic() - t0
-            # The real file delta grounds the audit record; normal completion
-            # decides whether this history batch has finished processing.
-            diff_body = store.dream_content_diff()
-            completed = MemoryStore.dream_run_completed(resp)
-            if completed:
-                store.set_last_dream_cursor(last_cursor)
-                if diff_body:
-                    content = f"Dream completed in {elapsed:.1f}s."
-                else:
-                    content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                content = _format_dream_no_input_message()
             else:
-                reason = MemoryStore.dream_incompletion_reason(resp)
-                content = (
-                    f"Dream did not complete after {elapsed:.1f}s ({reason}); "
-                    "memory cursor was not advanced."
+                prompt, last_cursor = result
+                operation_id = store.reserve_dream_run(cursor_before, last_cursor)
+                key = dream_session_key()
+                dream_runtime = loop.dream_runtime()
+                resp = await loop.process_direct(
+                    prompt,
+                    session_key=key,
+                    ephemeral=True,
+                    tools=store.build_dream_tools(operation_id=operation_id),
+                    on_progress=_silent,
+                    runtime=dream_runtime,
                 )
-        except Exception as e:
-            elapsed = time.monotonic() - t0
-            content = f"Dream failed after {elapsed:.1f}s: {e}"
-        finally:
-            if store.git.is_initialized():
+                elapsed = time.monotonic() - t0
+                # The real file delta grounds the audit record; normal completion
+                # decides whether this history batch has finished processing.
+                diff_body = store.dream_content_diff()
+                completed = MemoryStore.dream_run_completed(resp)
+                reason = MemoryStore.dream_incompletion_reason(resp)
                 commit_msg = build_dream_commit_message("dream: manual run", diff_body)
-                sha = store.git.auto_commit(commit_msg)
-                if sha:
-                    content += f" (commit {sha})"
-            store.compact_history()
-            prune_dream_sessions(loop.sessions)
+                finalization_started = True
+                sha = store.finish_dream_run(
+                    operation_id,
+                    completed=completed,
+                    commit_message=commit_msg,
+                )
+                settled = True
+                if completed:
+                    if diff_body:
+                        content = f"Dream completed in {elapsed:.1f}s."
+                    else:
+                        content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                    if sha:
+                        content += f" (commit {sha})"
+                    try:
+                        store.compact_history()
+                        prune_dream_sessions(loop.sessions)
+                    except Exception:
+                        content += " History maintenance could not be completed."
+                else:
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s ({reason}); "
+                        "memory cursor was not advanced."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+        except Exception:
+            elapsed = time.monotonic() - t0
+            if operation_id is not None and not finalization_started:
+                try:
+                    diff_body = store.dream_content_diff()
+                    commit_msg = build_dream_commit_message("dream: manual run", diff_body)
+                    sha = store.finish_dream_run(
+                        operation_id,
+                        completed=False,
+                        commit_message=commit_msg,
+                    )
+                    settled = True
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s; "
+                        "the history cursor was kept for review."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+                except Exception:
+                    content = (
+                        "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                        "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                    )
+            elif operation_id is not None and not settled:
+                content = (
+                    "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                    "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                )
+            else:
+                content = (
+                    f"Dream could not start after {elapsed:.1f}s. "
+                    "Memory was not changed; confirm that memory versioning is available."
+                )
         await loop.bus.publish_outbound(OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=content,
         ))

@@ -9,6 +9,7 @@ import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Sequence
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -31,7 +32,7 @@ from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.base import ToolDenialKind
 from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback, execute_tool_calls
-from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.registry import CapturedToolBindings, ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.events import NO_EVENTS, EventSink
 from nanobot.llm_usage.context import (
@@ -100,6 +101,11 @@ class RecordedResponse:
     response: LLMResponse
     source_event_id: str | None
     local_usage_anchor_eligible: bool = False
+    tools: CapturedToolBindings | None = field(default=None, repr=False, compare=False)
+
+    def release(self) -> None:
+        if self.tools is not None:
+            self.tools.release()
 
 
 ContinuationCallback = Callable[[], str | None]
@@ -776,6 +782,17 @@ class AgentRunner:
         messages: list[dict[str, Any]],
         request_state: ModelRequestState,
     ) -> AgentRunResult:
+        with ExitStack() as response_owners:
+            return await self._run_core_owned(spec, hook, messages, request_state, response_owners)
+
+    async def _run_core_owned(
+        self,
+        spec: AgentRunSpec,
+        hook: AgentHook,
+        messages: list[dict[str, Any]],
+        request_state: ModelRequestState,
+        response_owners: ExitStack,
+    ) -> AgentRunResult:
         final_content: str | None = None
         tools_used: list[str] = []
         usage: LLMUsage | None = None
@@ -805,6 +822,9 @@ class AgentRunner:
         governance_config = request_state.config
 
         for iteration in range(spec.max_iterations):
+            # The previous response's results/source have settled before this
+            # next sampling boundary. Exceptions/terminal exits use the stack.
+            response_owners.close()
             # A continuation starts a new attempt. A prior attempt's terminal
             # disposition must not leak into this attempt's public result.
             stop_reason = "completed"
@@ -831,6 +851,7 @@ class AgentRunner:
                 request_state=request_state,
                 transcript=messages,
             )
+            response_owners.callback(recorded_response.release)
             response = recorded_response.response
             assert request_state.messages is not None
             messages_for_model = request_state.messages
@@ -918,21 +939,32 @@ class AgentRunner:
                         else:
                             raise SourceValidationError('Artifact handoff has no parent grant authority')
 
-                results, new_events = await execute_tool_calls(
-                    spec.tools,
-                    response.tool_calls,
-                    concurrent=spec.concurrent_tools,
-                    external_lookup_counts=external_lookup_counts,
-                    workspace_violation_counts=workspace_violation_counts,
-                    hook=hook,
-                    context=context,
-                    tool_policy=spec.tool_policy,
-                    messages=messages,
-                    turn_context=spec.turn_context,
-                    fail_on_tool_error=spec.fail_on_tool_error,
-                    tool_result_callback=(record_result if source_writer is not None
-                                          else spec.tool_result_callback),
+                assert recorded_response.tools is not None
+                turn_context = spec.turn_context
+                previous_bindings = (
+                    turn_context.active_tool_bindings if turn_context is not None else None
                 )
+                if turn_context is not None:
+                    turn_context.active_tool_bindings = recorded_response.tools
+                try:
+                    results, new_events = await execute_tool_calls(
+                        recorded_response.tools,
+                        response.tool_calls,
+                        concurrent=spec.concurrent_tools,
+                        external_lookup_counts=external_lookup_counts,
+                        workspace_violation_counts=workspace_violation_counts,
+                        hook=hook,
+                        context=context,
+                        tool_policy=spec.tool_policy,
+                        messages=messages,
+                        turn_context=turn_context,
+                        fail_on_tool_error=spec.fail_on_tool_error,
+                        tool_result_callback=(record_result if source_writer is not None
+                                              else spec.tool_result_callback),
+                    )
+                finally:
+                    if turn_context is not None:
+                        turn_context.active_tool_bindings = previous_bindings
                 # Failing cancellation cleanup can surface as an ordinary tool
                 # error. Honour cancellation before starting recovery or another model call.
                 task = asyncio.current_task()
@@ -1730,15 +1762,44 @@ class AgentRunner:
         malformed_retry: bool = False,
         source_view: SourceTranscript | None = None,
         transcript: list[dict[str, Any]] | None,
+        _captured_tools: CapturedToolBindings | None = None,
+    ) -> tuple[RecordedResponse, LLMUsage]:
+        # This synchronous capture precedes context preparation and every
+        # provider await. Transfer only after mandatory source settlement.
+        bindings = (spec.tools.capture_request_tools()
+                    if _captured_tools is None else _captured_tools)
+        try:
+            recorded, usage = await self._request_model_owned(
+                spec, messages, hook, context, request_state=request_state,
+                malformed_retry=malformed_retry, source_view=source_view,
+                transcript=transcript, bindings=bindings,
+            )
+            return replace(recorded, tools=bindings), usage
+        except BaseException:
+            bindings.release()
+            raise
+
+    async def _request_model_owned(
+        self,
+        spec: AgentRunSpec,
+        messages: list[dict[str, Any]],
+        hook: AgentHook,
+        context: AgentHookContext,
+        *,
+        request_state: ModelRequestState,
+        malformed_retry: bool = False,
+        source_view: SourceTranscript | None = None,
+        transcript: list[dict[str, Any]] | None,
+        bindings: CapturedToolBindings,
     ) -> tuple[RecordedResponse, LLMUsage]:
         source_view = self._source_view(request_state, messages, source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
-        tool_definitions = spec.tools.get_definitions()
+        tool_definitions = bindings.get_definitions()
         wants_streaming = hook.wants_streaming()
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
             messages,
-            tool_definitions=tool_definitions,
+            tool_definitions=deepcopy(tool_definitions),
             transcript=transcript,
             source_view=source_view,
             stream=wants_streaming,
@@ -1861,7 +1922,7 @@ class AgentRunner:
             attempt_emitted_content = False
             attempt_emitted_reasoning = False
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-            kwargs = self._build_request_kwargs(spec, messages, tools=tool_definitions)
+            kwargs = self._build_request_kwargs(spec, messages, tools=deepcopy(tool_definitions))
             if wants_streaming:
                 coro = spec.runtime.provider.chat_stream_with_retry(
                     **kwargs,
@@ -2071,6 +2132,7 @@ class AgentRunner:
                 malformed_retry=True,
                 source_view=retry_view,
                 transcript=None,
+                _captured_tools=bindings,
             )
             return retry_response, round_usage + retry_usage
         if (

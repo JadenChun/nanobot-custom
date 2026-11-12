@@ -219,13 +219,13 @@ jobs:
         run: uv run --no-sync ruff check nanobot tests conftest.py
 
       - name: Prepare the frozen type baseline
-        if: matrix.coverage
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
         run: |
           mkdir -p /tmp/a3-0-baseline
           cp .github/baselines/a3-0/pyproject.toml /tmp/a3-0-baseline/pyproject.toml
 
       - name: Type check with BasedPyright (strict)
-        if: matrix.coverage
+        if: ${{ !cancelled() && steps.verification_setup.outcome == 'success' && matrix.coverage }}
         run: >-
           uv run --no-sync basedpyright --outputjson
           > basedpyright.json

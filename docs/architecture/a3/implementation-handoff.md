@@ -1,5 +1,422 @@
 # A3 implementation correction handoff
 
+## Latest handoff: stopped with unfinished backend work (2026-11-12)
+
+**User-requested stop; combined backend and A3 remain unaccepted.** This entry supersedes
+the earlier paused checkpoint and the later external `root-resume-state.md` instruction
+to finish the backend first. The next agent must continue the current unfinished child
+and artifact work before starting clients. The implementation graph is closed as
+`STOPPED_USER_REQUEST`, without an acceptance verdict. Implementation owners have stopped;
+no implementation, test, gateway or UI stage remains active.
+
+The plan remains frozen as **`A3-PLAN-2026-11-11`**. Use the
+[design](design.md), [product contract](v1-product-contract.md),
+[implementation plan](implementation-plan.md), and the canonical-child/client specifications
+later in this document. Architecture and product choices have not reopened. Future coding
+harness extension points remain required; SuperAgent coordinates normal sessions and does
+not redefine ordinary subagents.
+
+### Git checkpoint and scope
+
+Continue from the **WIP pause commit containing this entry** on
+`codex/staging-audit-implementation`. Its parent is
+`48684630ef1876f64531f70ffa0312bab4d1a063`. Staging was verified locally and remotely at
+`f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9` and remains separate. This is a preservation
+checkpoint for all task-owned source, tests and documentation, including incomplete changes;
+it is not an accepted backend delivery or authorization to merge into staging.
+Verified author/committer: `Jaden <changherng.jc@gmail.com>`.
+
+The saved changes include the previously accepted authority/MCP/media/recovery foundations,
+the Dream correction, provisional canonical-child changes, and unfinished separate-owner
+artifact adaptation. Existing CI evidence-step ordering and attachment migration-retirement
+documentation belong to those foundations. No dependency, lockfile or checker-setting change
+was made for this handoff. Raw QA files and ignored build/cache files remain outside Git.
+The record below is sufficient to resume from the branch without the earlier chat; local
+QA paths provide additional raw evidence when available.
+
+### Latest frozen evidence
+
+QA root:
+`/private/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-completion-20261112-iqd9sf_h`.
+Paths below are relative to that root. Candidate `handoff-paused-20261112-final` freezes
+**2,714 files**. All frozen bytes matched the live worktree before handoff-document edits.
+Python **3.13.2**, **183 unchanged distributions**, BasedPyright **1.40.1**; interpreter:
+`/Users/jaden/Documents/github/nanobot/.venv/bin/python`.
+
+| Check on the latest frozen combined source | Result |
+| --- | --- |
+| Python syntax | **1,468 files parsed**, no syntax failures; this does not qualify runtime behavior. |
+| Whitespace | `git diff --check` passed. |
+| Full Ruff | **FAIL: 21 findings**, exit 1: I001 × 7, F401 × 8, F811 × 6. |
+| Full-source strict | **FAIL: 1,078 errors / 545 files**, exit 1. |
+| Global signature comparison against accepted 962 baseline | **FAIL: 116 introduced, zero resolved**, across all files. |
+| Comparison against earlier paused source (1,010) | **98 introduced, 30 resolved**; this is diagnostic history, not a replacement baseline. |
+| Combined tests, installed artifact and fresh review | No new broad test suite, artifact qualification or fresh integrated review on this final combined checkpoint. |
+
+The 116 introduced signatures are distributed as follows; do not omit unchanged files
+from comparison merely because the current repair does not edit them.
+
+| File | Introduced signatures |
+| --- | ---: |
+| `nanobot/agent/child_sessions.py` | 8 |
+| `nanobot/agent/delegation.py` | 14 |
+| `nanobot/agent/turn.py` | 1 |
+| `nanobot/extensions/crawler.py` | 3 |
+| `nanobot/session/artifact_grants.py` | 88 |
+| `nanobot/session/artifact_reader.py` | 2 |
+
+Ruff findings are in `delegation.py` (7), `loop.py` (1), `turn.py` (2),
+`artifact_grants.py` (2), `test_delegated_child_events.py` (3), and
+`test_delegation_child_authority.py` (6). No repair was attempted during the handoff.
+Receipts: `handoff-paused-20261112-final-{context,hashes,check-summary,syntax}.json`,
+`handoff-paused-20261112-final-{strict,lint}-receipt.json`, and
+`handoff-paused-20261112-final-{integration,prior-pause}-comparison.json`.
+The matching patch and Git status are retained alongside them.
+
+The immutable 962-error report is
+`/private/tmp/nanobot-a3-resume-20261112-hovb2rb1/integration-strict.json`, with its
+`integration/` source in the same directory, originating from integration
+`685bee9279c0bbb962ef78344428afeaba121066`. Follow
+[the full-source regression rule](../../migration/p6-error-attribution.md) and
+`scripts/check_type_regressions.py`. Never absorb the 116 signatures into a refreshed
+baseline. On a different host, reproduce baseline and candidate under one recorded
+dependency environment; historical totals alone are insufficient.
+
+### Completed work and evidence limits
+
+**Foundations:** `foundations-corrected-2` retains its bounded **CLOSED_PASS**:
+13,849 tests passed, 41 skipped, six subtests; full Ruff/diff passed; strict 962 / 544
+files with zero introduced signatures. Acceptance covers AUTH-01, IR-MCP-01 and
+DR-F01/02/03/04/05/06 only. Preserve those owners and assertions. It does not accept the
+later child/artifact source, close P6, or qualify the release.
+
+**Dream:** correction round 1 is finished and independently verified **in isolation**.
+This round changed `nanobot/agent/memory.py`, `nanobot/utils/dream_operation.py`,
+`tests/agent/test_git_store.py`, and `tests/agent/test_memory_store.py`. All 19 introduced
+Dream diagnostics were repaired. New regressions cover directory obstruction and an
+actual issued `WriteFileTool` racing restore across distinct owners; the existing stale
+registry test remains. Root candidate `completion-dream-r1` passed **218 tests**, full
+Ruff/diff and unchanged-dependency global comparison: strict **962 / 545 files**, zero
+introduced, with 19 resolved against its correction input. This supersedes the older
+216-test/19-error Dream status below. Combined acceptance and fresh review remain pending.
+See `current-completion/dream-root-precheck.json`, `completion-dream-r1-*`, and
+`current-completion/dream/{checkpoint.md,commands.txt,source-hashes.json}`.
+
+### Canonical child backend: current partial state
+
+The actual canonical child session/run/history path is present. Exact original-chat
+approval resumes the same child source with a new run. Production 20-line overwrite,
+sibling approval isolation and duplicate refusal have focused positive evidence. Separate
+limits now default to depth 2, two immediate children, four descendants per root, and four
+children gateway-wide via `agents.defaults.delegation_tree`. Malformed recovery scans fence
+new admissions. Child Stop uses one bounded `asyncio.wait` deadline, retaining resistant
+task handles and uncertain capacity; awaited child tasks register under the parent
+ExecutionOwner while background children remain independent.
+
+| Acceptance criterion | Remaining work at stop |
+| --- | --- |
+| AC1 canonical source/run/history | Partial: custom-store refusal, adverse persistence and owner-close proofs remain. The nested planner test now verifies separate child history, permitting only delegated bootstrap while retaining the parent legacy-save prohibition. |
+| AC2 authority/private holds | Partial: complete live revocation, disabled-capability and captured-MCP lifetime barriers; preserve exact-effect admission and private parent task holds. |
+| AC3 original-chat exact approval | Partial: positive same-child/new-run and sibling cases pass; denial, stale source/ancestry, revocation, Stop and duplicate-dispatch races remain. |
+| AC4 ordered same-child follow-up | Open: no child control entrypoint is wired. Reuse `_SourceActivityAdmission.submit`, owner-registered `admit_pending_activity`, and the existing `PendingFollowupRecord`/writer admission-consumption journal. |
+| AC5 background result delivery | Open: implement durable completion outbox to the exact captured parent source lifetime and route, with restart/consume/stale-parent deduplication. |
+| AC6 finite budgets and recovery | Partial: three-root 2+2+1 capacity regression now passes. Valid uncertain records still need explicit owner-evidence settlement; list/read/persistence faults and shared gateway tree composition across AgentLoop instances need proofs. |
+| AC7 original-chat subtree Stop | Partial: root cancellation/join still precedes `stop_children`; fence subtree admission first. Durable stopping projection, control epoch/source-lifetime guard and resistant root-owner quiescence remain unfinished. |
+| AC8 typed projection and history | Partial/open: basic `DelegatedChildEvent` remains; complete source/run/state ordering, capacity/canStop/owned-work/epoch, durable-before-event delivery, reconnect hydration and canonical full-history accessor. |
+| AC9 artifact handoff | API adaptation is unfinished and not integrated into actual child writer/runner settlement; see below. |
+| AC10 regression and acceptance | Incomplete: production barriers, closest broad suite, full lint, global zero-new type ratchet and fresh combined review remain. |
+
+Child owner report: `QA/current-completion/children/worker-checkpoint.md`; ownership is
+released and its commands have exited. Focused evidence includes earlier **21 passing**
+cases, then **12 capacity/history cases**, **12 child Stop cases**, and the final **one-case
+parent task-registration probe**. Counts overlap and must not be summed. Root independently
+passed the exact approval probe on `completion-child-approval-interim`; that combined command
+also failed the then-stale planner fixture. The worker subsequently corrected that fixture
+and passed it, but root has not replayed the final combined package. Earlier failing runs
+remain recorded; no claim is made that every prior failure is now resolved.
+
+The worker used the fixed interpreter with `PYTHONDONTWRITEBYTECODE=1`, exact candidate
+`PYTHONPATH`, explicit `-c <source>/pyproject.toml` and short unique `/tmp` basetemp paths.
+Useful continuation targets are `tests/agent/test_delegation_child_authority.py`,
+`tests/agent/test_delegation_child_controls.py`, `tests/agent/test_delegation_child_sessions.py`,
+`tests/agent/test_delegation_gateway_capacity.py`, `tests/agent/test_delegated_child_events.py`,
+`tests/agent/test_migration_source_engine.py::test_source_nested_planner_stream_does_not_leak_into_root_history`,
+and `tests/config/test_delegation_tree_config.py`. These are starting points for the next
+agent, not tests run during this documentation handoff. The child checkpoint records exact
+commands/exits; its pytest output was in tool results rather than separate raw log files.
+
+### Separate-owner artifacts: unfinished API and integration seam
+
+Current WIP modifies only `nanobot/session/artifact_grants.py` and
+`nanobot/session/artifact_reader.py` in this package. No completed artifact regression
+evidence is available; these modules introduce **90** type signatures in the frozen source.
+Do not treat the API as accepted or the child runtime integration as present.
+The final artifact worker report was unavailable when its report-only turn was stopped;
+the status here comes from the frozen source and root receipts, without inferred test
+completion. Artifact write ownership is revoked and must be reassigned on continuation.
+
+The proposed API is:
+
+```python
+binding = ArtifactDirectChildBinding.capture(admission, parent_reader, child_writer)
+grants = ArtifactGrantSet.issue_downward(
+    parent_reader, child_writer, refs, child_binding=binding
+)
+collector = ArtifactHandoffCollector(child_reader, child_binding=binding)
+receipt = collector.prepare_after_completion(stop_reason=stop_reason)
+# Only after exact canonical run/source settlement, if a receipt was prepared:
+if receipt is not None:
+    receipt.seal_after_settlement(run_store=run_store, source_store=source_store)
+```
+
+Capture the actual live parent/child writers and durable direct-child relation, exact
+source/run/stream identities and private invocation nonce. A typed `ChildAdmission` alone
+is not live authority. Preserve private BLOB → SOURCE lock order and actual
+`ReadFileTool.verify_artifact_evidence` checks. Prepare the candidate before child owner
+close; carry it in a typed internal `TurnResult` field; seal in
+`AgentLoop.execute_child_turn` after `execute_turn` returns and the exact RunRecord is
+COMPLETED with a healthy closed source: no execution lease, recovery marker or unresolved
+execution links. Never validate an expired child owner as live. Upward acceptance is once
+only after the durable parent tool result. Approval resume cannot reuse the old expired
+parent reader/grants. Keep the explicit background-plus-artifact refusal.
+
+`runner.py` still relies on the inline `parent_stream_id` artifact path while the canonical
+child now owns a root writer of its own. No binding capture, typed candidate propagation,
+post-settlement seal or real positive/negative child integration test is wired. Give the
+artifact modules one owner and runtime/factory integration another owner only with an
+explicit API handoff; integrate against actual writers without mutual waiting. Relevant
+existing tests are `tests/session/test_artifact_{grants,handoff_boundary,reader}.py` and
+`tests/tools/test_artifact_origin_boundary.py`. Preserve inline same-owner behavior and
+sibling/transitive/forged/replaced-source/private-location/range/replay refusals.
+
+### Resume order and outstanding acceptance
+
+1. Sync and inspect the implementation branch, verify identity/refs, preserve this WIP,
+   and read this entry plus the canonical-child/client specifications below. The user's
+   implementation preference remains fresh-context **Luna Max workers through the
+   orchestrator**, with bounded ownership and independent evidence-based acceptance.
+2. Finish the unfinished backend: AC1/2/3 adverse paths, ordered input/outbox, recovery,
+   root Stop, typed projection/hydration/history, and artifact API plus runtime integration.
+   Fix the recorded lint/type regressions without weakening tests or accepted foundations.
+3. Freeze the combined source under the same dependencies; run affected child, artifact,
+   Dream and command suites, relevant broader regression coverage, full Ruff/diff and the
+   unchanged full-source global ratchet against the immutable baseline. Obtain one fresh
+   bounded Sol Max integrated review, then root PASS/CORRECT/REJECT. Dream isolation alone
+   cannot close the backend package.
+4. Only after backend protocol settlement, implement WebUI/TUI original-chat activity,
+   sibling approval, Stop, usable background composer and optional read-only detail/return
+   preserving parent draft/scroll/focus. Android uses the same responsive UI contract;
+   browser/PTY interaction evidence remains pending.
+5. Qualify the matching final installed macOS artifact and stopped-copy/restart behavior.
+   The earlier macOS wheel PASS applies only to `children-before` (wheel SHA-256
+   `d2e393faed74c31217bed8266d83570e19121a662c098fa997a25d2ac0e9df93`), not these changed
+   bytes. Linux/Android evidence retains its prior source scope. Whole-tree supervisor
+   qualification, full A3/P6, release and staging merge remain open.
+
+External continuation contracts: `current-completion/{child-contract,dream-contract,
+artifact-contract}.md` and original `contracts/{canonical-children,child-spec,child-client,
+dream-correction}.md`. `current-completion/graph.json` and `acceptance-ledger.json` record
+the stop. Their earlier complete-first instructions are superseded. Resume unfinished work
+only when the user starts the next task; no automatic continuation is requested.
+
+## Earlier paused checkpoint (2026-11-12; superseded)
+
+This historical record predates the latest child, artifact and Dream changes. Its counts,
+uncommitted-Git state and resume instructions do not describe the checkpoint above.
+
+**User-requested pause.** Both implementation owners are released; no implementation, test, gateway or UI stage is running. A3 remains
+unfinished and unaccepted; resume only when asked. Frozen `A3-PLAN-2026-11-11`, architecture and future coding-harness/session-based
+SuperAgent direction are unchanged.
+
+### Frozen candidate
+
+On `codex/staging-audit-implementation`, HEAD is `48684630ef1876f64531f70ffa0312bab4d1a063` and staging is
+`f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`; live remote refs match. Index is empty; corrections are local/uncommitted, with no commit,
+push or merge. Continue from this worktree or saved snapshot: remote HEAD alone lacks WIP.
+
+Verified identity: `Jaden <changherng.jc@gmail.com>`.
+
+`paused-current` freezes 2,712 files. Source/test/other-doc bytes matched frozen hashes before this handoff-only edit. Environment:
+Python 3.13.2, 183 distributions, BasedPyright 1.40.1; dependencies and checker settings unchanged. Root receipts/hashes are under
+`/private/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-completion-20261112-iqd9sf_h/`.
+
+### Root evidence and accepted foundation
+
+Current critical replay passed **24 tests** (child-authority, permission-owner and five immutable child/Dream probes). No full 14k
+broad rerun occurred on the incomplete combined child package. Full Ruff fails with **14 child production/test findings**: I001 (4),
+F401 (7), F811 (3).
+
+Full-source strict exits 1 at **1,010 diagnostics/545 files**, vs baseline 962; global all-file ratchet fails at **48 introduced, zero
+resolved** (19 Dream, 29 child). Do not refresh the baseline or compare edited files alone. Strict/comparator receipts and Ruff reports
+are in the paused-current QA bundle.
+
+Frozen `foundations-corrected-2` remains **CLOSED_PASS** (13,849 passed, 41 skipped, six subtests; full Ruff/diff pass; strict 962/544,
+zero introduced/resolved vs immutable `685bee92`). Strict debt remains; P6 is incomplete. This does not accept paused-current or A3.
+AUTH-01, IR-MCP-01 and DR-F01/02/03/04/05/06 remain frozen dependencies.
+
+Root macOS PASS applies only to immutable `children-before` wheel (SHA-256
+`d2e393faed74c31217bed8266d83570e19121a662c098fa997a25d2ac0e9df93`): 544-file source/bundle parity, installed CLI/process checks, 36
+stopped-copy/restart/revocation checks, unpatched foreground gateway and static/model routes, offline SSE, and exact two-message
+history after clean restart passed. Requalify the matching final artifact/stopped-copy restart. Whole-tree supervisor was unavailable;
+Full refused authority. No Once/Full whole-tree, physical Android, changed-APK/device equivalence, signing, deployment or release
+claim. Linux/Android evidence retains its prior source scope.
+
+### Canonical child correction — partial
+
+Canonical AgentLoop child path/source/run and risky-write blocking are present, with private parent Once-task reference holds. The
+green 24-test replay does not establish AC1–AC10; AC2 is partial. Live revocation, disabled-capability and captured-MCP lifetime
+barriers remain open.
+
+AC3 is scaffolding only: `ChildApprovalResume` and tree/manager helpers are not wired to `AgentLoop.execute_turn` or initial
+settlement. Exact-parent typed approval, same-child/new-run resume, denial/stale/duplicate handling and retained `waiting_approval`
+capacity are unproven; blocked settlement may fail/release instead of waiting. Wire and validate this path before acceptance.
+
+Earlier focused child report: **41 passed/10 failed**, not rerun at pause. Worker attribution (nine direct-tree fixtures missing
+canonical parent owner; one synthetic event-path mismatch) is unaccepted; the resumed worker lacked the exact command. Keep failures
+visible. AC4–AC10 remain: ordered follow-up; durable exact-parent result outbox; global/root/depth limits and uncertain capacity;
+bounded subtree Stop; durable typed projection/hydration/full history; sealed cross-owner artifact handoff; integrated
+fault/barrier/regression coverage.
+
+### Dream correction — worker complete, root acceptance pending
+
+Isolated seven-file Dream overlay passed **216 tests** (212 focused plus four immutable root probes), full Ruff and source/dependency
+parity. Strict is **981 diagnostics/545 files** vs 962: 19 introduced, zero resolved; ratchet fails. Combined replay also passed
+Dream's four root probes. Repair 19 signatures and add the directory-obstruction and real write-vs-restore barrier regressions. Actual
+`cmd_dream` with production MemoryStore/GitStore persistence errors passed via offline `process_direct` adapter; live
+AgentLoop/provider cancellation and power-loss behavior remain unqualified.
+
+### Clients and resume order
+
+WebUI/TUI work has not started: original-chat task/result/sibling approval/Stop, background composer, read-only detail/return
+preserving draft/scroll/focus, typed TUI approval and shared responsive Android UI remain. Browser/PTY evidence is pending; offline
+provider fixture is prepared and wire-proven only.
+
+Resume from this worktree after checking refs and paused-current hashes; preserve WIP and accepted foundations. Continue fresh-context
+Luna Max owners: wire child AC2/AC3; address known failures, 14 Ruff findings and 29 type signatures; repair Dream's 19 signatures/two
+gaps. Finish backend AC4–AC10; freeze combined source and run affected broad/command suites, full Ruff/diff and unchanged-dependency
+global zero-new strict. Then implement clients and verify browser/PTY; qualify matching installed macOS artifact/stopped-copy restart;
+obtain fresh bounded Sol Max integrated review and root PASS/CORRECT/REJECT. No A3, merge-readiness or release acceptance is claimed.
+
+Resume evidence: `paused-current-{context,hashes,package-inventory}.json`; `evidence/canonical-children/pause/pause-checkpoint.md`;
+`dream-correction/root-pause-checkpoint.json`. `contracts/dream-resume-correction.md` is prepared but not dispatched; original
+`contracts/canonical-children.md`, `child-spec.md` and `child-client.md` remain authoritative.
+
+## Authority, MCP and media foundation checkpoint (2026-11-12)
+
+The prerequisite correction graph is closed with **PASS** under frozen
+`A3-PLAN-2026-11-11`. This checkpoint supersedes earlier pending statuses for
+**AUTH-01, IR-MCP-01 and DR-F02/03/04/06**. The implementation branch remains
+`codex/staging-audit-implementation` at `48684630e`; these latest corrections are
+local and uncommitted. Repo-local Git identity is `Jaden <changherng.jc@gmail.com>`.
+
+- Exact approval now issues sealed, volatile authority for one concrete dispatch
+  attempt. Repeated/concurrent effects cannot reuse it; failure does not refill it.
+  Independent sibling approval IDs retain their original-chat addresses. Child
+  integration must reuse this admission owner rather than invent another registry.
+- Each model request captures immutable concrete tool/schema bindings. Independent
+  child/background work borrows narrowed holds through settlement. Reload/revocation
+  never redirects an old request to a replacement; every visible replacement owns
+  its exact generation before the next await. Dream filters preserve live admission
+  without retaining their local issuing registry indefinitely.
+- Media retention shares strict owner-declared inventory and publication/deletion
+  fencing. Invalid or incomplete evidence blocks every destruction branch; exact
+  durable pending custody protects unpublished bytes. Canonical source publication
+  participates through both `JsonlSessionStore.persist_source_records` branches.
+  Valid retained display references protect bytes, real orphans can reclaim, and
+  trusted workspace moves retain inode-bound declarations. The first-release route
+  retires the advertised attachment migration instead of adding legacy rewriting.
+
+Root validated an immutable 2,710-file candidate under the unchanged Python 3.13.2
+environment with 183 distributions: **13,849 passed, 41 skipped**, six subtests and
+59 warnings; full Ruff and whitespace checks passed. Full-source BasedPyright
+reported **962 diagnostics across 544 files**, with **zero introduced or resolved
+diagnostic signatures** against immutable integration `685bee9279c0bbb962ef78344428afeaba121066`.
+This passes the bounded repair ratchet; strict checking remains nonzero and P6 is
+not complete. The recorded broad command covers the affected backend, CLI/utils
+and WebSocket suites, rather than every optional channel or device matrix.
+
+Independent review found four defects, all corrected and rechecked. Its 280-test
+replay and final 13-node gateway recheck passed. Additional compatibility fixes
+preserve existing assertions, including stale approval with no foreground activity,
+history budgeting, temporary-chat privacy and signed historical-media reads. The
+last correction restores the test directory accessor's real creation contract;
+it changes no production behavior or test assertions.
+
+Continue with **AUTH-02 and CHILD-01..06**, then **UI-01/02**, using the canonical
+child and client specifications below. Source identity, mutation uncertainty,
+sampled MCP ownership, exact approval and media publication are accepted dependencies
+and must survive that work. Backend projection/control schema precedes client edits.
+The user selected **GPT-6 Luna Max workers for subsequent implementation and
+corrections** to conserve quota; keep evidence-based independent Sol Max review.
+Two later fixture corrections have already used Luna Max successfully.
+
+No final child/client, macOS selected-mode/artifact, changed Android-artifact or
+release qualification is claimed. The overall correction task remains active;
+staging merge and Git publication are separate actions. Current raw snapshots,
+contracts, commands, hashes, final review and root acceptance remain outside Git at
+`/private/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-a3-completion-20261112-iqd9sf_h`,
+with `root-foundation-final-verdict.json` and `foundation-review/recheck-2/review.md`
+as the foundation acceptance records.
+
+## Recovery foundation checkpoint (2026-11-12)
+
+**DR-F01 and DR-F05 have a bounded implementation PASS. Full A3 acceptance remains
+open.** The accepted `A3-PLAN-2026-11-11` is unchanged. At this checkpoint the recovery
+changes are local and uncommitted on `codex/staging-audit-implementation`, above
+`48684630ef1876f64531f70ffa0312bab4d1a063`. Staging remains `f1a6bb85`; no merge or
+publication was performed. Repo-local Git identity is `Jaden <changherng.jc@gmail.com>`.
+
+- **DR-F01.** Concrete first-party write/edit/patch and binary-publication paths retain
+  bounded mutation evidence, including mkdir, cancellation and tracking failures.
+  Registry/result copies preserve trusted facts; plugins cannot supply them. Mandatory
+  result persistence atomically fences unresolved effects before the reconciliation
+  abort. Tests prove no tail mutation or next model request, and fencing after reopen.
+  Historical mutation errors without evidence remain uncertain. No readback proof is
+  claimed and no automatic replay or general reconciliation bypass was added.
+- **DR-F05.** Typed source state comes from the admitted execution owner and follows
+  delayed process work. Store/key/incarnation/generation are rechecked under final
+  acquisition locks before lease publication, without source creation or fallback.
+  Retained-result access checks the same origin; journal CAS compares original stored
+  bytes. Missing/stale origins refuse, originless records remain inspectable, and an
+  interrupted admitted continuation remains unknown. Revision advances remain valid.
+- **Integration corrections.** Admitted body/cleanup errors preserve their original
+  identity. Bus completion has one notifier; only a typed source rejection before the
+  bus scope receives early settlement. A valid origin can also require an existing
+  session. Definition-only SDK close, mandatory-close failure assertions and CI strict
+  evidence-step ordering now follow their existing contracts.
+
+### Verification
+
+All final checks used one frozen candidate, with 2,705 input-file hashes and the same
+183-distribution Python 3.13.2 environment. No dependencies or checker settings changed.
+
+| Boundary | Final evidence |
+| --- | --- |
+| Affected backend suite | **11,468 passed, 32 skipped, 55 warnings, 6 subtests passed** across agent/session/tools/migration/cron/triggers/WebUI/remote/context/scripts and SDK streaming. This is an affected-suite run, not full release qualification. |
+| Correction regressions | 70 focused tests passed. Independent review replayed 23 tests and found no remaining defects in the bounded correction. Existing lifecycle assertions were preserved; new regressions fail against frozen pre-correction production. |
+| Lint and source integrity | Full `ruff check nanobot tests conftest.py` and `git diff --check` passed. Final source/test bytes match the frozen tested candidate; the correction changed only its four assigned files. |
+| Full-source type comparison | Immutable integration `685bee92` to final: **962 to 962 diagnostics, zero introduced signatures**, 542 candidate files. Original WIP to final: **968 to 962**, six resolved and zero introduced. Strict checking still exits 1 in this environment; this is not strict-zero/P6 completion. |
+
+The initial broad run had nine failures: six notification ownership regressions and
+three fixtures needing the new source/admission condition. Those failures are repaired
+and covered by the final passing run. The independent review also caught admitted-error
+misclassification and the valid existing-session carrier conflict; both are corrected.
+The recovery review/correction graph is closed with **PASS** after one correction round.
+
+Raw reports, exact commands/environment, immutable source snapshots, hashes, red/green
+logs and `root-verdict.json` are retained outside Git at
+`/private/tmp/nanobot-a3-resume-20261112-hovb2rb1`. The final snapshot is
+`accepted-candidate`; use `final-broad-receipt.json`, `final-strict-receipt.json` and
+`final-integration-comparison.json` for the final evidence rather than earlier runs.
+
+### Continue from here
+
+Next implement **IR-MCP-01** using the sampled binding specification below. Then finish
+media retention/publication **DR-F02/03/04/06**, followed by canonical child authority
+and the original-chat WebUI/TUI behavior. These packages have not been accepted by this
+recovery review. Physical Android, final macOS selected-mode qualification and the other
+release gates below remain open. Keep implementation separate from staging.
+
 ## Mobile correction checkpoint (2026-11-12)
 
 Resume from `codex/staging-audit-implementation` in the implementation worktree.
@@ -23,7 +440,8 @@ The correction follows the accepted `A3-PLAN-2026-11-11` on staging `f1a6bb85`.
 | Android | 20 host unit tests passed. Instrumented Kotlin compiled. The unsigned APK contains the corrected bootstrap and both native ABIs. Its manifest declares minSdk 24. |
 | Strict types | The mobile snapshot applies the mobile changes to `a8b3abf5`. It reports zero diagnostics across 541 files against frozen integration `685bee92`. The combined branch comparison resolved seven diagnostics and introduced zero across 542 files. |
 
-The combined branch still reports six strict diagnostics and two Ruff findings in recovery files.
+At the mobile checkpoint, the combined branch still reported six strict diagnostics and
+two Ruff findings in recovery files; the recovery checkpoint above resolves those findings.
 The Linux API 36 emulator crashed before boot. Android device execution remains pending.
 Full A3 acceptance remains open.
 
@@ -32,10 +450,8 @@ Raw logs, dependency inventories, source hashes and the accepted test cases are 
 
 ### Next stage
 
-Finish the recovery foundation in the implementation worktree.
-Start DR-F01 with `tests/session/test_filesystem_effect_recovery.py`.
-Prove that an applied or uncertain mutation blocks another model request and survives reopening.
-Then implement DR-F05 at final source admission. [Recovery foundation specification](#recovery-foundation-specification)
+The recovery checkpoint above completes the next foundation package described here.
+Continue with its remaining work order and the specifications below.
 
 The November 11 pause record below describes `c0f12f00` and its evidence.
 
@@ -44,6 +460,10 @@ The November 11 pause record below describes `c0f12f00` and its evidence.
 **Paused by the user on 2026-11-11. This is an incomplete implementation checkpoint,
 not a merge-ready or release-qualified result.** Resume only when asked. All previous
 worker write ownership has been released; no validation or agent jobs remain running.
+
+Status and failure descriptions in this historical record are superseded by the
+November 12 checkpoints above. Its accepted requirements and remaining specifications
+still apply; do not repeat already completed mobile or recovery corrections.
 
 This record is self-contained for an agent continuing from the implementation branch.
 The architectural direction is settled. Continue the corrections below; do not reopen

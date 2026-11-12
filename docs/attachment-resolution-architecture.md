@@ -185,9 +185,9 @@ same `AttachmentRecord`.
 ### 8.2 Server internal
 
 - `InboundMessage.attachments: list[AttachmentRecord]`. Keep the existing
-  `media` path list only as a migration field; remove it after backfill.
+  `media` compatibility projection remains derived from records.
 - Transcript events store `AttachmentRecord` objects, not absolute paths.
-  Legacy events with `media` paths are backfilled into records.
+  Retained legacy path evidence is read conservatively; no attachment migration rewrites it.
 - The model projection contains vision blocks plus server-generated path
   references. The model does not need to know which client uploaded the file.
 - The UI projection contains signed URLs built from records. No paths.
@@ -256,7 +256,7 @@ and are removed at the final gate, not kept indefinitely.
 | 1 | Extract `AttachmentIngress` / `AttachmentStore`; WebUI and mobile edge use it; stage/commit admission | None |
 | 2 | Move HTTP API and channel downloads to the same service; remove channel-level context markers | None |
 | 3 | Add upload-first IDs; `attachment.write` returns IDs; message accepts `{id}`; native streaming for large mobile files | Desktop/mobile update |
-| 4 | Store records in transcripts; UI projection signs from records; migrate legacy paths | UI-only |
+| 4 | Store records in transcripts; UI projection signs from records | UI-only |
 | 5 | Reference-aware retention and GC; remove legacy path fields and shims | None |
 
 Stage 1 is the key architectural step: it creates the one server boundary that
@@ -266,8 +266,20 @@ all later clients share. The complete plan is in
 Implementation note: the central adoption hook in `AgentLoop._restore_turn`
 copies every adapter media path under the media root through
 `AttachmentIngress`, so channel adapters share canonical storage without
-per-channel rewrites. `nanobot attachments migrate` rewrites legacy `media`
-events into `attachments` records for sessions that predate record storage.
+per-channel rewrites. The first release has no attachment migration command.
+The retained compatibility callable refuses without changing any files.
+
+Maintenance uses AttachmentStore's OS publication fence and a fresh, complete
+inventory of declared source, display, retained archive, memory and pending
+publication roots. Caller hash sets and completeness flags cannot authorize
+deletion. Each publication retains its own durable token until its actual
+source/display writer commits that exact identity. Cleanup preserves uncertain
+publications across restart and reports incomplete coverage or unmet quota.
+Generated helpers declare the selected `save_dir`, including custom subdirectories,
+so their retained `source_images` references participate in the same inventory.
+Qualified media executors are Linux/macOS. Other hosts keep plain text/session
+startup, skip media-owner activation, and explicitly refuse managed publication
+and destructive maintenance without treating absent declarations as completeness.
 
 ## 13. Acceptance checks
 

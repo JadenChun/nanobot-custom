@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from nanobot.agent.child_sessions import DelegationTree, DelegationTreePolicy
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.tools.context import ForkToolDependencies
 from nanobot.agent.tools.web import WebFetchConfig, load_web_fetch_state
@@ -49,6 +50,20 @@ def build_foreground_dependencies(
     optional = crawler_settings(config)
     grants = FolderGrantStore.for_workspace(workspace, sessions_root=sessions_root).view
     locks = FileLockRegistry()
+    child_tree = None
+    if sessions is not None:
+        limits = config.agents.defaults.delegation_tree if config is not None else None
+        policy = (
+            DelegationTreePolicy(
+                max_depth=limits.max_depth,
+                max_live_children_per_parent=limits.max_live_children_per_parent,
+                max_live_descendants=limits.max_live_descendants,
+                max_live_children_per_gateway=limits.max_live_children_per_gateway,
+            )
+            if limits is not None
+            else DelegationTreePolicy()
+        )
+        child_tree = DelegationTree(sessions, policy=policy)
     web_fetch_config_loader: Callable[[], tuple[WebFetchConfig, str]] | None = (
         load_web_fetch_state if refresh_web_fetch_config else None
     )
@@ -69,6 +84,7 @@ def build_foreground_dependencies(
         crawler_reasoning_effort=optional.reasoning_effort,
         folder_grants=grants,
         sessions=sessions,
+        delegation_tree=child_tree,
         disabled_skills=set(disabled_skills or ()),
     )
     return ForkToolDependencies(manager, manager.resource_policy, locks, crawler_enabled=optional.enabled)

@@ -24,10 +24,17 @@ def upgrade(loop, key='cli:source'):
     return backend
 
 
-def forbid_legacy(loop, monkeypatch):
+def forbid_legacy(loop, monkeypatch, *, allow_child_source_bootstrap=False):
     for method in ('_save_turn', '_set_runtime_checkpoint'):
         monkeypatch.setattr(loop, method, Mock(side_effect=AssertionError('legacy source path')))
-    monkeypatch.setattr(loop.sessions, 'save', Mock(side_effect=AssertionError('legacy save')))
+    original_save = loop.sessions.save
+
+    def guarded_save(session):
+        if allow_child_source_bootstrap and session.key.startswith('delegated:'):
+            return original_save(session)
+        raise AssertionError('legacy save')
+
+    monkeypatch.setattr(loop.sessions, 'save', guarded_save)
     monkeypatch.setattr(loop.auto_compact, 'prepare_session', Mock(side_effect=AssertionError('legacy compaction')))
 
 
@@ -84,20 +91,46 @@ async def test_source_reload_ignores_archive_cursor_and_fresh_excludes_old_input
 
 
 async def test_source_nested_planner_stream_does_not_leak_into_root_history(engine_config, monkeypatch):
+    from nanobot.session.execution_owner import ExecutionOwner
+
     provider = ScriptedProvider([
         LLMResponse(content=None, tool_calls=[ToolCallRequest(id='plan', name='plan_task', arguments={'objective': 'fixture plan'})]),
         LLMResponse(content='child plan'), LLMResponse(content='parent final'), LLMResponse(content='next'),
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     backend = upgrade(loop)
-    forbid_legacy(loop, monkeypatch)
+    forbid_legacy(loop, monkeypatch, allow_child_source_bootstrap=True)
+    owner_tasks = []
+    original_track_task = ExecutionOwner.track_task
+
+    def record_owner_task(owner, task):
+        owner_tasks.append((owner.key, task.get_coro().__qualname__))
+        return original_track_task(owner, task)
+
+    monkeypatch.setattr(ExecutionOwner, 'track_task', record_owner_task)
     try:
         result = await loop.execute_turn(TurnRequest(content='plan fixture', session_key='cli:source'))
         assert result.error is None, result.error
         assert result.content == 'parent final'
-        events = backend.source.load_source_snapshot('cli:source').events
-        assert sum('_parent_stream_id' in e for e in events) == 2
-        assert not validate_execution_links(events)
+        parent_events = backend.source.load_source_snapshot('cli:source').events
+        assert not any('_parent_stream_id' in event for event in parent_events)
+        assert not validate_execution_links(parent_events)
+        tree = loop._fork_dependencies.foreground_manager._delegation_tree
+        assert tree is not None
+        children = tree.children_of('cli:source')
+        assert len(children) == 1
+        child = children[0]
+        assert any(
+            key == 'cli:source' and 'run_and_finalize' in coroutine
+            for key, coroutine in owner_tasks
+        )
+        child_events = backend.source.load_source_snapshot(child.session_key).events
+        assert [event['role'] for event in child_events] == ['user', 'assistant']
+        assert 'fixture plan' in child_events[0]['content']
+        assert child_events[1]['content'] == 'child plan'
+        assert all(event['_run_id'] == child.current_run_id for event in child_events)
+        assert not any('_parent_stream_id' in event for event in child_events)
+        assert not validate_execution_links(child_events)
         result = await loop.execute_turn(TurnRequest(content='next input', session_key='cli:source'))
         assert result.error is None, result.error
         assert not any(m.get('role') == 'assistant' and m.get('content') == 'child plan' for m in provider.calls[-1][0])

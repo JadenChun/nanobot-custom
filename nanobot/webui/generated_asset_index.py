@@ -57,8 +57,16 @@ def write_generated_asset_index(
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        from nanobot.attachments._media import fsync_directory
+        from nanobot.webui.transcript import media_publication
+
+        with media_publication(payload):
+            with tmp.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.flush()
+                os.fsync(handle.fileno())
+            tmp.replace(path)
+            fsync_directory(path.parent)
     except OSError:
         logger.warning("failed to persist generated asset index for {}", session_key)
         tmp.unlink(missing_ok=True)

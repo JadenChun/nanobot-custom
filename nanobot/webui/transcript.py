@@ -6,13 +6,14 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
 import shutil
 import time
 import uuid
-from contextlib import suppress
+from contextlib import AbstractContextManager, suppress
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple, Sequence, cast
 from urllib.parse import unquote, urlparse
@@ -351,6 +352,176 @@ def _record_json_line(record: dict[str, Any]) -> str:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
 
 
+def validate_retained_transcript_record(row: dict[str, object]) -> None:
+    """Qualify known durable display rows without replay normalization/repair."""
+    supported = {
+        "user", "message", "delta", "reasoning_delta", "reasoning_end", "stream_end",
+        "turn_end", "file_edit", "fork_marker", "delegated_child", "context_compaction",
+        "goal_state", "goal_status", "session_updated", "user_message", "error",
+        "runtime_model_updated", "turn_model_updated",
+    }
+    event = row.get("event")
+    version = row.get("schemaVersion", row.get("schema_version", WEBUI_TRANSCRIPT_SCHEMA_VERSION))
+    if (event not in supported or type(version) is not int
+            or version != WEBUI_TRANSCRIPT_SCHEMA_VERSION):
+        raise ValueError("unsupported retained transcript event/version")
+    if "chat_id" in row and (not isinstance(row["chat_id"], str) or not row["chat_id"]):
+        raise ValueError("invalid retained transcript chat identity")
+    if event == "delegated_child":
+        if (any(not isinstance(row.get(name), str) or not row.get(name)
+                for name in ("child_id", "child_session_key", "profile", "state"))
+                or type(row.get("runtime_generation", 0)) is not int
+                or cast(int, row.get("runtime_generation", 0)) < 0):
+            raise ValueError("invalid retained delegated-child activity")
+    if event == "context_compaction" and (
+        not isinstance(row.get("compaction_id"), str) or not row.get("compaction_id")
+        or row.get("phase") not in {"started", "succeeded", "failed", "cancelled"}
+    ):
+        raise ValueError("invalid retained compaction activity")
+    if event == "goal_state" and not isinstance(row.get("goal_state"), dict):
+        raise ValueError("invalid retained goal state")
+    if event == "goal_status" and not isinstance(row.get("status"), str):
+        raise ValueError("invalid retained goal status")
+    for name in ("text", "content"):
+        if name in row and not isinstance(row[name], (str, list)):
+            raise ValueError("invalid retained display text")
+    for name in ("tool_events", "edits"):
+        if name in row and (not isinstance(row[name], list)
+                            or any(not isinstance(item, dict) for item in cast(list[object], row[name]))):
+            raise ValueError("invalid retained display records")
+
+
+def validate_retained_webui_thread(data: dict[str, object]) -> None:
+    """Qualify retained WebuiThreadPersistedPayload/UIMessage snapshots purely.
+
+    Legacy JSON snapshots and current replay payloads share these display rows;
+    accepting their outer messages list alone cannot certify retained evidence.
+    Unknown fields fail closed so a future reference representation needs its
+    owner's explicit inventory support before maintenance can delete anything.
+    """
+    allowed = {
+        "schemaVersion", "schema_version", "sessionKey", "chat_id", "savedAt", "messages",
+        "fork_boundary_message_count", "completed_turn_ids", "has_pending_tool_calls",
+        "active_turn_id", "page", "workspace_scope", "workspace_access_request",
+        "workspace_permissions",
+    }
+    if set(data) - allowed or not isinstance(data.get("messages"), list):
+        raise ValueError("unsupported retained thread record")
+    versions = [data[name] for name in ("schemaVersion", "schema_version") if name in data]
+    if len(versions) > 1 or any(type(value) is not int or value != WEBUI_TRANSCRIPT_SCHEMA_VERSION for value in versions):
+        raise ValueError("unsupported retained display version")
+    for name in ("sessionKey", "chat_id", "savedAt"):
+        if name in data and not isinstance(data[name], str):
+            raise ValueError("invalid retained thread identity")
+    for name in ("fork_boundary_message_count",):
+        if name in data and (type(data[name]) is not int or cast(int, data[name]) < 0):
+            raise ValueError("invalid retained thread count")
+    if "completed_turn_ids" in data and (
+        not isinstance(data["completed_turn_ids"], list)
+        or any(not isinstance(value, str) for value in cast(list[object], data["completed_turn_ids"]))
+    ):
+        raise ValueError("invalid retained completed turns")
+    if "has_pending_tool_calls" in data and type(data["has_pending_tool_calls"]) is not bool:
+        raise ValueError("invalid retained pending state")
+    if data.get("active_turn_id") is not None and not isinstance(data["active_turn_id"], str):
+        raise ValueError("invalid retained active turn")
+    for name in ("workspace_scope", "workspace_access_request", "workspace_permissions"):
+        if name in data and data[name] is not None and not isinstance(data[name], dict):
+            raise ValueError("invalid retained workspace projection")
+    if "page" in data:
+        page = data["page"]
+        page_fields = {"before_cursor", "has_more_before", "loaded_message_count", "total_known_message_count", "user_message_offset"}
+        if not isinstance(page, dict) or set(cast(dict[object, object], page)) - page_fields:
+            raise ValueError("invalid retained thread page")
+        checked = cast(dict[str, object], page)
+        for name, value in checked.items():
+            if name == "before_cursor":
+                valid = value is None or isinstance(value, str)
+            elif name == "has_more_before":
+                valid = type(value) is bool
+            else:
+                valid = type(value) is int and value >= 0
+            if not valid:
+                raise ValueError("invalid retained thread page")
+        if (checked.get("has_more_before") is not False
+                or checked.get("before_cursor") is not None
+                or checked.get("user_message_offset", 0) != 0
+                or any(checked[name] != len(cast(list[object], data["messages"]))
+                       for name in ("loaded_message_count", "total_known_message_count") if name in checked)):
+            raise ValueError("incomplete retained thread page")
+
+    strings = {"id", "content", "activitySegmentId", "reasoning", "turnId"}
+    numbers = {"createdAt", "latencyMs", "completedAt", "contextWindowTokens", "turnSeq"}
+    booleans = {"isStreaming", "reasoningStreaming"}
+    objects = {"compaction", "delegatedChild", "usage", "source", "sessionMessage"}
+    records = {"toolEvents", "fileEdits", "cliApps", "mcpPresets", "sessionMentions", "roundUsages"}
+    choices = {
+        "role": {"user", "assistant", "tool", "system"},
+        "kind": {"message", "trace", "compaction", "delegated_child"},
+        "activityKind": {"model"}, "compactReply": {"empty", "failed"},
+        "turnPhase": {"user", "reasoning", "activity", "answer", "complete"},
+        "deliveryStatus": {"sending", "accepted", "failed"},
+        "deliveryErrorKind": {"message_too_big", "workspace_scope_rejected", "connection_closed", "turn_rejected"},
+    }
+    known = strings | numbers | booleans | objects | records | set(choices) | {"traces", "images", "media"}
+    for raw in cast(list[object], data["messages"]):
+        if not isinstance(raw, dict):
+            raise ValueError("nonobject retained display message")
+        row = cast(dict[str, object], raw)
+        if set(row) - known or not {"id", "role", "content", "createdAt"} <= set(row):
+            raise ValueError("unsupported retained display message")
+        for name, value in row.items():
+            if name in strings:
+                valid = isinstance(value, str) and (name != "id" or bool(value))
+            elif name in numbers:
+                valid = type(value) in (int, float) and math.isfinite(cast(int | float, value)) and cast(int | float, value) >= 0
+            elif name in booleans:
+                valid = type(value) is bool
+            elif name in choices:
+                valid = isinstance(value, str) and value in choices[name]
+            elif name in objects:
+                valid = isinstance(value, dict)
+            elif name in records:
+                # Replay can retain a null toolEvents field after merging an
+                # ordinary trace with a prior unstructured activity row.
+                valid = (name == "toolEvents" and value is None) or (
+                    isinstance(value, list) and all(isinstance(item, dict) for item in cast(list[object], value)))
+            elif name == "traces":
+                valid = isinstance(value, list) and all(isinstance(item, str) for item in cast(list[object], value))
+            else:
+                valid = isinstance(value, list)
+                if valid:
+                    for media in cast(list[object], value):
+                        if not isinstance(media, dict):
+                            valid = False
+                            break
+                        item = cast(dict[str, object], media)
+                        fields = {"url", "name", "kind", "id"}
+                        if name == "images":
+                            fields.add("path")
+                        if (set(item) - fields or any(not isinstance(field, str) for field in item.values())
+                                or (name == "media" and item.get("kind") not in {"image", "video", "file"})):
+                            valid = False
+                            break
+            if not valid:
+                raise ValueError("invalid retained display message field")
+
+
+def media_publication(value: object) -> AbstractContextManager[None]:
+    from nanobot.attachments._media import configured_custody
+    from nanobot.attachments.store import AttachmentStore
+
+    custody = configured_custody()
+    custody.declare("webui", get_webui_dir().resolve(strict=True))
+    return AttachmentStore(custody.root / "attachments", media_root=custody.root).publication(value)
+
+
+def _fsync_transcript_directory(path: Path) -> None:
+    from nanobot.attachments._media import fsync_directory
+
+    fsync_directory(path)
+
+
 def _read_transcript_file(path: Path) -> list[dict[str, Any]]:
     lines_out: list[dict[str, Any]] = []
     try:
@@ -401,15 +572,17 @@ def _write_records_to_path(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            for row in rows:
-                raw = _record_json_line(row)
-                if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
-                    raise ValueError("webui transcript line too large")
-                f.write(raw + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        with media_publication(rows):
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    raw = _record_json_line(row)
+                    if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
+                        raise ValueError("webui transcript line too large")
+                    f.write(raw + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+            _fsync_transcript_directory(path.parent)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -487,8 +660,21 @@ def _write_segment_manifest(
     path = _webui_transcript_manifest_path(session_key)
     tmp_path = path.with_suffix(".json.tmp")
     try:
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp_path, path)
+        from nanobot.attachments._inventory import rows
+        from nanobot.attachments._media import read_bytes
+
+        retained_rows: list[dict[str, object]] = []
+        for entry in entries:
+            retained_rows.extend(rows(read_bytes(directory / f"{entry['id']}.jsonl")))
+        if active_name:
+            retained_rows.extend(rows(read_bytes(get_webui_dir() / active_name)))
+        with media_publication(retained_rows):
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+            _fsync_transcript_directory(directory)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -897,10 +1083,11 @@ def _append_to_active_transcript(session_key: str, obj: dict[str, Any]) -> None:
     path = active_transcript_path(session_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = raw + "\n"
-    with open(path, "a", encoding="utf-8") as f:
+    with media_publication(obj), open(path, "a", encoding="utf-8") as f:
         f.write(line)
         f.flush()
         os.fsync(f.fileno())
+        _fsync_transcript_directory(path.parent)
 
 
 def _now_ms() -> int:

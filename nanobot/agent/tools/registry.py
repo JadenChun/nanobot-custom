@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Collection, Iterable
-from contextlib import contextmanager
-from dataclasses import replace
+from contextlib import ExitStack, contextmanager
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generator, cast
+from weakref import ReferenceType, ref
 
 from nanobot.agent.tools.base import (
     Tool,
@@ -19,11 +22,13 @@ from nanobot.agent.tools.context import ContextAware, current_request_context
 from nanobot.agent.tools.filesystem_effect import (
     FilesystemEffectCancelled,
     accepted_filesystem_effects,
+    capture_filesystem_effects,
 )
 from nanobot.agent.tools.producer_adapters import accepted_producer_receipt
 from nanobot.security.folder_grants import FolderGrantView
 
 if TYPE_CHECKING:
+    from nanobot.agent.tools.mcp import MCPGenerationLease
     from nanobot.runtime_context import RuntimeContextProvider
 
 
@@ -123,6 +128,73 @@ def is_tool_error_result(result: Any) -> bool:
     return isinstance(result, ToolResult) and result.is_error
 
 
+@dataclass
+class _ToolAdmission:
+    """Live guard state that can outlive an unowned registry overlay's issuer."""
+
+    guard: ManagedToolDispatchGuard | None = None
+    parent: _ToolAdmission | None = None
+
+    def error(self, name: str) -> str | None:
+        if self.guard is not None and (error := self.guard.error(name)) is not None:
+            return error
+        return self.parent.error(name) if self.parent is not None else None
+
+    @contextmanager
+    def admit(self, name: str) -> Generator[str | None, None, None]:
+        with ExitStack() as admissions:
+            if self.parent is not None:
+                error = admissions.enter_context(self.parent.admit(name))
+                if error is not None:
+                    yield error
+                    return
+            yield admissions.enter_context(self.guard.admit(name)) if self.guard is not None else None
+
+
+@dataclass
+class _ToolRegistration:
+    """One registration occurrence; a later registration cannot revive it."""
+
+    tool: Tool
+    admission: _ToolAdmission
+    parent: _ToolRegistration | None = None
+    revoked: bool = False
+
+    def error(self) -> str | None:
+        if self.revoked:
+            return ToolPreparationError(
+                f"Tool '{self.tool.name}' call refused: its captured registration was revoked.",
+                kind=ToolPreparationErrorKind.WITHHELD_TOOL,
+            )
+        if self.parent is not None:
+            error = self.parent.error()
+            if error is not None:
+                return error
+        return self.admission.error(self.tool.name)
+
+
+class _CapturedParameterSchema(Tool):
+    """Use the base caster/validator with detached request parameters only."""
+
+    def __init__(self, schema: dict[str, Any]) -> None:
+        self._schema = schema
+
+    @property
+    def name(self) -> str:
+        return "captured_parameters"
+
+    @property
+    def description(self) -> str:
+        return "Internal parameter preparation"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._schema
+
+    async def execute(self, **kwargs: Any) -> Any:
+        raise RuntimeError("A captured parameter schema cannot execute a tool")
+
+
 class ToolRegistry:
     """
     Registry for agent tools.
@@ -132,27 +204,49 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: dict[str, Tool] = {}
+        self._registrations: dict[str, _ToolRegistration] = {}
         self._withheld_names: set[str] = set()
         self._cached_definitions: list[dict[str, Any]] | None = None
-        self._dispatch_guard: ManagedToolDispatchGuard | None = None
+        self._admission = _ToolAdmission()
+        self._dispatch_parent: ReferenceType[ToolRegistry] | None = None
 
     def set_dispatch_guard(self, guard: ManagedToolDispatchGuard | None) -> None:
         """Install a live admission check shared by this turn's tool dispatches."""
-        self._dispatch_guard = guard
+        self._admission.guard = guard
 
     def dispatch_error(self, name: str) -> str | None:
         """Return a current managed-capability denial, if one applies."""
-        if self._dispatch_guard is None:
+        registration = self._registrations.get(name)
+        if registration is not None and (error := registration.error()) is not None:
+            return error
+        return self._admission.error(name)
+
+    def dispatch_guard_error(self, name: str) -> str | None:
+        """Read this registry owner's current guard without resolving a tool."""
+        if self._admission.guard is None:
             return None
-        return self._dispatch_guard.error(name)
+        return self._admission.guard.error(name)
 
     @contextmanager
     def dispatch_admission(self, name: str) -> Generator[str | None, None, None]:
         """Hold first-activation admission for a native WebUI tool while it runs."""
-        if self._dispatch_guard is None:
-            yield None
+        if (error := self.dispatch_error(name)) is not None:
+            yield error
             return
-        with self._dispatch_guard.admit(name) as error:
+        with ExitStack() as admissions:
+            parent = self._dispatch_parent() if self._dispatch_parent is not None else None
+            if parent is not None:
+                error = admissions.enter_context(parent.dispatch_admission(name))
+                if error is not None:
+                    yield error
+                    return
+            elif self._admission.parent is not None:
+                error = admissions.enter_context(self._admission.parent.admit(name))
+                if error is not None:
+                    yield error
+                    return
+            guard = self._admission.guard
+            error = admissions.enter_context(guard.admit(name)) if guard is not None else None
             yield error
 
     def register(self, tool: Tool) -> None:
@@ -160,6 +254,7 @@ class ToolRegistry:
         if tool.name in self._tools:
             raise ValueError(f"Duplicate tool registration: {tool.name}")
         self._tools[tool.name] = tool
+        self._registrations[tool.name] = _ToolRegistration(tool, self._admission)
         self._withheld_names.discard(tool.name)
         self._cached_definitions = None
 
@@ -167,13 +262,16 @@ class ToolRegistry:
         """Explicitly replace an existing registration during validated reload."""
         if tool.name not in self._tools:
             raise ValueError(f"Cannot replace unregistered tool: {tool.name}")
+        self._registrations[tool.name].revoked = True
         self._tools[tool.name] = tool
+        self._registrations[tool.name] = _ToolRegistration(tool, self._admission)
         self._withheld_names.discard(tool.name)
         self._cached_definitions = None
 
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""
         if self._tools.pop(name, None) is not None:
+            self._registrations.pop(name).revoked = True
             self._withheld_names.add(name)
         self._cached_definitions = None
 
@@ -231,7 +329,7 @@ class ToolRegistry:
         register/unregister call.
         """
         if self._cached_definitions is None:
-            definitions = [tool.to_schema() for tool in self._tools.values()]
+            definitions = [deepcopy(tool.to_schema()) for tool in self._tools.values()]
             builtins: list[dict[str, Any]] = []
             mcp_tools: list[dict[str, Any]] = []
             for schema in definitions:
@@ -245,7 +343,15 @@ class ToolRegistry:
             mcp_tools.sort(key=self._schema_name)
             self._cached_definitions = builtins + mcp_tools
 
-        return self._cached_definitions
+        return deepcopy(self._cached_definitions)
+
+    def capture_request_tools(self) -> CapturedToolBindings:
+        """Synchronously own the definitions, registrations and generation resources."""
+        return CapturedToolBindings(self, self.tool_names)
+
+    def borrow_filtered(self, names: Collection[str]) -> CapturedToolBindings:
+        """Take independent, narrowed ownership before the current owner releases."""
+        return CapturedToolBindings(self, names)
 
     def prepare_call(
         self,
@@ -273,6 +379,8 @@ class ToolRegistry:
                 kind=kind,
             )
         if dispatch_error is not None:
+            if isinstance(dispatch_error, ToolPreparationError):
+                return None, params, dispatch_error
             return None, params, ToolPreparationError(
                 dispatch_error,
                 kind=ToolPreparationErrorKind.MANAGED_UNAVAILABLE,
@@ -283,7 +391,7 @@ class ToolRegistry:
         if isinstance(tool, ContextAware) and (ctx := current_request_context()) is not None:
             tool.set_context(ctx)
 
-        params = self._coerce_params(tool, params)
+        params = self._coerce_params(tool, params, schema=self._parameter_schema(tool))
         if not isinstance(params, dict):
             return tool, params, (
                 ToolResult.error(
@@ -293,13 +401,19 @@ class ToolRegistry:
                 )
             )
 
-        cast_params = tool.cast_params(cast(dict[str, Any], params))
-        errors = tool.validate_params(cast_params)
+        cast_params, errors = self._cast_and_validate(tool, cast(dict[str, Any], params))
         if errors:
             return tool, cast_params, (
                 ToolResult.error(f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors))
             )
         return tool, cast_params, None
+
+    def _cast_and_validate(self, tool: Tool, params: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        cast_params = tool.cast_params(params)
+        return cast_params, tool.validate_params(cast_params)
+
+    def _parameter_schema(self, tool: Tool) -> dict[str, Any]:
+        return tool.parameters
 
     @classmethod
     def _coerce_argument_value(cls, value: Any) -> Any:
@@ -323,18 +437,18 @@ class ToolRegistry:
         return parsed
 
     @classmethod
-    def _coerce_params(cls, tool: Tool, params: Any) -> Any:
+    def _coerce_params(cls, tool: Tool, params: Any, *, schema: dict[str, Any] | None = None) -> Any:
         params = cls._coerce_argument_value(params)
-        return cls._unwrap_arguments_payload(tool, params)
+        return cls._unwrap_arguments_payload(tool, params, schema=schema)
 
     @classmethod
-    def _unwrap_arguments_payload(cls, tool: Tool, params: Any) -> Any:
+    def _unwrap_arguments_payload(cls, tool: Tool, params: Any, *, schema: dict[str, Any] | None = None) -> Any:
         if not isinstance(params, dict):
             return params
         arguments_payload = cast(dict[str, Any], params)
         if set(arguments_payload) != {"arguments"}:
             return arguments_payload
-        properties = (tool.parameters or {}).get("properties", {})
+        properties = (tool.parameters if schema is None else schema).get("properties", {})
         if isinstance(properties, dict) and "arguments" in properties:
             return arguments_payload
         return cls._coerce_argument_value(arguments_payload.get("arguments"))
@@ -344,24 +458,35 @@ class ToolRegistry:
         """Execute a validated call once, retaining terminal fork metadata."""
         from nanobot.agent.turn import ToolOutcome
 
-        try:
-            result = (await tool.execute_with_context(context, **params)
-                      if context is not None else await tool.execute(**params))
-        except FilesystemEffectCancelled as exc:
-            if not accepted_filesystem_effects(tool, exc.facts):
-                # Plugin envelopes and cancellation text cannot create effect evidence.
-                import asyncio
-
-                raise asyncio.CancelledError(str(exc)) from exc
-            raise
+        with capture_filesystem_effects(tool) as capture:
+            try:
+                result = (await tool.execute_with_context(context, **params)
+                          if context is not None else await tool.execute(**params))
+            except asyncio.CancelledError as exc:
+                if capture is not None and capture.attempts:
+                    raise FilesystemEffectCancelled(str(exc), capture.failed()) from exc
+                if isinstance(exc, FilesystemEffectCancelled):
+                    # Plugin envelopes and cancellation text cannot create effect evidence.
+                    raise asyncio.CancelledError(str(exc)) from exc
+                raise
+            except Exception as exc:
+                if capture is None:
+                    raise
+                result = ToolOutcome(content=ToolResult.error(f"Error executing {tool.name}: {exc}"))
         if isinstance(result, ToolOutcome):
             outcome = result
         elif isinstance(result, ToolResult) and result.media_artifacts:
             outcome = ToolOutcome(content=result, media_artifacts=result.media_artifacts)
         else:
             outcome = ToolOutcome(content=result)
-        if outcome.filesystem_effects and not accepted_filesystem_effects(tool, outcome.filesystem_effects):
-            outcome = replace(outcome, filesystem_effects=())
+        effects = None
+        if capture is not None and (is_tool_error_result(outcome.content)
+                                    or outcome.stop_reason == "tool_error"
+                                    or outcome.filesystem_effects):
+            effects = capture.failed()
+        if not accepted_filesystem_effects(tool, effects):
+            effects = None
+        outcome = replace(outcome, filesystem_effects=effects)
         if outcome.recovery_kind is not None:
             # Recovery classification is owned by the registry/executor, never
             # by a tool's returned envelope.
@@ -454,7 +579,7 @@ class ToolRegistry:
         except Exception as exc:
             outcome = ToolOutcome(content=ToolResult.error(f"Error executing {name}: {exc}" + hint),
                                   stop_reason="tool_error")
-        return outcome if context is not None else outcome.content
+        return outcome if context is not None or outcome.filesystem_effects else outcome.content
 
     async def execute_with_context(self, name: str, params: Any, context: Any) -> Any:
         return await self.execute(name, params, context=context)
@@ -462,14 +587,23 @@ class ToolRegistry:
     def iter_tools(self):
         return iter(self._tools.values())
 
+    def _filtered_dispatch_parent(self) -> ToolRegistry:
+        return self
+
     def filtered(self, names: list[str]) -> ToolRegistry:
         registry = ToolRegistry()
-        registry.set_dispatch_guard(self._dispatch_guard)
+        # A filtered invocation overlay remains mutable for its own artifact
+        # reader. Inherit live admission, including native reservations, while
+        # explicit borrow_filtered owns any independent resource lifetime.
+        parent = self._filtered_dispatch_parent()
+        registry._dispatch_parent = ref(parent)
+        registry._admission.parent = parent._admission
         included = set(names)
         registry._withheld_names = self._withheld_names | (self._tools.keys() - included)
         for name in names:
             if name in self._tools:
                 registry.register(self._tools[name])
+                registry._registrations[name].parent = self._registrations[name]
         return registry
 
     @property
@@ -482,3 +616,122 @@ class ToolRegistry:
 
     def __contains__(self, name: str) -> bool:
         return self.has(name)
+
+
+class CapturedToolBindings(ToolRegistry):
+    """Owned request/borrower view of exact registrations, with live revocation.
+
+    Definitions are copied at capture and on access. Resource acquisition/release
+    never awaits, so reload and cancellation cannot split ownership on the loop.
+    """
+
+    def __init__(self, source: ToolRegistry, names: Collection[str]) -> None:
+        super().__init__()
+        if isinstance(source, CapturedToolBindings) and source._released:
+            raise RuntimeError("Cannot borrow released tool bindings")
+        origin = source._source if isinstance(source, CapturedToolBindings) else source
+        assert origin is not None  # A released source was rejected above.
+        self._source: ToolRegistry | None = origin
+        # Unowned filters retain live admission state, not the issuer registry.
+        # Owned requests retain exact available issuers only until release.
+        origins = [origin]
+        while origins[-1]._dispatch_parent is not None:
+            parent = origins[-1]._dispatch_parent()
+            if parent is None:
+                break
+            origins.append(parent)
+        self._origin_registries = tuple(origins)
+        self._released = False
+        included = set(names)
+        self._tools = {name: tool for name, tool in source._tools.items() if name in included}
+        self._registrations = {name: source._registrations[name] for name in self._tools}
+        self._withheld_names = source._withheld_names | (source._tools.keys() - included)
+        definitions = (source.get_definitions() if isinstance(source, CapturedToolBindings)
+                       else [deepcopy(tool.to_schema()) for tool in self._tools.values()])
+        self._definitions = sorted(
+            (definition for definition in definitions if self._schema_name(definition) in self._tools),
+            key=lambda definition: (self._schema_name(definition).startswith("mcp_"),
+                                    self._schema_name(definition)),
+        )
+        self._schemas: dict[str, dict[str, Any]] = {
+            name: deepcopy(tool.parameters) for name, tool in self._tools.items()
+        }
+        if isinstance(source, CapturedToolBindings):
+            self._schemas = {name: deepcopy(source._schemas[name]) for name in self._tools}
+        from nanobot.agent.tools.mcp import mcp_generation_lease
+
+        leases = {lease for tool in self._tools.values()
+                  if (lease := mcp_generation_lease(tool)) is not None}
+        self._leases: tuple[MCPGenerationLease, ...] = tuple(
+            lease for lease in leases if lease.acquire_sampled()
+        )
+
+    def get_definitions(self) -> list[dict[str, Any]]:
+        return deepcopy(self._definitions)
+
+    def dispatch_error(self, name: str) -> str | None:
+        if self._released:
+            return ToolPreparationError(
+                f"Tool '{name}' call refused: its captured bindings were released.",
+                kind=ToolPreparationErrorKind.WITHHELD_TOOL,
+            )
+        error = super().dispatch_error(name)
+        if error is not None:
+            return error
+        assert self._source is not None  # Release is checked before using the source.
+        if (error := self._source.dispatch_error(name)) is not None:
+            return error
+        from nanobot.agent.tools.mcp import mcp_binding_error
+
+        tool = self.get(name)
+        if tool is not None and (error := mcp_binding_error(tool)) is not None:
+            return ToolPreparationError(error, kind=ToolPreparationErrorKind.WITHHELD_TOOL)
+        return None
+
+    @contextmanager
+    def dispatch_admission(self, name: str) -> Generator[str | None, None, None]:
+        if (error := self.dispatch_error(name)) is not None:
+            yield error
+            return
+        # Preserve the originating view's live admission (including managed
+        # first-activation reservations); never resolve its current tool.
+        assert self._source is not None  # dispatch_error refused a released capture.
+        with self._source.dispatch_admission(name) as error:
+            yield error
+
+    def _cast_and_validate(self, tool: Tool, params: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        schema = self._schemas[tool.name] or {}
+        preparation = _CapturedParameterSchema(schema)
+        cast_params = (preparation.cast_params(params)
+                       if type(tool).cast_params is Tool.cast_params
+                       else tool.cast_params(params))
+        if type(tool).validate_params is not Tool.validate_params:
+            return cast_params, tool.validate_params(cast_params)
+        return cast_params, preparation.validate_params(cast_params)
+
+    def _parameter_schema(self, tool: Tool) -> dict[str, Any]:
+        return self._schemas[tool.name]
+
+    def _filtered_dispatch_parent(self) -> ToolRegistry:
+        if self._source is None:
+            raise RuntimeError("Cannot filter released tool bindings")
+        return self._source
+
+    def register(self, tool: Tool) -> None:
+        raise TypeError("Captured tool bindings cannot be changed")
+
+    def replace(self, tool: Tool) -> None:
+        raise TypeError("Captured tool bindings cannot be changed")
+
+    def unregister(self, name: str) -> None:
+        raise TypeError("Captured tool bindings cannot be changed")
+
+    def release(self) -> None:
+        """Release every sampled hold exactly once, even on a cancelled task."""
+        if self._released:
+            return
+        self._released = True
+        for lease in self._leases:
+            lease.release_sampled()
+        self._source = None
+        self._origin_registries = ()

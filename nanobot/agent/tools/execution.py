@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.policy import ToolPolicy
+from nanobot.agent.policy import RiskyActionPolicy, ToolPolicy
 from nanobot.agent.tools.base import (
     PRIVATE_NETWORK_DENIAL_NOTE,
     Tool,
@@ -28,9 +28,9 @@ from nanobot.agent.tools.filesystem import (
 from nanobot.agent.tools.filesystem_effect import (
     FilesystemEffectCancelled,
     FilesystemEffectFact,
-    FilesystemEffectReconciliationRequired,
+    FilesystemEffectReconciliationRequiredError,
 )
-from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nanobot.agent.tools.registry import CapturedToolBindings, ToolRegistry, is_tool_error_result
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
 from nanobot.utils.cancellation import task_is_cancelling
@@ -59,7 +59,7 @@ class KnownToolResult:
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
     handoff_receipt: ArtifactHandoffReceipt | None = None
-    filesystem_effects: tuple[FilesystemEffectFact, ...] = ()
+    filesystem_effects: tuple[FilesystemEffectFact, ...] | None = None
 
 
 ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
@@ -97,13 +97,13 @@ async def _record_result(callback: ToolResultCallback | None, ordinal: int,
                          producer_receipt: FilesystemReadReceipt | None = None,
                          retrieval_receipt: ArtifactRetrievalReceipt | None = None,
     handoff_receipt: ArtifactHandoffReceipt | None = None) -> None:
-    effects = raw.filesystem_effects if isinstance(raw, ToolOutcome) else ()
+    effects = raw.filesystem_effects if isinstance(raw, ToolOutcome) else None
     if callback is not None:
         await callback(KnownToolResult(ordinal, call.id, call.name, _copy_recorded_value(raw),
                                        _copy_recorded_value(result), deepcopy(event), dispatched, producer_receipt,
                                        retrieval_receipt, handoff_receipt, effects))
-    if any(fact.reconciliation_required for fact in effects):
-        raise FilesystemEffectReconciliationRequired()
+    if any(fact.reconciliation_required for fact in effects or ()):
+        raise FilesystemEffectReconciliationRequiredError()
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
 # SSRF is a hard security block at the tool boundary, but the agent turn
@@ -149,6 +149,16 @@ async def execute_tool_calls(
     """Execute one model response's tool calls in stable result order."""
     if turn_context is not None and turn_context.execution_owner is not None and tool_result_callback is None:
         raise ValueError("Execution ownership requires durable tool-result recording")
+    if (isinstance(tools, CapturedToolBindings) and type(tool_policy) is RiskyActionPolicy
+            and tool_policy.write_target_resolver is not None):
+        def resolve_captured_target(name: str, raw_path: str) -> Path | None:
+            resolver = getattr(tools.get(name), "resolve_write_path", None)
+            if not callable(resolver):
+                return None
+            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
+            return Path(resolved).expanduser().resolve(strict=False)
+
+        tool_policy = replace(tool_policy, write_target_resolver=resolve_captured_target)
     # Policy inspects the complete response before any side effect can begin.
     terminal: ToolOutcome | None = None
     if tool_policy is not None:
@@ -392,16 +402,29 @@ async def _execute_tool_call(
                 "status": "error",
                 "detail": dispatch_error[:120],
             }
+            captured_refusal = isinstance(dispatch_error, ToolPreparationError)
+            if captured_refusal:
+                event["_prepare_error_kind"] = dispatch_error.kind.value
             classified = ToolOutcome(
                 payload,
                 "tool_error",
-                recovery_kind=ToolDenialKind.MANAGED_UNAVAILABLE,
+                recovery_kind=(None if captured_refusal else ToolDenialKind.MANAGED_UNAVAILABLE),
             )
             await _record_result(tool_result_callback, ordinal, tool_call, dispatch_error,
                                  classified, event, dispatched=False)
             return classified, event
         if turn_context is not None and turn_context.execution_owner is not None:
             turn_context.execution_owner.validate_dispatch()
+        if tool_policy is not None:
+            decision = tool_policy.authorize_dispatch(tool_call, params, turn_context)
+            if decision.action != "allow":
+                refused = ToolOutcome(
+                    decision.response, decision.stop_reason or "policy_blocked", decision.metadata,
+                )
+                event = {"name": tool_call.name, "status": "stopped", "detail": refused.stop_reason}
+                await _record_result(tool_result_callback, ordinal, tool_call, refused,
+                                     refused, event, dispatched=False)
+                return refused, event
         try:
             binding_token = set_assessed_write_target(assessed_write_target)
             try:
@@ -420,7 +443,7 @@ async def _execute_tool_call(
             try:
                 await _record_result(tool_result_callback, ordinal, tool_call, raw, raw,
                                      event, dispatched=True)
-            except FilesystemEffectReconciliationRequired:
+            except FilesystemEffectReconciliationRequiredError:
                 pass
             raise
         except asyncio.CancelledError:
@@ -485,7 +508,7 @@ async def _execute_tool_call(
             outcome.policy_metadata if outcome else {},
             media_artifacts=outcome.media_artifacts if outcome else (),
             recovery_kind=recovery_kind,
-            filesystem_effects=outcome.filesystem_effects if outcome else (),
+            filesystem_effects=outcome.filesystem_effects if outcome else None,
         )
         _attach_media_artifacts(event, classified)
         await _record_result(tool_result_callback, ordinal, tool_call, raw_result,

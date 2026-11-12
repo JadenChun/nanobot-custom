@@ -8,29 +8,18 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nanobot.agent.child_sessions import ChildAdmission
-from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunResult
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.context import (
     RequestContext,
     bind_request_context,
     reset_request_context,
 )
-from nanobot.agent.turn import TurnContext
+from nanobot.agent.turn import DeliveryTarget, TurnRequest
 from nanobot.bus.outbound_events import DelegatedChildEvent
-from nanobot.session.manager import SessionManager
-
-
-class _Provider:
-    """Minimal provider surface required to construct the manager."""
-
-    provider_name = "test"
-    default_model = "test-model"
-    model = "test-model"
-    name = "test"
-
-    def get_default_model(self) -> str:
-        return self.default_model
+from nanobot.providers.base import LLMResponse, ToolCallRequest
+from tests.agent.test_migration_engine import ScriptedProvider
+from tests.agent.test_migration_source_engine import engine_config, upgrade
 
 
 def _make_admission() -> ChildAdmission:
@@ -50,31 +39,43 @@ def _make_admission() -> ChildAdmission:
 
 
 @pytest.mark.asyncio
-async def test_child_admission_emits_active_and_completed_events(tmp_path):
-    manager = ForegroundAgentManager(
-        provider=_Provider(),
-        workspace=tmp_path,
-        sessions=SessionManager(
-            tmp_path / "workspace",
-            sessions_root=tmp_path / "sessions",
-        ),
+async def test_child_admission_emits_active_and_completed_events(engine_config):
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="plan-child",
+            name="plan_task",
+            arguments={"objective": "fixture plan"},
+        )]),
+        LLMResponse(content="done"),
+        LLMResponse(content="parent completed"),
+    ])
+    loop = AgentLoop.from_config(
+        engine_config,
+        tool_registry=ToolRegistry(),
+        provider=provider,
     )
-    manager.runner.run = AsyncMock(
-        return_value=AgentRunResult(final_content="done", messages=[])
-    )
+    parent_key = "websocket:parent"
+    upgrade(loop, parent_key)
+    manager = loop._fork_dependencies.foreground_manager
     sink = AsyncMock()
     manager.set_child_event_sink(sink)
+    try:
+        result = await loop.execute_turn(TurnRequest(
+            content="Plan the fixture work.",
+            session_key=parent_key,
+            route=DeliveryTarget(channel="websocket", chat_id="parent"),
+        ))
 
-    context = TurnContext(session_key="websocket:parent", run_id="turn-1")
-    await manager.run_plan(objective="fixture plan", turn_context=context)
-
-    assert sink.await_count >= 2
-    admissions = [call.args[0] for call in sink.await_args_list]
-    assert admissions[0].state == "active"
-    assert admissions[-1].state == "completed"
-    for admission in admissions:
-        assert admission.session_key.startswith("delegated:")
-        assert admission.profile == "delegated"
+        assert result.error is None, result.error
+        assert sink.await_count >= 2
+        admissions = [call.args[0] for call in sink.await_args_list]
+        assert admissions[0].state == "active"
+        assert admissions[-1].state == "completed"
+        for admission in admissions:
+            assert admission.session_key.startswith("delegated:")
+            assert admission.profile == "delegated"
+    finally:
+        await loop.aclose()
 
 
 @pytest.mark.asyncio

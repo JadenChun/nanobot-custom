@@ -5,6 +5,7 @@ import gc
 import socket
 import subprocess
 import weakref
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -14,7 +15,7 @@ import pytest
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.runtime_events import TurnCompleted
 from nanobot.command.builtin import cmd_stop
@@ -129,6 +130,84 @@ async def test_dream_owner_subsets_filter_exclusions_and_weak_lifetime(loop):
     gc.collect()
     assert reference() is None
     assert len(store._dream_tool_bindings) == 1
+
+
+async def test_filtered_dream_dispatch_preserves_live_admission_after_issuer_collection(loop):
+    store = loop.context.memory
+
+    class LiveGuard(ManagedToolDispatchGuard):
+        def __init__(self):
+            super().__init__(None)
+            self.denied = False
+            self.admitted = 0
+
+        def error(self, name):
+            return "Dream test admission denied" if self.denied else None
+
+        @contextmanager
+        def admit(self, name):
+            self.admitted += 1
+            yield self.error(name)
+
+    guard = LiveGuard()
+
+    def issue_subset():
+        issued = store.build_dream_tools()
+        issued.set_dispatch_guard(guard)
+        derived = store.filter_dream_tools(
+            issued, frozenset({"write_file", "edit_file", "apply_patch"}), store.workspace,
+        )
+        assert derived is not None
+        return weakref.ref(issued), derived
+
+    reference, derived = issue_subset()
+    gc.collect()
+    assert reference() is None
+    assert len(store._dream_tool_bindings) == 1
+    assert store.owns_dream_tools(derived, store.workspace)
+    assert derived.tool_names == ["read_file"]
+    result = await derived.execute("read_file", {"path": str(store.memory_file)})
+    assert "PRIVATE_DREAM_MEMORY" in result
+    assert guard.admitted == 1
+    capture = derived.capture_request_tools()
+    try:
+        guard.denied = True
+        assert "admission denied" in await capture.execute("read_file", {"path": str(store.memory_file)})
+        assert guard.admitted == 1
+        guard.denied = False
+        assert "File unchanged since last read" in await capture.execute(
+            "read_file", {"path": str(store.memory_file)},
+        )
+        assert guard.admitted == 2
+        original = derived.get("read_file")
+        derived.unregister("read_file")
+        derived.register(original)
+        assert "refused" in await capture.execute("read_file", {"path": str(store.memory_file)})
+        assert guard.admitted == 2
+    finally:
+        capture.release()
+
+
+async def test_owned_dream_capture_retains_issuers_only_until_release(loop):
+    store = loop.context.memory
+
+    def capture_subset():
+        issued = store.build_dream_tools()
+        derived = store.filter_dream_tools(issued, frozenset({"write_file"}), store.workspace)
+        assert derived is not None
+        return weakref.ref(issued), weakref.ref(derived), derived.capture_request_tools()
+
+    issued, derived, capture = capture_subset()
+    gc.collect()
+    assert issued() is not None and derived() is not None
+    assert len(store._dream_tool_bindings) == 2
+    assert "PRIVATE_DREAM_MEMORY" in await capture.execute("read_file", {"path": str(store.memory_file)})
+    capture.release()
+    capture.release()
+    gc.collect()
+    assert issued() is None and derived() is None
+    assert len(store._dream_tool_bindings) == 0
+    assert "released" in await capture.execute("read_file", {"path": str(store.memory_file)})
 
 
 @pytest.mark.asyncio
@@ -441,7 +520,9 @@ async def test_shutdown_failure_still_settles_batch_and_joins_background_before_
             assert order == ["background-finally", "resources"]
             resources.assert_awaited_once()
             assert not loop._background_tasks and not loop._compact_dispatches and not loop._active_tasks
-            assert loop._closed and graph.state is RuntimeState.CLOSED
+            # Drained resources do not erase a failed mandatory close callback.
+            assert loop._closed and graph.state is RuntimeState.FAILED
+            assert graph._closers == [loop.aclose]
             assert graph._owner_loop is asyncio.get_running_loop()
             assert handle.mcp._closing and not handle.mcp.connected_server_names
             assert not handle.bus._pending
@@ -450,14 +531,20 @@ async def test_shutdown_failure_still_settles_batch_and_joins_background_before_
             with pytest.raises(RuntimeError) as repeated:
                 await loop.aclose()
             assert repeated.value is failure and loop._close_task is close_task
-            await graph.aclose()
+            with pytest.raises(ExceptionGroup) as retained:
+                await graph.aclose()
+            assert retained.value.exceptions == (failure,)
+            assert graph.state is RuntimeState.FAILED
+            assert graph._closers == [loop.aclose]
             resources.assert_awaited_once()
             assert len(attempts) == 2
         finally:
             # Red-run containment only: never leave the demonstrated orphan alive.
             background.cancel()
             await asyncio.gather(background, *tasks, return_exceptions=True)
-            await graph.aclose()
+            with pytest.raises(ExceptionGroup) as retained:
+                await graph.aclose()
+            assert retained.value.exceptions == (failure,)
             lease = await DurableSessionAuthority(
                 graph.preflight.workspace, sessions_root=graph.preflight.sessions_root,
             ).acquire()

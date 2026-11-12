@@ -28,7 +28,15 @@ def _new_tree(tmp_path, *, policy=None):
 def _new_parent(sessions, key="websocket:parent"):
     parent = sessions.get_or_create(key)
     sessions.save(parent)
-    return parent
+    backend = sessions._jsonl_store
+    backend.source.upgrade_source_session(
+        key,
+        expected_revision=parent.revision,
+        expected_generation=parent.generation,
+        expected_incarnation=parent.incarnation,
+    )
+    sessions.invalidate(key)
+    return sessions.get_or_create(key)
 
 
 def _reserve(tree, parent, *, assignment, attempt_id, profile=DEFAULT_CHILD_PROFILE):
@@ -402,6 +410,47 @@ async def test_restart_fences_live_child_and_restores_attempt(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_malformed_restore_fails_closed_until_owner_reconciles(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+    child = await _reserve(
+        tree,
+        parent,
+        assignment="retain unknown child state",
+        attempt_id="attempt-malformed-restore",
+    )
+    assert isinstance(child, ChildAdmission)
+
+    corrupted = child.metadata()
+    corrupted["child_id"] = "a different child"
+    assert sessions.upsert_session_metadata(
+        child.session_key,
+        {DELEGATION_CHILD_METADATA_KEY: corrupted},
+    )
+    restored_sessions, restored = _new_tree(tmp_path)
+    restored_parent = restored_sessions.get_or_create(parent.key)
+    assert restored.recovery_error is not None
+    refused = await _reserve(
+        restored,
+        restored_parent,
+        assignment="must wait for owner reconciliation",
+        attempt_id="attempt-fail-closed",
+    )
+    assert isinstance(refused, ChildRefusal)
+    assert refused.reason == "reconciliation_required"
+
+    assert restored_sessions.upsert_session_metadata(
+        child.session_key,
+        {DELEGATION_CHILD_METADATA_KEY: child.metadata()},
+    )
+    assert await restored.reconcile_recovery() is True
+    recovered = restored.child(child.child_id)
+    assert recovered is not None
+    assert recovered.state == "uncertain"
+    assert recovered.holds_capacity is True
+
+
+@pytest.mark.asyncio
 async def test_stop_for_parent_stops_subtree_and_leaves_other_parents(tmp_path):
     sessions, tree = _new_tree(tmp_path)
     parent_a = _new_parent(sessions, key="websocket:parent-a")
@@ -489,6 +538,47 @@ async def test_stop_subtree_cancels_attached_task_and_keeps_sibling(tmp_path):
     if not task.done():
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_resistant_child_stop_is_bounded_and_retains_owner_task(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+    admission = await _reserve(
+        tree,
+        parent,
+        assignment="ignore first cancellation",
+        attempt_id="attempt-resistant-stop",
+    )
+    assert isinstance(admission, ChildAdmission)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def resistant() -> None:
+        started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            await release.wait()
+
+    task = asyncio.create_task(resistant())
+    await tree.attach_task(admission.child_id, task)
+    await started.wait()
+
+    stopped = await tree.stop_subtree(admission.child_id, settle_timeout=0.01)
+    assert len(stopped) == 1
+    assert stopped[0].state == "uncertain"
+    assert stopped[0].holds_capacity is True
+    assert task.done() is False
+    assert tree._tasks.get(admission.child_id) is task
+
+    release.set()
+    await task
+    await asyncio.sleep(0)
+    assert task.done() is True
+    assert admission.child_id not in tree._tasks
+    held = tree.child(admission.child_id)
+    assert held is not None and held.state == "uncertain" and held.holds_capacity
 
 
 @pytest.mark.asyncio

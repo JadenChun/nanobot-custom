@@ -1,6 +1,7 @@
 """Foreground idle-activity admission stays dormant until explicitly injected."""
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from unittest.mock import AsyncMock
 
@@ -12,9 +13,11 @@ from nanobot.agent.turn import (
     ApprovalDecision,
     DeliveryTarget,
     RunStatus,
+    TurnContext,
     TurnRequest,
     TurnSource,
 )
+from nanobot.agent.turn_admission import ApprovalSnapshot
 from nanobot.bus.events import InboundMessage
 from nanobot.providers.base import LLMResponse
 from nanobot.session.recovery import RECOVERY_INBOUND_METADATA_KEY
@@ -345,11 +348,18 @@ async def test_rejected_approvals_do_not_record_foreground_activity(engine_confi
         )
         consume = loop.approval_admission.consume
 
-        async def replace_before_consume(snapshot):
+        async def replace_before_consume(
+            snapshot: ApprovalSnapshot,
+            *,
+            context: TurnContext | None = None,
+            source_is_current: Callable[[], bool] | None = None,
+        ) -> str:
             await loop.approval_admission.store(
                 session_key="cli:idle", channel="cli", chat_id="direct", summary="new"
             )
-            return await consume(snapshot)
+            return await consume(
+                snapshot, context=context, source_is_current=source_is_current,
+            )
 
         monkeypatch.setattr(loop.approval_admission, "consume", replace_before_consume)
         stale = await loop.execute_turn(TurnRequest(

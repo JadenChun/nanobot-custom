@@ -1,8 +1,9 @@
 """Regression tests for A3-8 AC8.2 and AC8.3 retry lanes."""
 
 import asyncio
+import hashlib
+import json
 from datetime import datetime
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from nanobot.agent.tools.context import RequestContext
 from nanobot.agent.tools.exec_session import ExecCompletion
 from nanobot.bus.queue import MessageBus
+from nanobot.config.loader import set_config_path
 from nanobot.process_completion import ProcessCompletionRuntime
 from nanobot.security.folder_grants import FolderGrantStore
 from nanobot.security.workspace_access import build_workspace_scope
@@ -25,6 +27,10 @@ class Assistant:
         session = self.sessions.get_or_create("telegram:42")
         session.add_message("user", "Run project A's check")
         self.sessions.save(session, fsync=True)
+        self.sessions._jsonl_store.source.upgrade_source_session(
+            session.key, expected_revision=session.revision,
+            expected_generation=session.generation, expected_incarnation=session.incarnation,
+        )
         self.messages = []
 
     async def submit_local_trigger_turn(self, msg):
@@ -32,7 +38,7 @@ class Assistant:
         return None
 
 
-def _origin(project):
+def _origin(project, assistant):
     return RequestContext(
         channel="telegram",
         chat_id="42",
@@ -42,6 +48,7 @@ def _origin(project):
         metadata={},
         workspace=project,
         workspace_scope=build_workspace_scope(project, "restricted"),
+        source_state=assistant.sessions.read_existing_canonical_source("telegram:42")[1].state,
     )
 
 
@@ -67,7 +74,7 @@ async def test_process_completion_lane_keeps_ordered_durable_transitions(tmp_pat
     assistant = Assistant(tmp_path / "agent")
     runtime = ProcessCompletionRuntime(tmp_path / "runtime", assistant)
     runtime.start()
-    origin = _origin(project)
+    origin = _origin(project, assistant)
 
     try:
         runtime.started("one", "first", str(project), origin)
@@ -94,7 +101,7 @@ async def test_process_completion_restart_marks_unfinished_execution_unknown(tmp
     project.mkdir()
     assistant = Assistant(tmp_path / "agent-restart")
     root = tmp_path / "runtime-restart"
-    origin = _origin(project)
+    origin = _origin(project, assistant)
 
     runtime = ProcessCompletionRuntime(root, assistant)
     runtime.start()
@@ -112,21 +119,31 @@ async def test_process_completion_restart_marks_unfinished_execution_unknown(tmp
 
 
 def test_partial_generated_media_deletion_retains_failed_ownership(tmp_path, monkeypatch):
-    root = tmp_path / "generated"
-    root.mkdir()
-    for name in ("a.png", "a.json", "b.png", "b.json"):
-        (root / name).write_text("generated\n", encoding="utf-8")
+    import nanobot.attachments._media as media_storage
+
+    set_config_path(tmp_path / "config.json")
+    SessionManager(tmp_path / "home", sessions_root=tmp_path / "sessions")
+    root = tmp_path / "media" / "generated"
+    root.mkdir(parents=True)
+    for name in ("a.png", "b.png"):
+        path = root / name
+        path.write_text("generated\n", encoding="utf-8")
+        path.with_suffix(".json").write_text(json.dumps({"id": path.stem, "kind": "image",
+            "path": str(path), "name": path.name, "mime": "image/png", "bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "prompt": "fixture",
+            "model": "fixture", "provider": "fixture", "source_images": [],
+            "created_at": datetime.now().astimezone().isoformat()}))
 
     now = datetime.now().astimezone()
     failed_path = root / "b.png"
-    original_unlink = Path.unlink
+    original_unlink = media_storage.os.unlink
 
     def selective_unlink(self, *args, **kwargs):
-        if Path(self) == failed_path:
+        if str(self) == failed_path.name:
             raise OSError("busy")
         return original_unlink(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", selective_unlink)
+    monkeypatch.setattr(media_storage.os, "unlink", selective_unlink)
 
     result = garbage_collect_generated_media(
         artifact_root=root,
@@ -173,24 +190,26 @@ async def test_temporary_chat_retains_failed_cleanup_until_retry(tmp_path, monke
 
     owner = object()
     chat_id = chats.create(owner, trusted_webui=True)
-    media = tmp_path / "attachment.txt"
+    media = chats._media_store.media_root / "websocket" / "attachment.txt"
+    media.parent.mkdir(parents=True, exist_ok=True)
     media.write_text("attachment\n", encoding="utf-8")
     chats.register_media(owner, chat_id, [str(media)])
 
-    original_unlink = Path.unlink
+    import nanobot.attachments._media as media_storage
+    original_unlink = media_storage.os.unlink
 
     def failing_unlink(self, *args, **kwargs):
-        if Path(self) == media:
+        if str(self) == media.name:
             raise OSError("busy")
         return original_unlink(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    monkeypatch.setattr(media_storage.os, "unlink", failing_unlink)
     try:
         await chats.discard(owner, chat_id)
         assert str(media) in chats.pending_cleanup(chat_id)
         assert media.exists()
     finally:
-        monkeypatch.setattr(Path, "unlink", original_unlink)
+        monkeypatch.setattr(media_storage.os, "unlink", original_unlink)
 
     remaining = chats.retry_cleanup(chat_id)
     assert remaining == ()

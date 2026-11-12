@@ -3,13 +3,39 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from copy import deepcopy
 from typing import Any
+from unittest.mock import Mock
 
 from nanobot.agent.runner import AgentRunSpec
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.utils.llm_runtime import LLMRuntime
+
+
+class _CapturedTestTools:
+    """Freeze legacy double definitions and callable identities for one request."""
+
+    def __init__(self, source: Any) -> None:
+        self._definitions = deepcopy(source.get_definitions())
+        self.get = source.get
+        self.prepare_call = source.prepare_call
+        self.execute = source.execute
+        self.execute_prepared = source.execute_prepared
+        self._admission = source.dispatch_admission
+        self._released = False
+
+    def get_definitions(self) -> Any:
+        return deepcopy(self._definitions)
+
+    def dispatch_admission(self, name: str) -> Any:
+        if self._released:
+            raise RuntimeError("Test tool capture already released")
+        return self._admission(name)
+
+    def release(self) -> None:
+        self._released = True
 
 
 def install_test_tool_dispatch(tools: Any) -> Any:
@@ -21,10 +47,13 @@ def install_test_tool_dispatch(tools: Any) -> Any:
     registry contract explicitly for these tests while leaving real registries
     and policy tests untouched.
     """
-    if not isinstance(tools, ToolRegistry) and not callable(
+    is_double = not isinstance(tools, ToolRegistry) or isinstance(tools, Mock)
+    if is_double and not callable(
         getattr(type(tools), "dispatch_admission", None)
     ):
         setattr(tools, "dispatch_admission", lambda _name: nullcontext(None))
+    if is_double and not callable(getattr(type(tools), "capture_request_tools", None)):
+        setattr(tools, "capture_request_tools", lambda: _CapturedTestTools(tools))
     return tools
 
 

@@ -21,6 +21,7 @@ from nanobot.webui.attachment_ingress import AttachmentIngressResult
 from nanobot.webui.ingress_policy import AttachmentIngressLimits
 from nanobot.webui.media_api import (
     serve_signed_media,
+    sign_existing_media_path,
     sign_or_stage_media_path,
     signed_media_attachments,
 )
@@ -130,11 +131,12 @@ class WebUIMediaGateway:
         *,
         workspace_path: Path | None = None,
         allow_folder_grants: bool = False,
+        publication: bool = True,
     ) -> str:
         return rewrite_local_markdown_images(
             text,
             workspace_path=workspace_path or self.workspace_path,
-            sign_path=lambda path: self.sign_or_stage_media_path(
+            sign_path=lambda path: (self.sign_or_stage_media_path if publication else self.sign_media_read)(
                 path,
                 allow_folder_grants=allow_folder_grants,
             ),
@@ -145,6 +147,18 @@ class WebUIMediaGateway:
             ),
         )
 
+    def sign_media_read(
+        self, path: Path, *, allow_folder_grants: bool = False,
+    ) -> dict[str, str] | None:
+        """Sign retained managed bytes purely; newly staged bytes keep custody."""
+        try:
+            managed = path.resolve(strict=True).is_relative_to(self._media_dir(None).resolve(strict=True))
+        except OSError:
+            return None
+        if managed:
+            return sign_existing_media_path(path, secret=self.secret, media_dir=self._media_dir)
+        return self.sign_or_stage_media_path(path, allow_folder_grants=allow_folder_grants)
+
     def augment_transcript_media(
         self,
         paths: list[str],
@@ -153,7 +167,7 @@ class WebUIMediaGateway:
     ) -> list[dict[str, Any]]:
         return signed_media_attachments(
             paths,
-            sign_path=lambda path: self.sign_or_stage_media_path(
+            sign_path=lambda path: self.sign_media_read(
                 path,
                 allow_folder_grants=allow_folder_grants,
             ),

@@ -96,7 +96,7 @@ class SourceTurnWriter:
     def _append(self, payload: dict[str, Any], *, execution_ids: list[str] | None = None,
                 execution_id: str | None = None, source_origin: dict[str, Any] | None = None,
                  artifact_read: dict[str, Any] | None = None,
-                 filesystem_effects: tuple[FilesystemEffectFact, ...] = ()) -> dict[str, Any]:
+                 filesystem_effects: tuple[FilesystemEffectFact, ...] | None = None) -> dict[str, Any]:
         if self._writes.failed:
             raise SourceValidationError('Source turn recording failed')
         try:
@@ -118,7 +118,7 @@ class SourceTurnWriter:
                 event['_execution_ids'] = execution_ids
             if execution_id is not None:
                 event['_execution_id'] = execution_id
-                if filesystem_effects:
+                if filesystem_effects is not None:
                     event['_filesystem_effects'] = [fact.to_dict(execution_id) for fact in filesystem_effects]
             self._writes.pending = event
             current = self.owner.read_snapshot()
@@ -290,7 +290,7 @@ class SourceTurnWriter:
                                          source_origin=origin, artifact_read=retrieval,
                                          filesystem_effects=value.filesystem_effects)
                 completed.add(index)
-                if any(fact.reconciliation_required for fact in value.filesystem_effects):
+                if any(fact.reconciliation_required for fact in value.filesystem_effects or ()):
                     self.owner.recovery_required = True
                     self._writes.failed = True
                 return committed['_event_id']

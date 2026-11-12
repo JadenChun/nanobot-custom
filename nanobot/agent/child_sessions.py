@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
+import re
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -30,15 +32,17 @@ from nanobot.session.runtime_authority import (
     read_runtime_session,
 )
 from nanobot.session.source import new_source_event
+from nanobot.session.source_store import SourceState
 
 DELEGATION_CHILD_METADATA_KEY = "delegation_child"
 CHILD_SESSION_PREFIX = "delegated:"
 DEFAULT_CHILD_PROFILE = "delegated"
 SUPPORTED_CHILD_PROFILES = frozenset({DEFAULT_CHILD_PROFILE})
-_LIVE_STATES = frozenset({"reserved", "active", "joining"})
+_LIVE_STATES = frozenset({"reserved", "active", "joining", "waiting_approval", "stopping"})
 _TERMINAL_STATES = frozenset({
     "completed", "failed", "uncertain", "stopped", "refused",
 })
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,13 +50,13 @@ class DelegationTreePolicy:
     """Finite tree limits for durable delegated children.
 
     A child may create one nested child. Two siblings are allowed under one
-    parent, and the live tree is bounded at four descendants. The depth and
-    capacity limits are finite and checked before a reservation is committed.
+    parent; each root and the gateway have separate finite child budgets.
     """
 
     max_depth: int = 2
     max_live_children_per_parent: int = 2
     max_live_descendants: int = 4
+    max_live_children_per_gateway: int = 4
 
     def __post_init__(self) -> None:
         if self.max_depth < 1:
@@ -61,6 +65,8 @@ class DelegationTreePolicy:
             raise ValueError("delegation child limit must be positive")
         if self.max_live_descendants < self.max_live_children_per_parent:
             raise ValueError("delegation tree limit must hold one parent's children")
+        if self.max_live_children_per_gateway < 1:
+            raise ValueError("gateway child limit must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +92,18 @@ class ChildAdmission:
     assignment_digest: str
     policy_facts: dict[str, Any]
     runtime_generation: int
+    source_state: SourceState | None = None
+    parent_source_state: SourceState | None = None
+    root_source_state: SourceState | None = None
+    run_sequence: int = 0
+    state_sequence: int = 0
+    current_run_id: str | None = None
+    last_run_id: str | None = None
+    holds_capacity: bool = True
+    pending_approval_id: str | None = None
+    pending_effect_id: str | None = None
+    pending_summary: str | None = None
+    blocked_run_id: str | None = None
     state: str = "reserved"
     outcome: str | None = None
     transcript: tuple[dict[str, str], ...] = ()
@@ -113,6 +131,18 @@ class ChildAdmission:
             "assignment_digest": self.assignment_digest,
             "policy_facts": dict(self.policy_facts),
             "runtime_generation": self.runtime_generation,
+            "source_state": _source_state_payload(self.source_state),
+            "parent_source_state": _source_state_payload(self.parent_source_state),
+            "root_source_state": _source_state_payload(self.root_source_state),
+            "run_sequence": self.run_sequence,
+            "state_sequence": self.state_sequence,
+            "current_run_id": self.current_run_id,
+            "last_run_id": self.last_run_id,
+            "holds_capacity": self.holds_capacity,
+            "pending_approval_id": self.pending_approval_id,
+            "pending_effect_id": self.pending_effect_id,
+            "pending_summary": self.pending_summary,
+            "blocked_run_id": self.blocked_run_id,
             "state": self.state,
             "outcome": self.outcome,
             "transcript": [dict(message) for message in self.transcript],
@@ -134,6 +164,181 @@ def assignment_digest(
         repr(sorted((policy_facts or {}).items())),
     ])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _source_state_payload(state: SourceState | None) -> dict[str, object] | None:
+    if state is None:
+        return None
+    return {
+        "store_identity": state.store_identity,
+        "session_key": state.session_key,
+        "incarnation": state.incarnation,
+        "revision": state.revision,
+        "generation": state.generation,
+        "checkpoint_id": state.checkpoint_id,
+        "checkpoint_fingerprint": state.checkpoint_fingerprint,
+    }
+
+
+def _parse_source_state(value: object) -> SourceState | None:
+    if not isinstance(value, Mapping):
+        return None
+    data = dict(cast(Mapping[str, object], value))
+    store_identity = data.get("store_identity")
+    session_key = data.get("session_key")
+    incarnation = data.get("incarnation")
+    revision = data.get("revision")
+    generation = data.get("generation")
+    checkpoint_id = data.get("checkpoint_id")
+    checkpoint_fingerprint = data.get("checkpoint_fingerprint")
+    if (
+        not isinstance(store_identity, str)
+        or not store_identity
+        or not isinstance(session_key, str)
+        or not session_key
+        or not isinstance(incarnation, str)
+        or not incarnation
+        or type(revision) is not int
+        or revision < 0
+        or type(generation) is not int
+        or generation < 0
+        or (checkpoint_id is not None and not isinstance(checkpoint_id, str))
+        or not isinstance(checkpoint_fingerprint, str)
+    ):
+        return None
+    return SourceState(
+        store_identity=store_identity,
+        session_key=session_key,
+        incarnation=incarnation,
+        revision=revision,
+        generation=generation,
+        checkpoint_id=checkpoint_id,
+        checkpoint_fingerprint=checkpoint_fingerprint,
+    )
+
+
+def _parse_child_admission(key: str, data: dict[str, Any]) -> ChildAdmission:
+    def text(name: str) -> str:
+        value = data.get(name)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"child field {name!r} is invalid")
+        return value
+
+    def optional_text(name: str) -> str | None:
+        value = data.get(name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"child field {name!r} is invalid")
+        return value
+
+    def counter(name: str, *, default: int = 0, minimum: int = 0) -> int:
+        value = data.get(name, default)
+        if type(value) is not int or value < minimum:
+            raise ValueError(f"child field {name!r} is invalid")
+        return value
+
+    child_id = text("child_id")
+    session_key = text("session_key")
+    parent_key = text("parent_key")
+    parent_incarnation = text("parent_incarnation")
+    root_key = text("root_key")
+    profile = text("profile")
+    if (
+        key != session_key
+        or session_key != f"{CHILD_SESSION_PREFIX}{child_id}"
+        or not re.fullmatch(r"[0-9a-f]{32}", child_id)
+        or parent_key == session_key
+        or root_key == session_key
+        or profile not in SUPPORTED_CHILD_PROFILES
+    ):
+        raise ValueError("child identity does not match its canonical source")
+
+    digest = text("assignment_digest")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("child assignment digest is invalid")
+    facts = data.get("policy_facts")
+    if not isinstance(facts, Mapping):
+        raise ValueError("child policy facts are invalid")
+
+    source_state = _parse_source_state(data.get("source_state"))
+    parent_source_state = _parse_source_state(data.get("parent_source_state"))
+    root_source_state = _parse_source_state(data.get("root_source_state"))
+    if (
+        source_state is None
+        or source_state.session_key != session_key
+        or parent_source_state is None
+        or parent_source_state.session_key != parent_key
+        or root_source_state is None
+        or root_source_state.session_key != root_key
+        or source_state.store_identity != parent_source_state.store_identity
+        or source_state.store_identity != root_source_state.store_identity
+    ):
+        raise ValueError("child source owner binding is invalid")
+
+    state_value = data.get("state", "uncertain")
+    if not isinstance(state_value, str) or state_value not in _LIVE_STATES | _TERMINAL_STATES:
+        raise ValueError("child state is invalid")
+    holds_value = data.get("holds_capacity")
+    if holds_value is not None and type(holds_value) is not bool:
+        raise ValueError("child capacity disposition is invalid")
+    holds_capacity = (
+        holds_value
+        if type(holds_value) is bool
+        else state_value in _LIVE_STATES or state_value == "uncertain"
+    )
+
+    raw_transcript = data.get("transcript", [])
+    if not isinstance(raw_transcript, list):
+        raise ValueError("child transcript is invalid")
+    transcript: list[dict[str, str]] = []
+    for item in raw_transcript:
+        if not isinstance(item, Mapping):
+            raise ValueError("child transcript row is invalid")
+        role = item.get("role")
+        content = item.get("content")
+        if not isinstance(role, str) or not isinstance(content, str):
+            raise ValueError("child transcript content is invalid")
+        transcript.append({"role": role, "content": content})
+
+    def timestamp(name: str) -> float:
+        value = data.get(name, time.time())
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"child timestamp {name!r} is invalid")
+        return float(value)
+
+    return ChildAdmission(
+        child_id=child_id,
+        session_key=session_key,
+        parent_key=parent_key,
+        parent_incarnation=parent_incarnation,
+        root_key=root_key,
+        profile=profile,
+        depth=counter("depth", minimum=1),
+        attempt_id=text("attempt_id"),
+        assignment_digest=digest,
+        policy_facts=dict(cast(Mapping[str, Any], facts)),
+        runtime_generation=counter("runtime_generation"),
+        source_state=source_state,
+        parent_source_state=parent_source_state,
+        root_source_state=root_source_state,
+        run_sequence=counter("run_sequence"),
+        state_sequence=counter("state_sequence"),
+        current_run_id=optional_text("current_run_id"),
+        last_run_id=optional_text("last_run_id"),
+        holds_capacity=holds_capacity,
+        pending_approval_id=optional_text("pending_approval_id"),
+        pending_effect_id=optional_text("pending_effect_id"),
+        pending_summary=optional_text("pending_summary"),
+        blocked_run_id=optional_text("blocked_run_id"),
+        state=state_value,
+        outcome=optional_text("outcome"),
+        transcript=tuple(transcript),
+        created_at=timestamp("created_at"),
+        updated_at=timestamp("updated_at"),
+    )
 
 
 class ChildLaunchFence:
@@ -177,6 +382,7 @@ class DelegationTree:
         self._launching: set[str] = set()
         self._launch_cancelled: set[str] = set()
         self._stopping_sessions: set[str] = set()
+        self._recovery_error: str | None = None
         self._restore()
 
     def _restore(self) -> None:
@@ -185,63 +391,51 @@ class DelegationTree:
             sessions = self.sessions.list_sessions()
         except Exception:
             logger.exception("Delegated child recovery scan failed")
+            self._recovery_error = "session index scan failed"
             return
         for info in sessions:
+            if not isinstance(info, Mapping):
+                self._recovery_error = "session index contains a malformed row"
+                logger.warning("Delegated child recovery found a malformed session row")
+                continue
             key = info.get("key")
-            if not isinstance(key, str) or not key.startswith(CHILD_SESSION_PREFIX):
+            if not isinstance(key, str):
+                self._recovery_error = "session index contains a malformed key"
+                logger.warning("Delegated child recovery found a session without a valid key")
+                continue
+            if not key.startswith(CHILD_SESSION_PREFIX):
                 continue
             try:
                 raw = self.sessions.read_session_metadata(key)
-                metadata = cast(
-                    dict[str, Any] | None,
-                    raw.get("metadata") if raw is not None else None,
-                )
-                if metadata is None:
-                    continue
+                if not isinstance(raw, Mapping):
+                    raise ValueError("child source metadata is missing")
+                metadata = raw.get("metadata")
+                if not isinstance(metadata, Mapping):
+                    raise ValueError("child source metadata is malformed")
                 payload = metadata.get(DELEGATION_CHILD_METADATA_KEY)
                 if not isinstance(payload, Mapping):
-                    continue
+                    raise ValueError("delegated child record is missing")
                 data = dict(cast(Mapping[str, Any], payload))
-                admission = ChildAdmission(
-                    child_id=cast(str, data["child_id"]),
-                    session_key=cast(str, data["session_key"]),
-                    parent_key=cast(str, data["parent_key"]),
-                    parent_incarnation=cast(str, data["parent_incarnation"]),
-                    root_key=cast(str, data["root_key"]),
-                    profile=cast(str, data["profile"]),
-                    depth=cast(int, data["depth"]),
-                    attempt_id=cast(str, data["attempt_id"]),
-                    assignment_digest=cast(str, data["assignment_digest"]),
-                    policy_facts=dict(cast(Mapping[str, Any], data.get("policy_facts") or {})),
-                    runtime_generation=cast(int, data["runtime_generation"]),
-                    state=cast(str, data.get("state") or "uncertain"),
-                    outcome=cast(str | None, data.get("outcome")),
-                    transcript=tuple(
-                        {
-                            "role": str(
-                                cast(dict[str, Any], item).get("role") or ""
-                            ),
-                            "content": str(
-                                cast(dict[str, Any], item).get("content") or ""
-                            ),
-                        }
-                        for item in cast(list[Any], data.get("transcript") or [])
-                        if isinstance(item, dict)
-                    ),
-                    created_at=cast(float, data.get("created_at") or time.time()),
-                    updated_at=cast(float, data.get("updated_at") or time.time()),
-                )
-            except (KeyError, TypeError, ValueError):
-                logger.warning("Ignoring malformed delegated child record {}", key)
+                admission = _parse_child_admission(key, data)
+            except Exception:
+                logger.warning("Ignoring admission for malformed delegated child {}", key)
+                self._recovery_error = f"malformed child record: {key}"
                 continue
             if admission.live:
                 admission = replace(
                     admission,
                     state="uncertain",
                     outcome="restart_unresolved",
+                    holds_capacity=True,
+                    pending_approval_id=None,
+                    pending_effect_id=None,
+                    pending_summary=None,
+                    blocked_run_id=None,
+                    state_sequence=admission.state_sequence + 1,
                     updated_at=time.time(),
                 )
-                self._persist(admission)
+                if not self._persist(admission):
+                    self._recovery_error = f"child uncertainty could not be persisted: {key}"
             self._children[admission.child_id] = admission
             self._attempts[
                 (
@@ -252,8 +446,32 @@ class DelegationTree:
                 )
             ] = admission.child_id
 
+    @property
+    def recovery_error(self) -> str | None:
+        """Whether unresolved durable child state currently fences admission."""
+        return self._recovery_error
+
+    async def reconcile_recovery(self) -> bool:
+        """Repeat a failed startup scan after the owning store was repaired."""
+        async with self._lock:
+            if self._recovery_error is None:
+                return True
+            if self._tasks or self._launching:
+                return False
+            self._children.clear()
+            self._attempts.clear()
+            self._recovery_error = None
+            self._restore()
+            return self._recovery_error is None
+
     def child(self, child_id: str) -> ChildAdmission | None:
         return self._children.get(child_id)
+
+    def child_for_session(self, session_key: str) -> ChildAdmission | None:
+        return next(
+            (child for child in self._children.values() if child.session_key == session_key),
+            None,
+        )
 
     def children_of(
         self,
@@ -269,6 +487,26 @@ class DelegationTree:
                 or child.parent_incarnation == parent_incarnation
             )
         )
+
+    def is_stopping(self, child_id: str) -> bool:
+        """Return whether Stop fenced this child or any owning ancestor."""
+        child = self._children.get(child_id)
+        if child is None:
+            return True
+        if child.session_key in self._stopping_sessions:
+            return True
+        parent_key = child.parent_key
+        while parent_key:
+            if parent_key in self._stopping_sessions:
+                return True
+            parent = next(
+                (item for item in self._children.values() if item.session_key == parent_key),
+                None,
+            )
+            if parent is None:
+                break
+            parent_key = parent.parent_key
+        return False
 
     def live_descendants(
         self,
@@ -322,6 +560,11 @@ class DelegationTree:
             f"{attempt_id}:{digest}",
         )
         async with self._lock:
+            if self._recovery_error is not None:
+                return ChildRefusal(
+                    "reconciliation_required",
+                    "Delegated child recovery must be reconciled before new work",
+                )
             if parent_key in self._stopping_sessions:
                 return ChildRefusal(
                     "session_stopping",
@@ -342,23 +585,48 @@ class DelegationTree:
             root_key = str(
                 parent.metadata.get("delegation_root_key") or parent_key
             )
+            parent_backend = self.sessions.source_backend(parent_key)
+            root_backend = self.sessions.source_backend(root_key)
+            if parent_backend is None or root_backend is None or parent_backend is not root_backend:
+                return ChildRefusal(
+                    "session_unavailable",
+                    "Durable delegation requires the parent's and root's canonical source owner",
+                )
+            try:
+                parent_source_state = parent_backend.source.load_source_snapshot(parent_key).state
+                root_source_state = root_backend.source.load_source_snapshot(root_key).state
+            except Exception:
+                logger.exception("Delegated parent source admission failed for {}", parent_key)
+                return ChildRefusal(
+                    "session_unavailable",
+                    "The parent or root canonical source could not be read",
+                )
             parent_children = [
                 child for child in self._children.values()
-                if child.parent_key == parent_key and child.live
+                if child.parent_key == parent_key and child.holds_capacity
             ]
             if len(parent_children) >= self.policy.max_live_children_per_parent:
                 return ChildRefusal(
                     "child_limit",
                     "This parent already holds its live child limit",
                 )
-            live_tree = [
+            root_descendants = [
                 child for child in self._children.values()
-                if child.root_key == root_key and child.live
+                if child.root_key == root_key and child.holds_capacity
             ]
-            if len(live_tree) >= self.policy.max_live_descendants:
+            if len(root_descendants) >= self.policy.max_live_descendants:
                 return ChildRefusal(
-                    "tree_limit",
-                    "The delegation tree already holds its live child limit",
+                    "root_tree_limit",
+                    "This root chat already holds its live descendant limit",
+                )
+            gateway_children = [
+                child for child in self._children.values()
+                if child.holds_capacity
+            ]
+            if len(gateway_children) >= self.policy.max_live_children_per_gateway:
+                return ChildRefusal(
+                    "gateway_child_limit",
+                    "The gateway already holds its live child limit",
                 )
             child_id = uuid.uuid4().hex
             child_key = f"{CHILD_SESSION_PREFIX}{child_id}"
@@ -374,7 +642,48 @@ class DelegationTree:
                 assignment_digest=digest,
                 policy_facts=facts,
                 runtime_generation=runtime_generation,
+                parent_source_state=parent_source_state,
+                root_source_state=root_source_state,
             )
+            try:
+                if self.sessions.has_managed_authority:
+                    resolved = self.sessions.admit_persistent_write(child_key)
+                    backend = self.sessions.source_backend(child_key)
+                    if resolved.state != "active" or resolved.mode != "canonical" or backend is None:
+                        return ChildRefusal(
+                            "session_unavailable",
+                            "The child session could not be admitted as canonical history",
+                        )
+                else:
+                    # Offline source-backed sessions have no mode resolver, but
+                    # still have one authoritative Jsonl source store. Admit the
+                    # new key through that exact store before recording child
+                    # metadata; custom stores return no parent source above.
+                    legacy = self.sessions.get_or_create(child_key)
+                    self.sessions.save(legacy)
+                    parent_backend.source.upgrade_source_session(
+                        child_key,
+                        expected_revision=legacy.revision,
+                        expected_generation=legacy.generation,
+                        expected_incarnation=legacy.incarnation,
+                    )
+                    self.sessions.invalidate(child_key)
+                    backend = self.sessions.source_backend(child_key)
+                if backend is None or backend is not parent_backend:
+                    return ChildRefusal(
+                        "session_unavailable",
+                        "The child session could not be admitted as canonical history",
+                    )
+                admission = replace(
+                    admission,
+                    source_state=backend.source.load_source_snapshot(child_key).state,
+                )
+            except Exception:
+                logger.exception("Delegated child {} source admission failed", child_id)
+                return ChildRefusal(
+                    "session_unavailable",
+                    "The child session could not be admitted as canonical history",
+                )
             if not self._persist(admission, parent=parent):
                 return ChildRefusal(
                     "session_unavailable",
@@ -390,6 +699,142 @@ class DelegationTree:
     async def begin_join(self, child_id: str) -> ChildAdmission | None:
         return await self._transition(child_id, "joining")
 
+    async def register_run(self, child_id: str, run_id: str) -> ChildAdmission | None:
+        """Persist the next safe run identity before a child turn is launched."""
+        if not _SAFE_RUN_ID.fullmatch(run_id):
+            raise ValueError("delegated child run id is not filename safe")
+        async with self._lock:
+            current = self._children.get(child_id)
+            if current is None or current.terminal or current.source_state is None:
+                return None
+            updated = replace(
+                current,
+                run_sequence=current.run_sequence + 1,
+                state_sequence=current.state_sequence + 1,
+                current_run_id=run_id,
+                last_run_id=run_id,
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                return None
+            self._children[child_id] = updated
+            return updated
+
+    async def wait_for_approval(
+        self,
+        child_id: str,
+        *,
+        approval_id: str,
+        effect_id: str,
+        summary: str,
+        blocked_run_id: str,
+    ) -> ChildAdmission | None:
+        """Persist an actionable pending approval while retaining capacity."""
+        async with self._lock:
+            current = self._children.get(child_id)
+            if (
+                current is None
+                or current.state not in {"active", "joining"}
+                or not current.holds_capacity
+                or current.current_run_id != blocked_run_id
+            ):
+                return current
+            updated = replace(
+                current,
+                state="waiting_approval",
+                state_sequence=current.state_sequence + 1,
+                holds_capacity=True,
+                pending_approval_id=approval_id,
+                pending_effect_id=effect_id,
+                pending_summary=summary[:4000],
+                blocked_run_id=blocked_run_id,
+                outcome="approval_required",
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                return None
+            self._children[child_id] = updated
+            return updated
+
+    async def begin_approval_resume(
+        self,
+        child_id: str,
+        *,
+        approval_id: str,
+        blocked_run_id: str,
+        run_id: str,
+        task: asyncio.Task[Any] | None = None,
+    ) -> ChildAdmission | None:
+        """Claim an authorized decision as one new serialized child run."""
+        if not _SAFE_RUN_ID.fullmatch(run_id):
+            raise ValueError("delegated child run id is not filename safe")
+        async with self._lock:
+            current = self._children.get(child_id)
+            if (
+                current is None
+                or current.state != "waiting_approval"
+                or not current.holds_capacity
+                or current.pending_approval_id != approval_id
+                or current.blocked_run_id != blocked_run_id
+                or current.current_run_id != blocked_run_id
+                or self.is_stopping(child_id)
+            ):
+                return None
+            updated = replace(
+                current,
+                state="joining",
+                state_sequence=current.state_sequence + 1,
+                run_sequence=current.run_sequence + 1,
+                current_run_id=run_id,
+                last_run_id=run_id,
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                return None
+            self._children[child_id] = updated
+            if task is not None:
+                self._tasks[child_id] = task
+                task.add_done_callback(
+                    lambda done, child_id=child_id: self._forget_task(child_id, done)
+                )
+            return updated
+
+    async def activate_approval_resume(
+        self,
+        child_id: str,
+        *,
+        approval_id: str,
+        blocked_run_id: str,
+        run_id: str,
+    ) -> ChildAdmission | None:
+        """Publish the consumed approval transition before provider dispatch."""
+        async with self._lock:
+            current = self._children.get(child_id)
+            if (
+                current is None
+                or current.state != "joining"
+                or current.current_run_id != run_id
+                or current.pending_approval_id != approval_id
+                or current.blocked_run_id != blocked_run_id
+                or self.is_stopping(child_id)
+            ):
+                return None
+            updated = replace(
+                current,
+                state="active",
+                state_sequence=current.state_sequence + 1,
+                pending_approval_id=None,
+                pending_effect_id=None,
+                pending_summary=None,
+                blocked_run_id=None,
+                outcome=None,
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                return None
+            self._children[child_id] = updated
+            return updated
+
     async def complete(
         self,
         child_id: str,
@@ -400,7 +845,9 @@ class DelegationTree:
         if state not in {"completed", "failed", "uncertain", "stopped"}:
             raise ValueError("delegated child terminal state is invalid")
         updated = await self._transition(child_id, state, outcome=outcome)
-        self._tasks.pop(child_id, None)
+        task = self._tasks.get(child_id)
+        if task is not None and task.done():
+            self._tasks.pop(child_id, None)
         return updated
 
     async def release(self, child_id: str, *, reason: str = "not_started") -> ChildAdmission | None:
@@ -438,6 +885,9 @@ class DelegationTree:
     async def attach_task(self, child_id: str, task: asyncio.Task[Any]) -> None:
         async with self._lock:
             self._tasks[child_id] = task
+            task.add_done_callback(
+                lambda done: self._forget_task(child_id, done)
+            )
 
     def record_transcript(
         self,
@@ -456,8 +906,10 @@ class DelegationTree:
         if result_text:
             messages.append({"role": "assistant", "content": result_text[:8000]})
         updated = replace(child, transcript=tuple(messages), updated_at=time.time())
+        if not self._persist(updated):
+            return False
         self._children[child_id] = updated
-        return self._persist(updated)
+        return True
 
     def record_exchange(
         self,
@@ -581,26 +1033,27 @@ class DelegationTree:
             victims = self._subtree_locked(child_id)
             self._stopping_sessions.update(victim.session_key for victim in victims)
         stopped: list[ChildAdmission] = []
+        retain_fence = False
         try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + max(0.0, settle_timeout)
+            tasks = {
+                victim.child_id: self._tasks.get(victim.child_id)
+                for victim in victims
+            }
             for victim in victims:
                 if victim.child_id in self._launching:
                     self._launch_cancelled.add(victim.child_id)
-                task = self._tasks.get(victim.child_id)
-                settled = True
+                task = tasks[victim.child_id]
                 if task is not None and not task.done():
                     task.cancel()
-                if task is not None:
-                    joined = asyncio.gather(task, return_exceptions=True)
-                    try:
-                        await asyncio.wait_for(joined, timeout=settle_timeout)
-                    except asyncio.TimeoutError:
-                        settled = False
-                    except asyncio.CancelledError:
-                        current = asyncio.current_task()
-                        if current is not None and current.cancelling() > 0:
-                            raise
-                        # The target task itself completed by cancellation.
-                        settled = task.done()
+            for victim in victims:
+                task = tasks[victim.child_id]
+                settled = True
+                if task is not None and not task.done():
+                    remaining = max(0.0, deadline - loop.time())
+                    done, _pending = await asyncio.wait({task}, timeout=remaining)
+                    settled = task in done
                 updated = await self.complete(
                     victim.child_id,
                     outcome=("stopped_by_owner" if settled else "stop_unsettled"),
@@ -608,11 +1061,19 @@ class DelegationTree:
                 )
                 if updated is not None:
                     stopped.append(updated)
+                    expected_state = "stopped" if settled else "uncertain"
+                    if updated.state != expected_state or (
+                        not settled and updated.holds_capacity is not True
+                    ):
+                        retain_fence = True
+                else:
+                    retain_fence = True
         finally:
-            async with self._lock:
-                self._stopping_sessions.difference_update(
-                    victim.session_key for victim in victims
-                )
+            if not retain_fence:
+                async with self._lock:
+                    self._stopping_sessions.difference_update(
+                        victim.session_key for victim in victims
+                    )
         return tuple(stopped)
 
     def _subtree_locked(self, child_id: str) -> list[ChildAdmission]:
@@ -648,11 +1109,18 @@ class DelegationTree:
             updated = replace(
                 current,
                 state=state,
+                state_sequence=current.state_sequence + 1,
+                holds_capacity=state in _LIVE_STATES or state == "uncertain",
+                pending_approval_id=None,
+                pending_effect_id=None,
+                pending_summary=None,
+                blocked_run_id=None,
                 outcome=outcome if outcome is not None else current.outcome,
                 updated_at=time.time(),
             )
+            if not self._persist(updated):
+                return current
             self._children[child_id] = updated
-        self._persist(updated)
         return updated
 
     def _persist(self, admission: ChildAdmission, *, parent: Session | None = None) -> bool:
@@ -691,7 +1159,7 @@ class DelegationTree:
             return "completed"
         if admission.state in {"failed", "stopped", "refused"}:
             return "interrupted"
-        if admission.state == "uncertain":
+        if admission.state in {"uncertain", "waiting_approval"}:
             return "uncertain"
         return "none"
 

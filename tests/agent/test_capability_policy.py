@@ -187,11 +187,19 @@ async def test_approval_effect_binding_requires_new_decision_for_different_effec
     assert decision.metadata["effect_id"]
     assert decision.metadata["approval_id"]
 
-    approved = RiskyActionPolicy(
-        workspace=tmp_path,
-        approval_granted=True,
-        approved_effect_ids=frozenset(decision.metadata["effect_id"].split(",")),
+    from nanobot.agent.turn import ApprovalDecision, TurnContext
+    from nanobot.agent.turn_admission import ApprovalAdmission
+
+    admission = ApprovalAdmission()
+    pending = await admission.store(
+        session_key="cli:approval", channel="cli", chat_id="approval", summary="delete old",
+        effect_id=decision.metadata["effect_id"], run_id="blocked",
     )
+    context = TurnContext(run_id="resume", session_key="cli:approval")
+    snapshot = await admission.snapshot_decision("cli:approval", ApprovalDecision(
+        approval_id=pending.approval_id, decision="approve"))
+    assert await admission.consume(snapshot, context=context) == "affirmative"
+    approved = RiskyActionPolicy(workspace=tmp_path, effect_authority=context.policy.effect_authority)
     same = await approved.evaluate(messages=[], tool_calls=[first])
     assert same.action == "allow"
 

@@ -408,6 +408,21 @@ class SourceCompactionConfig(Base):
         return self
 
 
+class DelegationTreeConfig(Base):
+    """Finite delegated-child limits for one gateway runtime."""
+
+    max_depth: StrictInt = Field(default=2, ge=1, le=2)
+    max_live_children_per_parent: StrictInt = Field(default=2, ge=1, le=2)
+    max_live_descendants: StrictInt = Field(default=4, ge=2, le=4)
+    max_live_children_per_gateway: StrictInt = Field(default=4, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_child_limits(self) -> "DelegationTreeConfig":
+        if self.max_live_descendants < self.max_live_children_per_parent:
+            raise ValueError("root descendant limit must hold one parent's children")
+        return self
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -496,6 +511,7 @@ class AgentDefaults(Base):
     fallback_models: list[FallbackCandidate] = Field(default_factory=list)
     max_tool_iterations: int = 200
     max_concurrent_subagents: int = Field(default=4, ge=1)
+    delegation_tree: DelegationTreeConfig = Field(default_factory=DelegationTreeConfig)
     max_tool_result_chars: int = 16_000
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
     tool_hint_max_length: int = Field(

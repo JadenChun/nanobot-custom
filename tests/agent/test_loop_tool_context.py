@@ -144,11 +144,28 @@ async def test_loop_binds_request_context_for_tool_execution(
 
     metadata = {"slack": {"thread_ts": "111.222", "channel_type": "channel"}}
     runtime = loop.llm_runtime()
+    from nanobot.agent.policy import RiskyActionPolicy
+    from nanobot.agent.turn import ApprovalDecision
+
+    run_context = _run_context(loop)
+    run_context.run_id = "approved-context-run"
+    run_context.session_key = "slack:C123:111.222"
+    policy = RiskyActionPolicy(workspace=loop.workspace)
+    decision = await policy.evaluate(messages=[], tool_calls=[
+        ToolCallRequest(id="planned", name="cron", arguments={"action": "add"}),
+    ])
+    pending = await loop.approval_admission.store(
+        session_key=run_context.session_key, channel="slack", chat_id="C123", summary="schedule",
+        effect_id=decision.metadata["effect_id"], run_id="blocked-context-run",
+    )
+    snapshot = await loop.approval_admission.snapshot_decision(run_context.session_key, ApprovalDecision(
+        approval_id=pending.approval_id, decision="approve"))
+    assert await loop.approval_admission.consume(snapshot, context=run_context) == "affirmative"
     try:
         await loop._run_agent_loop(
             TranscriptInput(history=[], current_message=None),
             runtime=runtime,
-            run_context=_run_context(loop, approval_granted=True),
+            run_context=run_context,
             request_context=RequestContext(
                 channel="slack",
                 chat_id="C123",
@@ -158,6 +175,7 @@ async def test_loop_binds_request_context_for_tool_execution(
             ),
         )
     finally:
+        loop.approval_admission.retire(run_context)
         loop.tools.replace(original_cron)
 
     assert cron.contexts[-1] == {

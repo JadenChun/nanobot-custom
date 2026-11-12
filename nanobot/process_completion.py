@@ -13,13 +13,15 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Protocol
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from nanobot.agent.automation_turns import AutomationTurnError
 from nanobot.agent.tools.context import RequestContext
 from nanobot.agent.tools.exec_session import ExecCompletion
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.security.workspace_access import WorkspaceAccessMode, build_workspace_scope
 from nanobot.session.manager import SessionManager
+from nanobot.session.source_store import SourceOriginMismatchError, SourceState
 from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
 
 
@@ -48,6 +50,21 @@ class ProcessRecord(BaseModel):
     exit_code: int | None = None
     timed_out: bool = False
     reason: str | None = None
+    source_state: SourceState | None = None
+    _stored_json: str | None = PrivateAttr(default=None)
+
+    @classmethod
+    def from_stored_json(cls, raw: str) -> ProcessRecord:
+        record = cls.model_validate_json(raw)
+        record._stored_json = raw
+        return record
+
+    @property
+    def original_json(self) -> str:
+        """Original journal bytes, excluded from persisted/public record fields."""
+        if self._stored_json is None:
+            raise ValueError("process transition requires its original stored bytes")
+        return self._stored_json
 
 
 class _PersistenceLane:
@@ -153,7 +170,11 @@ class ProcessCompletionRuntime:
 
     def records(self) -> list[ProcessRecord]:
         rows = self._read(lambda db: db.execute("SELECT data FROM processes").fetchall())
-        return [ProcessRecord.model_validate_json(row[0]) for row in rows]
+        return [self._parse_record(row[0]) for row in rows]
+
+    @staticmethod
+    def _parse_record(raw: str) -> ProcessRecord:
+        return ProcessRecord.from_stored_json(raw)
 
     def get(self, identity: str) -> ProcessRecord:
         row = self._read(
@@ -163,12 +184,13 @@ class ProcessCompletionRuntime:
         )
         if row is None:
             raise ValueError("unknown background process")
-        record = ProcessRecord.model_validate_json(row[0])
+        record = self._parse_record(row[0])
         if record.id != identity:
             raise ValueError("process journal identity mismatch")
         return record
 
     def _save(self, record: ProcessRecord, *, expected: str | None) -> None:
+        raw = record.model_dump_json()
         def operation(db: sqlite3.Connection) -> None:
             db.execute("BEGIN IMMEDIATE")
             if expected is None:
@@ -178,12 +200,12 @@ class ProcessCompletionRuntime:
                     )
                 db.execute(
                     "INSERT INTO processes(id,data) VALUES (?,?)",
-                    (record.id, record.model_dump_json()),
+                    (record.id, raw),
                 )
             else:
                 result = db.execute(
                     "UPDATE processes SET data=? WHERE id=? AND data=?",
-                    (record.model_dump_json(), record.id, expected),
+                    (raw, record.id, expected),
                 )
                 if result.rowcount != 1:
                     raise ValueError("process continuation state changed")
@@ -192,13 +214,15 @@ class ProcessCompletionRuntime:
 
     def _transition(self, record: ProcessRecord, state: Literal["waiting", "ready", "dispatching", "done", "cancelled", "unknown"], **updates: object) -> None:
         replacement = ProcessRecord.model_validate({**record.model_dump(), **updates, "state": state})
-        self._save(replacement, expected=record.model_dump_json())
+        self._save(replacement, expected=record.original_json)
 
     def started(self, session_id: str, command: str, cwd: str, origin: RequestContext) -> None:
         if self._closed or not self._started or not origin.session_key or origin.workspace_scope is None:
             raise ValueError("background completion requires a running gateway and a captured workspace scope")
         if not origin.persistent_session:
             raise ValueError("durable background continuation is unavailable for temporary conversations")
+        if not isinstance(origin.source_state, SourceState) or origin.source_state.session_key != origin.session_key:
+            raise ValueError("background completion requires an admitted canonical source")
         scope = origin.workspace_scope
         record = ProcessRecord(
             id=session_id, started_at_ms=int(time.time() * 1000), session_key=origin.session_key,
@@ -207,6 +231,7 @@ class ProcessCompletionRuntime:
             instruction=origin.original_user_text or "", instruction_ref=origin.turn_id,
             reply_metadata={name: origin.metadata[name] for name in ("message_id", "message_thread_id", "thread_id")
                             if name in origin.metadata},
+            source_state=origin.source_state,
         )
         self._save(record, expected=None)
 
@@ -228,12 +253,18 @@ class ProcessCompletionRuntime:
         if record.state == "waiting":
             self._transition(record, "cancelled", reason=reason)
 
-    def result(self, session_id: str, owner_session_key: str | None) -> ExecCompletion | None:
+    def result(self, session_id: str, owner_session_key: str | None, *,
+               source_state: SourceState | None = None) -> ExecCompletion | None:
         try:
             record = self.get(session_id)
         except ValueError:
             return None
-        if record.session_key != owner_session_key or record.state == "waiting":
+        if (record.session_key != owner_session_key or record.state == "waiting"
+                or record.source_state is None or source_state is None
+                or not record.source_state.same_origin(source_state)):
+            return None
+        current = self.assistant.sessions.read_existing_canonical_source(record.session_key)
+        if current is None or not current[1].state.same_origin(source_state):
             return None
         state = "unknown" if record.state == "unknown" else "cancelled" if record.state == "cancelled" else "completed"
         return ExecCompletion(record.output, record.exit_code, record.timed_out, record.state == "cancelled", state)
@@ -279,12 +310,14 @@ class ProcessCompletionRuntime:
         record = await asyncio.to_thread(self.get, identity)
         if record.state != "ready":
             return
-        if self.assistant.sessions.read_session_snapshot(record.session_key) is None:
+        current = self.assistant.sessions.read_existing_canonical_source(record.session_key)
+        if (record.source_state is None or current is None
+                or not current[1].state.same_origin(record.source_state)):
             await asyncio.to_thread(
                 self._transition,
                 record,
                 "cancelled",
-                reason="owner_session_missing",
+                reason="source_changed" if record.source_state is not None else "source_origin_missing",
             )
             return
         await asyncio.to_thread(self._transition, record, "dispatching")
@@ -293,11 +326,12 @@ class ProcessCompletionRuntime:
                 "trigger_id": f"process:{identity}", "trigger_name": "Background process completion",
                 "delivery_id": f"process:{identity}", "persist_content": f"Background process {identity} completed.",
             }}
-            details = record.model_dump(exclude={"state", "session_key", "channel", "chat_id", "reply_metadata"})
+            details = record.model_dump(exclude={"state", "session_key", "channel", "chat_id", "reply_metadata", "source_state"})
             message = InboundMessage(
                 channel=record.channel, chat_id=record.chat_id, sender_id="system:process",
                 session_key_override=record.session_key, metadata=metadata, input_role="system",
                 workspace_scope=build_workspace_scope(record.project_path, record.access_mode),
+                source_state=record.source_state,
                 content=("A background process from this conversation finished. Continue its original task "
                          "using the retained project and process directory. The conversation may now be on "
                          "another project. Inspect this result; do not rerun the completed command.\n" + json.dumps(details)),
@@ -308,15 +342,20 @@ class ProcessCompletionRuntime:
                 await asyncio.to_thread(self.get, identity),
                 "done",
             )
-        except BaseException:
+        except BaseException as exc:
             current = await asyncio.to_thread(self.get, identity)
             if current.state == "dispatching":
+                stale_origin = (isinstance(exc, SourceOriginMismatchError)
+                                or isinstance(exc, AutomationTurnError)
+                                and isinstance(exc.__cause__, SourceOriginMismatchError))
                 await asyncio.to_thread(
                     self._transition,
                     current,
-                    "unknown",
-                    reason="continuation_interrupted",
+                    "cancelled" if stale_origin else "unknown",
+                    reason="source_changed" if stale_origin else "continuation_interrupted",
                 )
+                if stale_origin:
+                    return
             raise
 
     async def aclose(self) -> None:

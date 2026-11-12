@@ -21,6 +21,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve, unix_serv
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request as WsRequest
 
+from nanobot.attachments._inventory import retained_markdown_media
 from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import (
     OUTBOUND_META_AGENT_UI,
@@ -1284,7 +1285,10 @@ class WebSocketChannel(BaseChannel):
             metadata=msg.metadata,
             phase=phase,
             include_source=True,
-            transcript_overrides={"text": text},
+            transcript_overrides={
+                "text": text,
+                "media_publications": retained_markdown_media(wire_text),
+            },
         )
         raw = json.dumps(payload, ensure_ascii=False)
         if not conns:

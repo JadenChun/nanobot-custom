@@ -182,6 +182,7 @@ def test_cancellation_insertion_holds_privacy_mutex_until_complete(tmp_path):
 
 @pytest.fixture(autouse=True)
 def isolated_webui(tmp_path, monkeypatch):
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", tmp_path / "config.json")
     monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
     monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
 

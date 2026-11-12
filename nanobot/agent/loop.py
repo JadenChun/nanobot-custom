@@ -36,6 +36,7 @@ from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
 from nanobot.agent.cron_turns import CronTurnCoordinator
+from nanobot.agent.child_backend import ChildApprovalResume, ChildTurnRequest
 from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
 from nanobot.agent.direct_execution import DirectExecutionOptions
 from nanobot.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
@@ -44,7 +45,7 @@ from nanobot.agent.idle_lifecycle import IdleLifecycleIntegration
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.memory_recovery_startup_admission import require_startup_receipt_admission
 from nanobot.agent.model_runtime import ModelRuntimeResolver
-from nanobot.agent.policy import RiskyActionPolicy
+from nanobot.agent.policy import CompositeToolPolicy, RiskyActionPolicy, ToolPolicy
 from nanobot.agent.run_store import RunStore
 from nanobot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
@@ -172,7 +173,9 @@ from nanobot.session.recovery import (
 )
 from nanobot.session.source import validate_execution_links
 from nanobot.session.source_projection import SourceNode, source_nodes
+from nanobot.session.source_projection import RuntimeNode
 from nanobot.session.source_request import SourceTranscript
+from nanobot.session.source_store import SourceOriginMismatchError, SourceState
 from nanobot.session.summary import (
     SessionSummary,
     SessionSummaryCheckpoint,
@@ -211,7 +214,10 @@ if TYPE_CHECKING:
         ToolsConfig,
     )
     from nanobot.cron.service import CronService
-    from nanobot.security.desktop_permissions import WorkspaceFullAccessReference
+    from nanobot.security.desktop_permissions import (
+        WorkspaceFullAccessReference,
+        WorkspaceTaskAccessReference,
+    )
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.manager import JsonlSessionStore
     from nanobot.session.source_store import SourceSnapshot
@@ -445,8 +451,23 @@ class _TurnExecutionOptions:
     retry_activity_notification: bool = False
     admitted_activity_marker: _AdmittedActivityMessage | None = None
     silent_output: bool = False
+    suppress_channel_output: bool = False
     persist_approval_request: bool = True
+    approval_target: DeliveryTarget | None = None
+    internal_system_instructions: str | None = None
+    internal_tool_policy: ToolPolicy | None = None
+    internal_max_iterations: int | None = None
+    approval_authority_check: Callable[[RunTurnContext], bool] | None = field(
+        default=None, repr=False,
+    )
+    on_approval_consumed: Callable[[RunTurnContext, str], Awaitable[bool]] | None = field(
+        default=None, repr=False,
+    )
+    preserve_workspace_task_reference_on_approval: bool = False
     workspace_access_continuation: WorkspaceAccessContinuationReference | None = field(
+        default=None, repr=False,
+    )
+    workspace_task_reference: WorkspaceTaskAccessReference | None = field(
         default=None, repr=False,
     )
     workspace_full_reference: WorkspaceFullAccessReference | None = field(
@@ -700,6 +721,7 @@ class AgentLoop:
         )
         self.sessions = session_manager or SessionManager(workspace, sessions_root=effective_root)
         fork_dependencies.foreground_manager.bind_session_owner(self.sessions)
+        fork_dependencies.foreground_manager.bind_child_turn_executor(self)
         self.approval_admission = ApprovalAdmission()
         self.run_store = RunStore(workspace, self.sessions)
         # One file-read/write tracker per logical session. The tool registry is
@@ -1138,6 +1160,72 @@ class AgentLoop:
             runtime_generation=runtime_generation,
         )
 
+    async def execute_child_turn(
+        self,
+        request: ChildTurnRequest,
+        *,
+        approval_resume: ChildApprovalResume | None = None,
+    ) -> TurnResult:
+        """Admit one trusted child through the normal canonical turn pipeline."""
+        admission = request.admission
+        source_state = admission.source_state
+        if (
+            source_state is None
+            or source_state.session_key != admission.session_key
+            or request.run_id != admission.current_run_id
+        ):
+            raise RuntimeError("canonical child source or run admission is unavailable")
+        turn_request = TurnRequest(
+            content=request.assignment,
+            session_key=admission.session_key,
+            source=TurnSource.SYSTEM_COMPAT,
+            route=DeliveryTarget(channel="system", chat_id=admission.session_key),
+            sender_id="subagent",
+            hooks=(request.hook,),
+            run_id=request.run_id,
+            expected_source_state=source_state,
+            approval_decision=(
+                approval_resume.decision
+                if approval_resume is not None
+                else request.approval_decision
+            ),
+        )
+        approval_authority_check: Callable[[RunTurnContext], bool] | None = None
+        on_approval_consumed: Callable[[RunTurnContext, str], Awaitable[bool]] | None = None
+        if approval_resume is not None:
+            manager = self._fork_dependencies.foreground_manager
+            approval_authority_check = partial(
+                manager.child_approval_authority_is_current,
+                approval_resume,
+            )
+
+            async def activate_resume(context: RunTurnContext, action: str) -> bool:
+                return await manager.activate_child_approval_resume(
+                    approval_resume,
+                    context,
+                    action,
+                )
+
+            on_approval_consumed = activate_resume
+        return await self.execute_turn(
+            turn_request,
+            _tools=request.tools,
+            _options=_TurnExecutionOptions(
+                runtime=request.runtime,
+                suppress_channel_output=True,
+                approval_target=request.approval_target,
+                workspace_task_reference=request.workspace_task_reference,
+                internal_system_instructions=request.instructions,
+                internal_tool_policy=request.policy,
+                internal_max_iterations=request.max_iterations,
+                approval_authority_check=approval_authority_check,
+                on_approval_consumed=on_approval_consumed,
+                preserve_workspace_task_reference_on_approval=(
+                    request.workspace_task_reference is not None
+                ),
+            ),
+        )
+
     async def _publish_delegated_child(self, child: Any) -> None:
         """Project one typed child reference into the parent chat activity."""
         request = current_request_context()
@@ -1164,9 +1252,15 @@ class AgentLoop:
             metadata=dict(request.metadata or {}),
         ))
 
-    def _resolve_policy_write_target(self, tool_name: str, raw_path: str) -> Path | None:
+    def _resolve_policy_write_target(
+        self,
+        tool_name: str,
+        raw_path: str,
+        *,
+        tools: ToolRegistry | None = None,
+    ) -> Path | None:
         """Resolve risk assessment through the same tool boundary as dispatch."""
-        tool = self.tools.get(tool_name)
+        tool = (tools or self.tools).get(tool_name)
         resolver = getattr(tool, "resolve_write_path", None)
         if not callable(resolver):
             return None
@@ -1367,6 +1461,9 @@ class AgentLoop:
             workspace=scope.project_path,
             workspace_scope=scope,
             persistent_session=ctx.session.policy.persist and not ctx.ephemeral,
+            source_state=(ctx.run_context.execution_owner.read_snapshot().state
+                          if ctx.run_context is not None and ctx.run_context.execution_owner is not None
+                          else None),
         )
 
     async def _resolve_runtime_context_for_turn(
@@ -2094,17 +2191,20 @@ class AgentLoop:
             pending_queue = None
         if fresh_history or source_writer is not None:
             provider_state = None
-        tool_policy = RiskyActionPolicy(
+        risky_policy = RiskyActionPolicy(
             workspace=run_context.policy.workspace,
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
-            approved_effect_ids=frozenset(
-                str(value)
-                for value in run_context.policy.metadata.get("approved_effect_ids", ())
-                if isinstance(value, str) and value
+            effect_authority=run_context.policy.effect_authority,
+            write_target_resolver=lambda name, path: self._resolve_policy_write_target(
+                name,
+                path,
+                tools=tools if tools is not None else self.tools,
             ),
-            write_target_resolver=self._resolve_policy_write_target,
         )
+        tool_policy: ToolPolicy = risky_policy
+        if run_context.internal_tool_policy is not None:
+            tool_policy = CompositeToolPolicy((run_context.internal_tool_policy, risky_policy))
         self._sync_subagent_runtime_limits()
 
         async def _checkpoint(payload: dict[str, Any]) -> None:
@@ -2387,6 +2487,18 @@ class AgentLoop:
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
                     include_memory=session.policy.persist if session is not None else True,
                     tool_names=frozenset(effective_tools.tool_names))
+                instructions = run_context.internal_system_instructions
+                if instructions:
+                    nodes = list(source_transcript.nodes)
+                    system = nodes[0] if nodes else None
+                    if not isinstance(system, RuntimeNode) or system.message.get("role") != "system":
+                        raise RuntimeError("canonical child context is missing its governing system prompt")
+                    system_message = deepcopy(system.message)
+                    system_message["content"] = (
+                        f"{system_message.get('content', '')}\n\n{instructions}"
+                    )
+                    nodes[0] = RuntimeNode(system.node_id, system_message)
+                    source_transcript = SourceTranscript(tuple(nodes))
             run_context.artifact_read_allowed = (
                 (
                     self._artifact_reader_factory is not None
@@ -2416,7 +2528,7 @@ class AgentLoop:
                 fail_on_tool_error=True,
                 allow_pre_dispatch_recovery=allow_pre_dispatch_recovery,
                 runtime=runtime,
-                max_iterations=self.max_iterations,
+                max_iterations=(run_context.internal_max_iterations or self.max_iterations),
                 max_tool_result_chars=self.max_tool_result_chars,
                 transcript_input=transcript_input,
                 transcript_builder=transcript_builder,
@@ -2991,9 +3103,18 @@ class AgentLoop:
         recovery = self._recovery_admission
         task = asyncio.current_task()
         registered = False
+        bus_scope_created = False
+
+        def admission_scope(key: str) -> AbstractAsyncContextManager[_AdmittedTurnIO]:
+            nonlocal bus_scope_created
+            bus_scope_created = True
+            return self._bus_turn_scope(msg, key, settlement=_compact_settlement)
+
         try:
+            if msg.source_state is not None:
+                self._read_expected_source(registration_key, msg.source_state)
             recovery_id = msg.metadata.get(RECOVERY_INBOUND_METADATA_KEY)
-            if recovery is not None and continuation is None:
+            if recovery is not None and continuation is None and msg.source_state is None:
                 if isinstance(recovery_id, str) and recovery_id and task is not None:
                     recovery.register_recovery_task(registration_key, task)
                     registered = True
@@ -3012,7 +3133,7 @@ class AgentLoop:
                 sender_id=msg.sender_id, media=tuple(msg.media),
                 attachments=msg.attachments,
                 approval_decision=approval_decision,
-                metadata=dict(msg.metadata))
+                metadata=dict(msg.metadata), expected_source_state=msg.source_state)
             bound_tools = cast(Any, getattr(self, "tools_config", None))
             bound_cidrs: list[str] = (
                 list(cast(list[str], bound_tools.ssrf_whitelist))
@@ -3021,11 +3142,7 @@ class AgentLoop:
             with bind_network_policy_for_cidrs(bound_cidrs):
                 await self.execute_turn(request, _options=_TurnExecutionOptions(
                     inbound=msg,
-                    admission_scope=partial(
-                        self._bus_turn_scope,
-                        msg,
-                        settlement=_compact_settlement,
-                    ),
+                    admission_scope=admission_scope,
                     raise_errors=True,
                     trusted_foreground_activity=self._trusted_foreground_inbound(msg),
                     activity_already_recorded=activity_marker is not None,
@@ -3039,6 +3156,16 @@ class AgentLoop:
                 ))
         except asyncio.CancelledError:
             raise
+        except SourceOriginMismatchError as exc:
+            # Only this typed rejection settles automation before the bus scope
+            # exists; admitted computation and delivery keep their sole notifier.
+            if not bus_scope_created:
+                for _, coordinator in self._automation_turn_coordinators:
+                    try:
+                        coordinator.complete(msg, error=exc)
+                    except Exception:
+                        logger.warning('Automation completion observer failed for {}', registration_key)
+            logger.exception('Canonical source origin was rejected for {}', registration_key)
         except WorkspaceAccessContinuationRejectedError:
             if continuation is not None:
                 owner = msg.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
@@ -3228,6 +3355,14 @@ class AgentLoop:
             raise WorkspaceAccessContinuationRejectedError()
         return existing
 
+    def _read_expected_source(
+        self, key: str, expected: SourceState,
+    ) -> tuple[JsonlSessionStore, SourceSnapshot]:
+        existing = self.sessions.read_existing_canonical_source(key)
+        if existing is None or not existing[1].state.same_origin(expected):
+            raise SourceOriginMismatchError()
+        return existing
+
     @asynccontextmanager
     async def _acquire_source_execution_owner(
         self,
@@ -3237,10 +3372,16 @@ class AgentLoop:
         run_id: str,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None,
         workspace_full_reference: WorkspaceFullAccessReference | None,
+        expected_source_state: SourceState | None = None,
     ) -> AsyncGenerator[ExecutionOwner]:
         """Classify only a provable stale continuation binding as a rejection."""
         from nanobot.session.manager import SessionWriteConflict
 
+        def validate_origin(snapshot: SourceSnapshot) -> None:
+            if expected_source_state is not None and not snapshot.state.same_origin(expected_source_state):
+                raise SourceOriginMismatchError()
+
+        owner_published = False
         try:
             async with acquire_execution(
                 backend,
@@ -3253,10 +3394,16 @@ class AgentLoop:
                     if workspace_full_reference is not None
                     else None
                 ),
+                validate_snapshot=validate_origin,
             ) as owner:
+                owner_published = True
                 yield owner
+        except FileNotFoundError:
+            if not owner_published and expected_source_state is not None:
+                raise SourceOriginMismatchError() from None
+            raise
         except SessionWriteConflict:
-            if workspace_access_continuation is not None:
+            if not owner_published and workspace_access_continuation is not None:
                 self._read_workspace_continuation_source(
                     key,
                     workspace_access_continuation,
@@ -3271,6 +3418,7 @@ class AgentLoop:
         require_existing_session: bool = False,
         ephemeral: bool = False,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
+        expected_source_state: SourceState | None = None,
     ) -> AsyncGenerator[Session | None]:
         """Wait outside admission while an earlier lifecycle operation can act.
 
@@ -3286,6 +3434,10 @@ class AgentLoop:
                            if not task.done()}
                 if not pending:
                     self._bus_cleanup_tasks.pop(key, None)
+                    if expected_source_state is not None:
+                        if ephemeral:
+                            raise SourceOriginMismatchError()
+                        self._read_expected_source(key, expected_source_state)
                     # Select the live policy only after lifecycle cleanup and
                     # under admission: queued temporary work cannot recreate
                     # a disposed session or acquire persistent source authority.
@@ -3300,6 +3452,10 @@ class AgentLoop:
                             key,
                             workspace_access_continuation,
                         )
+                        session = None
+                    elif expected_source_state is not None:
+                        # The origin precondition already proved an existing
+                        # canonical source without creating or caching a Session.
                         session = None
                     else:
                         session = (
@@ -3340,7 +3496,10 @@ class AgentLoop:
         admitted: Callable[[], None] | None = None,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
         workspace_full_reference: WorkspaceFullAccessReference | None = None,
+        expected_source_state: SourceState | None = None,
     ) -> AsyncGenerator[None]:
+        if expected_source_state is not None and not persistent:
+            raise SourceOriginMismatchError()
         if workspace_access_continuation is not None and (
             not persistent or workspace_access_continuation.session_key != key
         ):
@@ -3411,9 +3570,12 @@ class AgentLoop:
             persistent
             and self.sessions.has_managed_authority
             and workspace_access_continuation is None
+            and expected_source_state is None
         ):
             self.sessions.admit_persistent_write(key)
-        if workspace_access_continuation is not None:
+        if expected_source_state is not None:
+            backend, _ = self._read_expected_source(key, expected_source_state)
+        elif workspace_access_continuation is not None:
             backend, _ = self._read_workspace_continuation_source(
                 key,
                 workspace_access_continuation,
@@ -3433,6 +3595,7 @@ class AgentLoop:
             run_id=context.run_id,
             workspace_access_continuation=workspace_access_continuation,
             workspace_full_reference=workspace_full_reference,
+            expected_source_state=expected_source_state,
         ) as owner:
             # Recovery may only enter the explicit reset route. Never consume an
             # approval or request a model while uncertain effects remain.
@@ -3626,10 +3789,77 @@ class AgentLoop:
             snapshot = await self.approval_admission.snapshot_decision(
                 key, request.approval_decision,
             )
+            if (
+                snapshot.typed
+                and snapshot.action in {"affirmative", "negative"}
+                and snapshot.pending is not None
+                and snapshot.decision is not None
+                and options.on_approval_consumed is None
+            ):
+                manager = deps.foreground_manager
+                tree = manager._delegation_tree
+                child = (
+                    tree.child_for_session(snapshot.pending.session_key)
+                    if tree is not None
+                    else None
+                )
+                if child is not None:
+                    try:
+                        child_result = await manager.resume_child_approval_decision(
+                            child_id=child.child_id,
+                            approval_id=snapshot.pending.approval_id,
+                            blocked_run_id=snapshot.pending.run_id or "",
+                            decision=snapshot.decision,
+                            approval_target=target,
+                        )
+                    except Exception as exc:
+                        current = tree.child(child.child_id) if tree is not None else None
+                        child_result = TurnResult(
+                            run_id=current.current_run_id if current else "",
+                            status=RunStatus.ERROR,
+                            stop_reason="approval_resume_unsettled",
+                            error=str(exc),
+                            policy_metadata={
+                                "delegated_child": current.metadata() if current else {},
+                            },
+                        )
+                    if child_result is None:
+                        current = tree.child(child.child_id) if tree is not None else None
+                        child_result = TurnResult(
+                            run_id=current.current_run_id if current else "",
+                            status=RunStatus.CANCELLED,
+                            stop_reason="approval_stale",
+                            content="That child approval is no longer current.",
+                            policy_metadata={
+                                "delegated_child": current.metadata() if current else {},
+                            },
+                        )
+                    if child_result.outbound is None and target.chat_id is not None:
+                        response = child_result.content
+                        if not isinstance(response, str) or not response:
+                            current = tree.child(child.child_id) if tree is not None else None
+                            if current is not None and current.state == "waiting_approval":
+                                response = (
+                                    f"Child task {current.child_id} is waiting for another approval."
+                                )
+                            elif current is not None and current.state == "completed":
+                                response = f"Child task {current.child_id} completed."
+                            else:
+                                response = f"Child task {child.child_id} updated."
+                        child_result.outbound = OutboundMessage(
+                            channel=target.channel,
+                            chat_id=target.chat_id,
+                            content=response,
+                        )
+                    return child_result
             if options.silent_output and snapshot.pending is not None:
                 raise ValueError("silent cron turn cannot consume a pending approval")
             cancellation_key_unchanged = snapshot.effective_key == key
             key = snapshot.effective_key
+            expected_source_state = request.expected_source_state
+            if (snapshot.typed and snapshot.action in {'affirmative', 'negative'}
+                    and snapshot.pending is not None and snapshot.pending.source_state is not None):
+                expected_source_state = snapshot.pending.source_state
             run_id = request.run_id
             if not run_id or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', run_id):
                 run_id = uuid.uuid4().hex
@@ -3639,11 +3869,15 @@ class AgentLoop:
                 delegation_budget=deps.foreground_manager.new_budget(),
                 policy=RunPolicyContext(workspace=deps.resource_policy.workspace,
                     context_manager=deps.resource_policy.context_manager,
-                    approval_grant=grant, approval_granted=bool(grant.granted), source=request.source),
+                    approval_grant=grant, approval_granted=False, source=request.source),
                 delivery=DeliveryState(primary=target), lock_owner=f'main:{key}',
                 metadata=dict(request.metadata),
             )
+            context.internal_system_instructions = options.internal_system_instructions
+            context.internal_tool_policy = options.internal_tool_policy
+            context.internal_max_iterations = options.internal_max_iterations
             context.workspace_full_reference = options.workspace_full_reference
+            context.workspace_task_reference = options.workspace_task_reference
             context.trusted_foreground_activity = (
                 options.trusted_foreground_activity
                 and request.source in _FOREGROUND_IDLE_SOURCES
@@ -3673,6 +3907,7 @@ class AgentLoop:
                     ),
                     ephemeral=options.ephemeral,
                     workspace_access_continuation=options.workspace_access_continuation,
+                    expected_source_state=expected_source_state,
                 ) as admitted_session, self._source_execution(
                     key,
                     context,
@@ -3680,16 +3915,53 @@ class AgentLoop:
                     admitted=persist_admitted_run,
                     workspace_access_continuation=options.workspace_access_continuation,
                     workspace_full_reference=options.workspace_full_reference,
+                    expected_source_state=expected_source_state,
                 ):
                     if context.source_writer is not None:
                         record.metadata["source_stream_id"] = context.source_writer.stream_id
                     try:
                         scope = options.admission_scope(key) if options.admission_scope else nullcontext(_AdmittedTurnIO())
                         async with scope as io:
+                            def approval_source_is_current() -> bool:
+                                pending = snapshot.pending
+                                if pending is None:
+                                    return False
+                                if (
+                                    options.approval_authority_check is not None
+                                    and not options.approval_authority_check(context)
+                                ):
+                                    return False
+                                if pending.run_id is not None:
+                                    blocked = self.run_store.load(pending.run_id)
+                                    if (blocked is None or blocked.status is not RunStatus.APPROVAL_REQUIRED
+                                            or blocked.session_ref is None
+                                            or blocked.session_ref.session_key != key):
+                                        return False
+                                if context.execution_owner is not None:
+                                    state = context.execution_owner.read_snapshot().state
+                                    if pending.source_state is not None:
+                                        return state.same_origin(pending.source_state)
+                                    incarnation, generation = state.incarnation, state.generation
+                                else:
+                                    current = self.sessions.read_session_snapshot(key)
+                                    if current is None:
+                                        return pending.session_incarnation is None and pending.generation is None
+                                    incarnation, generation = current.incarnation, current.generation
+                                return (
+                                    (pending.session_incarnation is None or pending.session_incarnation == incarnation)
+                                    and (pending.generation is None or pending.generation == generation)
+                                )
+
                             action = (
-                                await self.approval_admission.consume(snapshot)
+                                await self.approval_admission.consume(
+                                    snapshot, context=context, source_is_current=approval_source_is_current,
+                                )
                                 if snapshot.typed else snapshot.action
                             )
+                            if options.on_approval_consumed is not None:
+                                activated = await options.on_approval_consumed(context, action)
+                                if not activated:
+                                    action = "stale"
                             activity_marker = options.admitted_activity_marker
                             if activity_marker is not None and context.execution_owner is not None:
                                 owner = context.execution_owner
@@ -3759,12 +4031,7 @@ class AgentLoop:
                                         raise activity.callback_error
                                 content = request.content
                                 if action == 'affirmative' and snapshot.pending is not None:
-                                    context.policy.approval_granted = True
-                                    context.policy.metadata["approved_effect_ids"] = tuple(
-                                        value
-                                        for value in (snapshot.pending.effect_id or "").split(",")
-                                        if value
-                                    )
+                                    record.resumed_run_id = snapshot.pending.run_id
                                     content = ('The user approved the previously blocked risky action. '
                                         f'Resume the task that required approval: {snapshot.pending.summary}.'
                                         '\n\nApproval decision: approve.')
@@ -3793,6 +4060,12 @@ class AgentLoop:
                                 copy_pending_followup_proof(envelope, msg)
                                 if options.silent_output:
                                     io.delivery = self.turn_delivery_factory.silent(msg, key)
+                                elif options.suppress_channel_output:
+                                    io.delivery = self.turn_delivery_factory.create(
+                                        msg,
+                                        key,
+                                        suppress_channel_output=True,
+                                    )
                                 effective_tools = _tools if _tools is not None else (
                                     self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
                                 io.message = msg
@@ -3813,31 +4086,46 @@ class AgentLoop:
                                     'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
                                     'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
                                 }.get(runner.stop_reason, RunStatus.ERROR)
+                                policy_metadata = dict(runner.policy_metadata) if runner else {}
+                                if (
+                                    context.forwarded_child_approval_id is not None
+                                    and context.forwarded_child_id is not None
+                                ):
+                                    policy_metadata["delegated_child_approval"] = {
+                                        "approval_id": context.forwarded_child_approval_id,
+                                        "child_id": context.forwarded_child_id,
+                                    }
                                 result = TurnResult(run_id=run_id, status=status,
                                     content=runner.final_content if runner else (stage.outbound.content if stage.outbound else None),
                                     stop_reason=runner.stop_reason if runner else 'command', outbound=stage.outbound,
                                     tools_used=list(runner.tools_used) if runner else [],
-                                    policy_metadata=dict(runner.policy_metadata) if runner else {},
+                                    policy_metadata=policy_metadata,
                                     error=runner.error if runner else None,
                                     usage={k: v for k, v in runner.usage.to_dict().items()
                                            if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
                                     sent_messages=tuple(context.delivery.sent_messages),
                                     llm_usage=runner.usage if runner else None)
-                                if status is RunStatus.APPROVAL_REQUIRED and options.persist_approval_request:
+                                if (
+                                    status is RunStatus.APPROVAL_REQUIRED
+                                    and options.persist_approval_request
+                                    and context.forwarded_child_approval_id is None
+                                ):
                                     owner = context.execution_owner
                                     state = owner.read_snapshot().state if owner is not None else None
+                                    pending_session = stage.session if state is None else None
                                     raw_turn_id = request.metadata.get(WEBUI_TURN_METADATA_KEY)
                                     await self.approval_admission.store(
                                         session_key=key,
-                                        channel=target.channel,
-                                        chat_id=target.chat_id or '',
+                                        channel=(options.approval_target or target).channel,
+                                        chat_id=(options.approval_target or target).chat_id or '',
                                         summary=str(result.policy_metadata.get('summary') or 'risky action'),
                                         approval_id=(
                                             str(result.policy_metadata.get('approval_id'))
                                             if result.policy_metadata.get('approval_id')
                                             else None
                                         ),
-                                        session_incarnation=(state.incarnation if state else None),
+                                        session_incarnation=(state.incarnation if state else
+                                            pending_session.incarnation if pending_session else None),
                                         run_id=result.run_id,
                                         turn_id=(
                                             raw_turn_id
@@ -3849,7 +4137,9 @@ class AgentLoop:
                                             if result.policy_metadata.get('effect_id')
                                             else None
                                         ),
-                                        generation=(state.generation if state else None),
+                                        generation=(state.generation if state else
+                                            pending_session.generation if pending_session else None),
+                                        source_state=state,
                                     )
                             io.result = result
                         if io.delivery_error:
@@ -3886,10 +4176,16 @@ class AgentLoop:
                 if options.raise_errors:
                     raise
             finally:
+                self.approval_admission.retire(context)
                 task_reference = context.workspace_task_reference
+                preserve_task_reference = (
+                    options.preserve_workspace_task_reference_on_approval
+                    and result is not None
+                    and result.status is RunStatus.APPROVAL_REQUIRED
+                )
                 if task_reference is not None and (
                     result is None or result.stop_reason != "folder_access_required"
-                ):
+                ) and not preserve_task_reference:
                     try:
                         self.sessions.desktop_permissions.retire_task_reference(
                             task_reference,

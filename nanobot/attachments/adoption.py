@@ -97,6 +97,7 @@ def adopt_media_paths(
         else:
             record = existing_record
             canonical = store.resolve(record) or canonical
+        store.retain_record(record)
         canonical_text = str(canonical)
         paths.append(canonical_text)
         if str(resolved) != canonical_text:

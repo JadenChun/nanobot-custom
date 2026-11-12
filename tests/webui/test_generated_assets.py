@@ -767,3 +767,30 @@ def test_forked_session_keeps_generated_asset_references(assets_client) -> None:
 
     assert payload["total"] == 1
     assert payload["groups"][0]["artifacts"][0]["id"] == "img-fork"
+
+
+async def test_repeated_library_gets_do_not_pin_published_media(assets_client) -> None:
+    from nanobot.attachments.store import AttachmentStore
+    from nanobot.utils.artifacts import store_generated_image_artifact
+    from nanobot.webui.media_maintenance import garbage_collect_generated_media
+    from tests.attachments.test_media_publication_retention import PNG
+
+    _project, instance, services, token = assets_client
+    artifact = store_generated_image_artifact(PNG, prompt="read purity", model="fixture")
+    key = "websocket:pure-library"
+    append_transcript_object(key, {"event": "message", "tool_events": [
+        _event(result={"artifacts": [artifact]})]})
+    store = AttachmentStore(instance / "media" / "attachments", media_root=instance / "media")
+    assert store.custody.records("pending") == []
+    for url in [f"/api/sessions/{key}/generated-assets", "/api/generated-assets"] * 2:
+        response = await services.endpoint.process_request(None,
+            Request(url, Headers({"Authorization": f"Bearer {token}"})),
+            is_allowed=lambda _client: True)
+        assert response.status_code == 200, response.body
+        assert json.loads(response.body)["total"] == 1
+        assert store.custody.records("pending") == []
+    assert delete_webui_transcript(key)
+    result = garbage_collect_generated_media(artifact_root=instance / "media" / "generated",
+        max_bytes=1, orphan_grace_days=0)
+    assert result["evidence_complete"], result["reasons"]
+    assert result["deleted"] == 1 and not Path(artifact["path"]).exists()

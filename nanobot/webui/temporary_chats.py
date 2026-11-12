@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
-import json
-import os
+import hashlib
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from nanobot.attachments._media import (
+    MediaFence,
+    atomic_write,
+    configured_custody,
+    generation,
+    object_json,
+    read_bytes,
+)
+from nanobot.attachments.models import AttachmentRecord
+from nanobot.attachments.store import AttachmentStore
 from nanobot.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
     RUNTIME_CONTROL_SESSION_DISCARD,
@@ -19,7 +29,7 @@ from nanobot.config.paths import get_runtime_subdir
 from nanobot.security.desktop_permissions import PermissionSourceBinding
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import Session, SessionManager
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from nanobot.webui.workspaces import WebUIWorkspaceController, webui_workspace_state_path
 
 _TEMPORARY_CHAT_DISABLED_TOOLS = frozenset({
     "create_goal",
@@ -72,6 +82,15 @@ class WebUITemporaryChats:
         self._cleanup_retry_store = (
             get_runtime_subdir("temporary-chat-cleanup") / "retained.json"
         )
+        custody = configured_custody()
+        self._media_store = AttachmentStore(custody.root / "attachments", media_root=custody.root)
+        # The gateway's workspace/permission owners can create this display
+        # root before a first transcript. Declare the actual selected path so
+        # exclusive temporary uploads can still be safely disposed.
+        self._media_store.custody.declare("webui", webui_workspace_state_path().parent.resolve(strict=True))
+        self._media_store.custody.declare("temporary", self._cleanup_retry_store.parent.resolve(strict=True))
+        self._cleanup_entries: dict[str, list[dict[str, object]]] = {}
+        self._cleared_cleanup_chats: set[str] = set()
         self._cleanup_retries = self._load_cleanup_retries()
         self._owner_chat_ids: dict[object, set[str]] = {}
         # Keep active sessions alive if the bounded manager cache evicts them
@@ -89,40 +108,56 @@ class WebUITemporaryChats:
 
     def _load_cleanup_retries(self) -> dict[str, set[str]]:
         try:
-            raw: object = json.loads(self._cleanup_retry_store.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw = object_json(read_bytes(self._cleanup_retry_store))
+        except FileNotFoundError:
             return {}
-        if not isinstance(raw, dict):
-            return {}
+        if (set(raw) != {"version", "chats"} or type(raw["version"]) is not int
+                or raw["version"] != 1 or not isinstance(raw["chats"], dict)):
+            raise TemporaryChatError("temporary_cleanup_recovery_required")
         retained: dict[str, set[str]] = {}
-        for raw_chat_id, raw_paths in cast(dict[object, object], raw).items():
-            if not isinstance(raw_chat_id, str) or not isinstance(raw_paths, list):
-                continue
+        for raw_chat_id, raw_entries in cast(dict[object, object], raw["chats"]).items():
+            if not isinstance(raw_chat_id, str) or not raw_chat_id or not isinstance(raw_entries, list):
+                raise TemporaryChatError("temporary_cleanup_recovery_required")
             kept: set[str] = set()
-            for raw_item in cast(list[object], raw_paths):
-                if isinstance(raw_item, str) and raw_item:
-                    kept.add(raw_item)
+            entries: list[dict[str, object]] = []
+            for value in cast(list[object], raw_entries):
+                if not isinstance(value, dict):
+                    raise TemporaryChatError("temporary_cleanup_recovery_required")
+                entry = cast(dict[str, object], value)
+                path, tokens, asset_generation = entry.get("path"), entry.get("tokens"), entry.get("generation")
+                if (set(entry) != {"path", "tokens", "generation"} or not isinstance(path, str)
+                        or not Path(path).is_absolute() or ".." in Path(path).parts
+                        or not Path(path).is_relative_to(self._media_store.media_root)
+                        or not isinstance(tokens, list) or not tokens
+                        or any(not isinstance(token, str) or len(token) != 32 or any(c not in "0123456789abcdef" for c in token) for token in cast(list[object], tokens))
+                        or not isinstance(asset_generation, list) or len(cast(list[object], asset_generation)) != 5
+                        or any(type(item) is not int for item in cast(list[object], asset_generation))):
+                    raise TemporaryChatError("temporary_cleanup_recovery_required")
+                kept.add(path)
+                entries.append(entry)
             if kept:
                 retained[raw_chat_id] = kept
+                self._cleanup_entries[raw_chat_id] = entries
         return retained
 
-    def _save_cleanup_retries(self) -> None:
-        payload = {
-            chat_id: sorted(paths)
-            for chat_id, paths in self._cleanup_retries.items()
-            if paths
-        }
+    def _save_cleanup_retries(self, gate: MediaFence | None = None) -> None:
         path = self._cleanup_retry_store
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, separators=(",", ":"))
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, path)
-        except OSError:
-            self._logger.warning("failed to persist temporary WebUI cleanup custody")
+        custody = self._media_store.custody
+        with custody.fence(create=True) if gate is None else nullcontext(gate) as active_gate:
+            active_gate.require(custody)
+            payload: dict[str, object]
+            try:
+                payload = object_json(read_bytes(path))
+            except FileNotFoundError:
+                payload = {"version": 1, "chats": {}}
+            if set(payload) != {"version", "chats"} or payload["version"] != 1 or not isinstance(payload["chats"], dict):
+                raise TemporaryChatError("temporary_cleanup_recovery_required")
+            chats = cast(dict[str, object], payload["chats"])
+            chats.update(self._cleanup_entries)
+            for chat_id in self._cleared_cleanup_chats:
+                chats.pop(chat_id, None)
+            atomic_write(path, payload)
+            self._cleared_cleanup_chats.clear()
 
     def _cached_session_is_transient(self, chat_id: str) -> bool:
         if self._sessions is None:
@@ -233,12 +268,34 @@ class WebUITemporaryChats:
         if chat_id in self._known_transient_chat_ids:
             raise TemporaryChatError("temporary_chat_unavailable")
 
-    def register_media(self, owner: object, chat_id: str, paths: list[str]) -> None:
+    def register_media(self, owner: object, chat_id: str, paths: list[str],
+                       *, records: tuple[AttachmentRecord, ...] = ()) -> None:
         if not paths:
             return
         if self._owners.get(chat_id) is not owner:
             raise TemporaryChatError("temporary_chat_unavailable")
-        self._media_paths.setdefault(chat_id, set()).update(paths)
+        store = self._media_store
+        with store.custody.fence(create=True) as gate:
+            pending = store.custody.records("pending")
+            owned_ids = {record.id for record in records}
+            entries = self._cleanup_entries.setdefault(chat_id, [])
+            existing_paths = {str(entry["path"]) for entry in entries}
+            for raw_path in paths:
+                path = Path(raw_path).expanduser().absolute()
+                if not path.is_relative_to(store.media_root) or ".." in path.parts:
+                    raise TemporaryChatError("unsupported_temporary_media")
+                data = read_bytes(path)
+                tokens = [str(row["token"]) for row in pending if row["publication_id"] in owned_ids and row["path"] == str(path)]
+                if str(path) in existing_paths:
+                    entry = next(entry for entry in entries if entry["path"] == str(path))
+                    entry["tokens"] = sorted(set(cast(list[str], entry["tokens"])) | set(tokens))
+                    continue
+                if not tokens:
+                    tokens = [store.custody.pin(gate, publication_id=f"temporary:{chat_id}:{uuid.uuid4().hex}",
+                                                 path=path, sha256=hashlib.sha256(data).hexdigest())]
+                entries.append({"path": str(path), "tokens": tokens, "generation": list(generation(path.lstat()))})
+            self._save_cleanup_retries(gate)
+            self._media_paths.setdefault(chat_id, set()).update(paths)
 
     def chat_ids_for_owner(self, owner: object) -> tuple[str, ...]:
         return tuple(self._owner_chat_ids.get(owner, ()))
@@ -254,17 +311,21 @@ class WebUITemporaryChats:
         )
 
     def _discard_media(self, chat_id: str) -> set[str]:
-        failed: set[str] = set()
-        for raw_path in self._media_paths.pop(chat_id, set()):
-            try:
-                Path(raw_path).unlink(missing_ok=True)
-            except OSError:
-                failed.add(raw_path)
-                self._logger.warning("failed to remove a temporary WebUI attachment")
+        paths = self._media_paths.pop(chat_id, set()) | self._cleanup_retries.get(chat_id, set())
+        removed: set[Path]
+        try:
+            removed = self._media_store.custody.cleanup_temporary(chat_id)
+        except (OSError, ValueError, TypeError):
+            removed = set()
+        failed = paths - {str(path) for path in removed}
         if failed:
             self._cleanup_retries[chat_id] = failed
         else:
             self._cleanup_retries.pop(chat_id, None)
+            self._cleanup_entries.pop(chat_id, None)
+            self._cleared_cleanup_chats.add(chat_id)
+        if failed:
+            self._cleanup_entries[chat_id] = [entry for entry in self._cleanup_entries.get(chat_id, []) if entry["path"] in failed]
         self._save_cleanup_retries()
         return failed
 
@@ -274,17 +335,7 @@ class WebUITemporaryChats:
 
     def retry_cleanup(self, chat_id: str) -> tuple[str, ...]:
         """Retry owned temporary-chat cleanup; return any still-retained paths."""
-        failed: set[str] = set()
-        for raw_path in self._cleanup_retries.get(chat_id, set()):
-            try:
-                Path(raw_path).unlink(missing_ok=True)
-            except OSError:
-                failed.add(raw_path)
-        if failed:
-            self._cleanup_retries[chat_id] = failed
-        else:
-            self._cleanup_retries.pop(chat_id, None)
-        self._save_cleanup_retries()
+        failed = self._discard_media(chat_id)
         return tuple(sorted(failed))
 
     def _forget_owner(self, owner: object, chat_id: str) -> None:

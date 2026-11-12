@@ -1308,7 +1308,7 @@ class WebUICommandRouter:
             else:
                 media_records = tuple(bound_records)
             if temporary_policy is not None and media_paths:
-                self._temporary_chats.register_media(connection, chat_id, media_paths)
+                self._temporary_chats.register_media(connection, chat_id, media_paths, records=media_records)
 
             try:
                 if is_webui and (
