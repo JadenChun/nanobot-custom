@@ -1,5 +1,41 @@
 # A3 implementation correction handoff
 
+## Background result delivery checkpoint (2026-11-12)
+
+Resume from `67524f1a` on `codex/staging-audit-implementation`. This checkpoint
+completes the AC5 background-result slice of `A3-PLAN-2026-11-11`. Staging is at
+`f1a6bb85`.
+
+- A background child records the exact parent source lifetime and original route
+  when it starts.
+- The child writes a bounded terminal result with a stable outbox identity before
+  it releases capacity. The result survives restart in the child admission.
+- The manager admits the result once into the parent's canonical pending journal
+  under the captured parent lifetime. It publishes the row to the captured route.
+- A temporary parent-journal failure leaves the result pending. A replaced or
+  deleted parent produces a durable stale disposition. The child run remains
+  intact and is not replayed.
+- A missing result is rebuilt from an exact completed RunRecord and a healthy
+  closed child source.
+- Foreground child turns keep channel-output suppression in the canonical bus
+  scope. The earlier scope overwrote that flag.
+
+Verification on the Linux worktree with Python 3.14.10, BasedPyright 1.40.2, and
+pytest 9.2.0:
+
+| Check | Result |
+| --- | --- |
+| AC5 background-result suite | **8 passed**. |
+| Delegation, AC4, AC5, crawler, and source suites | **208 passed**. |
+| Full `tests/session` suite | **1,940 passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+Continue with AC8 projection, reconnect hydration, and canonical history access.
+The crawler admission and prompt isolation fix, uncertain-run recovery proof,
+combined backend review, clients, and release qualification remain open.
+
 ## Ordered child follow-up checkpoint (2026-11-12)
 
 Resume from `0a1137444ae877fac299cd74d22fe0ccdcac11fe` on
