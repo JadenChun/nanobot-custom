@@ -48,7 +48,12 @@ from nanobot.agent.runner import AgentRunner, AgentRunResult
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
-from nanobot.agent.tools.context import current_request_context
+from nanobot.agent.tools.context import (
+    RequestContext,
+    bind_request_context,
+    current_request_context,
+    reset_request_context,
+)
 from nanobot.agent.tools.explore import ExploreTool
 from nanobot.agent.tools.file_state import FileStates
 from nanobot.agent.tools.filesystem import (
@@ -412,6 +417,22 @@ class ForegroundAgentManager:
             await sink(admission)
         except Exception:
             logger.debug("Delegated child event projection failed")
+
+    async def _emit_child_for_route(
+        self,
+        admission: Any,
+        record: PendingBackgroundResult,
+    ) -> None:
+        """Project a disposition change outside a live parent turn."""
+        token = bind_request_context(RequestContext(
+            channel=record.route_channel,
+            chat_id=record.route_chat_id,
+            session_key=record.parent_key,
+        ))
+        try:
+            await self._emit_child(admission)
+        finally:
+            reset_request_context(token)
 
     def bind_session_owner(self, sessions: SessionManager) -> None:
         """Attach the canonical session owner once the loop has constructed it."""
@@ -2331,11 +2352,37 @@ class ForegroundAgentManager:
             outcome=outcome,
         )
 
+    async def reconcile_uncertain_children(self, run_store: RunStore) -> tuple[int, int]:
+        """Settle every uncertain child that has exact run and source evidence."""
+        tree = self._delegation_tree
+        if tree is None:
+            return (0, 0)
+        settled = 0
+        remaining = 0
+        for child in tree.uncertain_children():
+            updated = await self.settle_uncertain_child(
+                child.child_id,
+                run_store=run_store,
+            )
+            if updated is not None and updated.state != "uncertain":
+                settled += 1
+            else:
+                remaining += 1
+        return (settled, remaining)
+
     async def recover_missing_background_results(self, run_store: RunStore) -> int:
-        """Rebuild a missing result from the completed run and healthy child source."""
+        """Rebuild a missing terminal result from its run and healthy child source."""
         tree = self._delegation_tree
         if tree is None:
             return 0
+        terminal_statuses = {
+            RunStatus.COMPLETED,
+            RunStatus.CANCELLED,
+            RunStatus.POLICY_BLOCKED,
+            RunStatus.TOOL_ERROR,
+            RunStatus.MAX_ITERATIONS,
+            RunStatus.ERROR,
+        }
         recovered = 0
         for child in tree.background_delivery_candidates():
             delivery = child.background_delivery
@@ -2346,11 +2393,10 @@ class ForegroundAgentManager:
             backend = tree.sessions.source_backend(child.session_key)
             if (
                 record is None
-                or record.status is not RunStatus.COMPLETED
+                or record.status not in terminal_statuses
                 or record.session_ref is None
                 or record.session_ref.session_key != child.session_key
                 or record.session_ref.run_id != run_id
-                or record.stop_reason != "completed"
                 or backend is None
             ):
                 continue
@@ -2381,18 +2427,27 @@ class ForegroundAgentManager:
                     child.child_id,
                 )
                 continue
-            if not terminal:
+            if not terminal and record.status is RunStatus.COMPLETED:
                 continue
-            content = terminal[-1].get("content")
+            content = terminal[-1].get("content") if terminal else ""
             if not isinstance(content, str):
-                continue
+                content = ""
+            stop_reason = record.stop_reason or record.status.value
+            if not content.strip():
+                content = f"Background child ended with {stop_reason}."
             result = self._background_result_record(
                 child,
                 run_id=run_id,
                 delivery=delivery,
                 content=content,
-                stop_reason="completed",
-                outcome="completed",
+                stop_reason=stop_reason,
+                outcome=(
+                    "completed"
+                    if record.status is RunStatus.COMPLETED
+                    else "stopped"
+                    if record.status is RunStatus.CANCELLED
+                    else "failed"
+                ),
             )
             if await tree.record_background_result(result) is not None:
                 recovered += 1
@@ -2428,13 +2483,31 @@ class ForegroundAgentManager:
         tree = self._delegation_tree
         if tree is None:
             return "pending"
+
+        async def mark(
+            state: Literal["admitted", "stale"],
+            *,
+            journal_id: str | None = None,
+            stale_reason: str | None = None,
+        ) -> bool:
+            updated = await tree.mark_background_result(
+                child.child_id,
+                state=state,
+                journal_id=journal_id,
+                stale_reason=stale_reason,
+            )
+            if (
+                updated is None
+                or updated.background_result is None
+                or updated.background_result.state != state
+            ):
+                return False
+            await self._emit_child_for_route(updated, record)
+            return True
+
         backend = tree.sessions.source_backend(record.parent_key)
         if backend is None:
-            await tree.mark_background_result(
-                child.child_id,
-                state="stale",
-                stale_reason="parent_unavailable",
-            )
+            await mark("stale", stale_reason="parent_unavailable")
             return "stale"
         try:
             snapshot = backend.source.load_source_snapshot(record.parent_key)
@@ -2446,21 +2519,13 @@ class ForegroundAgentManager:
             or snapshot.state.incarnation != record.parent_incarnation
             or snapshot.state.generation != record.parent_generation
         ):
-            await tree.mark_background_result(
-                child.child_id,
-                state="stale",
-                stale_reason="parent_source_changed",
-            )
+            await mark("stale", stale_reason="parent_source_changed")
             return "stale"
         if any(
             event.get("_pending_followup_id") == record.outbox_id
             for event in snapshot.events
         ):
-            await tree.mark_background_result(
-                child.child_id,
-                state="admitted",
-                journal_id=record.outbox_id,
-            )
+            await mark("admitted", journal_id=record.outbox_id)
             return "admitted"
         try:
             existing = next(
@@ -2477,21 +2542,13 @@ class ForegroundAgentManager:
                 None,
             )
         except (KeyError, TypeError, ValueError):
-            await tree.mark_background_result(
-                child.child_id,
-                state="stale",
-                stale_reason="parent_journal_invalid",
-            )
+            await mark("stale", stale_reason="parent_journal_invalid")
             return "stale"
         if existing is not None and (
             existing.background_result is None
             or not existing.background_result.same_result(record)
         ):
-            await tree.mark_background_result(
-                child.child_id,
-                state="stale",
-                stale_reason="parent_journal_conflict",
-            )
+            await mark("stale", stale_reason="parent_journal_conflict")
             return "stale"
         try:
             tree.sessions.get_or_create(record.parent_key)
@@ -2536,11 +2593,7 @@ class ForegroundAgentManager:
             except ExecutionBusyError:
                 return "pending"
             except (ExecutionOwnershipError, SessionWriteConflict):
-                await tree.mark_background_result(
-                    child.child_id,
-                    state="stale",
-                    stale_reason="parent_source_changed",
-                )
+                await mark("stale", stale_reason="parent_source_changed")
                 return "stale"
             except Exception:
                 logger.exception(
@@ -2548,20 +2601,18 @@ class ForegroundAgentManager:
                     child.child_id,
                 )
                 return "pending"
-        await tree.mark_background_result(
-            child.child_id,
-            state="admitted",
-            journal_id=pending_record.identifier,
-        )
-        sink = self._background_result_sink
-        if sink is not None:
-            try:
-                await sink(message)
-            except Exception:
-                logger.exception(
-                    "Background child result publication failed for {}",
-                    child.child_id,
-                )
+        if not await mark("admitted", journal_id=pending_record.identifier):
+            return "pending"
+        if existing is None:
+            sink = self._background_result_sink
+            if sink is not None:
+                try:
+                    await sink(message)
+                except Exception:
+                    logger.exception(
+                        "Background child result publication failed for {}",
+                        child.child_id,
+                    )
         return "admitted"
 
     @staticmethod
@@ -3127,7 +3178,17 @@ capability boundary and report the work that the follow-up changes."""
             launch_fence.release()
             child_bindings.release()
             return self._followup_disposition("refused")
-        activated = await tree.activate(child_id)
+        try:
+            activated = await tree.activate(child_id)
+        except BaseException:
+            launch_fence.release()
+            await tree.complete(
+                child_id,
+                outcome="followup_stopped_before_dispatch",
+                state="stopped",
+            )
+            child_bindings.release()
+            raise
         if activated is None or launch_fence.cancelled:
             launch_fence.release()
             child_bindings.release()
@@ -3281,6 +3342,8 @@ capability boundary and report the work that the follow-up changes."""
         def track_child_task(task: asyncio.Task[Any]) -> None:
             launch_fence.attach(task)
 
+        handed_to_task = False
+
         try:
             if launch_fence.cancelled:
                 await tree.complete(child_id, outcome="followup_stopped_before_dispatch", state="stopped")
@@ -3294,7 +3357,17 @@ capability boundary and report the work that the follow-up changes."""
                 ),
                 track=track_child_task,
             )
+            if handle.task.cancelled() or launch_fence.cancelled:
+                return self._followup_disposition("refused")
+            handed_to_task = True
             self._track_child_handle(handle)
+
+            def release_bindings_after_settlement(_done: asyncio.Task[Any]) -> None:
+                current = tree.child(child_id)
+                if current is None or not current.holds_capacity:
+                    child_bindings.release()
+
+            handle.task.add_done_callback(release_bindings_after_settlement)
             await asyncio.wait(
                 {turn_result, handle.task},
                 return_when=asyncio.FIRST_COMPLETED,
@@ -3350,6 +3423,18 @@ capability boundary and report the work that the follow-up changes."""
         finally:
             launch_fence.release()
             current = tree.child(child_id)
+            if (
+                not handed_to_task
+                and current is not None
+                and current.current_run_id == run_id
+                and current.live
+            ):
+                await tree.complete(
+                    child_id,
+                    outcome="followup_stopped_before_dispatch",
+                    state="stopped",
+                )
+                current = tree.child(child_id)
             if current is None or not current.holds_capacity:
                 child_bindings.release()
 

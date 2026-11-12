@@ -872,6 +872,7 @@ class AgentLoop:
         self._discarding_sessions: set[str] = set()
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._background_results_reconciled = False
+        self._uncertain_children_reconciled = False
         self._close_lock = asyncio.Lock()
         self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
@@ -1726,10 +1727,21 @@ class AgentLoop:
 
     async def _reconcile_background_results_once(self) -> None:
         """Retry durable child result delivery after tree restore or a new turn."""
+        if self._background_results_reconciled and self._uncertain_children_reconciled:
+            return
+        manager = self._fork_dependencies.foreground_manager
+        if not self._uncertain_children_reconciled:
+            try:
+                _settled, remaining = await manager.reconcile_uncertain_children(
+                    self.run_store,
+                )
+            except Exception:
+                logger.exception("Uncertain child reconciliation failed")
+            else:
+                self._uncertain_children_reconciled = remaining == 0
         if self._background_results_reconciled:
             return
         try:
-            manager = self._fork_dependencies.foreground_manager
             await manager.recover_missing_background_results(self.run_store)
             _delivered, _stale, pending = await manager.reconcile_background_results()
         except Exception:
@@ -2114,6 +2126,11 @@ class AgentLoop:
         ctx: TurnContext,
     ) -> list[RuntimeContextBlock]:
         assert ctx.request_context is not None
+        if (
+            ctx.run_context is not None
+            and ctx.run_context.internal_system_prompt is not None
+        ):
+            return []
         return await self._resolve_runtime_context_for_request(
             ctx.request_context,
             ctx.tools if ctx.tools is not None else self.tools,

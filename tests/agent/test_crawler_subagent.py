@@ -13,6 +13,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
 from nanobot.providers.factory import ProviderSnapshot
+from nanobot.runtime_context import RuntimeContextBlock
 from nanobot.utils.llm_runtime import LLMRuntime
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
@@ -240,6 +241,18 @@ async def test_foreground_crawler_uses_its_own_model_and_budget(engine_config, m
     loop, captured, prepare, cleanup = _build_crawler_loop(
         engine_config, monkeypatch, parent_provider=parent, crawler_provider=crawler_provider,
     )
+    ambient_calls = []
+
+    async def ambient(request):
+        ambient_calls.append(request)
+        return [
+            RuntimeContextBlock(
+                source="private",
+                content="AMBIENT PRIVATE CONTEXT",
+            )
+        ]
+
+    loop._runtime_context_providers = [ambient]
     try:
         result = await loop.execute_turn(TurnRequest(
             content="Crawl the supplied page.", session_key="cli:source",
@@ -268,6 +281,8 @@ async def test_foreground_crawler_uses_its_own_model_and_budget(engine_config, m
         assert str(engine_config.workspace_path) not in system_prompt
         assert "Context Repositories" not in system_prompt
         assert "# Memory" not in system_prompt
+        assert "AMBIENT PRIVATE CONTEXT" not in str(crawler_messages)
+        assert len(ambient_calls) == 1
         assert crawler_messages[-1]["content"] == "Inspect the supplied public page."
         model, kwargs, _tools = crawler_provider.chat_kwargs[0]
         assert model == "vendor/cheap-crawler-model"

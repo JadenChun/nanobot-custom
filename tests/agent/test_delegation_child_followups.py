@@ -5,6 +5,8 @@ import re
 from collections import deque
 from copy import deepcopy
 
+import pytest
+
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import TurnRequest
@@ -189,6 +191,55 @@ async def _wait_for_child_completion(loop: AgentLoop, child_id: str) -> None:
     child = await asyncio.wait_for(tree.wait_child(child_id, timeout=5), timeout=6)
     assert child is not None
     assert child.state == "completed", child.metadata()
+
+
+async def test_followup_cancel_before_dispatch_releases_claim(engine_config, monkeypatch):
+    parent_key = "cli:followup-cancel-claim"
+    provider = _FollowupProvider(
+        [
+            _tool_call(
+                "delegate_task",
+                {
+                    "contract": "Complete the bounded offline fixture task.",
+                    "write_scope": ["fixture.txt"],
+                    "background": True,
+                },
+                "delegate",
+            ),
+            LLMResponse(content="The delegated child is running."),
+        ],
+        child_responses=[LLMResponse(content="child final")],
+    )
+    loop = _make_loop(engine_config, provider, parent_key)
+    try:
+        child_id = await _start_background_child(loop, parent_key)
+        await _wait_for_child_completion(loop, child_id)
+        tree = loop._fork_dependencies.foreground_manager._delegation_tree
+        assert tree is not None
+
+        async def cancel_activate(_child_id: str):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(tree, "activate", cancel_activate)
+        provider.responses.extend([
+            _tool_call(
+                "followup_child",
+                {"child_id": child_id, "content": "Continue once."},
+                "followup",
+            ),
+            LLMResponse(content="The follow-up was interrupted."),
+        ])
+        with pytest.raises(asyncio.CancelledError):
+            await loop.execute_turn(TurnRequest(
+                content="Continue the delegated child.",
+                session_key=parent_key,
+            ))
+        child = tree.child(child_id)
+        assert child is not None
+        assert child.state == "stopped"
+        assert child.holds_capacity is False
+    finally:
+        await loop.aclose()
 
 
 async def test_busy_child_followups_are_durable_ordered_and_retry_safe(engine_config, monkeypatch):

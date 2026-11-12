@@ -83,17 +83,28 @@ async def _collect(target, message):
 async def test_background_result_is_admitted_once(engine_config):
     parent_key = "websocket:ac5-probe"
     loop = _make_loop(engine_config, _background_provider(), parent_key)
+    manager = loop._fork_dependencies.foreground_manager
+    tree = manager._delegation_tree
+    assert tree is not None
+    emitted = []
+
+    async def capture(admission):
+        emitted.append(admission)
+
+    manager.set_child_event_sink(capture)
     try:
         child_id = await _start_background_child(loop, parent_key)
         await _wait_for_child_completion(loop, child_id)
-        manager = loop._fork_dependencies.foreground_manager
-        tree = manager._delegation_tree
-        assert tree is not None
         child = tree.child(child_id)
         assert child is not None and child.holds_capacity is False
         record = await _wait_admitted(tree, child_id)
         assert record.result == "child final result"
         assert record.journal_id == record.outbox_id
+        assert any(
+            item.background_result is not None
+            and item.background_result.state == "admitted"
+            for item in emitted
+        )
 
         backend = loop.sessions.source_backend(parent_key)
         assert backend is not None
@@ -326,6 +337,49 @@ async def test_missing_result_is_rebuilt_from_completed_run(engine_config):
             assert child is not None and child.background_result is not None
             assert child.background_result.result == "child final result"
             assert child.background_result.state == "pending"
+        finally:
+            await restarted.close()
+    finally:
+        await loop.aclose()
+
+
+async def test_missing_failed_result_is_rebuilt(engine_config):
+    parent_key = "websocket:ac5-recover-failed"
+    provider = _background_provider()
+    loop = _make_loop(engine_config, provider, parent_key)
+    try:
+        manager = loop._fork_dependencies.foreground_manager
+        manager.record_background_result = AsyncMock(return_value=True)
+        manager.reconcile_background_results = AsyncMock(return_value=(0, 0, 0))
+        child_id = await _start_background_child(loop, parent_key)
+        await _wait_for_child_completion(loop, child_id)
+        tree = manager._delegation_tree
+        assert tree is not None
+        child = tree.child(child_id)
+        assert child is not None and child.current_run_id is not None
+        run_id = child.current_run_id
+        record = loop.run_store.load(run_id)
+        assert record is not None
+        record.status = RunStatus.ERROR
+        record.stop_reason = "provider_error"
+        loop.run_store.save(record)
+
+        restarted_tree = DelegationTree(loop.sessions)
+        restarted = ForegroundAgentManager(
+            provider=manager.provider,
+            workspace=loop.workspace,
+            sessions=loop.sessions,
+            delegation_tree=restarted_tree,
+        )
+        try:
+            recovered = await restarted.recover_missing_background_results(
+                loop.run_store,
+            )
+            assert recovered == 1
+            child = restarted_tree.child(child_id)
+            assert child is not None and child.background_result is not None
+            assert child.background_result.stop_reason == "provider_error"
+            assert child.background_result.outcome == "failed"
         finally:
             await restarted.close()
     finally:

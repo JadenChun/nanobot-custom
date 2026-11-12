@@ -288,6 +288,7 @@ async def test_delegated_children_hydration_returns_current_children(tmp_path: P
                 "control_epoch": 4,
                 "holds_capacity": True,
                 "current_run_id": "child-run",
+                "updated_at": 100.0,
             },
             "_runtime_session": RuntimeSessionMetadata(
                 profile="delegated",
@@ -297,6 +298,53 @@ async def test_delegated_children_hydration_returns_current_children(tmp_path: P
                 parent_incarnation=current.incarnation,
                 backend_binding="native-runner",
             ).payload(),
+        },
+        create_if_absent=True,
+    )
+    session_manager.upsert_session_metadata(
+        "delegated:a3-8-current-newer",
+        {
+            "delegation_child": {
+                "child_id": "a3-8-current-newer",
+                "session_key": "delegated:a3-8-current-newer",
+                "parent_key": _PARENT_KEY,
+                "parent_incarnation": current.incarnation,
+                "profile": "delegated",
+                "state": "completed",
+                "runtime_generation": 1,
+                "holds_capacity": False,
+                "updated_at": 200.0,
+            },
+            "_runtime_session": RuntimeSessionMetadata(
+                profile="delegated",
+                execution_kind="native",
+                delegation_depth=1,
+                parent_key=_PARENT_KEY,
+                parent_incarnation=current.incarnation,
+                backend_binding="native-runner",
+            ).payload(),
+        },
+        create_if_absent=True,
+    )
+    session_manager.upsert_session_metadata(
+        "delegated:a3-8-stale-parent-source",
+        {
+            "delegation_child": {
+                "child_id": "a3-8-stale-parent-source",
+                "session_key": "delegated:a3-8-stale-parent-source",
+                "parent_key": _PARENT_KEY,
+                "parent_incarnation": current.incarnation,
+                "parent_source_state": {
+                    "store_identity": "wrong-store",
+                    "session_key": _PARENT_KEY,
+                    "incarnation": current.incarnation,
+                    "generation": 1,
+                },
+                "profile": "delegated",
+                "state": "active",
+                "runtime_generation": 0,
+                "updated_at": 300.0,
+            }
         },
         create_if_absent=True,
     )
@@ -326,8 +374,11 @@ async def test_delegated_children_hydration_returns_current_children(tmp_path: P
         )
         assert response.status_code == 200, response.text
         children = response.json()["children"]
-        assert [child["child_id"] for child in children] == ["a3-8-current"]
-        child = children[0]
+        assert [child["child_id"] for child in children] == [
+            "a3-8-current-newer",
+            "a3-8-current",
+        ]
+        child = next(item for item in children if item["child_id"] == "a3-8-current")
         assert child["state"] == "active"
         assert child["run_sequence"] == 1
         assert child["state_sequence"] == 3

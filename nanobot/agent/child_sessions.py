@@ -742,6 +742,13 @@ class DelegationTree:
             if child.background_result is not None
         )
 
+    def uncertain_children(self) -> tuple[ChildAdmission, ...]:
+        """Return children that need explicit owner-evidence settlement."""
+        return tuple(
+            child for child in self._children.values()
+            if child.state == "uncertain"
+        )
+
     def background_delivery_candidates(self) -> tuple[ChildAdmission, ...]:
         """Return settled background children whose result write did not land."""
         return tuple(

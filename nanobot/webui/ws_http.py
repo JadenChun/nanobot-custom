@@ -1537,6 +1537,20 @@ class GatewayHTTPHandler:
                 and recorded_incarnation != parent.incarnation
             ):
                 continue
+            parent_source = _payload_source_state(payload, "parent_source_state")
+            if parent_source is not None and not _source_state_is_current(
+                self.session_manager,
+                decoded_key,
+                parent_source,
+            ):
+                continue
+            child_source = _payload_source_state(payload, "source_state")
+            if child_source is not None and not _source_state_is_current(
+                self.session_manager,
+                child_key,
+                child_source,
+            ):
+                continue
             from nanobot.session.runtime_authority import read_runtime_session
 
             runtime = read_runtime_session(self.session_manager, child_key)
@@ -1547,7 +1561,10 @@ class GatewayHTTPHandler:
             )
             if child is not None:
                 children.append(child)
-        children.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        children.sort(
+            key=lambda item: _updated_at_sort_value(item.get("updated_at")),
+            reverse=True,
+        )
         return _http_json_response({
             "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
             "parentSessionKey": decoded_key,
@@ -1617,6 +1634,16 @@ class GatewayHTTPHandler:
                 return _http_error(404, "session not found")
             root_key = resolve_child_root_key(self.session_manager, decoded_key)
             if root_key is None:
+                return _http_error(404, "session not found")
+            root_source = (
+                _payload_source_state(child_payload, "root_source_state")
+                if child_payload is not None else None
+            )
+            if root_source is not None and not _source_state_is_current(
+                self.session_manager,
+                root_key,
+                root_source,
+            ):
                 return _http_error(404, "session not found")
             from nanobot.session.runtime_authority import read_runtime_session
 
@@ -3417,6 +3444,21 @@ def _positive_int(value: Any) -> int | None:
     return value if value > 0 else None
 
 
+def _updated_at_sort_value(value: object) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value:
+        try:
+            from datetime import datetime
+
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _hydrated_child_payload(
     child_key: str,
     payload: Mapping[str, Any],
@@ -3456,6 +3498,9 @@ def _hydrated_child_payload(
         value = payload.get(name)
         if type(value) is int and value >= 0:
             child[name] = value
+    updated_at = payload.get("updated_at")
+    if isinstance(updated_at, (int, float)) and not isinstance(updated_at, bool):
+        child["updated_at"] = float(updated_at)
     if not child.get("child_run_id"):
         child_run_id = payload.get("current_run_id")
         if isinstance(child_run_id, str) and child_run_id:

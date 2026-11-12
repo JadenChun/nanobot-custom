@@ -74,6 +74,21 @@ async def _uncertain_child(engine_config, *, complete: bool = True):
     return loop, manager, restarted_tree, admission
 
 
+async def test_loop_reconciliation_settles_uncertain_child(engine_config):
+    loop, manager, tree, admission = await _uncertain_child(engine_config)
+    try:
+        loop._fork_dependencies.foreground_manager._delegation_tree = tree
+        await loop._reconcile_background_results_once()
+        settled = tree.child(admission.child_id)
+        assert settled is not None
+        assert settled.state == "completed"
+        assert settled.outcome == "recovered_completed"
+        assert settled.holds_capacity is False
+    finally:
+        await manager.close()
+        await loop.aclose()
+
+
 async def test_completed_run_settles_uncertain_child(engine_config):
     loop, manager, tree, admission = await _uncertain_child(engine_config)
     try:
