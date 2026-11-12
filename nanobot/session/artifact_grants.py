@@ -9,6 +9,7 @@ transaction.
 
 from __future__ import annotations
 
+import json
 import secrets
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Mapping, NoReturn, SupportsIndex, cast
@@ -24,11 +25,42 @@ if TYPE_CHECKING:
     from nanobot.agent.run_store import RunStore
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.artifact_store import ArtifactBlobTransaction
-    from nanobot.session.source_store import SourceSnapshot, SourceState, SourceSessionStore
+    from nanobot.session.source_store import SourceSessionStore, SourceSnapshot, SourceState
     from nanobot.session.turn_writer import SourceTurnWriter
 
 _MAX_ARTIFACT_REFERENCES = 16
 _CAPABILITY = object()
+_CHILD_RELATION_VOLATILE_FIELDS = frozenset({
+    "state",
+    "state_sequence",
+    "holds_capacity",
+    "pending_approval_id",
+    "pending_effect_id",
+    "pending_summary",
+    "blocked_run_id",
+    "outcome",
+    "transcript",
+    "updated_at",
+})
+
+
+def _child_relation_signature(relation: Mapping[str, object]) -> str:
+    """Bind stable child identity fields while allowing the terminal transition."""
+    stable_fields = {
+        key: value
+        for key, value in relation.items()
+        if key not in _CHILD_RELATION_VOLATILE_FIELDS
+    }
+    try:
+        return json.dumps(
+            cast(object, stable_fields),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        raise ArtifactValidationError("Artifact child relation is invalid") from None
 
 
 def _parse_grant_references(references: object) -> tuple[str, ...]:
@@ -53,6 +85,7 @@ class ArtifactDirectChildBinding:
     _parent_stream_id: str
     _child_run_id: str
     _child_stream_id: str
+    _child_relation_signature: str
     _nonce: bytes
 
     def __init__(
@@ -67,6 +100,7 @@ class ArtifactDirectChildBinding:
         parent_stream_id: str,
         child_run_id: str,
         child_stream_id: str,
+        child_relation_signature: str,
         nonce: bytes,
     ) -> None:
         if capability is not _CAPABILITY:
@@ -80,7 +114,61 @@ class ArtifactDirectChildBinding:
         object.__setattr__(self, "_parent_stream_id", parent_stream_id)
         object.__setattr__(self, "_child_run_id", child_run_id)
         object.__setattr__(self, "_child_stream_id", child_stream_id)
+        object.__setattr__(self, "_child_relation_signature", child_relation_signature)
         object.__setattr__(self, "_nonce", nonce)
+
+    @property
+    def parent_reader(self) -> ArtifactReader:
+        return self._parent_reader
+
+    @property
+    def child_writer(self) -> SourceTurnWriter:
+        return self._child_writer
+
+    @property
+    def parent_source_state(self) -> SourceState:
+        return self._parent_state
+
+    @property
+    def child_source_state(self) -> SourceState:
+        return self._child_state
+
+    @property
+    def child_id(self) -> str:
+        return self._child_id
+
+    @property
+    def parent_run_id(self) -> str:
+        return self._parent_run_id
+
+    @property
+    def parent_stream_id(self) -> str:
+        return self._parent_stream_id
+
+    @property
+    def child_run_id(self) -> str:
+        return self._child_run_id
+
+    @property
+    def child_stream_id(self) -> str:
+        return self._child_stream_id
+
+    def matches_direct_child_nonce(self, nonce: bytes) -> bool:
+        """Compare the runtime token without exposing the private invocation nonce."""
+        return nonce is self._nonce
+
+    def nonce_for_grant(self, capability: object) -> bytes:
+        """Provide the private nonce only to this module's grant issuer."""
+        if capability is not _CAPABILITY:
+            raise ArtifactValidationError("Artifact child invocation binding changed")
+        return self._nonce
+
+    def matches_child_relation(self, relation: Mapping[str, object]) -> bool:
+        """Check the captured durable child identity after allowed state changes."""
+        try:
+            return _child_relation_signature(relation) == self._child_relation_signature
+        except ArtifactValidationError:
+            return False
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("Artifact child bindings cannot be serialized")
@@ -97,11 +185,8 @@ class ArtifactDirectChildBinding:
         child_writer: SourceTurnWriter,
     ) -> ArtifactDirectChildBinding:
         """Capture a durable direct-child admission against its live source owners."""
-        from nanobot.agent.child_sessions import (
-            ChildAdmission as RuntimeChildAdmission,
-            DELEGATION_CHILD_METADATA_KEY,
-            _parse_child_admission,
-        )
+        from nanobot.agent.child_sessions import DELEGATION_CHILD_METADATA_KEY
+        from nanobot.agent.child_sessions import ChildAdmission as RuntimeChildAdmission
         from nanobot.session.runtime_authority import parse_runtime_session_metadata
 
         if type(admission) is not RuntimeChildAdmission:
@@ -147,18 +232,21 @@ class ArtifactDirectChildBinding:
         metadata = child_snapshot.header.get("metadata")
         if not isinstance(metadata, Mapping):
             raise ArtifactValidationError("Artifact child relation is unavailable")
-        child_relation = metadata.get(DELEGATION_CHILD_METADATA_KEY)
+        raw_metadata = cast(Mapping[object, object], metadata)
+        if any(not isinstance(key, str) for key in raw_metadata):
+            raise ArtifactValidationError("Artifact child relation is unavailable")
+        metadata_record = cast(Mapping[str, object], metadata)
+        child_relation = metadata_record.get(DELEGATION_CHILD_METADATA_KEY)
         if not isinstance(child_relation, Mapping):
             raise ArtifactValidationError("Artifact child relation is unavailable")
-        try:
-            persisted = _parse_child_admission(
-                child_writer.owner.key,
-                dict(cast(Mapping[str, object], child_relation)),
-            )
-        except (TypeError, ValueError):
-            raise ArtifactValidationError("Artifact child relation is invalid") from None
+        raw_child_relation = cast(Mapping[object, object], child_relation)
+        if any(not isinstance(key, str) for key in raw_child_relation):
+            raise ArtifactValidationError("Artifact child relation is unavailable")
+        child_relation_record = cast(Mapping[str, object], child_relation)
+        if dict(child_relation_record) != admission.metadata():
+            raise ArtifactValidationError("Artifact child relation is stale")
         runtime = parse_runtime_session_metadata(
-            cast(Mapping[str, object], metadata),
+            metadata_record,
             parent_incarnation=parent_state.incarnation,
         )
         if (
@@ -167,7 +255,6 @@ class ArtifactDirectChildBinding:
             or runtime.metadata.parent_key != admission.parent_key
             or runtime.metadata.parent_incarnation != parent_state.incarnation
             or runtime.metadata.profile != admission.profile
-            or not _same_child_relation(persisted, admission)
         ):
             raise ArtifactValidationError("Artifact child relation is stale")
 
@@ -182,10 +269,11 @@ class ArtifactDirectChildBinding:
             parent_writer.stream_id,
             child_writer.run_id,
             child_writer.stream_id,
+            _child_relation_signature(child_relation_record),
             secrets.token_bytes(32),
         )
 
-    def _binds(
+    def binds(
         self,
         parent_reader: ArtifactReader,
         child_writer: SourceTurnWriter,
@@ -199,7 +287,7 @@ class ArtifactDirectChildBinding:
             and child_writer.stream_id == self._child_stream_id
         )
 
-    def _validate_live(self) -> tuple[SourceSnapshot, SourceSnapshot]:
+    def validate_live(self) -> tuple[SourceSnapshot, SourceSnapshot]:
         parent_writer = self._parent_reader.writer
         child_writer = self._child_writer
         parent_writer.owner.validate_dispatch()
@@ -223,77 +311,59 @@ def _writer_lease_matches(writer: SourceTurnWriter, snapshot: SourceSnapshot) ->
     metadata = snapshot.header.get("metadata")
     if not isinstance(metadata, Mapping):
         return False
-    lease = metadata.get("execution_lease")
-    return isinstance(lease, Mapping) and lease.get("run_id") == writer.run_id
-
-
-def _same_child_relation(left: ChildAdmission, right: ChildAdmission) -> bool:
-    return (
-        left.child_id == right.child_id
-        and left.session_key == right.session_key
-        and left.parent_key == right.parent_key
-        and left.parent_incarnation == right.parent_incarnation
-        and left.root_key == right.root_key
-        and left.profile == right.profile
-        and left.runtime_generation == right.runtime_generation
-        and left.run_sequence == right.run_sequence
-        and left.state_sequence == right.state_sequence
-        and left.current_run_id == right.current_run_id
-        and left.state == right.state == "active"
-        and left.holds_capacity
-        and right.holds_capacity
-        and left.source_state is not None
-        and right.source_state is not None
-        and left.source_state.same_origin(right.source_state)
-        and left.parent_source_state is not None
-        and right.parent_source_state is not None
-        and left.parent_source_state.same_origin(right.parent_source_state)
-    )
+    raw_metadata = cast(Mapping[object, object], metadata)
+    if any(not isinstance(key, str) for key in raw_metadata):
+        return False
+    metadata_record = cast(Mapping[str, object], metadata)
+    lease = metadata_record.get("execution_lease")
+    if not isinstance(lease, Mapping):
+        return False
+    raw_lease = cast(Mapping[object, object], lease)
+    if any(not isinstance(key, str) for key in raw_lease):
+        return False
+    lease_record = cast(Mapping[str, object], lease)
+    return lease_record.get("run_id") == writer.run_id
 
 
 def _stored_child_relation_matches(
     snapshot: SourceSnapshot,
     binding: ArtifactDirectChildBinding,
 ) -> bool:
-    from nanobot.agent.child_sessions import DELEGATION_CHILD_METADATA_KEY, _parse_child_admission
+    from nanobot.agent.child_sessions import DELEGATION_CHILD_METADATA_KEY
     from nanobot.session.runtime_authority import parse_runtime_session_metadata
 
     metadata = snapshot.header.get("metadata")
     if not isinstance(metadata, Mapping):
         return False
-    child_relation = metadata.get(DELEGATION_CHILD_METADATA_KEY)
-    if (
-        not isinstance(child_relation, Mapping)
-        or any(not isinstance(key, str) for key in child_relation)
-    ):
+    raw_metadata = cast(Mapping[object, object], metadata)
+    if any(not isinstance(key, str) for key in raw_metadata):
         return False
-    try:
-        persisted = _parse_child_admission(
-            snapshot.state.session_key,
-            dict(cast(Mapping[str, object], child_relation)),
-        )
-    except (TypeError, ValueError):
+    metadata_record = cast(Mapping[str, object], metadata)
+    child_relation = metadata_record.get(DELEGATION_CHILD_METADATA_KEY)
+    if not isinstance(child_relation, Mapping):
+        return False
+    raw_child_relation = cast(Mapping[object, object], child_relation)
+    if any(not isinstance(key, str) for key in raw_child_relation):
+        return False
+    relation = cast(Mapping[str, object], child_relation)
+    if not binding.matches_child_relation(relation):
         return False
     runtime = parse_runtime_session_metadata(
-        cast(Mapping[str, object], metadata),
-        parent_incarnation=binding._parent_state.incarnation,
+        metadata_record,
+        parent_incarnation=binding.parent_source_state.incarnation,
     )
     return (
-        persisted.child_id == binding._child_id
-        and persisted.session_key == binding._child_state.session_key
-        and persisted.parent_key == binding._parent_state.session_key
-        and persisted.parent_incarnation == binding._parent_state.incarnation
-        and persisted.state in {"active", "completed"}
-        and persisted.source_state is not None
-        and persisted.source_state.same_origin(binding._child_state)
-        and persisted.parent_source_state is not None
-        and persisted.parent_source_state.same_origin(binding._parent_state)
-        and binding._child_run_id in {persisted.current_run_id, persisted.last_run_id}
+        relation.get("child_id") == binding.child_id
+        and relation.get("session_key") == binding.child_source_state.session_key
+        and relation.get("parent_key") == binding.parent_source_state.session_key
+        and relation.get("parent_incarnation") == binding.parent_source_state.incarnation
+        and relation.get("state") in {"active", "completed"}
+        and relation.get("current_run_id") == binding.child_run_id
         and runtime.present
         and runtime.executable
-        and runtime.metadata.parent_key == binding._parent_state.session_key
-        and runtime.metadata.parent_incarnation == binding._parent_state.incarnation
-        and runtime.metadata.profile == persisted.profile
+        and runtime.metadata.parent_key == binding.parent_source_state.session_key
+        and runtime.metadata.parent_incarnation == binding.parent_source_state.incarnation
+        and runtime.metadata.profile == relation.get("profile")
     )
 
 
@@ -378,7 +448,7 @@ class ArtifactGrantSet:
             raise ArtifactValidationError("Artifact grants do not match execution owner")
         if (
             self._child_binding is not None
-            and not self._child_binding._binds(self._child_binding._parent_reader, reader.writer)
+            and not self._child_binding.binds(self._child_binding.parent_reader, reader.writer)
         ):
             raise ArtifactValidationError("Artifact grants do not match child execution")
         if self._store is not None and self._store is not reader.store:
@@ -425,15 +495,15 @@ class ArtifactGrantSet:
                 raise ArtifactValidationError("Artifact grants require an admitted direct child")
         elif (
             same_owner_child_stream
-            or not isinstance(child_binding, ArtifactDirectChildBinding)
-            or not child_binding._binds(parent, child_writer)
+            or type(child_binding) is not ArtifactDirectChildBinding
+            or not child_binding.binds(parent, child_writer)
         ):
             raise ArtifactValidationError("Artifact grants require an admitted direct child")
         child = cls(_CAPABILITY, child_writer)
         child._child_binding = child_binding
         if not identifiers:
             if child_binding is not None:
-                child_binding._validate_live()
+                child_binding.validate_live()
             return child
         parent.require_grant_issuer()
         grants: list[_Grant] = []
@@ -467,7 +537,7 @@ class ArtifactGrantSet:
                     with child_writer.store.execution_transaction(
                         child_writer.owner.key, child_writer.owner
                     ):
-                        parent_snapshot, target_snapshot = child_binding._validate_live()
+                        parent_snapshot, target_snapshot = child_binding.validate_live()
                         for identifier in identifiers:
                             descriptor = parent.verify_native_artifact(
                                 identifier, parent_snapshot, blobs
@@ -484,14 +554,14 @@ class ArtifactGrantSet:
                                 child_writer,
                                 target_snapshot.state,
                                 child_binding,
-                            direct_child_nonce=child_binding._nonce,
+                            direct_child_nonce=child_binding.nonce_for_grant(_CAPABILITY),
                             ))
                         blobs.assert_reachable()
-                        child_binding._validate_live()
+                        child_binding.validate_live()
         child._grants = tuple(grants)
         return child
 
-    def _find_separate_owner_grant(
+    def find_separate_owner_grant(
         self,
         reader: ArtifactReader,
         identifier: str,
@@ -506,7 +576,10 @@ class ArtifactGrantSet:
             and grant.target_writer is reader.writer
             and (
                 grant.child_binding is None
-                or grant.direct_child_nonce is grant.child_binding._nonce
+                or (
+                    grant.direct_child_nonce is not None
+                    and grant.child_binding.matches_direct_child_nonce(grant.direct_child_nonce)
+                )
             )
             and (
                 grant.child_binding is not None
@@ -525,7 +598,7 @@ class ArtifactGrantSet:
             raise ArtifactValidationError("Artifact grant targets another invocation")
         return grant
 
-    def _read_separate_owner_grant(
+    def read_separate_owner_grant(
         self,
         reader: ArtifactReader,
         grant: _Grant,
@@ -544,11 +617,14 @@ class ArtifactGrantSet:
         if parse_artifact_reference(reference) != grant.descriptor.artifact_id:
             raise ArtifactValidationError("Artifact grant is unavailable")
         binding = grant.child_binding
-        if binding is not None and grant.direct_child_nonce is not binding._nonce:
+        if binding is not None and (
+            grant.direct_child_nonce is None
+            or not binding.matches_direct_child_nonce(grant.direct_child_nonce)
+        ):
             raise ArtifactValidationError("Artifact child invocation binding changed")
         if binding is not None and (
             grant.direction != "downward"
-            and binding._child_writer is not origin_writer
+            and binding.child_writer is not origin_writer
         ):
             raise ArtifactValidationError("Artifact handoff binding changed")
 
@@ -566,17 +642,17 @@ class ArtifactGrantSet:
                             not origin_snapshot.state.same_origin(grant.origin_state)
                             or not target_snapshot.state.same_origin(grant.target_state)
                             or target_writer.failed
-                            or (binding is not None and not binding._binds(origin_reader, target_writer))
+                            or (binding is not None and not binding.binds(origin_reader, target_writer))
                             or (
                                 binding is not None
                                 and not _stored_child_relation_matches(target_snapshot, binding)
                             )
                         ):
                             raise ArtifactValidationError("Artifact source admission changed")
-                        origin_view = reader._origin_view(origin_reader)
+                        origin_view = reader.origin_view(origin_reader)
                         origin_view.verify_published(grant.descriptor, origin_snapshot, blobs)
                         if binding is not None:
-                            binding._validate_live()
+                            binding.validate_live()
                         raw = blobs.read_range(grant.descriptor, offset=offset, limit=max_bytes)
                         origin_writer.owner.validate_dispatch()
                         target_writer.owner.validate_dispatch()
@@ -602,7 +678,7 @@ class ArtifactGrantSet:
                         )
                         if not self._is_parent_result_event(parent_result, target_writer):
                             raise ArtifactValidationError("Artifact handoff result changed")
-                        origin_view = reader._origin_view(origin_reader)
+                        origin_view = reader.origin_view(origin_reader)
                         origin_view.verify_settled_published(
                             grant.descriptor,
                             origin_snapshot,
@@ -610,7 +686,7 @@ class ArtifactGrantSet:
                             expected_state=grant.origin_state,
                             expected_run_id=origin_writer.run_id,
                             expected_stream_id=(
-                                binding._child_stream_id if binding is not None
+                                binding.child_stream_id if binding is not None
                                 else grant.descriptor.stream_id
                             ),
                         )
@@ -747,7 +823,7 @@ class ArtifactGrantSet:
             raise ArtifactValidationError("Invalid artifact handoff set")
         if current_ids.intersection(ids) or len(current_ids) + len(ids) > _MAX_ARTIFACT_REFERENCES:
             raise ArtifactValidationError("Artifact handoff exceeds invocation limit")
-        if receipt._child_binding is not None:
+        if receipt.child_binding is not None:
             return self._accept_separate_owner_handoff(
                 reader,
                 receipt,
@@ -781,7 +857,7 @@ class ArtifactGrantSet:
                         reader.writer.stream_id,
                         descriptor,
                         self._invocation_nonce,
-                        receipt._collector.reader,
+                        receipt.collector.reader,
                         reader.writer.owner.read_snapshot().state,
                         reader.writer,
                         reader.writer.owner.read_snapshot().state,
@@ -807,38 +883,37 @@ class ArtifactGrantSet:
         parent_result_event_id: str,
     ) -> tuple[str, ...]:
         """Accept a settled canonical child receipt under origin-blob then source locks."""
-        binding = receipt._child_binding
-        source_store = receipt._source_store
-        run_store = receipt._run_store
-        child_reader = receipt._collector.reader
+        binding = receipt.child_binding
+        source_store = receipt.source_store
+        run_store = receipt.run_store
+        child_reader = receipt.collector.reader
         child_writer = child_reader.writer
         if (
             binding is None
+            or source_store is None
             or source_store is not child_writer.store
             or run_store is None
-            or binding._parent_reader is not reader
-            or binding._child_writer is not child_writer
+            or binding.parent_reader is not reader
+            or binding.child_writer is not child_writer
         ):
             raise ArtifactValidationError("Artifact handoff settlement is unavailable")
         minted: list[_Grant] = []
         with child_reader.store.transaction() as blobs:
             with source_store.execution_transaction(child_writer.owner.key):
                 child_snapshot = source_store.load_source_snapshot(child_writer.owner.key)
-                if receipt._run_store is None:
-                    raise ArtifactValidationError("Artifact handoff settlement is unavailable")
-                self._validate_settled_child(
+                self.validate_settled_child(
                     receipt,
                     child_snapshot,
                     blobs,
                     reader,
-                    run_store=receipt._run_store,
+                    run_store=run_store,
                 )
                 with reader.writer.store.execution_transaction(
                     reader.writer.owner.key, reader.writer.owner
                 ):
                     reader.writer.owner.validate_dispatch()
                     parent_snapshot = reader.writer.owner.read_snapshot()
-                    if not parent_snapshot.state.same_origin(binding._parent_state):
+                    if not parent_snapshot.state.same_origin(binding.parent_source_state):
                         raise ArtifactValidationError("Artifact parent source admission changed")
                     parent_result = next(
                         (event for event in parent_snapshot.events
@@ -862,8 +937,8 @@ class ArtifactGrantSet:
                             binding,
                             run_store,
                             parent_result_event_id,
-                            tuple(receipt._tool_events),
-                            binding._nonce,
+                            receipt.tool_events,
+                            binding.nonce_for_grant(_CAPABILITY),
                         ))
                     blobs.assert_reachable()
                     reader.writer.owner.validate_dispatch()
@@ -877,7 +952,7 @@ class ArtifactGrantSet:
         return tuple("artifact:" + descriptor.artifact_id for descriptor in descriptors)
 
     @staticmethod
-    def _validate_settled_child(
+    def validate_settled_child(
         receipt: ArtifactHandoffReceipt,
         snapshot: SourceSnapshot,
         blobs: ArtifactBlobTransaction,
@@ -885,13 +960,14 @@ class ArtifactGrantSet:
         *,
         run_store: RunStore,
     ) -> None:
-        binding = receipt._child_binding
-        child_reader = receipt._collector.reader
-        if binding is None or receipt._prepared_state is None:
+        binding = receipt.child_binding
+        child_reader = receipt.collector.reader
+        prepared_state = receipt.prepared_state
+        if binding is None or prepared_state is None:
             raise ArtifactValidationError("Artifact handoff settlement is unavailable")
         if (
-            not snapshot.state.same_origin(receipt._prepared_state)
-            or not snapshot.state.same_origin(binding._child_state)
+            not snapshot.state.same_origin(prepared_state)
+            or not snapshot.state.same_origin(binding.child_source_state)
         ):
             raise ArtifactValidationError("Artifact child source admission changed")
         if not _stored_child_relation_matches(snapshot, binding):
@@ -907,22 +983,22 @@ class ArtifactGrantSet:
             raise ArtifactValidationError("Artifact child settlement is unresolved")
         event_ids = {event.get("_event_id") for event in snapshot.events}
         if (
-            not receipt._tool_events
-            or not set(receipt._tool_events) <= event_ids
+            not receipt.tool_events
+            or not set(receipt.tool_events) <= event_ids
         ):
             raise ArtifactValidationError("Artifact handoff result was not retained")
         stream = [
             event for event in snapshot.events
-            if event.get("_stream_id") == binding._child_stream_id
+            if event.get("_stream_id") == binding.child_stream_id
         ]
         if (
             not stream
             or stream[-1].get("role") != "assistant"
             or stream[-1].get("tool_calls")
-            or stream[-1].get("_run_id") != binding._child_run_id
+            or stream[-1].get("_run_id") != binding.child_run_id
         ):
             raise ArtifactValidationError("Artifact handoff has no successful child terminal event")
-        for event_id in receipt._tool_events:
+        for event_id in receipt.tool_events:
             event = next(
                 (row for row in stream if row.get("_event_id") == event_id),
                 None,
@@ -931,33 +1007,33 @@ class ArtifactGrantSet:
                 event is None
                 or event.get("role") != "tool"
                 or event.get("name") != "handoff_artifact"
-                or event.get("_run_id") != binding._child_run_id
+                or event.get("_run_id") != binding.child_run_id
                 or event.get("_outcome_status") != "ok"
                 or event.get("_dispatched") is not True
             ):
                 raise ArtifactValidationError("Artifact handoff result was not successful")
-        record = run_store.load(binding._child_run_id)
+        record = run_store.load(binding.child_run_id)
         from nanobot.agent.turn import RunStatus
 
         if (
             record is None
             or record.status is not RunStatus.COMPLETED
-            or record.run_id != binding._child_run_id
+            or record.run_id != binding.child_run_id
             or record.session_ref is None
             or record.session_ref.session_key != snapshot.state.session_key
             or record.stop_reason != "completed"
             or record.completed_at is None
         ):
             raise ArtifactValidationError("Artifact child run did not settle successfully")
-        origin_view = parent_reader._origin_view(child_reader)
-        for descriptor in receipt._descriptors:
+        origin_view = parent_reader.origin_view(child_reader)
+        for descriptor in receipt.descriptors:
             origin_view.verify_settled_published(
                 descriptor,
                 snapshot,
                 blobs,
-                expected_state=receipt._prepared_state,
-                expected_run_id=binding._child_run_id,
-                expected_stream_id=binding._child_stream_id,
+                expected_state=prepared_state,
+                expected_run_id=binding.child_run_id,
+                expected_stream_id=binding.child_stream_id,
             )
 
 
@@ -996,6 +1072,34 @@ class ArtifactHandoffReceipt:
         self._prepared_state = prepared_state
         self._source_store: SourceSessionStore | None = None
         self._run_store: RunStore | None = None
+
+    @property
+    def collector(self) -> ArtifactHandoffCollector:
+        return self._collector
+
+    @property
+    def descriptors(self) -> tuple[ArtifactDescriptor, ...]:
+        return self._descriptors
+
+    @property
+    def tool_events(self) -> tuple[str, ...]:
+        return tuple(self._tool_events)
+
+    @property
+    def child_binding(self) -> ArtifactDirectChildBinding | None:
+        return self._child_binding
+
+    @property
+    def prepared_state(self) -> SourceState | None:
+        return self._prepared_state
+
+    @property
+    def source_store(self) -> SourceSessionStore | None:
+        return self._source_store
+
+    @property
+    def run_store(self) -> RunStore | None:
+        return self._run_store
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("ArtifactHandoffReceipt cannot be serialized")
@@ -1049,9 +1153,9 @@ class ArtifactHandoffReceipt:
         if self._child_binding is not None:
             return (
                 not self._consumed
-                and self._child_binding._parent_reader.writer is writer
-                and writer.run_id == self._child_binding._parent_run_id
-                and writer.stream_id == self._child_binding._parent_stream_id
+                and self._child_binding.parent_reader.writer is writer
+                and writer.run_id == self._child_binding.parent_run_id
+                and writer.stream_id == self._child_binding.parent_stream_id
             )
         child = self._collector.reader.writer
         return (
@@ -1077,8 +1181,7 @@ class ArtifactHandoffReceipt:
     ) -> None:
         """Seal a canonical-child candidate only after its registered run and source close."""
         if self._child_binding is None:
-            self._seal(_CAPABILITY)
-            return
+            raise ArtifactValidationError("Artifact handoff settlement is unavailable")
         writer = self._collector.reader.writer
         if (
             self._sealed
@@ -1094,7 +1197,7 @@ class ArtifactHandoffReceipt:
         with self._collector.reader.store.transaction() as blobs:
             with source_store.execution_transaction(writer.owner.key):
                 snapshot = source_store.load_source_snapshot(writer.owner.key)
-                ArtifactGrantSet._validate_settled_child(
+                ArtifactGrantSet.validate_settled_child(
                     self,
                     snapshot,
                     blobs,
@@ -1116,8 +1219,8 @@ class ArtifactHandoffReceipt:
         child = self._collector.reader.writer
         if self._child_binding is not None:
             if (
-                not self._child_binding._binds(parent, child)
-                or self._child_binding._parent_reader is not parent
+                not self._child_binding.binds(parent, child)
+                or self._child_binding.parent_reader is not parent
             ):
                 raise ArtifactValidationError("Artifact handoff is not a direct child result")
         elif (
@@ -1167,9 +1270,9 @@ class ArtifactHandoffCollector:
         if child_binding is None and reader.writer.parent_stream_id is None:
             raise ArtifactValidationError("Artifact handoff requires a child stream")
         if child_binding is not None:
-            if not child_binding._binds(child_binding._parent_reader, reader.writer):
+            if not child_binding.binds(child_binding.parent_reader, reader.writer):
                 raise ArtifactValidationError("Artifact handoff requires an admitted direct child")
-            child_binding._validate_live()
+            child_binding.validate_live()
         self.reader = reader
         self._receipts: list[ArtifactHandoffReceipt] = []
         self._selected: set[str] = set()
@@ -1256,31 +1359,31 @@ class ArtifactHandoffCollector:
         binding = self._child_binding
         with self.reader.store.transaction() as blobs:
             with writer.store.execution_transaction(writer.owner.key, writer.owner):
-                parent_snapshot, child_snapshot = binding._validate_live()
+                parent_snapshot, child_snapshot = binding.validate_live()
                 _ = parent_snapshot
                 snapshot = writer.owner.read_snapshot()
-                if not snapshot.state.same_origin(binding._child_state):
+                if not snapshot.state.same_origin(binding.child_source_state):
                     raise ArtifactValidationError("Artifact child source admission changed")
                 if not _stored_child_relation_matches(snapshot, binding):
                     raise ArtifactValidationError("Artifact child relation changed")
                 stream = [
                     event for event in snapshot.events
-                    if event.get("_stream_id") == binding._child_stream_id
+                    if event.get("_stream_id") == binding.child_stream_id
                 ]
                 if (
                     not stream
                     or stream[-1].get("role") != "assistant"
                     or stream[-1].get("tool_calls")
-                    or stream[-1].get("_run_id") != binding._child_run_id
+                    or stream[-1].get("_run_id") != binding.child_run_id
                 ):
                     raise ArtifactValidationError(
                         "Artifact handoff has no successful child terminal event"
                     )
                 event_ids: set[object] = {event.get("_event_id") for event in stream}
                 for receipt in self._receipts:
-                    if not receipt._tool_events or not set(receipt._tool_events) <= event_ids:
+                    if not receipt.tool_events or not set(receipt.tool_events) <= event_ids:
                         raise ArtifactValidationError("Artifact handoff result was not retained")
-                    for event_id in receipt._tool_events:
+                    for event_id in receipt.tool_events:
                         event = next(
                             (row for row in stream if row.get("_event_id") == event_id),
                             None,
@@ -1289,7 +1392,7 @@ class ArtifactHandoffCollector:
                             event is None
                             or event.get("role") != "tool"
                             or event.get("name") != "handoff_artifact"
-                            or event.get("_run_id") != binding._child_run_id
+                            or event.get("_run_id") != binding.child_run_id
                             or event.get("_outcome_status") != "ok"
                             or event.get("_dispatched") is not True
                         ):
@@ -1308,7 +1411,7 @@ class ArtifactHandoffCollector:
         descriptors = tuple(
             descriptor
             for receipt in self._receipts
-            for descriptor in receipt._descriptors
+            for descriptor in receipt.descriptors
         )
         merged = ArtifactHandoffReceipt(
             _CAPABILITY,

@@ -162,7 +162,7 @@ class ArtifactReader:
                           blobs: ArtifactBlobTransaction) -> None:
         self._verify_descriptor(descriptor, snapshot, blobs, require_native=True)
 
-    def _origin_view(self, origin: ArtifactReader) -> ArtifactReader:
+    def origin_view(self, origin: ArtifactReader) -> ArtifactReader:
         """Apply this invocation's current read policy to one sealed origin namespace."""
         return ArtifactReader(
             origin.writer,
@@ -234,9 +234,9 @@ class ArtifactReader:
         writer, owner = self.writer, self.writer.owner
         owner.validate_dispatch()
         if self.grants is not None:
-            grant = self.grants._find_separate_owner_grant(self, identity)
+            grant = self.grants.find_separate_owner_grant(self, identity)
             if grant is not None:
-                descriptor, raw = self.grants._read_separate_owner_grant(
+                descriptor, raw = self.grants.read_separate_owner_grant(
                     self,
                     grant,
                     reference=reference,
