@@ -822,6 +822,9 @@ class AgentLoop:
         self.sessions = session_manager or SessionManager(workspace, sessions_root=effective_root)
         fork_dependencies.foreground_manager.bind_session_owner(self.sessions)
         fork_dependencies.foreground_manager.bind_child_turn_executor(self)
+        fork_dependencies.foreground_manager.set_background_result_sink(
+            self.bus.publish_inbound,
+        )
         self.approval_admission = ApprovalAdmission()
         fork_dependencies.foreground_manager.set_child_approval_revoker(
             self.approval_admission.revoke,
@@ -866,6 +869,7 @@ class AgentLoop:
         self._compact_dispatches: dict[asyncio.Task[None], _CompactDispatchSettlement] = {}
         self._discarding_sessions: set[str] = set()
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._background_results_reconciled = False
         self._close_lock = asyncio.Lock()
         self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
@@ -1306,7 +1310,11 @@ class AgentLoop:
             )
 
         def child_admission_scope(key: str) -> AbstractAsyncContextManager[_AdmittedTurnIO]:
-            return self._bus_turn_scope(inbound, key)
+            return self._bus_turn_scope(
+                inbound,
+                key,
+                suppress_channel_output=True,
+            )
 
         turn_request = TurnRequest(
             content=assignment,
@@ -1383,6 +1391,22 @@ class AgentLoop:
                 )
             raise
         self._seal_child_artifact_handoff(request, result)
+        if (
+            request.background_delivery is not None
+            and result.status is not RunStatus.APPROVAL_REQUIRED
+        ):
+            recorded = await self._fork_dependencies.foreground_manager.record_background_result(
+                child_id=request.admission.child_id,
+                run_id=request.run_id,
+                result=result,
+                delivery=request.background_delivery,
+            )
+            if not recorded:
+                raise RuntimeError("Background child result could not be persisted")
+            self._background_results_reconciled = False
+            self.schedule_background(
+                self._fork_dependencies.foreground_manager.reconcile_background_results()
+            )
         return result
 
     async def submit_child_followup(
@@ -1695,6 +1719,19 @@ class AgentLoop:
             run_store=self.run_store,
             source_store=backend.source,
         )
+
+    async def _reconcile_background_results_once(self) -> None:
+        """Retry durable child result delivery after tree restore or a new turn."""
+        if self._background_results_reconciled:
+            return
+        try:
+            manager = self._fork_dependencies.foreground_manager
+            await manager.recover_missing_background_results(self.run_store)
+            _delivered, _stale, pending = await manager.reconcile_background_results()
+        except Exception:
+            logger.exception("Background child result reconciliation failed")
+            return
+        self._background_results_reconciled = pending == 0
 
     def _cancelled_child_run_is_settled(self, request: ChildTurnRequest) -> bool:
         """Require a terminal run and a healthy closed source before releasing capacity."""
@@ -3431,6 +3468,7 @@ class AgentLoop:
             return
         self._loop_task = asyncio.current_task()
         self._running = True
+        await self._reconcile_background_results_once()
         try:
             logger.info("Agent loop started")
 
@@ -3685,11 +3723,17 @@ class AgentLoop:
     async def _bus_turn_scope(
         self, original: InboundMessage, key: str,
         settlement: _CompactDispatchSettlement | None = None,
+        *,
+        suppress_channel_output: bool = False,
     ) -> AsyncGenerator[_AdmittedTurnIO]:
         """Own bus delivery and the injection queue inside canonical admission."""
         msg = dataclasses.replace(original, session_key_override=key, metadata=dict(original.metadata))
         copy_pending_followup_proof(original, msg)
-        delivery = self.turn_delivery_factory.unrouted(msg, key)
+        delivery = self.turn_delivery_factory.unrouted(
+            msg,
+            key,
+            suppress_channel_output=suppress_channel_output,
+        )
         pending: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=20)
         io = _AdmittedTurnIO(pending_queue=pending, delivery=delivery)
         self._pending_queues[key] = pending
@@ -3771,7 +3815,12 @@ class AgentLoop:
                         or settlement.key != key):
                     raise RuntimeError("compact dispatch settlement identity mismatch")
                 settlement.claimed = True
-            delivery = self.turn_delivery_factory.create(msg, key, enable_stream=True)
+            delivery = self.turn_delivery_factory.create(
+                msg,
+                key,
+                enable_stream=True,
+                suppress_channel_output=suppress_channel_output,
+            )
             io.delivery = delivery
             stage_entered = True
             yield io
@@ -4578,6 +4627,7 @@ class AgentLoop:
             raise TypeError('execute_turn expects a TurnRequest')
         if self._lifecycle_is_closing():
             raise RuntimeError("agent loop is closing")
+        await self._reconcile_background_results_once()
         options = _options or _TurnExecutionOptions()
         if options.silent_output:
             if (

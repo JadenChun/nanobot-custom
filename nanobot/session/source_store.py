@@ -1783,6 +1783,11 @@ class SourceSessionStore:
             and event.get("_child_followup") == (
                 record.child_followup.to_dict() if record.child_followup is not None else None
             )
+            and event.get("_background_result") == (
+                record.background_result.to_dict()
+                if record.background_result is not None
+                else None
+            )
         )
 
     def discard_pending_followups(

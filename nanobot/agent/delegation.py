@@ -6,6 +6,7 @@ import asyncio
 import contextvars
 import json
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -28,6 +29,7 @@ from nanobot.agent.child_backend import (
 from nanobot.agent.child_sessions import (
     DEFAULT_CHILD_PROFILE,
     STOP_SETTLE_TIMEOUT,
+    BackgroundDeliveryIntent,
     ChildAdmission,
     ChildControlState,
     ChildRefusal,
@@ -41,6 +43,7 @@ from nanobot.agent.policy import (
     ToolPolicy,
     ToolPolicyDecision,
 )
+from nanobot.agent.run_store import RunStore
 from nanobot.agent.runner import AgentRunner, AgentRunResult
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
@@ -94,10 +97,21 @@ from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider, ToolCallRequest
 from nanobot.security.folder_grants import FolderGrantView
 from nanobot.security.workspace_access import current_tool_workspace
-from nanobot.session.manager import SessionManager
+from nanobot.session.execution_owner import (
+    ExecutionBusyError,
+    ExecutionOwnershipError,
+    acquire_execution,
+)
+from nanobot.session.manager import SessionManager, SessionWriteConflict
 from nanobot.session.pending_followups import (
+    BACKGROUND_RESULT_INBOUND_METADATA_KEY,
+    MAX_BACKGROUND_RESULT_CHARS,
+    PendingBackgroundResult,
     PendingChildFollowup,
     PendingFollowupRecord,
+    background_result_content,
+    background_result_id,
+    mint_background_result_id,
     mint_child_followup_id,
     parse_pending_followup_records,
 )
@@ -340,6 +354,8 @@ class ForegroundAgentManager:
         self._child_task_references: dict[str, WorkspaceTaskAccessReference] = {}
         self._suspended_children: dict[str, _SuspendedChild] = {}
         self._child_handles: dict[str, ChildBackendHandle] = {}
+        self._background_result_sink: Callable[[InboundMessage], Awaitable[None]] | None = None
+        self._background_reconcile_lock = asyncio.Lock()
 
     def set_child_event_sink(
         self,
@@ -347,6 +363,13 @@ class ForegroundAgentManager:
     ) -> None:
         """Publish typed child references to the parent activity owner."""
         self._child_event_sink = sink
+
+    def set_background_result_sink(
+        self,
+        sink: Callable[[InboundMessage], Awaitable[None]] | None,
+    ) -> None:
+        """Bind the owning loop's inbound publisher for delivered child results."""
+        self._background_result_sink = sink
 
     def set_child_approval_revoker(
         self,
@@ -1559,6 +1582,46 @@ class ForegroundAgentManager:
                 stop_reason="policy_blocked",
                 policy_metadata={"delegation_refused": True},
             )
+        background_delivery: BackgroundDeliveryIntent | None = None
+        if background:
+            binding = turn_context.active_tool_intent_binding
+            route = turn_context.delivery.primary
+            if (
+                type(binding) is not SourceToolIntentBinding
+                or binding.run_id != turn_context.run_id
+                or turn_context.source_writer is None
+                or not turn_context.source_writer.owns_tool_intent(binding)
+                or route is None
+                or not route.channel
+                or not route.chat_id
+            ):
+                return AgentRunResult(
+                    final_content=(
+                        "Error: background delivery requires an exact parent tool "
+                        "intent and route"
+                    ),
+                    messages=[],
+                    stop_reason="policy_blocked",
+                    policy_metadata={"delegation_refused": True},
+                )
+            try:
+                background_delivery = BackgroundDeliveryIntent(
+                    parent_key=parent_key,
+                    parent_source_state=expected_parent_source_state,
+                    parent_run_id=binding.run_id,
+                    parent_tool_event_id=binding.event_id,
+                    parent_execution_id=binding.execution_id,
+                    parent_dispatch_ordinal=binding.ordinal,
+                    route_channel=route.channel,
+                    route_chat_id=route.chat_id,
+                )
+            except ValueError:
+                return AgentRunResult(
+                    final_content="Error: background delivery intent is invalid",
+                    messages=[],
+                    stop_reason="policy_blocked",
+                    policy_metadata={"delegation_refused": True},
+                )
         parent = tree.sessions.read_session_snapshot(parent_key)
         if parent is None:
             return AgentRunResult(
@@ -1584,6 +1647,7 @@ class ForegroundAgentManager:
             profile=DEFAULT_CHILD_PROFILE,
             policy_facts=policy_facts,
             expected_parent_source_state=expected_parent_source_state,
+            background_delivery=background_delivery,
         )
         if isinstance(reserved, ChildRefusal):
             return AgentRunResult(
@@ -1719,6 +1783,7 @@ class ForegroundAgentManager:
                 approval_target=turn_context.delivery.primary,
                 workspace_task_reference=child_task_reference,
                 artifact_input=artifact_input,
+                background_delivery=background_delivery,
                 request_boundary_validator=lambda child_id=admission.child_id, active_run=run_id: (
                     self._child_request_is_current(child_id, active_run)
                 ),
@@ -2097,6 +2162,330 @@ class ForegroundAgentManager:
         error = task.exception()
         if error is not None:
             logger.error("Delegated background child failed: {}", error)
+
+    async def record_background_result(
+        self,
+        *,
+        child_id: str,
+        run_id: str,
+        result: TurnResult,
+        delivery: BackgroundDeliveryIntent,
+    ) -> bool:
+        """Persist one terminal child result before capacity release."""
+        tree = self._delegation_tree
+        if tree is None or result.status is RunStatus.APPROVAL_REQUIRED:
+            return False
+        child = tree.child(child_id)
+        if (
+            child is None
+            or child.current_run_id != run_id
+            or child.source_state is None
+            or child.parent_key != delivery.parent_key
+        ):
+            return False
+        content = result.content if isinstance(result.content, str) else ""
+        if not content.strip():
+            role_value = child.policy_facts.get("role")
+            role = role_value if isinstance(role_value, str) else "child"
+            content = f"{role} finished with {result.stop_reason or result.status.value}."
+        record = self._background_result_record(
+            child,
+            run_id=run_id,
+            delivery=delivery,
+            content=content,
+            stop_reason=result.stop_reason or result.status.value,
+            outcome=(
+                "completed"
+                if result.status is RunStatus.COMPLETED
+                and (result.stop_reason or result.status.value) == "completed"
+                else "stopped"
+                if result.status is RunStatus.CANCELLED
+                else "failed"
+            ),
+        )
+        updated = await tree.record_background_result(record)
+        return (
+            updated is not None
+            and updated.background_result is not None
+            and updated.background_result.same_result(record)
+        )
+
+    @staticmethod
+    def _background_result_record(
+        child: ChildAdmission,
+        *,
+        run_id: str,
+        delivery: BackgroundDeliveryIntent,
+        content: str,
+        stop_reason: str,
+        outcome: str,
+    ) -> PendingBackgroundResult:
+        content = content[:MAX_BACKGROUND_RESULT_CHARS]
+        return PendingBackgroundResult(
+            outbox_id=background_result_id(
+                child_id=child.child_id,
+                child_run_id=run_id,
+                parent_key=delivery.parent_key,
+                parent_store_identity=delivery.parent_source_state.store_identity,
+                parent_incarnation=delivery.parent_source_state.incarnation,
+                parent_generation=delivery.parent_source_state.generation,
+                parent_tool_event_id=delivery.parent_tool_event_id,
+                parent_execution_id=delivery.parent_execution_id,
+                parent_dispatch_ordinal=delivery.parent_dispatch_ordinal,
+            ),
+            parent_key=delivery.parent_key,
+            parent_store_identity=delivery.parent_source_state.store_identity,
+            parent_incarnation=delivery.parent_source_state.incarnation,
+            parent_generation=delivery.parent_source_state.generation,
+            parent_run_id=delivery.parent_run_id,
+            parent_tool_event_id=delivery.parent_tool_event_id,
+            parent_execution_id=delivery.parent_execution_id,
+            parent_dispatch_ordinal=delivery.parent_dispatch_ordinal,
+            child_id=child.child_id,
+            child_key=child.session_key,
+            child_run_id=run_id,
+            child_state_sequence=child.state_sequence,
+            child_control_epoch=child.control_epoch,
+            route_channel=delivery.route_channel,
+            route_chat_id=delivery.route_chat_id,
+            result=content,
+            stop_reason=stop_reason,
+            outcome=outcome,
+            created_at=time.time(),
+        )
+
+    async def recover_missing_background_results(self, run_store: RunStore) -> int:
+        """Rebuild a missing result from the completed run and healthy child source."""
+        tree = self._delegation_tree
+        if tree is None:
+            return 0
+        recovered = 0
+        for child in tree.background_delivery_candidates():
+            delivery = child.background_delivery
+            run_id = child.current_run_id
+            if delivery is None or run_id is None or child.source_state is None:
+                continue
+            record = run_store.load(run_id)
+            backend = tree.sessions.source_backend(child.session_key)
+            if (
+                record is None
+                or record.status is not RunStatus.COMPLETED
+                or record.session_ref is None
+                or record.session_ref.session_key != child.session_key
+                or record.session_ref.run_id != run_id
+                or record.stop_reason != "completed"
+                or backend is None
+            ):
+                continue
+            try:
+                snapshot = backend.source.load_source_snapshot(child.session_key)
+                metadata = snapshot.header["metadata"]
+                if (
+                    not snapshot.state.same_origin(child.source_state)
+                    or "execution_lease" in metadata
+                    or "execution_recovery_required" in metadata
+                    or validate_execution_links(snapshot.events)
+                ):
+                    continue
+                stream_id = record.metadata.get("source_stream_id")
+                terminal = [
+                    event for event in snapshot.events
+                    if event.get("_run_id") == run_id
+                    and event.get("role") == "assistant"
+                    and not event.get("tool_calls")
+                    and (
+                        not isinstance(stream_id, str)
+                        or event.get("_stream_id") == stream_id
+                    )
+                ]
+            except Exception:
+                logger.exception(
+                    "Background child result recovery failed for {}",
+                    child.child_id,
+                )
+                continue
+            if not terminal:
+                continue
+            content = terminal[-1].get("content")
+            if not isinstance(content, str):
+                continue
+            result = self._background_result_record(
+                child,
+                run_id=run_id,
+                delivery=delivery,
+                content=content,
+                stop_reason="completed",
+                outcome="completed",
+            )
+            if await tree.record_background_result(result) is not None:
+                recovered += 1
+        return recovered
+
+    async def reconcile_background_results(self) -> tuple[int, int, int]:
+        """Deliver pending child results once to their captured parent lifetime."""
+        tree = self._delegation_tree
+        if tree is None:
+            return (0, 0, 0)
+        async with self._background_reconcile_lock:
+            delivered = 0
+            stale = 0
+            pending = 0
+            for child in tree.background_results():
+                record = child.background_result
+                if record is None or record.state != "pending":
+                    continue
+                disposition = await self._reconcile_background_result(child, record)
+                if disposition == "admitted":
+                    delivered += 1
+                elif disposition == "stale":
+                    stale += 1
+                else:
+                    pending += 1
+            return (delivered, stale, pending)
+
+    async def _reconcile_background_result(
+        self,
+        child: ChildAdmission,
+        record: PendingBackgroundResult,
+    ) -> str:
+        tree = self._delegation_tree
+        if tree is None:
+            return "pending"
+        backend = tree.sessions.source_backend(record.parent_key)
+        if backend is None:
+            await tree.mark_background_result(
+                child.child_id,
+                state="stale",
+                stale_reason="parent_unavailable",
+            )
+            return "stale"
+        try:
+            snapshot = backend.source.load_source_snapshot(record.parent_key)
+        except Exception:
+            return "pending"
+        if (
+            snapshot.state.session_key != record.parent_key
+            or snapshot.state.store_identity != record.parent_store_identity
+            or snapshot.state.incarnation != record.parent_incarnation
+            or snapshot.state.generation != record.parent_generation
+        ):
+            await tree.mark_background_result(
+                child.child_id,
+                state="stale",
+                stale_reason="parent_source_changed",
+            )
+            return "stale"
+        if any(
+            event.get("_pending_followup_id") == record.outbox_id
+            for event in snapshot.events
+        ):
+            await tree.mark_background_result(
+                child.child_id,
+                state="admitted",
+                journal_id=record.outbox_id,
+            )
+            return "admitted"
+        try:
+            existing = next(
+                (
+                    item
+                    for item in parse_pending_followup_records(
+                        snapshot.header["metadata"].get(
+                            SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
+                            [],
+                        )
+                    )
+                    if item.identifier == record.outbox_id
+                ),
+                None,
+            )
+        except (KeyError, TypeError, ValueError):
+            await tree.mark_background_result(
+                child.child_id,
+                state="stale",
+                stale_reason="parent_journal_invalid",
+            )
+            return "stale"
+        if existing is not None and (
+            existing.background_result is None
+            or not existing.background_result.same_result(record)
+        ):
+            await tree.mark_background_result(
+                child.child_id,
+                state="stale",
+                stale_reason="parent_journal_conflict",
+            )
+            return "stale"
+        try:
+            tree.sessions.get_or_create(record.parent_key)
+        except Exception:
+            return "pending"
+
+        message = InboundMessage(
+            channel=record.route_channel,
+            sender_id="subagent",
+            chat_id=record.route_chat_id,
+            content=background_result_content(record),
+            metadata={
+                BACKGROUND_RESULT_INBOUND_METADATA_KEY: record.outbox_id,
+                "background_child_id": record.child_id,
+            },
+            session_key_override=record.parent_key,
+            require_existing_session=True,
+        )
+        try:
+            mint_background_result_id(message, record)
+            pending_record = source_pending_followup_record(message)
+        except (TypeError, ValueError):
+            return "pending"
+        if existing is None:
+            try:
+                async with acquire_execution(
+                    backend,
+                    record.parent_key,
+                    run_id=f"outbox-{record.outbox_id[:24]}",
+                    wait_for_lock=False,
+                    expected_source={
+                        "store_identity": record.parent_store_identity,
+                        "incarnation": record.parent_incarnation,
+                        "generation": record.parent_generation,
+                    },
+                ) as owner:
+                    backend.source.admit_pending_followup(
+                        record.parent_key,
+                        owner,
+                        pending_record,
+                    )
+            except ExecutionBusyError:
+                return "pending"
+            except (ExecutionOwnershipError, SessionWriteConflict):
+                await tree.mark_background_result(
+                    child.child_id,
+                    state="stale",
+                    stale_reason="parent_source_changed",
+                )
+                return "stale"
+            except Exception:
+                logger.exception(
+                    "Background child result admission failed for {}",
+                    child.child_id,
+                )
+                return "pending"
+        await tree.mark_background_result(
+            child.child_id,
+            state="admitted",
+            journal_id=pending_record.identifier,
+        )
+        sink = self._background_result_sink
+        if sink is not None:
+            try:
+                await sink(message)
+            except Exception:
+                logger.exception(
+                    "Background child result publication failed for {}",
+                    child.child_id,
+                )
+        return "admitted"
 
     @staticmethod
     def _child_disposition(result: AgentRunResult) -> tuple[str, str]:

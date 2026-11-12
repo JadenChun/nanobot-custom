@@ -12,7 +12,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nanobot.agent.child_sessions import ChildAdmission
+from nanobot.agent.child_sessions import BackgroundDeliveryIntent, ChildAdmission
 from nanobot.agent.hook import AgentHook
 from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.registry import ToolRegistry
@@ -78,6 +78,7 @@ class ChildTurnRequest:
     workspace_task_reference: WorkspaceTaskAccessReference | None = None
     approval_decision: ApprovalDecision | None = None
     artifact_input: CanonicalChildArtifactInput | None = None
+    background_delivery: BackgroundDeliveryIntent | None = None
     followup_record: PendingFollowupRecord | None = None
     followup_records: tuple[PendingFollowupRecord, ...] = ()
     followup_records_to_admit: tuple[PendingFollowupRecord, ...] = ()

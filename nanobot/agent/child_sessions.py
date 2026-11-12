@@ -28,7 +28,10 @@ from typing import Any, Literal, Mapping, cast
 from loguru import logger
 
 from nanobot.session.manager import Session, SessionManager
-from nanobot.session.pending_followups import parse_pending_followup_records
+from nanobot.session.pending_followups import (
+    PendingBackgroundResult,
+    parse_pending_followup_records,
+)
 from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
 from nanobot.session.runtime_authority import (
     RUNTIME_SESSION_METADATA_KEY,
@@ -125,6 +128,34 @@ class OriginalChatStopAdmission:
 
 
 @dataclass(frozen=True, slots=True)
+class BackgroundDeliveryIntent:
+    """Exact parent lifetime and route captured when a background child starts."""
+
+    parent_key: str
+    parent_source_state: SourceState
+    parent_run_id: str
+    parent_tool_event_id: str
+    parent_execution_id: str
+    parent_dispatch_ordinal: int
+    route_channel: str
+    route_chat_id: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.parent_key
+            or not self.parent_run_id
+            or not self.parent_tool_event_id
+            or not self.parent_execution_id
+            or type(self.parent_dispatch_ordinal) is not int
+            or self.parent_dispatch_ordinal < 0
+            or not self.route_channel
+            or not self.route_chat_id
+            or type(self.parent_source_state) is not SourceState
+        ):
+            raise ValueError("Background delivery intent is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class ChildAdmission:
     """One committed child identity and its current tree state."""
 
@@ -155,6 +186,8 @@ class ChildAdmission:
     state: str = "reserved"
     outcome: str | None = None
     transcript: tuple[dict[str, str], ...] = ()
+    background_delivery: BackgroundDeliveryIntent | None = None
+    background_result: PendingBackgroundResult | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -195,6 +228,12 @@ class ChildAdmission:
             "state": self.state,
             "outcome": self.outcome,
             "transcript": [dict(message) for message in self.transcript],
+            "background_delivery": _background_delivery_payload(self.background_delivery),
+            "background_result": (
+                self.background_result.to_dict()
+                if self.background_result is not None
+                else None
+            ),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -227,6 +266,59 @@ def _source_state_payload(state: SourceState | None) -> dict[str, object] | None
         "checkpoint_id": state.checkpoint_id,
         "checkpoint_fingerprint": state.checkpoint_fingerprint,
     }
+
+
+def _background_delivery_payload(
+    intent: BackgroundDeliveryIntent | None,
+) -> dict[str, object] | None:
+    if intent is None:
+        return None
+    return {
+        "parent_key": intent.parent_key,
+        "parent_source_state": _source_state_payload(intent.parent_source_state),
+        "parent_run_id": intent.parent_run_id,
+        "parent_tool_event_id": intent.parent_tool_event_id,
+        "parent_execution_id": intent.parent_execution_id,
+        "parent_dispatch_ordinal": intent.parent_dispatch_ordinal,
+        "route_channel": intent.route_channel,
+        "route_chat_id": intent.route_chat_id,
+    }
+
+
+def _parse_background_delivery(value: object) -> BackgroundDeliveryIntent:
+    if not isinstance(value, Mapping):
+        raise ValueError("child background delivery is invalid")
+    data = cast(Mapping[str, object], value)
+    strings = (
+        "parent_key",
+        "parent_run_id",
+        "parent_tool_event_id",
+        "parent_execution_id",
+        "route_channel",
+        "route_chat_id",
+    )
+    parsed: dict[str, str] = {}
+    for name in strings:
+        field_value = data.get(name)
+        if not isinstance(field_value, str) or not field_value:
+            raise ValueError("child background delivery is invalid")
+        parsed[name] = field_value
+    ordinal = data.get("parent_dispatch_ordinal")
+    if type(ordinal) is not int or ordinal < 0:
+        raise ValueError("child background delivery is invalid")
+    parent_state = _parse_source_state(data.get("parent_source_state"))
+    if parent_state is None:
+        raise ValueError("child background delivery is invalid")
+    return BackgroundDeliveryIntent(
+        parent_key=parsed["parent_key"],
+        parent_source_state=parent_state,
+        parent_run_id=parsed["parent_run_id"],
+        parent_tool_event_id=parsed["parent_tool_event_id"],
+        parent_execution_id=parsed["parent_execution_id"],
+        parent_dispatch_ordinal=ordinal,
+        route_channel=parsed["route_channel"],
+        route_chat_id=parsed["route_chat_id"],
+    )
 
 
 def _parse_source_state(value: object) -> SourceState | None:
@@ -349,6 +441,27 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
             raise ValueError("child transcript content is invalid")
         transcript.append({"role": role, "content": content})
 
+    raw_background_delivery = data.get("background_delivery")
+    background_delivery = (
+        _parse_background_delivery(raw_background_delivery)
+        if raw_background_delivery is not None
+        else None
+    )
+    if background_delivery is not None and background_delivery.parent_key != parent_key:
+        raise ValueError("child background delivery binding is invalid")
+    raw_background_result = data.get("background_result")
+    background_result = (
+        PendingBackgroundResult.from_value(raw_background_result)
+        if raw_background_result is not None
+        else None
+    )
+    if background_result is not None and (
+        background_result.child_id != child_id
+        or background_result.child_key != session_key
+        or background_result.parent_key != parent_key
+    ):
+        raise ValueError("child background result binding is invalid")
+
     def timestamp(name: str) -> float:
         value = data.get(name, time.time())
         if (
@@ -387,6 +500,8 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
         state=state_value,
         outcome=optional_text("outcome"),
         transcript=tuple(transcript),
+        background_delivery=background_delivery,
+        background_result=background_result,
         created_at=timestamp("created_at"),
         updated_at=timestamp("updated_at"),
     )
@@ -613,6 +728,118 @@ class DelegationTree:
     def source_state(self, key: str) -> SourceState | None:
         """Read the canonical source lifetime for one session key."""
         return self._source_state(key)
+
+    def background_results(self) -> tuple[ChildAdmission, ...]:
+        """Return every child that owns a durable background result record."""
+        return tuple(
+            child for child in self._children.values()
+            if child.background_result is not None
+        )
+
+    def background_delivery_candidates(self) -> tuple[ChildAdmission, ...]:
+        """Return settled background children whose result write did not land."""
+        return tuple(
+            child for child in self._children.values()
+            if child.background_delivery is not None
+            and child.background_result is None
+            and child.current_run_id is not None
+            and (child.state == "uncertain" or child.terminal)
+        )
+
+    async def record_background_result(
+        self,
+        intent: PendingBackgroundResult,
+    ) -> ChildAdmission | None:
+        """Persist one bounded terminal result before the child releases capacity."""
+        if type(intent) is not PendingBackgroundResult:
+            raise ValueError("Invalid background child result")
+        async with self._lock:
+            current = self._children.get(intent.child_id)
+            if (
+                current is None
+                or current.background_result is not None
+                and not current.background_result.same_result(intent)
+                or current.current_run_id != intent.child_run_id
+                or current.session_key != intent.child_key
+                or current.parent_key != intent.parent_key
+            ):
+                return None
+            parent_state = self._source_state(intent.parent_key)
+            stale_reason = (
+                "parent_unavailable"
+                if parent_state is None
+                else "parent_source_changed"
+                if (
+                    parent_state.session_key != intent.parent_key
+                    or parent_state.store_identity != intent.parent_store_identity
+                    or parent_state.incarnation != intent.parent_incarnation
+                    or parent_state.generation != intent.parent_generation
+                )
+                else None
+            )
+            if current.background_result is not None:
+                existing = current.background_result
+                if existing.state != "pending" or stale_reason is None:
+                    return current
+                updated = replace(
+                    current,
+                    background_result=replace(
+                        existing,
+                        state="stale",
+                        stale_reason=stale_reason,
+                    ),
+                    updated_at=time.time(),
+                )
+            else:
+                updated = replace(
+                    current,
+                    background_result=replace(
+                        intent,
+                        state="stale" if stale_reason is not None else "pending",
+                        stale_reason=stale_reason,
+                    ),
+                    updated_at=time.time(),
+                )
+            if not self._persist(updated):
+                return current
+            self._children[intent.child_id] = updated
+            return updated
+
+    async def mark_background_result(
+        self,
+        child_id: str,
+        *,
+        state: Literal["admitted", "stale"],
+        journal_id: str | None = None,
+        stale_reason: str | None = None,
+    ) -> ChildAdmission | None:
+        """Advance one result disposition without changing the child run."""
+        async with self._lock:
+            current = self._children.get(child_id)
+            if current is None or current.background_result is None:
+                return None
+            existing = current.background_result
+            if existing.state == "admitted" and state != "admitted":
+                return current
+            if journal_id is not None and (
+                len(journal_id) != 32
+                or any(character not in "0123456789abcdef" for character in journal_id)
+            ):
+                raise ValueError("Invalid background result journal identity")
+            updated = replace(
+                current,
+                background_result=replace(
+                    existing,
+                    state=state,
+                    journal_id=journal_id if journal_id is not None else existing.journal_id,
+                    stale_reason=stale_reason if state == "stale" else None,
+                ),
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                return current
+            self._children[child_id] = updated
+            return updated
 
     def capture_child_control_state(self, child_id: str) -> ChildControlState | None:
         """Capture the source lifetimes and epoch seen by an existing child control."""
@@ -967,6 +1194,7 @@ class DelegationTree:
         policy_facts: Mapping[str, Any] | None = None,
         runtime_generation: int = 0,
         expected_parent_source_state: SourceState | None = None,
+        background_delivery: BackgroundDeliveryIntent | None = None,
     ) -> ChildAdmission | ChildRefusal:
         """Reserve one child slot before launch, or return an existing attempt."""
         if profile not in SUPPORTED_CHILD_PROFILES:
@@ -1105,6 +1333,7 @@ class DelegationTree:
                 control_epoch=self._control_epochs.get(root_key, 0),
                 parent_source_state=parent_source_state,
                 root_source_state=root_source_state,
+                background_delivery=background_delivery,
             )
             try:
                 if self.sessions.has_managed_authority:

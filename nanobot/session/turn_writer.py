@@ -152,7 +152,7 @@ class SourceTurnWriter:
         try:
             self.owner.validate_dispatch()
             clean = deepcopy(payload)
-            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin', '_artifact_read', '_busy_input_id', '_pending_followup_id', '_filesystem_effects'):
+            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin', '_artifact_read', '_busy_input_id', '_pending_followup_id', '_child_followup', '_background_result', '_filesystem_effects'):
                 clean.pop(key, None)
             if 'content' in clean:
                 clean['content'] = _persisted_content(clean['content'])
@@ -212,6 +212,8 @@ class SourceTurnWriter:
             event["_pending_followup_id"] = record.identifier
             if record.child_followup is not None:
                 event["_child_followup"] = record.child_followup.to_dict()
+            if record.background_result is not None:
+                event["_background_result"] = record.background_result.to_dict()
             event["_stream_id"] = self.stream_id
             self._writes.pending = event
             committed_snapshot, committed_event = self.store.consume_pending_followup(
@@ -301,7 +303,10 @@ class SourceTurnWriter:
             if not isinstance(tool_name, str) or not tool_name or not isinstance(tool_call_id, str):
                 bindings.append(None)
                 continue
-            if tool_name != "followup_child" or self.parent_stream_id is not None:
+            if (
+                tool_name not in {"followup_child", "delegate_task"}
+                or self.parent_stream_id is not None
+            ):
                 bindings.append(None)
                 continue
             arguments: object = function.get("arguments")
@@ -405,13 +410,27 @@ class SourceTurnWriter:
         self,
         event_id: str,
     ) -> tuple[SourceToolIntentBinding | None, ...] | None:
-        """Return writer-minted identities only for followup-child dispatches."""
+        """Return writer-minted identities for child dispatch tool calls."""
         if self.failed:
             raise SourceValidationError("Tool intent is unavailable after source failure")
         bindings = self._tool_intents_by_event.get(event_id)
         if bindings is None or not any(binding is not None for binding in bindings):
             return None
         return bindings
+
+    def owns_tool_intent(self, binding: object) -> bool:
+        """Confirm this writer minted the exact binding for the current stream."""
+        saved = self._tool_intent_bindings.get(id(binding))
+        if (
+            type(binding) is not SourceToolIntentBinding
+            or saved is None
+            or saved[0] is not binding
+            or binding.run_id != self.run_id
+            or binding.stream_id != self.stream_id
+        ):
+            return False
+        self.owner.validate_dispatch()
+        return True
 
     def validate_tool_intent_binding(
         self,
