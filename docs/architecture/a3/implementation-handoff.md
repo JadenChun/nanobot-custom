@@ -2,9 +2,10 @@
 
 ## Combined backend review corrections (2026-11-13)
 
-Resume from `bc95f779` on `codex/staging-audit-implementation`. An independent
+Resume from `c92d1fe6` on `codex/staging-audit-implementation`. An independent
 combined review of `225ea3f9..8652b8b1` returned **CORRECT** with two P1 and four
-P2 findings. This checkpoint closes them.
+P2 findings. This checkpoint closes them, including the delta findings from the
+fix review.
 
 - A cancelled follow-up claim before dispatch now settles the child as stopped and
   releases capacity. Follow-up tool bindings also release when the backend task
@@ -20,12 +21,19 @@ P2 findings. This checkpoint closes them.
 - Background result disposition changes re-emit the child event. Reconcile does not
   republish a result that already has a durable parent journal row.
 - Result reconciliation is serialized on the shared tree across AgentLoop instances.
+- A claimed follow-up that loses to Stop before activation or dispatch settles as
+  stopped. It does not leave an `uncertain` child with no run evidence.
+- An admitted but unpublished background result carries a durable published marker.
+  Reconciliation publishes it once and does not republish it.
+- Missing failed background results recover from matching terminal runs. Owner-stopped
+  cancelled runs are not replayed as a new parent result.
 
 Verification:
 
 | Check | Result |
 | --- | --- |
 | Affected follow-up, background, uncertain, crawler, hydration, projection suites | **146 passed**. |
+| Delta follow-up, background, uncertain, crawler, gateway, hydration set | **42 passed**. |
 | Full Ruff over `nanobot tests conftest.py` | **Passed**. |
 | Whitespace check | **Passed**. |
 | Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
