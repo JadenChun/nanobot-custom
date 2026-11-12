@@ -613,17 +613,25 @@ class ContextBuilder:
         input_event_id: str | None, channel: str | None = None,
         workspace: Path | None = None, include_memory: bool = True,
         tool_names: frozenset[str] | None = None,
+        system_prompt_override: str | None = None,
+        include_skill_context: bool = True,
     ) -> SourceTranscript:
         """Bind source identities at construction, never by message offsets."""
-        nodes: list[RequestNode] = [RuntimeNode(uuid.uuid4().hex, {
-            'role': 'system', 'content': self.build_system_prompt(
+        system_content = (
+            system_prompt_override
+            if system_prompt_override is not None
+            else self.build_system_prompt(
                 channel=channel, workspace=workspace or self.workspace,
-                include_memory=include_memory, tool_names=tool_names),
+                include_memory=include_memory, tool_names=tool_names)
+        )
+        nodes: list[RequestNode] = [RuntimeNode(uuid.uuid4().hex, {
+            'role': 'system', 'content': system_content,
         }), *history.nodes]
         if transcript.current_message is not None:
             current = self.build_current_message(
                 transcript.current_message, media=list(transcript.media) if transcript.media else None,
-                current_role=transcript.current_role, runtime_context_blocks=transcript.runtime_context_blocks)
+                current_role=transcript.current_role, runtime_context_blocks=transcript.runtime_context_blocks,
+                include_skill_context=include_skill_context)
             nodes.append(SourceNode(input_event_id, current) if input_event_id is not None
                          else RuntimeNode(uuid.uuid4().hex, current))
         return SourceTranscript(tuple(nodes))
@@ -635,15 +643,17 @@ class ContextBuilder:
         media: list[str] | None = None,
         current_role: str = "user",
         runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
+        include_skill_context: bool = True,
     ) -> dict[str, Any]:
         """Build only the fresh turn message without merging it into history."""
         content = self.build_user_content(current_message, image_paths=media)
         blocks: list[RuntimeContextBlock] = []
         if current_role == "user":
             blocks.extend(runtime_context_blocks or ())
-            skill_context = self.skills.build_explicit_skill_runtime_context(current_message)
-            if skill_context is not None and skill_context not in blocks:
-                blocks.append(skill_context)
+            if include_skill_context:
+                skill_context = self.skills.build_explicit_skill_runtime_context(current_message)
+                if skill_context is not None and skill_context not in blocks:
+                    blocks.append(skill_context)
         merged, runtime_context_meta = append_runtime_context(content, blocks)
         current: dict[str, Any] = {"role": current_role, "content": merged}
         if current_role == "user" and runtime_context_meta is not None:

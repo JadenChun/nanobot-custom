@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from loguru import logger
 
@@ -1477,6 +1477,8 @@ class ForegroundAgentManager:
         runtime_override: LLMRuntime | None = None,
         authority: dict[str, Any] | None = None,
         background: bool = False,
+        system_prompt: str | None = None,
+        include_skill_context: bool = True,
     ) -> AgentRunResult:
         from nanobot.session.artifact_grants import CanonicalChildArtifactInput
         from nanobot.session.artifact_reader import ArtifactReader
@@ -1780,6 +1782,8 @@ class ForegroundAgentManager:
                 max_iterations=max_iterations,
                 hook=_DelegationHook(role, call_id),
                 policy=child_policy,
+                system_prompt=system_prompt,
+                include_skill_context=include_skill_context,
                 approval_target=turn_context.delivery.primary,
                 workspace_task_reference=child_task_reference,
                 artifact_input=artifact_input,
@@ -2252,6 +2256,80 @@ class ForegroundAgentManager:
             stop_reason=stop_reason,
             outcome=outcome,
             created_at=time.time(),
+        )
+
+    async def settle_uncertain_child(
+        self,
+        child_id: str,
+        *,
+        run_store: RunStore,
+    ) -> ChildAdmission | None:
+        """Close one uncertain child from a matching terminal run and closed source."""
+        tree = self._delegation_tree
+        if tree is None:
+            return None
+        child = tree.child(child_id)
+        if child is None or child.state != "uncertain" or child.source_state is None:
+            return None
+        run_id = child.current_run_id or child.last_run_id
+        if not run_id:
+            return None
+        record = run_store.load(run_id)
+        if (
+            record is None
+            or record.run_id != run_id
+            or record.session_ref is None
+            or record.session_ref.session_key != child.session_key
+            or record.session_ref.run_id != run_id
+            or record.status not in {
+                RunStatus.COMPLETED,
+                RunStatus.CANCELLED,
+                RunStatus.POLICY_BLOCKED,
+                RunStatus.TOOL_ERROR,
+                RunStatus.MAX_ITERATIONS,
+                RunStatus.ERROR,
+            }
+        ):
+            return None
+        backend = tree.sessions.source_backend(child.session_key)
+        if backend is None:
+            return None
+        try:
+            snapshot = backend.source.load_source_snapshot(child.session_key)
+            metadata = snapshot.header["metadata"]
+            if (
+                not snapshot.state.same_origin(child.source_state)
+                or "execution_lease" in metadata
+                or "execution_recovery_required" in metadata
+                or validate_execution_links(snapshot.events)
+                or not any(
+                    event.get("_run_id") == run_id for event in snapshot.events
+                )
+            ):
+                return None
+        except Exception:
+            return None
+        if record.status is RunStatus.COMPLETED:
+            terminal = any(
+                event.get("_run_id") == run_id
+                and event.get("role") == "assistant"
+                and not event.get("tool_calls")
+                for event in snapshot.events
+            )
+            if not terminal:
+                return None
+            state: Literal["completed", "failed", "stopped"] = "completed"
+            outcome = "recovered_completed"
+        elif record.status is RunStatus.CANCELLED:
+            state = "stopped"
+            outcome = "recovered_cancelled"
+        else:
+            state = "failed"
+            outcome = f"recovered_{record.status.value}"
+        return await tree.settle_uncertain(
+            child_id,
+            state=state,
+            outcome=outcome,
         )
 
     async def recover_missing_background_results(self, run_store: RunStore) -> int:

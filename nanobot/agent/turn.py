@@ -556,6 +556,8 @@ class TurnContext:
         default=None, repr=False,
     )
     internal_system_instructions: str | None = field(default=None, repr=False)
+    internal_system_prompt: str | None = field(default=None, repr=False)
+    internal_include_skill_context: bool = True
     internal_tool_policy: ToolPolicy | None = field(default=None, repr=False)
     internal_max_iterations: int | None = field(default=None, repr=False)
     active_tool_bindings: CapturedToolBindings | None = field(default=None, repr=False)

@@ -74,6 +74,8 @@ class ChildTurnRequest:
     max_iterations: int
     hook: AgentHook
     policy: ToolPolicy | None = None
+    system_prompt: str | None = None
+    include_skill_context: bool = True
     approval_target: DeliveryTarget | None = None
     workspace_task_reference: WorkspaceTaskAccessReference | None = None
     approval_decision: ApprovalDecision | None = None

@@ -1909,6 +1909,38 @@ class DelegationTree:
                 pending.append(child.session_key)
         return found
 
+    async def settle_uncertain(
+        self,
+        child_id: str,
+        *,
+        state: Literal["completed", "failed", "stopped"],
+        outcome: str,
+    ) -> ChildAdmission | None:
+        """Close one uncertain child only after the caller proves its run and source."""
+        async with self._lock:
+            current = self._children.get(child_id)
+            if current is None or current.state != "uncertain":
+                return None
+            updated = replace(
+                current,
+                state=state,
+                state_sequence=current.state_sequence + 1,
+                holds_capacity=False,
+                pending_approval_id=None,
+                pending_effect_id=None,
+                pending_summary=None,
+                blocked_run_id=None,
+                outcome=outcome,
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                return current
+            self._children[child_id] = updated
+        stop_admission = self._original_stop_admissions.get(updated.root_key)
+        if stop_admission is not None:
+            self._maybe_release_original_chat_stop(stop_admission)
+        return updated
+
     async def _transition(
         self,
         child_id: str,

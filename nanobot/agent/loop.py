@@ -552,6 +552,8 @@ class _TurnExecutionOptions:
     persist_approval_request: bool = True
     approval_target: DeliveryTarget | None = None
     internal_system_instructions: str | None = None
+    internal_system_prompt: str | None = None
+    internal_include_skill_context: bool = True
     internal_tool_policy: ToolPolicy | None = None
     internal_max_iterations: int | None = None
     approval_authority_check: Callable[[RunTurnContext], bool] | None = field(
@@ -1370,6 +1372,8 @@ class AgentLoop:
                     approval_target=request.approval_target,
                     workspace_task_reference=request.workspace_task_reference,
                     internal_system_instructions=request.instructions,
+                    internal_system_prompt=request.system_prompt,
+                    internal_include_skill_context=request.include_skill_context,
                     internal_tool_policy=request.policy,
                     internal_max_iterations=request.max_iterations,
                     approval_authority_check=approval_authority_check,
@@ -3362,9 +3366,11 @@ class AgentLoop:
                     input_event_id=run_context.source_input_event_id,
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
                     include_memory=session.policy.persist if session is not None else True,
-                    tool_names=frozenset(effective_tools.tool_names))
+                    tool_names=frozenset(effective_tools.tool_names),
+                    system_prompt_override=run_context.internal_system_prompt,
+                    include_skill_context=run_context.internal_include_skill_context)
                 instructions = run_context.internal_system_instructions
-                if instructions:
+                if instructions and run_context.internal_system_prompt is None:
                     nodes = list(source_transcript.nodes)
                     system = nodes[0] if nodes else None
                     if not isinstance(system, RuntimeNode) or system.message.get("role") != "system":
@@ -4820,6 +4826,8 @@ class AgentLoop:
                     options.followup_request_acknowledged(identifiers)
 
             context.internal_system_instructions = options.internal_system_instructions
+            context.internal_system_prompt = options.internal_system_prompt
+            context.internal_include_skill_context = options.internal_include_skill_context
             context.internal_tool_policy = options.internal_tool_policy
             context.internal_max_iterations = options.internal_max_iterations
             context.request_boundary_validator = options.request_boundary_validator

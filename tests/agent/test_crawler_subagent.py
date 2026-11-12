@@ -262,6 +262,13 @@ async def test_foreground_crawler_uses_its_own_model_and_budget(engine_config, m
         # The crawler role used its own provider with the derived budget; the
         # main provider did not serve the child turn.
         assert len(crawler_provider.calls) == 1
+        crawler_messages, _crawler_tools, _crawler_model = crawler_provider.calls[0]
+        system_prompt = crawler_messages[0]["content"]
+        assert "Crawler Role" in system_prompt
+        assert str(engine_config.workspace_path) not in system_prompt
+        assert "Context Repositories" not in system_prompt
+        assert "# Memory" not in system_prompt
+        assert crawler_messages[-1]["content"] == "Inspect the supplied public page."
         model, kwargs, _tools = crawler_provider.chat_kwargs[0]
         assert model == "vendor/cheap-crawler-model"
         assert kwargs["max_tokens"] == 1400

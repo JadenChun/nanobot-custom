@@ -81,7 +81,11 @@ async def run_crawler(
         if authenticated_crawl_enabled()
         else "Use only publicly accessible content. No authenticated profile is available."
     )
-    prompt = host._base_prompt("Crawler Role") + f"""
+    prompt = f"""# Crawler Role
+
+You are a foreground browser role called by Nanobot's main orchestrator. Complete only the
+bounded crawl assignment and return evidence to the orchestrator. Never address the end user,
+send messages, schedule work, request approval, or delegate to another agent.
 
 ## Role
 
@@ -115,6 +119,8 @@ with exact source URLs, visible dates, limitations, and uncertainty."""
                 assignment=task,
                 tools=tools,
                 max_iterations=host.crawler_max_iterations,
+                system_prompt=prompt,
+                include_skill_context=False,
                 model=host.crawler_model,
                 max_input_tokens=host.crawler_max_input_tokens,
                 max_output_tokens=host.crawler_max_output_tokens,
