@@ -25,7 +25,7 @@ pytest 9.2.0:
 
 | Check | Result |
 | --- | --- |
-| AC5 background-result suite | **8 passed**. |
+| AC5 background-result suite | **9 passed**. |
 | Delegation, AC4, AC5, crawler, and source suites | **208 passed**. |
 | Full `tests/session` suite | **1,940 passed**. |
 | Full Ruff over `nanobot tests conftest.py` | **Passed**. |

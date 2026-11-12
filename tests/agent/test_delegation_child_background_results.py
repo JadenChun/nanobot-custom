@@ -119,6 +119,33 @@ async def test_background_result_is_admitted_once(engine_config):
         await loop.aclose()
 
 
+async def test_background_result_preserves_cli_route(engine_config):
+    parent_key = "cli:ac5-cli"
+    loop, manager, _provider, child_id, original = await _start_without_delivery(
+        engine_config, parent_key,
+    )
+    try:
+        result = await original()
+        assert result == (1, 0, 0), result
+        tree = manager._delegation_tree
+        assert tree is not None
+        child = tree.child(child_id)
+        assert child is not None and child.background_result is not None
+        assert child.background_result.route_channel == "cli"
+        assert child.background_result.route_chat_id == "ac5-cli"
+        backend = loop.sessions.source_backend(parent_key)
+        assert backend is not None
+        snapshot = backend.source.load_source_snapshot(parent_key)
+        rows = snapshot.header["metadata"].get("source_pending_followups", [])
+        assert len(rows) == 1
+        messages = decode_pending_followups(rows, parent_key)
+        assert len(messages) == 1
+        assert messages[0].channel == "cli"
+        assert messages[0].chat_id == "ac5-cli"
+    finally:
+        await loop.aclose()
+
+
 async def test_background_result_survives_restart_and_admits_once(engine_config):
     parent_key = "websocket:ac5-restart"
     loop, _manager, _provider, child_id, _original = await _start_without_delivery(
