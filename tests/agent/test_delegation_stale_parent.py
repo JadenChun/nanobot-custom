@@ -5,8 +5,22 @@ from __future__ import annotations
 import pytest
 
 from nanobot.agent.child_sessions import ChildAdmission, DelegationTree
-from nanobot.session.manager import Session, SessionManager
+from nanobot.session.manager import SessionManager
 from nanobot.session.runtime_authority import read_runtime_session
+
+
+def _source_parent(manager: SessionManager, key: str):
+    parent = manager.get_or_create(key)
+    manager.save(parent)
+    backend = manager._jsonl_store
+    backend.source.upgrade_source_session(
+        key,
+        expected_revision=parent.revision,
+        expected_generation=parent.generation,
+        expected_incarnation=parent.incarnation,
+    )
+    manager.invalidate(key)
+    return manager.get_or_create(key)
 
 
 @pytest.mark.asyncio
@@ -16,8 +30,7 @@ async def test_delegation_rejects_stale_parent(tmp_path, monkeypatch):
     manager = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
     parent_key = "websocket:chat-a"
 
-    manager.save(Session(key=parent_key))
-    old_parent = manager.read_session_snapshot(parent_key)
+    old_parent = _source_parent(manager, parent_key)
     assert old_parent is not None
 
     tree = DelegationTree(manager)
@@ -29,13 +42,17 @@ async def test_delegation_rejects_stale_parent(tmp_path, monkeypatch):
     )
     assert isinstance(old, ChildAdmission)
 
-    child_session = manager.get_or_create(old.session_key)
-    child_session.add_message("user", "old child history")
-    manager.save(child_session)
+    # Canonical child history lives in the child source snapshot, not in
+    # legacy Session.messages. Record one exchange so the data-preservation
+    # check below observes the durable child source.
+    assert tree.record_exchange(
+        old.child_id,
+        assignment="same assignment",
+        result_text="old child history",
+    ) is True
 
     manager.delete_session(parent_key)
-    manager.save(Session(key=parent_key))
-    new_parent = manager.read_session_snapshot(parent_key)
+    new_parent = _source_parent(manager, parent_key)
     assert new_parent is not None
     assert new_parent.incarnation != old_parent.incarnation
 
@@ -45,7 +62,13 @@ async def test_delegation_rejects_stale_parent(tmp_path, monkeypatch):
 
     snapshot = manager.read_session_snapshot(old.session_key)
     assert snapshot is not None
-    assert any("old child history" in str(m.get("content", "")) for m in snapshot.messages)
+    child_source = manager.source_backend(old.session_key).source.load_source_snapshot(
+        old.session_key,
+    )
+    assert any(
+        "old child history" in str(event.get("content", ""))
+        for event in child_source.events
+    )
 
     children = tree.children_of(parent_key, parent_incarnation=new_parent.incarnation)
     assert old.child_id not in {child.child_id for child in children}

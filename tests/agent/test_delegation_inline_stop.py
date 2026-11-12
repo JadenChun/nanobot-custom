@@ -1,235 +1,149 @@
-"""Regression coverage for inline child stop and control-generation checks."""
+"""Regression coverage for inline child stop and control-generation checks.
+
+These cases now drive the canonical DelegationTree and child-control path. The
+retired inline runner path (``ForegroundAgentManager.runner``) no longer exists,
+so each case reserves a source-backed child and attaches a real asyncio task to
+observe cancellation instead of injecting a fake runner.
+"""
 
 import asyncio
-import time
-from pathlib import Path
-from unittest.mock import MagicMock
 
-from nanobot.agent.delegation import ForegroundAgentManager
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.turn import TurnContext
-from nanobot.session.manager import SessionManager
-
-PARENT = "websocket:parent"
-
-
-def manager_for(tmp_path: Path):
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    sessions = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
-    manager = ForegroundAgentManager(
-        provider=provider,
-        workspace=tmp_path,
-        sessions=sessions,
-    )
-    parent = sessions.get_or_create(PARENT)
-    sessions.save(parent)
-    return manager, sessions
-
-
-class GateRunner:
-    def __init__(self, *, gate: asyncio.Event | None = None, text: str = "child result"):
-        self.gate = gate
-        self.text = text
-        self.calls: list[str | None] = []
-        self.cancelled = False
-        self.finished = asyncio.Event()
-
-    async def run(self, spec):
-        key = spec.turn_context.session_key if spec.turn_context else None
-        self.calls.append(key)
-        if self.gate is not None:
-            try:
-                await self.gate.wait()
-            except asyncio.CancelledError:
-                self.cancelled = True
-                raise
-        else:
-            await asyncio.sleep(0.15)
-        self.finished.set()
-        return AgentRunResult(final_content=self.text, messages=[])
-
-
-class TwoGateRunner:
-    def __init__(self, gates):
-        self.gates = gates
-        self.calls = 0
-        self.cancelled: list[bool] = []
-
-    async def run(self, spec):
-        index = self.calls
-        self.calls += 1
-        self.cancelled.append(False)
-        try:
-            await self.gates[index].wait()
-        except asyncio.CancelledError:
-            self.cancelled[index] = True
-            raise
-        return AgentRunResult(final_content=f"result {index}", messages=[])
-
-
-async def _wait_for(predicate, timeout: float = 2.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        value = predicate()
-        if value:
-            return value
-        await asyncio.sleep(0.01)
-    return predicate()
-
-
-def _active_children(manager, count: int):
-    children = manager._delegation_tree.children_of(PARENT)
-    if len(children) >= count and all(child.state == "active" for child in children[:count]):
-        return children
-    return None
-
-
-async def _settle(task: asyncio.Task) -> None:
-    try:
-        await asyncio.wait_for(task, timeout=5.0)
-    except asyncio.CancelledError:
-        pass
-
-
-async def _release_gate_after(gate: asyncio.Event, *, delay: float) -> None:
-    await asyncio.sleep(delay)
-    gate.set()
+from tests.agent.test_delegation_child_controls import _live_child, _manager, _parent
 
 
 async def test_foreground_stop_cancels_the_runner_and_settles_the_child(tmp_path):
-    manager, _sessions = manager_for(tmp_path)
-    gate = asyncio.Event()
-    runner = GateRunner(gate=gate)
-    manager.runner = runner
-    ctx = TurnContext(session_key=PARENT, run_id="turn-1")
+    manager = _manager(tmp_path)
+    parent = _parent(manager)
+    tree = manager._delegation_tree
 
-    task = asyncio.create_task(
-        manager.run_worker(
-            contract="Do the bounded work with acceptance evidence and validation.",
-            write_scope=["out.txt"],
-            turn_context=ctx,
-        )
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def worker():
+        started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    admission = await _live_child(
+        manager,
+        parent,
+        assignment="Do the bounded work with acceptance evidence and validation.",
+        attempt_id="turn-1",
     )
-
-    children = await _wait_for(lambda: _active_children(manager, 1))
-    assert children is not None
-    child = children[0]
+    task = asyncio.create_task(worker())
+    await tree.attach_task(admission.child_id, task)
+    await started.wait()
 
     stopped = await manager.control_child(
-        parent_key=PARENT,
-        child_id=child.child_id,
+        parent_key=parent.key,
+        child_id=admission.child_id,
         action="stop",
     )
 
     assert stopped["ok"] is True
     assert stopped["state"] == "stopped"
-    assert runner.cancelled is True
+    assert cancelled.is_set()
+    assert task.done()
 
-    await _settle(task)
-
-    final = await _wait_for(
-        lambda: manager._delegation_tree.child(child.child_id)
-        if manager._delegation_tree.child(child.child_id).state == "stopped"
-        else None
-    )
+    final = tree.child(admission.child_id)
     assert final is not None
     assert final.state == "stopped"
 
 
 async def test_stopping_one_sibling_leaves_the_other_running(tmp_path):
-    manager, _sessions = manager_for(tmp_path)
-    gate_a = asyncio.Event()
-    gate_b = asyncio.Event()
-    runner = TwoGateRunner([gate_a, gate_b])
-    manager.runner = runner
-    ctx = TurnContext(session_key=PARENT, run_id="turn-1")
+    manager = _manager(tmp_path)
+    parent = _parent(manager)
+    tree = manager._delegation_tree
 
-    task_a = asyncio.create_task(
-        manager.run_worker(
-            contract="first sibling contract with acceptance evidence.",
-            write_scope=["out.txt"],
-            turn_context=ctx,
-        )
+    child_a = await _live_child(
+        manager,
+        parent,
+        assignment="first sibling contract with acceptance evidence.",
+        attempt_id="turn-a",
     )
-    first = await _wait_for(lambda: _active_children(manager, 1))
-    assert first is not None
+    child_b = await _live_child(
+        manager,
+        parent,
+        assignment="second sibling contract with acceptance evidence.",
+        attempt_id="turn-b",
+    )
 
-    task_b = asyncio.create_task(
-        manager.run_worker(
-            contract="second sibling contract with acceptance evidence.",
-            write_scope=["out.txt"],
-            turn_context=ctx,
-        )
-    )
-    both = await _wait_for(lambda: _active_children(manager, 2))
-    assert both is not None
-    child_a, child_b = both[0], both[1]
+    a_started = asyncio.Event()
+    a_cancelled = asyncio.Event()
+    b_started = asyncio.Event()
+    b_release = asyncio.Event()
+    b_finished = asyncio.Event()
+
+    async def worker_a():
+        a_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            a_cancelled.set()
+            raise
+
+    async def worker_b():
+        b_started.set()
+        await b_release.wait()
+        b_finished.set()
+
+    task_a = asyncio.create_task(worker_a())
+    task_b = asyncio.create_task(worker_b())
+    await tree.attach_task(child_a.child_id, task_a)
+    await tree.attach_task(child_b.child_id, task_b)
+    await a_started.wait()
+    await b_started.wait()
 
     stopped = await manager.control_child(
-        parent_key=PARENT,
+        parent_key=parent.key,
         child_id=child_a.child_id,
         action="stop",
     )
+
     assert stopped["ok"] is True
-    await _settle(task_a)
+    assert a_cancelled.is_set()
+    assert task_a.done()
+    assert tree.child(child_a.child_id).state == "stopped"
+    assert not task_b.cancelled()
+    assert tree.child(child_b.child_id).state == "active"
 
-    cancelled = await _wait_for(lambda: runner.cancelled[0] if runner.cancelled and runner.cancelled[0] else None)
-    assert cancelled is True
-    assert runner.cancelled[1] is False
-    assert manager._delegation_tree.child(child_b.child_id).state == "active"
-
-    gate_b.set()
-    await asyncio.wait_for(task_b, timeout=5.0)
-
-    completed = await _wait_for(
-        lambda: manager._delegation_tree.child(child_b.child_id)
-        if manager._delegation_tree.child(child_b.child_id).state == "completed"
-        else None
-    )
-    assert completed is not None
-    assert completed.state == "completed"
+    b_release.set()
+    await b_finished.wait()
+    await tree.complete(child_b.child_id, outcome="completed")
+    assert tree.child(child_b.child_id).state == "completed"
 
 
 async def test_control_generation_is_checked(tmp_path):
-    manager, _sessions = manager_for(tmp_path)
-    gate = asyncio.Event()
-    runner = GateRunner(gate=gate)
-    manager.runner = runner
-    ctx = TurnContext(session_key=PARENT, run_id="turn-1")
+    # The runtime-generation guard is not asserted by the canonical control
+    # suite, so this case is preserved here.
+    manager = _manager(tmp_path)
+    parent = _parent(manager)
 
-    await manager.run_worker(
-        contract="Do the bounded work with acceptance evidence and validation.",
-        write_scope=["out.txt"],
-        turn_context=ctx,
-        background=True,
+    admission = await _live_child(
+        manager,
+        parent,
+        assignment="Do the bounded work with acceptance evidence and validation.",
+        attempt_id="turn-1",
     )
-    child = manager._delegation_tree.children_of(PARENT)[0]
-    assert child.state == "active"
+    assert admission.runtime_generation == 0
 
     stale = await manager.control_child(
-        parent_key=PARENT,
-        child_id=child.child_id,
+        parent_key=parent.key,
+        child_id=admission.child_id,
         action="wait",
         runtime_generation=99,
     )
     assert stale["ok"] is False
     assert stale["reason"] == "stale_generation"
 
-    matching_release = asyncio.create_task(_release_gate_after(gate, delay=0.05))
-    matching = await asyncio.wait_for(
-        manager.control_child(
-            parent_key=PARENT,
-            child_id=child.child_id,
-            action="wait",
-            runtime_generation=child.runtime_generation,
-        ),
-        timeout=5.0,
+    matching = await manager.control_child(
+        parent_key=parent.key,
+        child_id=admission.child_id,
+        action="wait",
+        runtime_generation=admission.runtime_generation,
     )
-    await matching_release
     assert matching["ok"] is True
-
-    await asyncio.wait_for(runner.finished.wait(), timeout=2.0)
-    await _wait_for(
-        lambda: manager._delegation_tree.child(child.child_id).state == "completed"
-    )
+    assert matching["state"] == "active"
