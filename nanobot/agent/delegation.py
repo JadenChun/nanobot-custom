@@ -1259,14 +1259,17 @@ class ForegroundAgentManager:
         role_tools: ToolRegistry,
         *,
         allowed_names: set[str],
+        owned_names: frozenset[str] = frozenset(),
         read_only_mcp_names: tuple[str, ...],
     ) -> tuple[ToolRegistry, CapturedToolBindings]:
-        """Intersect role tools with this request's exact captured bindings."""
-        borrowed = parent_bindings.borrow_filtered(tuple(sorted(allowed_names)))
+        """Intersect role tools with the parent binding and explicit role-owned tools."""
+        effective_names = set(allowed_names) & (
+            set(parent_bindings.tool_names) | set(owned_names)
+        )
+        borrowed = parent_bindings.borrow_filtered(tuple(sorted(effective_names)))
         scoped = borrowed.filtered(list(read_only_mcp_names)) if read_only_mcp_names else ToolRegistry()
-        allowed = set(parent_bindings.tool_names)
         for tool in role_tools.iter_tools():
-            if tool.name in allowed:
+            if tool.name in effective_names:
                 scoped.register(tool)
         scoped.set_dispatch_guard(
             ManagedToolDispatchGuard(
@@ -1429,8 +1432,12 @@ class ForegroundAgentManager:
 
         role_profile = role_capabilities(role)
         parent_tool_names = set(parent_bindings.tool_names)
+        # Keep the parent narrowing for every borrowed tool. Only tools that the
+        # role executes itself, such as ``social_crawl``, may bypass the binding.
         effective_tool_names = {
-            name for name in tools.tool_names if name in parent_tool_names
+            name
+            for name in tools.tool_names
+            if name in parent_tool_names or name in role_profile.owned_tools
         }
         read_only_mcp_names = tuple(
             name for name in parent_bindings.tool_names
@@ -1557,6 +1564,7 @@ class ForegroundAgentManager:
                 parent_bindings,
                 tools,
                 allowed_names=effective_tool_names,
+                owned_names=role_profile.owned_tools,
                 read_only_mcp_names=read_only_mcp_names,
             )
             await self._emit_child(admission)

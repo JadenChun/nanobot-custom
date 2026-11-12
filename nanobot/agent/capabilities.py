@@ -38,6 +38,9 @@ class RoleCapabilityProfile:
     tools: frozenset[str]
     read_only: bool
     allow_read_only_mcp: bool = False
+    # Tools the role executes itself and the parent never holds. Every other
+    # role tool remains narrowed by the live parent binding.
+    owned_tools: frozenset[str] = frozenset()
 
 
 ROLE_CAPABILITIES = MappingProxyType({
@@ -64,6 +67,7 @@ ROLE_CAPABILITIES = MappingProxyType({
         tools=CRAWLER_CAPABILITIES,
         read_only=True,
         allow_read_only_mcp=False,
+        owned_tools=CRAWLER_CAPABILITIES,
     ),
     "worker": RoleCapabilityProfile(
         role="worker",
