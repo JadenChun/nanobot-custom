@@ -355,7 +355,6 @@ class ForegroundAgentManager:
         self._suspended_children: dict[str, _SuspendedChild] = {}
         self._child_handles: dict[str, ChildBackendHandle] = {}
         self._background_result_sink: Callable[[InboundMessage], Awaitable[None]] | None = None
-        self._background_reconcile_lock = asyncio.Lock()
 
     def set_child_event_sink(
         self,
@@ -2404,7 +2403,7 @@ class ForegroundAgentManager:
         tree = self._delegation_tree
         if tree is None:
             return (0, 0, 0)
-        async with self._background_reconcile_lock:
+        async with tree.background_result_lock:
             delivered = 0
             stale = 0
             pending = 0

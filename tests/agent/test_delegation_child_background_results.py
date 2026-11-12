@@ -146,6 +146,43 @@ async def test_background_result_preserves_cli_route(engine_config):
         await loop.aclose()
 
 
+async def test_shared_tree_reconciles_result_once(engine_config):
+    parent_key = "websocket:ac5-shared"
+    loop, manager, _provider, child_id, original = await _start_without_delivery(
+        engine_config, parent_key,
+    )
+    try:
+        tree = manager._delegation_tree
+        assert tree is not None
+        second = ForegroundAgentManager(
+            provider=manager.provider,
+            workspace=loop.workspace,
+            sessions=loop.sessions,
+            delegation_tree=tree,
+        )
+        published = []
+        manager.set_background_result_sink(
+            lambda message: _collect(published, message),
+        )
+        second.set_background_result_sink(
+            lambda message: _collect(published, message),
+        )
+        results = await asyncio.gather(
+            original(),
+            second.reconcile_background_results(),
+        )
+        assert sum(result[0] for result in results) == 1, results
+        assert len(published) == 1
+        backend = loop.sessions.source_backend(parent_key)
+        assert backend is not None
+        snapshot = backend.source.load_source_snapshot(parent_key)
+        rows = snapshot.header["metadata"].get("source_pending_followups", [])
+        assert len(rows) == 1
+        await second.close()
+    finally:
+        await loop.aclose()
+
+
 async def test_background_result_survives_restart_and_admits_once(engine_config):
     parent_key = "websocket:ac5-restart"
     loop, _manager, _provider, child_id, _original = await _start_without_delivery(

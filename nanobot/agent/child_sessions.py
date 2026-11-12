@@ -542,6 +542,7 @@ class DelegationTree:
         self.sessions = sessions
         self.policy = policy or DelegationTreePolicy()
         self._lock = asyncio.Lock()
+        self._background_result_lock = asyncio.Lock()
         self._children: dict[str, ChildAdmission] = {}
         self._attempts: dict[tuple[str, str, str, str], str] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
@@ -644,6 +645,11 @@ class DelegationTree:
     def recovery_error(self) -> str | None:
         """Whether unresolved durable child state currently fences admission."""
         return self._recovery_error
+
+    @property
+    def background_result_lock(self) -> asyncio.Lock:
+        """Serialize result recovery and journal admission across shared loops."""
+        return self._background_result_lock
 
     async def reconcile_recovery(self) -> bool:
         """Repeat a failed startup scan after the owning store was repaired."""
