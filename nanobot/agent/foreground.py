@@ -63,7 +63,7 @@ def build_foreground_dependencies(
             if limits is not None
             else DelegationTreePolicy()
         )
-        child_tree = DelegationTree(sessions, policy=policy)
+        child_tree = DelegationTree.shared(sessions, policy=policy)
     web_fetch_config_loader: Callable[[], tuple[WebFetchConfig, str]] | None = (
         load_web_fetch_state if refresh_web_fetch_config else None
     )

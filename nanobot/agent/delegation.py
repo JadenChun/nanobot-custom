@@ -17,18 +17,21 @@ from loguru import logger
 
 from nanobot.agent.capabilities import DELEGATED_READ_ONLY_ROLES, role_capabilities
 from nanobot.agent.child_backend import (
+    ChildApprovalResume,
     ChildBackendBinding,
     ChildBackendRegistry,
     ChildBackendUnavailableError,
-    ChildApprovalResume,
     ChildTurnExecutor,
     ChildTurnRequest,
 )
 from nanobot.agent.child_sessions import (
     DEFAULT_CHILD_PROFILE,
+    STOP_SETTLE_TIMEOUT,
     ChildAdmission,
+    ChildControlState,
     ChildRefusal,
     DelegationTree,
+    OriginalChatStopAdmission,
 )
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import (
@@ -37,7 +40,7 @@ from nanobot.agent.policy import (
     ToolPolicy,
     ToolPolicyDecision,
 )
-from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
+from nanobot.agent.runner import AgentRunner, AgentRunResult
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
@@ -79,7 +82,6 @@ from nanobot.agent.turn import (
     TurnContext,
     TurnResult,
 )
-from nanobot.agent.turn_admission import PendingApproval
 from nanobot.agent.write_guard import FileLockRegistry, WriteScope
 from nanobot.config.schema import (
     AgentBrowserConfig,
@@ -91,15 +93,13 @@ from nanobot.providers.base import LLMProvider, ToolCallRequest
 from nanobot.security.folder_grants import FolderGrantView
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.session.manager import SessionManager
-from nanobot.session.source_projection import RuntimeNode, SourceNode
-from nanobot.session.source_request import SourceTranscript
 from nanobot.session.source_store import SourceState
 from nanobot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.security.desktop_permissions import WorkspaceTaskAccessReference
-    from nanobot.session.artifact_reader import ArtifactReader as _ArtifactReader
+    from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.turn_writer import SourceTurnWriter
 
 # Legacy explore/crawler tools call the manager directly.  Keep their bridge
@@ -316,11 +316,12 @@ class ForegroundAgentManager:
             default=None,
         )
         self._delegation_tree = delegation_tree or (
-            DelegationTree(sessions) if sessions is not None else None
+            DelegationTree.shared(sessions) if sessions is not None else None
         )
         self._disabled_skills = set(disabled_skills or ())
         self._child_backends = ChildBackendRegistry()
         self._child_turn_executor: ChildTurnExecutor | None = None
+        self._child_approval_revoker: Callable[[str], Awaitable[int]] | None = None
         self._child_event_sink: Callable[[Any], Awaitable[None]] | None = None
         self._child_task_references: dict[str, WorkspaceTaskAccessReference] = {}
         self._suspended_children: dict[str, _SuspendedChild] = {}
@@ -331,6 +332,40 @@ class ForegroundAgentManager:
     ) -> None:
         """Publish typed child references to the parent activity owner."""
         self._child_event_sink = sink
+
+    def set_child_approval_revoker(
+        self,
+        revoker: Callable[[str], Awaitable[int]] | None,
+    ) -> None:
+        """Bind the owning loop's volatile approval cleanup."""
+        self._child_approval_revoker = revoker
+
+    async def revoke_child_approvals_for_stop(
+        self,
+        session_keys: tuple[str, ...],
+    ) -> None:
+        revoker = self._child_approval_revoker
+        if revoker is None:
+            return
+        for session_key in session_keys:
+            await revoker(session_key)
+
+    def child_session_keys_for_stop(
+        self,
+        admission: OriginalChatStopAdmission,
+    ) -> tuple[str, ...]:
+        tree = self._delegation_tree
+        return tree.child_session_keys_for_parent_stop(admission) if tree is not None else ()
+
+    def _release_settled_child_authority(self, child_id: str) -> None:
+        tree = self._delegation_tree
+        child = tree.child(child_id) if tree is not None else None
+        if child is None or child.holds_capacity:
+            return
+        suspended = self._suspended_children.pop(child_id, None)
+        if suspended is not None:
+            suspended.parent_bindings.release()
+        self._release_child_task_reference(child_id)
 
     async def _emit_child(self, admission: Any) -> None:
         sink = self._child_event_sink
@@ -344,7 +379,7 @@ class ForegroundAgentManager:
     def bind_session_owner(self, sessions: SessionManager) -> None:
         """Attach the canonical session owner once the loop has constructed it."""
         if self._delegation_tree is None:
-            self._delegation_tree = DelegationTree(sessions)
+            self._delegation_tree = DelegationTree.shared(sessions)
 
     def bind_child_turn_executor(self, executor: ChildTurnExecutor) -> None:
         """Bind the trusted canonical AgentLoop child-turn adapter."""
@@ -394,6 +429,7 @@ class ForegroundAgentManager:
             suspended.request,
             parent_bindings,
             child_context=None,
+            require_capabilities=decision.decision == "approve",
         ):
             return None
         run_id = f"{child_id}-{uuid.uuid4().hex}"
@@ -411,7 +447,7 @@ class ForegroundAgentManager:
             run_id,
             suspended.request.role,
             parent_bindings,
-            allowed_tools=suspended.request.tools.tool_names,
+            allowed_tools=tuple(suspended.request.tools.tool_names),
         )
         resumed = replace(
             suspended.request,
@@ -462,24 +498,28 @@ class ForegroundAgentManager:
                         approval_resume=resume,
                     )
                 except asyncio.CancelledError:
-                    await tree.complete(
+                    updated = await tree.complete(
                         child_id,
                         outcome="approval_resume_unsettled",
                         state="uncertain",
                     )
+                    if updated is not None:
+                        await self._emit_child(updated)
                     raise
                 except Exception:
-                    await tree.complete(
+                    updated = await tree.complete(
                         child_id,
                         outcome="approval_resume_unsettled",
                         state="uncertain",
                     )
+                    if updated is not None:
+                        await self._emit_child(updated)
                     raise
                 await self.finish_child_approval_resume(resume, result)
                 return result
             finally:
                 current = tree.child(child_id)
-                if current is None or current.state != "waiting_approval":
+                if current is None or not current.holds_capacity:
                     suspended = self._suspended_children.pop(child_id, None)
                     if suspended is not None:
                         suspended.parent_bindings.release()
@@ -545,6 +585,7 @@ class ForegroundAgentManager:
         parent_bindings: CapturedToolBindings,
         *,
         child_context: TurnContext | None,
+        require_capabilities: bool = True,
     ) -> bool:
         tree = self._delegation_tree
         if tree is None or tree.is_stopping(child.child_id):
@@ -575,14 +616,19 @@ class ForegroundAgentManager:
                     return False
             except Exception:
                 return False
-        reference = request.workspace_task_reference
-        permission_owner = getattr(tree.sessions, "desktop_permissions", None)
-        if reference is not None and (
-            permission_owner is None
-            or not permission_owner.is_current_task_reference(reference)
-        ):
-            return False
-        return all(parent_bindings.dispatch_error(name) is None for name in parent_bindings.tool_names)
+        if require_capabilities:
+            reference = request.workspace_task_reference
+            permission_owner = getattr(tree.sessions, "desktop_permissions", None)
+            if reference is not None and (
+                permission_owner is None
+                or not permission_owner.is_current_task_reference(reference)
+            ):
+                return False
+            return all(
+                parent_bindings.dispatch_error(name) is None
+                for name in parent_bindings.tool_names
+            )
+        return True
 
     def _source_is_current(self, key: str, expected: SourceState | None) -> bool:
         if expected is None:
@@ -625,6 +671,7 @@ class ForegroundAgentManager:
             resume.request,
             suspended.parent_bindings,
             child_context=context,
+            require_capabilities=resume.decision.decision == "approve",
         )
 
     async def activate_child_approval_resume(
@@ -689,7 +736,10 @@ class ForegroundAgentManager:
                             admission=updated,
                         ),
                     )
-                    result.policy_metadata["delegated_child"] = updated.metadata()
+                    result.policy_metadata = {
+                        **result.policy_metadata,
+                        "delegated_child": updated.metadata(),
+                    }
                     await self._emit_child(updated)
                     return
         agent_result = AgentRunResult(
@@ -710,7 +760,10 @@ class ForegroundAgentManager:
                 outcome = "projection_write_failed"
             updated = await tree.complete(child_id, outcome=outcome, state=state)
             if updated is not None:
-                result.policy_metadata["delegated_child"] = updated.metadata()
+                result.policy_metadata = {
+                    **result.policy_metadata,
+                    "delegated_child": updated.metadata(),
+                }
                 await self._emit_child(updated)
         else:
             await self._finalize_admission(
@@ -723,9 +776,12 @@ class ForegroundAgentManager:
             )
             updated = tree.child(child_id)
             if updated is not None:
-                result.policy_metadata["delegated_child"] = updated.metadata()
+                result.policy_metadata = {
+                    **result.policy_metadata,
+                    "delegated_child": updated.metadata(),
+                }
         current = tree.child(child_id)
-        if current is None or current.state != "waiting_approval":
+        if current is None or not current.holds_capacity:
             self._suspended_children.pop(child_id, None)
             suspended.parent_bindings.release()
             self._release_child_task_reference(child_id)
@@ -767,6 +823,7 @@ class ForegroundAgentManager:
         action: str,
         content: str | None = None,
         runtime_generation: int | None = None,
+        expected_state: ChildControlState | None = None,
     ) -> dict[str, Any]:
         """Apply one typed child control to the current admitted generation."""
         tree = self._delegation_tree
@@ -795,7 +852,25 @@ class ForegroundAgentManager:
                 "runtime_generation": child.runtime_generation,
             }
         if action == "stop":
-            stopped = await tree.stop_subtree(child_id)
+            observed = expected_state or tree.capture_child_control_state(child_id)
+            if observed is None or observed.child_id != child_id:
+                return {"ok": False, "reason": "stale_control_state"}
+            stop_admission = tree.begin_child_stop(observed)
+            if stop_admission is None:
+                return {"ok": False, "reason": "stale_control_state"}
+            stopping = await tree.fence_child_stop(stop_admission)
+            if stopping is None:
+                tree.abort_child_stop(stop_admission)
+                return {"ok": False, "reason": "stale_control_state"}
+            for item in stopping:
+                await self._emit_child(item)
+            await self.revoke_child_approvals_for_stop(
+                tree.child_session_keys_for_stop(child_id),
+            )
+            stopped = await tree.stop_subtree(child_id, fenced=True)
+            for item in stopped:
+                await self._emit_child(item)
+                self._release_settled_child_authority(item.child_id)
             current = tree.child(child_id)
             return {
                 "ok": True,
@@ -823,18 +898,99 @@ class ForegroundAgentManager:
             return {"ok": True, "child_id": child_id, "state": "active"}
         return {"ok": False, "reason": "unsupported_child_action"}
 
-    async def stop_children(self, parent_key: str) -> int:
+    def begin_original_chat_stop(
+        self,
+        parent_key: str,
+        *,
+        active_root_identity: tuple[asyncio.Task[Any], ...],
+        target_turn_id: str | None,
+        pending_queue_identity: int | None = None,
+    ) -> OriginalChatStopAdmission | None:
+        """Capture and fence the current original-chat Stop target."""
+        tree = self._delegation_tree
+        if tree is None:
+            return None
+        try:
+            parent = tree.sessions.read_session_snapshot(parent_key)
+            parent_source_state = tree.source_state(parent_key)
+        except Exception:
+            return None
+        return tree.begin_original_chat_stop(
+            parent_key=parent_key,
+            parent_incarnation=parent.incarnation if parent is not None else None,
+            parent_source_state=parent_source_state,
+            active_root_identity=active_root_identity,
+            target_turn_id=target_turn_id,
+            pending_queue_identity=pending_queue_identity,
+        )
+
+    def validate_original_chat_stop(
+        self,
+        admission: OriginalChatStopAdmission,
+        active_root_identity: tuple[asyncio.Task[Any], ...],
+    ) -> bool:
+        tree = self._delegation_tree
+        return tree is not None and tree.validate_original_chat_stop(
+            admission,
+            active_root_identity,
+        )
+
+    def abort_original_chat_stop(self, admission: OriginalChatStopAdmission) -> None:
+        tree = self._delegation_tree
+        if tree is not None:
+            tree.abort_original_chat_stop(admission)
+
+    async def fence_children_for_stop(
+        self,
+        admission: OriginalChatStopAdmission,
+        active_root_identity: tuple[asyncio.Task[Any], ...],
+    ) -> bool:
+        tree = self._delegation_tree
+        if tree is None:
+            return False
+        updates = await tree.fence_original_chat_stop(admission, active_root_identity)
+        if updates is None:
+            return False
+        for item in updates:
+            await self._emit_child(item)
+        return True
+
+    async def stop_children(
+        self,
+        parent_key: str,
+        *,
+        admission: OriginalChatStopAdmission | None = None,
+        active_root_identity: tuple[asyncio.Task[Any], ...] = (),
+        fenced: bool = False,
+        deadline: float | None = None,
+        settle_timeout: float = STOP_SETTLE_TIMEOUT,
+    ) -> int:
         """Stop the admitted active child subtree for one parent incarnation."""
         if self._delegation_tree is None:
             return 0
-        parent = self._delegation_tree.sessions.read_session_snapshot(parent_key)
-        if parent is None:
-            return 0
+        if admission is None:
+            parent = self._delegation_tree.sessions.read_session_snapshot(parent_key)
+            if parent is None:
+                return 0
+            parent_incarnation = parent.incarnation
+        else:
+            parent_incarnation = admission.parent_incarnation
         stopped = await self._delegation_tree.stop_for_parent(
             parent_key,
-            parent_incarnation=parent.incarnation,
+            parent_incarnation=parent_incarnation,
+            admission=admission,
+            active_root_identity=active_root_identity,
+            fenced=fenced,
+            deadline=deadline,
+            settle_timeout=settle_timeout,
         )
-        return len(stopped)
+        for item in stopped:
+            await self._emit_child(item)
+            self._release_settled_child_authority(item.child_id)
+        return sum(
+            1 for item in stopped
+            if item.state == "stopped" and not item.holds_capacity
+        )
 
     @property
     def file_lock_registry(self) -> FileLockRegistry:
@@ -1120,6 +1276,73 @@ class ForegroundAgentManager:
         )
         return scoped, borrowed
 
+    def _parent_source_owner_is_current(
+        self,
+        *,
+        parent_key: str,
+        owner: ExecutionOwner,
+        expected_parent_state: SourceState,
+        child_admission: ChildAdmission | None = None,
+    ) -> bool:
+        """Require the exact live parent and root source before child dispatch."""
+        tree = self._delegation_tree
+        if tree is None or owner.key != parent_key:
+            return False
+        try:
+            owner_state = owner.read_snapshot().state
+            parent = tree.sessions.read_session_snapshot(parent_key)
+            parent_state = tree.source_state(parent_key)
+            parent_child = tree.child_for_session(parent_key)
+            if parent_child is not None:
+                if (
+                    parent_child.source_state is None
+                    or not parent_child.source_state.same_origin(expected_parent_state)
+                    or not parent_child.holds_capacity
+                    or parent_child.state != "active"
+                    or tree.is_stopping(parent_child.child_id)
+                ):
+                    return False
+                root_key = parent_child.root_key
+                expected_root_state = parent_child.root_source_state
+            else:
+                root_key = parent_key
+                expected_root_state = expected_parent_state
+            if child_admission is not None:
+                if (
+                    child_admission.parent_key != parent_key
+                    or child_admission.parent_source_state is None
+                    or not child_admission.parent_source_state.same_origin(
+                        expected_parent_state,
+                    )
+                ):
+                    return False
+                root_key = child_admission.root_key
+                expected_root_state = child_admission.root_source_state
+            root_state = tree.source_state(root_key)
+        except Exception:
+            return False
+        if (
+            parent is None
+            or parent.incarnation != expected_parent_state.incarnation
+            or not owner_state.same_origin(expected_parent_state)
+            or parent_state is None
+            or not parent_state.same_origin(expected_parent_state)
+            or expected_root_state is None
+            or root_state is None
+            or not root_state.same_origin(expected_root_state)
+        ):
+            return False
+        if child_admission is None:
+            return True
+        current = tree.child(child_admission.child_id)
+        return (
+            current is not None
+            and current.current_run_id == child_admission.current_run_id
+            and current.state == "active"
+            and current.holds_capacity
+            and not tree.is_stopping(current.child_id)
+        )
+
     async def _run_role(
         self,
         *,
@@ -1138,6 +1361,9 @@ class ForegroundAgentManager:
         authority: dict[str, Any] | None = None,
         background: bool = False,
     ) -> AgentRunResult:
+        from nanobot.session.artifact_grants import CanonicalChildArtifactInput
+        from nanobot.session.artifact_reader import ArtifactReader
+
         call_id = str(uuid.uuid4())[:8]
         logger.info("Foreground {} [{}] started", role, call_id)
         tree = self._delegation_tree
@@ -1158,20 +1384,48 @@ class ForegroundAgentManager:
             )
 
         parent_execution_owner = turn_context.execution_owner
-        if not background and parent_execution_owner is None:
+        if parent_execution_owner is None:
             return AgentRunResult(
                 final_content="Error: the parent source owner is unavailable",
                 messages=[],
                 stop_reason="policy_blocked",
                 policy_metadata={"delegation_refused": True},
             )
-        if artifact_references:
-            return AgentRunResult(
-                final_content="Error: artifact handoff is unavailable for this child execution",
-                messages=[],
-                stop_reason="policy_blocked",
-                policy_metadata={"delegation_refused": True, "artifact_handoff": "unavailable"},
-            )
+        artifact_input: CanonicalChildArtifactInput | None = None
+        parent_artifact_reader: ArtifactReader | None = None
+        if artifact_references or role == "worker":
+            if background:
+                if artifact_references:
+                    return AgentRunResult(
+                        final_content=(
+                            "Error: artifact handoff is unavailable for background children"
+                        ),
+                        messages=[],
+                        stop_reason="policy_blocked",
+                        policy_metadata={
+                            "delegation_refused": True,
+                            "artifact_handoff": "background_unavailable",
+                        },
+                    )
+            else:
+                candidate_reader = turn_context.artifact_reader
+                if (
+                    type(candidate_reader) is ArtifactReader
+                    and candidate_reader.writer.owner is parent_execution_owner
+                ):
+                    parent_artifact_reader = candidate_reader
+                if artifact_references and parent_artifact_reader is None:
+                    return AgentRunResult(
+                        final_content=(
+                            "Error: artifact handoff is unavailable for this child execution"
+                        ),
+                        messages=[],
+                        stop_reason="policy_blocked",
+                        policy_metadata={
+                            "delegation_refused": True,
+                            "artifact_handoff": "unavailable",
+                        },
+                    )
 
         role_profile = role_capabilities(role)
         parent_tool_names = set(parent_bindings.tool_names)
@@ -1187,7 +1441,34 @@ class ForegroundAgentManager:
         effective_tool_names.update(read_only_mcp_names)
 
         parent_key = turn_context.session_key
-        parent = tree.sessions.get_or_create(parent_key)
+        try:
+            expected_parent_source_state = parent_execution_owner.read_snapshot().state
+        except Exception:
+            return AgentRunResult(
+                final_content="Error: the parent source owner is unavailable",
+                messages=[],
+                stop_reason="policy_blocked",
+                policy_metadata={"delegation_refused": True},
+            )
+        if not self._parent_source_owner_is_current(
+            parent_key=parent_key,
+            owner=parent_execution_owner,
+            expected_parent_state=expected_parent_source_state,
+        ):
+            return AgentRunResult(
+                final_content="Error: the parent source lifetime changed before child admission",
+                messages=[],
+                stop_reason="policy_blocked",
+                policy_metadata={"delegation_refused": True},
+            )
+        parent = tree.sessions.read_session_snapshot(parent_key)
+        if parent is None:
+            return AgentRunResult(
+                final_content="Error: the parent source is unavailable",
+                messages=[],
+                stop_reason="policy_blocked",
+                policy_metadata={"delegation_refused": True},
+            )
         attempt_id = turn_context.run_id or call_id
         policy_facts: dict[str, Any] = {
             "role": role,
@@ -1203,6 +1484,7 @@ class ForegroundAgentManager:
             attempt_id=attempt_id,
             profile=DEFAULT_CHILD_PROFILE,
             policy_facts=policy_facts,
+            expected_parent_source_state=expected_parent_source_state,
         )
         if isinstance(reserved, ChildRefusal):
             return AgentRunResult(
@@ -1263,14 +1545,20 @@ class ForegroundAgentManager:
                     policy_metadata={"delegation_refused": True},
                 )
             admission = registered
+            if artifact_references or (
+                role == "worker" and parent_artifact_reader is not None
+            ):
+                artifact_input = CanonicalChildArtifactInput(
+                    admission=admission,
+                    parent_reader=cast(ArtifactReader, parent_artifact_reader),
+                    references=tuple(artifact_references or ()),
+                )
             tools, child_authority_bindings = self._scope_child_tools(
                 parent_bindings,
                 tools,
                 allowed_names=effective_tool_names,
                 read_only_mcp_names=read_only_mcp_names,
             )
-            if child_authority_bindings is None:
-                raise RuntimeError("child capability capture was not admitted")
             await self._emit_child(admission)
 
             if role in DELEGATED_READ_ONLY_ROLES:
@@ -1330,6 +1618,7 @@ class ForegroundAgentManager:
                 policy=child_policy,
                 approval_target=turn_context.delivery.primary,
                 workspace_task_reference=child_task_reference,
+                artifact_input=artifact_input,
             )
 
             async def run_and_finalize() -> AgentRunResult:
@@ -1337,18 +1626,22 @@ class ForegroundAgentManager:
                     try:
                         result = await executor.execute_child_turn(turn_request)
                     except asyncio.CancelledError:
-                        await tree.complete(
+                        updated = await tree.complete(
                             admission.child_id,
                             outcome="settlement_unconfirmed",
                             state="uncertain",
                         )
+                        if updated is not None:
+                            await self._emit_child(updated)
                         raise
                     except Exception:
-                        await tree.complete(
+                        updated = await tree.complete(
                             admission.child_id,
                             outcome="settlement_unconfirmed",
                             state="uncertain",
                         )
+                        if updated is not None:
+                            await self._emit_child(updated)
                         raise
                     stop_reason = result.stop_reason or {
                         "completed": "completed",
@@ -1365,6 +1658,7 @@ class ForegroundAgentManager:
                         stop_reason=stop_reason,
                         policy_metadata=dict(result.policy_metadata),
                         error=result.error,
+                        artifact_handoff_receipt=result.artifact_handoff_receipt,
                     )
                     if result.status is RunStatus.APPROVAL_REQUIRED:
                         approval_id = result.policy_metadata.get("approval_id")
@@ -1417,21 +1711,40 @@ class ForegroundAgentManager:
                 finally:
                     current_child = tree.child(admission.child_id)
                     if (
-                        child_authority_bindings is not None
-                        and (current_child is None or current_child.state != "waiting_approval")
+                        current_child is None or not current_child.holds_capacity
                     ):
                         child_authority_bindings.release()
-                    if current_child is None or current_child.state != "waiting_approval":
+                    if current_child is None or not current_child.holds_capacity:
                         self._release_child_task_reference(admission.child_id)
 
             def track_child_task(task: asyncio.Task[Any]) -> None:
                 launch_fence.attach(task)
-                if not background and parent_execution_owner is not None:
+                if not background:
                     try:
                         parent_execution_owner.track_task(cast(asyncio.Task[object], task))
                     except Exception:
                         task.cancel()
                         raise
+
+            if not self._parent_source_owner_is_current(
+                parent_key=parent_key,
+                owner=parent_execution_owner,
+                expected_parent_state=expected_parent_source_state,
+                child_admission=admission,
+            ):
+                await tree.release(
+                    admission.child_id,
+                    reason="parent_source_changed_before_dispatch",
+                )
+                return AgentRunResult(
+                    final_content="Error: the parent source lifetime changed before child dispatch",
+                    messages=[],
+                    stop_reason="policy_blocked",
+                    policy_metadata={
+                        "child_refusal": "stale_parent",
+                        "delegation_refused": True,
+                    },
+                )
 
             handle = await backend.start(
                 admission,
@@ -1443,13 +1756,12 @@ class ForegroundAgentManager:
                 track=track_child_task,
             )
             handed_to_task = True
-            if child_authority_bindings is not None:
-                def release_bindings_after_settlement(_done: asyncio.Task[Any]) -> None:
-                    current = tree.child(admission.child_id)
-                    if current is None or current.state != "waiting_approval":
-                        child_authority_bindings.release()
+            def release_bindings_after_settlement(_done: asyncio.Task[Any]) -> None:
+                current = tree.child(admission.child_id)
+                if current is None or not current.holds_capacity:
+                    child_authority_bindings.release()
 
-                handle.task.add_done_callback(release_bindings_after_settlement)
+            handle.task.add_done_callback(release_bindings_after_settlement)
             if handle.task.cancelled() or launch_fence.cancelled:
                 return AgentRunResult(
                     final_content="Error: delegated child was stopped.",
@@ -1717,13 +2029,15 @@ class ForegroundAgentManager:
             if (
                 isinstance(approval_id, str)
                 and isinstance(child, dict)
-                and isinstance(child.get("child_id"), str)
+                and isinstance(cast(dict[object, object], child).get("child_id"), str)
             ):
                 # The child's exact request was already indexed against the
                 # original visible route. The parent run must forward that
                 # request without registering a second approval identity.
                 turn_context.forwarded_child_approval_id = approval_id
-                turn_context.forwarded_child_id = child["child_id"]
+                turn_context.forwarded_child_id = cast(
+                    str, cast(dict[object, object], child)["child_id"],
+                )
         if (
             turn_context is not None
             and result.stop_reason in {

@@ -9,17 +9,19 @@ import pytest
 
 from nanobot.agent.child_sessions import ChildAdmission
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.context import (
     RequestContext,
     bind_request_context,
     reset_request_context,
 )
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import DeliveryTarget, TurnRequest
 from nanobot.bus.outbound_events import DelegatedChildEvent
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from tests.agent.test_migration_engine import ScriptedProvider
-from tests.agent.test_migration_source_engine import engine_config, upgrade
+from tests.agent.test_migration_source_engine import upgrade
+
+pytest_plugins = ("tests.agent.test_migration_source_engine",)
 
 
 def _make_admission() -> ChildAdmission:

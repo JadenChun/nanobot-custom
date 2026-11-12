@@ -2,8 +2,8 @@
 
 import asyncio
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.loop import _TurnExecutionOptions
+from nanobot.agent.child_sessions import ChildAdmission, ChildRefusal
+from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import (
     ApprovalDecision,
@@ -12,11 +12,17 @@ from nanobot.agent.turn import (
     TurnRequest,
     TurnSource,
 )
+from nanobot.bus.events import InboundMessage
+from nanobot.command.builtin import cmd_stop
+from nanobot.command.router import CommandContext
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.security.workspace_access import current_workspace_focus
+from nanobot.session.pending_followups import mint_pending_followup_id
 from nanobot.session.source import validate_execution_links
 from tests.agent.test_migration_engine import ScriptedProvider
-from tests.agent.test_migration_source_engine import engine_config, upgrade
+from tests.agent.test_migration_source_engine import upgrade
+
+pytest_plugins = ("tests.agent.test_migration_source_engine",)
 
 
 async def test_scoped_worker_write_uses_child_risky_policy(engine_config):
@@ -41,10 +47,25 @@ async def test_scoped_worker_write_uses_child_risky_policy(engine_config):
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     parent_backend = upgrade(loop)
+    parent_key = "cli:source"
+    state = parent_backend.source.load_source_snapshot(parent_key).state
+    reference = loop.sessions.desktop_permissions.activate_once(
+        session_key=parent_key,
+        source_binding={
+            "store_identity": state.store_identity,
+            "incarnation": state.incarnation,
+            "generation": state.generation,
+        },
+        task_turn_id="parent-task",
+        task_input_event_id="parent-input",
+        path=engine_config.workspace_path,
+        file_access="read_write",
+        commands=False,
+    )
     try:
         result = await loop.execute_turn(TurnRequest(
-            content="Delegate the bounded write.", session_key="cli:source",
-        ))
+            content="Delegate the bounded write.", session_key=parent_key,
+        ), _options=_TurnExecutionOptions(workspace_task_reference=reference))
 
         assert result.error is None, result.error
         assert target.read_text() == original
@@ -79,7 +100,405 @@ async def test_scoped_worker_write_uses_child_risky_policy(engine_config):
         manager = loop._fork_dependencies.foreground_manager
         assert child.child_id in manager._suspended_children
         assert child.child_id in manager._child_task_references
+        assert loop.sessions.desktop_permissions.is_current_task_reference(reference)
     finally:
+        await loop.aclose()
+
+
+async def test_original_stop_traverses_settled_child_to_resistant_grandchild(engine_config):
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]))
+    parent_key = "cli:source"
+    upgrade(loop, parent_key)
+    manager = loop._fork_dependencies.foreground_manager
+    tree = manager._delegation_tree
+    assert tree is not None
+    parent = loop.sessions.get_or_create(parent_key)
+
+    settled_child = await tree.reserve(
+        parent=parent,
+        parent_key=parent_key,
+        assignment="finish before the descendant",
+        attempt_id="attempt-settled-ancestor",
+    )
+    assert isinstance(settled_child, ChildAdmission)
+    child_parent = loop.sessions.get_or_create(settled_child.session_key)
+    background_child = await tree.reserve(
+        parent=child_parent,
+        parent_key=settled_child.session_key,
+        assignment="continue in background",
+        attempt_id="attempt-background-descendant",
+    )
+    assert isinstance(background_child, ChildAdmission)
+    completed_ancestor = await tree.complete(
+        settled_child.child_id,
+        outcome="ordinary child response completed",
+        state="completed",
+    )
+    assert completed_ancestor is not None
+    assert completed_ancestor.holds_capacity is False
+    assert await tree.activate(background_child.child_id) is not None
+
+    started = asyncio.Event()
+    cancellation_received = asyncio.Event()
+    release = asyncio.Event()
+
+    async def resistant_background_owner():
+        started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancellation_received.set()
+            await release.wait()
+
+    owner_task = asyncio.create_task(resistant_background_owner())
+    await tree.attach_task(background_child.child_id, owner_task)
+    await started.wait()
+
+    capacity_parents = []
+    for index in range(3):
+        capacity_key = f"cli:stop-capacity-{index}"
+        upgrade(loop, capacity_key)
+        capacity_parent = loop.sessions.get_or_create(capacity_key)
+        capacity_child = await tree.reserve(
+            parent=capacity_parent,
+            parent_key=capacity_key,
+            assignment=f"hold gateway slot {index}",
+            attempt_id=f"attempt-stop-capacity-{index}",
+        )
+        assert isinstance(capacity_child, ChildAdmission)
+        capacity_parents.append(capacity_parent)
+
+    message = InboundMessage(
+        channel="cli",
+        chat_id="source",
+        sender_id="user",
+        content="/stop",
+    )
+    stop_task = asyncio.create_task(cmd_stop(CommandContext(
+        msg=message,
+        session=None,
+        key=parent_key,
+        raw="/stop",
+        loop=loop,
+    )))
+    try:
+        await asyncio.wait_for(cancellation_received.wait(), timeout=2)
+
+        stopping_descendant = tree.child(background_child.child_id)
+        assert stopping_descendant is not None
+        assert stopping_descendant.state == "stopping"
+        assert stopping_descendant.holds_capacity is True
+        assert tree.is_stopping(background_child.child_id)
+        refused_while_held = await tree.reserve(
+            parent=capacity_parents[0],
+            parent_key=capacity_parents[0].key,
+            assignment="wait for the stopped owner to settle",
+            attempt_id="attempt-capacity-still-held",
+        )
+        assert isinstance(refused_while_held, ChildRefusal)
+        assert refused_while_held.reason == "gateway_child_limit"
+
+        release.set()
+        await asyncio.wait_for(stop_task, timeout=2)
+        stopped_descendant = tree.child(background_child.child_id)
+        assert stopped_descendant is not None
+        assert stopped_descendant.state == "stopped"
+        assert stopped_descendant.holds_capacity is False
+        assert tree.is_stopping(background_child.child_id) is False
+        still_completed = tree.child(settled_child.child_id)
+        assert still_completed is not None
+        assert still_completed.state == "completed"
+        assert still_completed.holds_capacity is False
+
+        admitted_after_settlement = await tree.reserve(
+            parent=capacity_parents[0],
+            parent_key=capacity_parents[0].key,
+            assignment="use the released gateway slot",
+            attempt_id="attempt-capacity-released",
+        )
+        assert isinstance(admitted_after_settlement, ChildAdmission)
+    finally:
+        release.set()
+        if not stop_task.done():
+            await asyncio.gather(stop_task, return_exceptions=True)
+        await loop.aclose()
+
+
+async def test_original_stop_keeps_root_fence_until_resistant_root_settles(engine_config):
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]))
+    parent_key = "cli:source"
+    upgrade(loop, parent_key)
+    manager = loop._fork_dependencies.foreground_manager
+    tree = manager._delegation_tree
+    assert tree is not None
+    parent = loop.sessions.get_or_create(parent_key)
+    root_started = asyncio.Event()
+    cancellation_received = asyncio.Event()
+    release = asyncio.Event()
+    statuses = []
+
+    class StatusPublisher:
+        async def run_status_changed(self, message, session_key, status):
+            statuses.append(status)
+
+    loop.runtime_event_publisher = StatusPublisher()
+
+    async def resistant_root_owner():
+        root_started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancellation_received.set()
+            await release.wait()
+
+    root_task = asyncio.create_task(resistant_root_owner())
+    loop._track_active_task(parent_key, root_task)
+    await root_started.wait()
+    message = InboundMessage(
+        channel="cli",
+        chat_id="source",
+        sender_id="user",
+        content="/stop",
+    )
+    stop_task = asyncio.create_task(cmd_stop(CommandContext(
+        msg=message,
+        session=None,
+        key=parent_key,
+        raw="/stop",
+        loop=loop,
+    )))
+    try:
+        await asyncio.wait_for(cancellation_received.wait(), timeout=2)
+        assert statuses == ["stopping"]
+        refused_while_root_held = await tree.reserve(
+            parent=parent,
+            parent_key=parent_key,
+            assignment="do not launch while the stopped root still runs",
+            attempt_id="attempt-root-stop-fence",
+        )
+        assert isinstance(refused_while_root_held, ChildRefusal)
+        assert refused_while_root_held.reason == "session_stopping"
+
+        release.set()
+        await asyncio.wait_for(stop_task, timeout=2)
+        assert root_task.done()
+        assert statuses == ["stopping", "interrupted"]
+        admitted_after_settlement = await tree.reserve(
+            parent=parent,
+            parent_key=parent_key,
+            assignment="launch after the original root settles",
+            attempt_id="attempt-after-root-stop",
+        )
+        assert isinstance(admitted_after_settlement, ChildAdmission)
+    finally:
+        release.set()
+        if not stop_task.done():
+            await asyncio.gather(stop_task, return_exceptions=True)
+        await loop.aclose()
+
+
+async def test_original_stop_fences_new_followup_until_root_settlement(engine_config):
+    class ResistantProvider(ScriptedProvider):
+        def __init__(self):
+            super().__init__([])
+            self.started = asyncio.Event()
+            self.cancel_received = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((messages, tools, model))
+            self.started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                self.cancel_received.set()
+                await self.release.wait()
+            return LLMResponse(content="The original turn settled.")
+
+    provider = ResistantProvider()
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    parent_key = "cli:source"
+    upgrade(loop, parent_key)
+    turn_task = asyncio.create_task(loop.execute_turn(TurnRequest(
+        content="Keep the original root active.",
+        session_key=parent_key,
+        route=DeliveryTarget(channel="cli", chat_id="source"),
+    )))
+    loop._track_active_task(parent_key, turn_task)
+    stop_task = None
+    message = InboundMessage(
+        channel="cli",
+        chat_id="source",
+        sender_id="user",
+        content="/stop",
+    )
+    try:
+        await asyncio.wait_for(provider.started.wait(), timeout=2)
+        stop_task = asyncio.create_task(cmd_stop(CommandContext(
+            msg=message,
+            session=None,
+            key=parent_key,
+            raw="/stop",
+            loop=loop,
+        )))
+        await asyncio.wait_for(provider.cancel_received.wait(), timeout=2)
+        followup = InboundMessage(
+            channel="websocket",
+            chat_id="source",
+            sender_id="user",
+            content="This follow-up must not enter after Stop.",
+        )
+        outcome = await loop._admit_pending_activity(
+            parent_key,
+            followup,
+            followup_id=mint_pending_followup_id(followup),
+        )
+        assert outcome.followup_pending is False
+
+        provider.release.set()
+        await asyncio.wait_for(stop_task, timeout=2)
+        await asyncio.wait_for(asyncio.gather(turn_task, return_exceptions=True), timeout=2)
+    finally:
+        provider.release.set()
+        if stop_task is not None and not stop_task.done():
+            await asyncio.gather(stop_task, return_exceptions=True)
+        await loop.aclose()
+
+
+async def test_rejected_original_stop_leaves_followup_admission_open(engine_config):
+    class WaitingProvider(ScriptedProvider):
+        def __init__(self):
+            super().__init__([])
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((messages, tools, model))
+            self.started.set()
+            await self.release.wait()
+            return LLMResponse(content="The current root continues.")
+
+    provider = WaitingProvider()
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    parent_key = "cli:source"
+    upgrade(loop, parent_key)
+    turn_task = asyncio.create_task(loop.execute_turn(TurnRequest(
+        content="Keep the current root open.",
+        session_key=parent_key,
+        route=DeliveryTarget(channel="cli", chat_id="source"),
+    )))
+    loop._track_active_task(parent_key, turn_task)
+    newer_owner_release = asyncio.Event()
+    newer_owner = asyncio.create_task(newer_owner_release.wait())
+    try:
+        await asyncio.wait_for(provider.started.wait(), timeout=2)
+        stop_admission = loop._capture_original_chat_stop(parent_key, None)
+        assert stop_admission is not None
+        loop._active_tasks[parent_key].add(newer_owner)
+
+        cancelled = await loop._cancel_active_tasks(
+            parent_key,
+            _stop_admission=stop_admission,
+        )
+        assert cancelled == 0
+        assert not turn_task.cancelling()
+        assert not newer_owner.cancelling()
+
+        followup = InboundMessage(
+            channel="websocket",
+            chat_id="source",
+            sender_id="user",
+            content="This follow-up remains admissible after stale Stop.",
+        )
+        outcome = await loop._admit_pending_activity(
+            parent_key,
+            followup,
+            followup_id=mint_pending_followup_id(followup),
+        )
+        assert outcome.followup_pending is True
+
+        provider.release.set()
+        newer_owner_release.set()
+        await asyncio.gather(turn_task, newer_owner, return_exceptions=True)
+    finally:
+        provider.release.set()
+        newer_owner_release.set()
+        if not turn_task.done():
+            await asyncio.gather(turn_task, return_exceptions=True)
+        if not newer_owner.done():
+            await asyncio.gather(newer_owner, return_exceptions=True)
+        await loop.aclose()
+
+
+async def test_old_original_stop_cannot_cancel_replacement_lifetime(engine_config):
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]))
+    parent_key = "cli:source"
+    upgrade(loop, parent_key)
+    manager = loop._fork_dependencies.foreground_manager
+    tree = manager._delegation_tree
+    assert tree is not None
+    stop_entered = asyncio.Event()
+    continue_stop = asyncio.Event()
+    statuses = []
+
+    class StopBarrierPublisher:
+        async def run_status_changed(self, message, session_key, status):
+            statuses.append(status)
+            if status == "stopping":
+                stop_entered.set()
+                await continue_stop.wait()
+
+    loop.runtime_event_publisher = StopBarrierPublisher()
+    old_owner_release = asyncio.Event()
+    old_owner = asyncio.create_task(old_owner_release.wait())
+    loop._track_active_task(parent_key, old_owner)
+    message = InboundMessage(
+        channel="cli",
+        chat_id="source",
+        sender_id="user",
+        content="/stop",
+    )
+    stop_task = asyncio.create_task(cmd_stop(CommandContext(
+        msg=message,
+        session=None,
+        key=parent_key,
+        raw="/stop",
+        loop=loop,
+    )))
+    replacement_owner_release = asyncio.Event()
+    replacement_owner = None
+    try:
+        await asyncio.wait_for(stop_entered.wait(), timeout=2)
+        assert loop.sessions.delete_session(parent_key) is True
+        replacement = loop.sessions.get_or_create(parent_key)
+        loop.sessions.save(replacement)
+        upgrade(loop, parent_key)
+        replacement = loop.sessions.get_or_create(parent_key)
+        replacement_owner = asyncio.create_task(replacement_owner_release.wait())
+        loop._track_active_task(parent_key, replacement_owner)
+
+        continue_stop.set()
+        result = await asyncio.wait_for(stop_task, timeout=2)
+        assert result.content == "No active task to stop."
+        assert statuses == ["stopping"]
+        assert old_owner.cancelled() is False
+        assert replacement_owner.cancelled() is False
+        admitted = await tree.reserve(
+            parent=replacement,
+            parent_key=parent_key,
+            assignment="replacement source owns new work",
+            attempt_id="attempt-new-source-after-old-stop",
+        )
+        assert isinstance(admitted, ChildAdmission)
+    finally:
+        continue_stop.set()
+        old_owner_release.set()
+        replacement_owner_release.set()
+        if not stop_task.done():
+            await asyncio.gather(stop_task, return_exceptions=True)
+        await asyncio.gather(old_owner, return_exceptions=True)
+        if replacement_owner is not None:
+            await asyncio.gather(replacement_owner, return_exceptions=True)
         await loop.aclose()
 
 

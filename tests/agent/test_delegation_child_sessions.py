@@ -451,6 +451,49 @@ async def test_malformed_restore_fails_closed_until_owner_reconciles(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_transition_after_child_source_replacement_fails_closed(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+    child = await _reserve(
+        tree,
+        parent,
+        assignment="retain the original child source lifetime",
+        attempt_id="attempt-source-replacement",
+    )
+    assert isinstance(child, ChildAdmission)
+
+    assert sessions.delete_session(child.session_key) is True
+    replacement = sessions.get_or_create(child.session_key)
+    sessions.save(replacement)
+    sessions._jsonl_store.source.upgrade_source_session(
+        child.session_key,
+        expected_revision=replacement.revision,
+        expected_generation=replacement.generation,
+        expected_incarnation=replacement.incarnation,
+    )
+    sessions.invalidate(child.session_key)
+
+    await tree.complete(child.child_id, outcome="late settlement", state="completed")
+
+    current = tree.child(child.child_id)
+    assert current is not None
+    assert current.state == "uncertain"
+    assert current.holds_capacity is True
+    assert tree.recovery_error is not None
+    replacement_metadata = sessions.read_session_metadata(child.session_key)
+    assert replacement_metadata is not None
+    assert DELEGATION_CHILD_METADATA_KEY not in replacement_metadata.get("metadata", {})
+    refused = await _reserve(
+        tree,
+        parent,
+        assignment="must wait for owner reconciliation",
+        attempt_id="attempt-after-source-replacement",
+    )
+    assert isinstance(refused, ChildRefusal)
+    assert refused.reason == "reconciliation_required"
+
+
+@pytest.mark.asyncio
 async def test_stop_for_parent_stops_subtree_and_leaves_other_parents(tmp_path):
     sessions, tree = _new_tree(tmp_path)
     parent_a = _new_parent(sessions, key="websocket:parent-a")

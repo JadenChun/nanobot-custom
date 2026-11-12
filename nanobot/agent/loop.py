@@ -34,9 +34,14 @@ from nanobot.agent import context as agent_context
 from nanobot.agent import model_presets as preset_helpers
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
+from nanobot.agent.child_backend import ChildApprovalResume, ChildTurnRequest
+from nanobot.agent.child_sessions import (
+    STOP_SETTLE_TIMEOUT,
+    ChildControlState,
+    OriginalChatStopAdmission,
+)
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
 from nanobot.agent.cron_turns import CronTurnCoordinator
-from nanobot.agent.child_backend import ChildApprovalResume, ChildTurnRequest
 from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
 from nanobot.agent.direct_execution import DirectExecutionOptions
 from nanobot.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
@@ -172,8 +177,7 @@ from nanobot.session.recovery import (
     restore_runtime_checkpoint,
 )
 from nanobot.session.source import validate_execution_links
-from nanobot.session.source_projection import SourceNode, source_nodes
-from nanobot.session.source_projection import RuntimeNode
+from nanobot.session.source_projection import RuntimeNode, SourceNode, source_nodes
 from nanobot.session.source_request import SourceTranscript
 from nanobot.session.source_store import SourceOriginMismatchError, SourceState
 from nanobot.session.summary import (
@@ -218,6 +222,7 @@ if TYPE_CHECKING:
         WorkspaceFullAccessReference,
         WorkspaceTaskAccessReference,
     )
+    from nanobot.session.artifact_grants import CanonicalChildArtifactInput
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.manager import JsonlSessionStore
     from nanobot.session.source_store import SourceSnapshot
@@ -369,7 +374,11 @@ class _AdmittedActivityMessage:
 class _SourceActivityAdmission:
     queue: asyncio.Queue[_ActivityAdmissionRequest | None]
     task: asyncio.Task[None]
+    session_key: str
+    source_state: SourceState
+    root_queue_identity: int | None
     closed: bool = False
+    followup_stop_admission: OriginalChatStopAdmission | None = None
 
     async def submit(
         self,
@@ -381,6 +390,8 @@ class _SourceActivityAdmission:
 
         if self.closed:
             raise RuntimeError("Source activity admission is closed")
+        if followup_id is not None and self.followup_stop_admission is not None:
+            return _ForegroundActivityResult(followup_pending=False)
         result = asyncio.get_running_loop().create_future()
         self.queue.put_nowait(_ActivityAdmissionRequest(
             message=message,
@@ -399,10 +410,15 @@ class _SourceActivityAdmission:
                     pass
             raise
 
-    async def discard_pending_followups(self) -> tuple[str, ...]:
+    async def discard_pending_followups(
+        self,
+        stop_admission: OriginalChatStopAdmission | None = None,
+    ) -> tuple[str, ...]:
         """Fence stop disposition through the existing owner-registered worker."""
         if self.closed:
             raise RuntimeError("Source activity admission is closed")
+        if stop_admission is not None and not self.fence_followups(stop_admission):
+            raise RuntimeError("Stop does not match the active source follow-up owner")
         result = asyncio.get_running_loop().create_future()
         self.queue.put_nowait(_ActivityAdmissionRequest(
             message=None,
@@ -413,6 +429,27 @@ class _SourceActivityAdmission:
         if outcome.callback_error is not None:
             raise outcome.callback_error
         return outcome.discarded_followup_ids
+
+    def fence_followups(self, stop_admission: OriginalChatStopAdmission) -> bool:
+        """Reject new follow-ups for the exact source lifetime and Stop epoch."""
+        if (
+            stop_admission.parent_key != self.session_key
+            or stop_admission.pending_queue_identity != self.root_queue_identity
+            or stop_admission.parent_source_state is None
+            or not self.source_state.same_origin(stop_admission.parent_source_state)
+            or self.source_state.incarnation != stop_admission.parent_incarnation
+        ):
+            return False
+        current = self.followup_stop_admission
+        if current is not None and current.control_epoch > stop_admission.control_epoch:
+            return False
+        self.followup_stop_admission = stop_admission
+        return True
+
+    def release_followup_fence(self, stop_admission: OriginalChatStopAdmission) -> None:
+        """Release only the fence installed by this rejected Stop admission."""
+        if self.followup_stop_admission is stop_admission:
+            self.followup_stop_admission = None
 
     async def close(self) -> None:
         """Drain admitted work and stop the owner-registered worker."""
@@ -471,6 +508,9 @@ class _TurnExecutionOptions:
         default=None, repr=False,
     )
     workspace_full_reference: WorkspaceFullAccessReference | None = field(
+        default=None, repr=False,
+    )
+    canonical_child_artifact_input: CanonicalChildArtifactInput | None = field(
         default=None, repr=False,
     )
 
@@ -723,6 +763,9 @@ class AgentLoop:
         fork_dependencies.foreground_manager.bind_session_owner(self.sessions)
         fork_dependencies.foreground_manager.bind_child_turn_executor(self)
         self.approval_admission = ApprovalAdmission()
+        fork_dependencies.foreground_manager.set_child_approval_revoker(
+            self.approval_admission.revoke,
+        )
         self.run_store = RunStore(workspace, self.sessions)
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
@@ -1150,6 +1193,7 @@ class AgentLoop:
         action: str,
         content: str | None = None,
         runtime_generation: int | None = None,
+        expected_state: ChildControlState | None = None,
     ) -> dict[str, Any]:
         """Route one authenticated child control to the delegation owner."""
         return await self._fork_dependencies.foreground_manager.control_child(
@@ -1158,6 +1202,7 @@ class AgentLoop:
             action=action,
             content=content,
             runtime_generation=runtime_generation,
+            expected_state=expected_state,
         )
 
     async def execute_child_turn(
@@ -1207,24 +1252,109 @@ class AgentLoop:
                 )
 
             on_approval_consumed = activate_resume
-        return await self.execute_turn(
-            turn_request,
-            _tools=request.tools,
-            _options=_TurnExecutionOptions(
-                runtime=request.runtime,
-                suppress_channel_output=True,
-                approval_target=request.approval_target,
-                workspace_task_reference=request.workspace_task_reference,
-                internal_system_instructions=request.instructions,
-                internal_tool_policy=request.policy,
-                internal_max_iterations=request.max_iterations,
-                approval_authority_check=approval_authority_check,
-                on_approval_consumed=on_approval_consumed,
-                preserve_workspace_task_reference_on_approval=(
-                    request.workspace_task_reference is not None
+        if request.artifact_input is not None and approval_resume is not None:
+            raise RuntimeError(
+                "Artifact input cannot survive child approval resume; delegate again"
+            )
+        try:
+            result = await self.execute_turn(
+                turn_request,
+                _tools=request.tools,
+                _options=_TurnExecutionOptions(
+                    runtime=request.runtime,
+                    suppress_channel_output=True,
+                    approval_target=request.approval_target,
+                    workspace_task_reference=request.workspace_task_reference,
+                    internal_system_instructions=request.instructions,
+                    internal_tool_policy=request.policy,
+                    internal_max_iterations=request.max_iterations,
+                    approval_authority_check=approval_authority_check,
+                    on_approval_consumed=on_approval_consumed,
+                    preserve_workspace_task_reference_on_approval=(
+                        request.workspace_task_reference is not None
+                    ),
+                    canonical_child_artifact_input=(
+                        request.artifact_input if approval_resume is None else None
+                    ),
                 ),
-            ),
+            )
+        except asyncio.CancelledError:
+            if self._cancelled_child_run_is_settled(request):
+                return TurnResult(
+                    run_id=request.run_id,
+                    status=RunStatus.CANCELLED,
+                    stop_reason="cancelled",
+                )
+            raise
+        self._seal_child_artifact_handoff(request, result)
+        return result
+
+    def _seal_child_artifact_handoff(
+        self,
+        request: ChildTurnRequest,
+        result: TurnResult,
+    ) -> None:
+        """Seal one prepared child receipt only on exact completed settlement."""
+        receipt = result.artifact_handoff_receipt
+        if receipt is None:
+            return
+        from nanobot.session.artifact import ArtifactValidationError
+
+        if result.status is not RunStatus.COMPLETED or result.stop_reason != "completed":
+            raise ArtifactValidationError(
+                "Artifact handoff requires a completed child run"
+            )
+        backend = self.sessions.source_backend(request.admission.session_key)
+        if backend is None:
+            raise ArtifactValidationError("Artifact handoff child source is unavailable")
+        receipt.seal_after_settlement(
+            run_store=self.run_store,
+            source_store=backend.source,
         )
+
+    def _cancelled_child_run_is_settled(self, request: ChildTurnRequest) -> bool:
+        """Require a terminal run and a healthy closed source before releasing capacity."""
+        admission = request.admission
+        if admission.source_state is None or request.run_id != admission.current_run_id:
+            return False
+        record = self.run_store.load(request.run_id)
+        if (
+            record is None
+            or record.status is not RunStatus.CANCELLED
+            or record.session_ref is None
+            or record.session_ref.session_key != admission.session_key
+            or record.session_ref.run_id != request.run_id
+        ):
+            return False
+        stream_id = record.metadata.get("source_stream_id")
+        if not isinstance(stream_id, str) or not stream_id:
+            return False
+        backend = self.sessions.source_backend(admission.session_key)
+        if backend is None:
+            return False
+        try:
+            snapshot = backend.source.load_source_snapshot(admission.session_key)
+            checkpoint = backend.get_runtime_checkpoint_path(admission.session_key)
+            metadata = snapshot.header["metadata"]
+            return (
+                snapshot.state.same_origin(admission.source_state)
+                and "execution_lease" not in metadata
+                and "execution_recovery_required" not in metadata
+                and not checkpoint.exists()
+                and not checkpoint.is_symlink()
+                and not validate_execution_links(snapshot.events)
+                and any(
+                    event.get("_stream_id") == stream_id
+                    and event.get("_run_id") == request.run_id
+                    for event in snapshot.events
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Cancelled child run {} did not retain healthy owner evidence",
+                request.run_id,
+            )
+            return False
 
     async def _publish_delegated_child(self, child: Any) -> None:
         """Project one typed child reference into the parent chat activity."""
@@ -1633,40 +1763,197 @@ class AgentLoop:
         if cancelled:
             raise asyncio.CancelledError
 
-    async def _cancel_active_tasks(self, key: str) -> int:
+    def _active_root_task_identity(self, key: str) -> tuple[asyncio.Task[Any], ...]:
+        """Return current root tasks except the command that requests Stop."""
+        current = asyncio.current_task()
+        return tuple(sorted(
+            (
+                task for task in self._active_tasks.get(key, set())
+                if task is not current and not task.done()
+            ),
+            key=id,
+        ))
+
+    def _capture_original_chat_stop(
+        self,
+        key: str,
+        target_turn_id: str | None,
+    ) -> OriginalChatStopAdmission | None:
+        """Capture the existing root Stop target before its first await."""
+        manager = self._fork_dependencies.foreground_manager
+        if manager._delegation_tree is None:
+            return None
+        admission = manager.begin_original_chat_stop(
+            key,
+            active_root_identity=self._active_root_task_identity(key),
+            target_turn_id=target_turn_id,
+            pending_queue_identity=(
+                id(self._pending_queues[key]) if key in self._pending_queues else None
+            ),
+        )
+        if admission is None:
+            raise RuntimeError("The original chat source changed before Stop admission")
+        followup_admission = getattr(self, "_source_activity_admissions", {}).get(key)
+        if followup_admission is not None:
+            followup_admission.fence_followups(admission)
+        return admission
+
+    def _release_original_chat_stop_followups(
+        self,
+        key: str,
+        admission: OriginalChatStopAdmission,
+    ) -> None:
+        followup_admission = getattr(self, "_source_activity_admissions", {}).get(key)
+        if followup_admission is not None:
+            followup_admission.release_followup_fence(admission)
+
+    def _validate_original_chat_stop(
+        self,
+        key: str,
+        admission: OriginalChatStopAdmission,
+    ) -> bool:
+        """Check the captured root Stop against the current source and task set."""
+        manager = self._fork_dependencies.foreground_manager
+        current_queue = self._pending_queues.get(key)
+        if (
+            current_queue is not None
+            and id(current_queue) != admission.pending_queue_identity
+        ):
+            return False
+        return manager.validate_original_chat_stop(admission, self._active_root_task_identity(key))
+
+    def _original_chat_stop_has_live_owner(
+        self,
+        key: str,
+        admission: OriginalChatStopAdmission,
+    ) -> bool:
+        """Keep Stop visible while a captured root or child owner still holds work."""
+        if any(
+            task in admission.active_root_identity and not task.done()
+            for task in self._active_tasks.get(key, set())
+        ):
+            return True
+        manager = self._fork_dependencies.foreground_manager
+        tree = manager._delegation_tree
+        if tree is not None and any(
+            (child := tree.child_for_session(session_key)) is not None
+            and child.holds_capacity
+            for session_key in manager.child_session_keys_for_stop(admission)
+        ):
+            return True
+        return self.subagents.get_running_count_by_session(key) > 0
+
+    async def _cancel_active_tasks(
+        self,
+        key: str,
+        *,
+        _stop_admission: OriginalChatStopAdmission | None = None,
+    ) -> int:
         """Cancel and await all active work for *key*.
 
         Returns the total number of cancelled tasks, subagents, and exec sessions.
         """
+        manager = self._fork_dependencies.foreground_manager
+        if _stop_admission is not None:
+            active_identity = self._active_root_task_identity(key)
+            if not manager.validate_original_chat_stop(_stop_admission, active_identity):
+                manager.abort_original_chat_stop(_stop_admission)
+                self._release_original_chat_stop_followups(key, _stop_admission)
+                return 0
+            if not await manager.fence_children_for_stop(_stop_admission, active_identity):
+                manager.abort_original_chat_stop(_stop_admission)
+                self._release_original_chat_stop_followups(key, _stop_admission)
+                return 0
+            await self.approval_admission.revoke(key)
+            await manager.revoke_child_approvals_for_stop(
+                manager.child_session_keys_for_stop(_stop_admission),
+            )
         try:
-            await self.discard_pending_followups_for_stop(key)
+            await self.discard_pending_followups_for_stop(key, _stop_admission)
         except Exception as exc:
             raise PendingFollowupStopError("Could not save pending-input stop disposition") from exc
+        if _stop_admission is not None and not self._validate_original_chat_stop(
+            key,
+            _stop_admission,
+        ):
+            manager.abort_original_chat_stop(_stop_admission)
+            self._release_original_chat_stop_followups(key, _stop_admission)
+            return 0
         settlements = tuple(
             (task, state) for task, state in getattr(self, "_compact_dispatches", {}).items()
             if state.key == key
+            and (
+                _stop_admission is None
+                or task in _stop_admission.active_root_identity
+            )
         )
-        tasks = tuple(self._active_tasks.pop(key, set()) | {task for task, _ in settlements})
+        if _stop_admission is None:
+            tasks = tuple(self._active_tasks.pop(key, set()) | {task for task, _ in settlements})
+        else:
+            active = self._active_tasks.get(key, set())
+            selected = {
+                task for task in active
+                if task in _stop_admission.active_root_identity
+            }
+            tasks = tuple(selected | {task for task, _ in settlements})
+        settle_deadline = (
+            asyncio.get_running_loop().time() + STOP_SETTLE_TIMEOUT
+            if _stop_admission is not None
+            else None
+        )
         cancelled = sum(1 for t in tasks if not t.done() and not t.cancelling() and t.cancel())
 
         async def join_and_settle() -> int:
             errors: list[BaseException] = []
-            for t in tasks:
-                with suppress(asyncio.CancelledError, Exception):
-                    await t
+            child_cancelled: int | None = None
+            settled_root_count = cancelled
+            if _stop_admission is not None:
+                child_cancelled = await manager.stop_children(
+                    key,
+                    admission=_stop_admission,
+                    active_root_identity=_stop_admission.active_root_identity,
+                    fenced=True,
+                    deadline=settle_deadline,
+                )
+                pending = {task for task in tasks if not task.done()}
+                if pending:
+                    assert settle_deadline is not None
+                    remaining = max(0.0, settle_deadline - asyncio.get_running_loop().time())
+                    done, _pending = await asyncio.wait(pending, timeout=remaining)
+                else:
+                    done = set(tasks)
+                settled_root_count = len(done)
+                for task in done:
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
+            else:
+                for task in tasks:
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
             for task, state in settlements:
+                if _stop_admission is not None and not task.done():
+                    continue
                 try:
                     await self._settle_queued_compact(task, state)
                 except BaseException as exc:
                     errors.append(exc)
-            sub_cancelled = await self.subagents.cancel_by_session(key)
-            child_cancelled = await self._fork_dependencies.foreground_manager.stop_children(key)
-            exec_cancelled = await self._exec_session_manager.terminate_by_owner(key)
+            still_current = (
+                _stop_admission is None
+                or self._validate_original_chat_stop(key, _stop_admission)
+            )
+            sub_cancelled = await self.subagents.cancel_by_session(key) if still_current else 0
+            if child_cancelled is None:
+                child_cancelled = await manager.stop_children(key)
+            exec_cancelled = (
+                await self._exec_session_manager.terminate_by_owner(key)
+                if still_current
+                else 0
+            )
             if errors:
                 for error in errors[1:]:
                     logger.warning("Additional queued completion failed: {}", type(error).__name__)
                 raise errors[0]
-            return cancelled + sub_cancelled + child_cancelled + exec_cancelled
+            return settled_root_count + sub_cancelled + child_cancelled + exec_cancelled
 
         cleanup = asyncio.create_task(join_and_settle())
         owner_cancelled = False
@@ -2011,12 +2298,19 @@ class AgentLoop:
             raise RuntimeError("Source follow-up admission is unavailable")
         return await admission.submit(msg, followup_id=followup_id)
 
-    async def discard_pending_followups_for_stop(self, key: str) -> tuple[str, ...]:
+    async def discard_pending_followups_for_stop(
+        self,
+        key: str,
+        stop_admission: OriginalChatStopAdmission | None = None,
+    ) -> tuple[str, ...]:
         """Commit stop disposition under the active source owner before cancellation."""
         admission = getattr(self, "_source_activity_admissions", {}).get(key)
         if admission is None:
             return ()
-        identifiers = await admission.discard_pending_followups()
+        if stop_admission is None:
+            identifiers = await admission.discard_pending_followups()
+        else:
+            identifiers = await admission.discard_pending_followups(stop_admission)
         if identifiers:
             self._stopped_pending_followup_ids.setdefault(key, set()).update(identifiers)
         return identifiers
@@ -2516,6 +2810,7 @@ class AgentLoop:
             )
             result = await self.runner.run(AgentRunSpec(
                 artifact_read_allowed=run_context.artifact_read_allowed,
+                canonical_child_artifact_input=run_context.canonical_child_artifact_input,
                 initial_messages=None,
                 source_transcript=source_transcript,
                 source_isolated=fresh_history,
@@ -3743,7 +4038,15 @@ class AgentLoop:
 
             activity_task = asyncio.create_task(admit_pending_activity())
             owner.track_task(activity_task)
-            activity_admission = _SourceActivityAdmission(activity_queue, activity_task)
+            activity_admission = _SourceActivityAdmission(
+                activity_queue,
+                activity_task,
+                session_key=key,
+                source_state=owner.read_snapshot().state,
+                root_queue_identity=(
+                    id(self._pending_queues[key]) if key in self._pending_queues else None
+                ),
+            )
             self._source_activity_admissions[key] = activity_admission
             try:
                 if admitted is not None:
@@ -3878,6 +4181,7 @@ class AgentLoop:
             context.internal_max_iterations = options.internal_max_iterations
             context.workspace_full_reference = options.workspace_full_reference
             context.workspace_task_reference = options.workspace_task_reference
+            context.canonical_child_artifact_input = options.canonical_child_artifact_input
             context.trusted_foreground_activity = (
                 options.trusted_foreground_activity
                 and request.source in _FOREGROUND_IDLE_SOURCES
@@ -4104,7 +4408,10 @@ class AgentLoop:
                                     usage={k: v for k, v in runner.usage.to_dict().items()
                                            if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
                                     sent_messages=tuple(context.delivery.sent_messages),
-                                    llm_usage=runner.usage if runner else None)
+                                    llm_usage=runner.usage if runner else None,
+                                    artifact_handoff_receipt=(
+                                        runner.artifact_handoff_receipt if runner else None
+                                    ))
                                 if (
                                     status is RunStatus.APPROVAL_REQUIRED
                                     and options.persist_approval_request

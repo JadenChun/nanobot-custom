@@ -115,7 +115,6 @@ with exact source URLs, visible dates, limitations, and uncertainty."""
                 assignment=task,
                 tools=tools,
                 max_iterations=host.crawler_max_iterations,
-                runner=host.crawler_runner,
                 model=host.crawler_model,
                 max_input_tokens=host.crawler_max_input_tokens,
                 max_output_tokens=host.crawler_max_output_tokens,

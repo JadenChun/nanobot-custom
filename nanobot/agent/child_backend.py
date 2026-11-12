@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nanobot.agent.child_sessions import ChildAdmission
 from nanobot.agent.hook import AgentHook
@@ -19,6 +19,9 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ApprovalDecision, DeliveryTarget, TurnResult
 from nanobot.security.desktop_permissions import WorkspaceTaskAccessReference
 from nanobot.utils.llm_runtime import LLMRuntime
+
+if TYPE_CHECKING:
+    from nanobot.session.artifact_grants import CanonicalChildArtifactInput
 
 
 class ChildBackendError(RuntimeError):
@@ -72,6 +75,7 @@ class ChildTurnRequest:
     approval_target: DeliveryTarget | None = None
     workspace_task_reference: WorkspaceTaskAccessReference | None = None
     approval_decision: ApprovalDecision | None = None
+    artifact_input: CanonicalChildArtifactInput | None = None
 
 
 @dataclass(frozen=True, slots=True)

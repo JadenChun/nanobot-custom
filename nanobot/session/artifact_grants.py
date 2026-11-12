@@ -93,9 +93,7 @@ class CanonicalChildArtifactInput:
         raw_references = cast(object, self.references)
         if not isinstance(raw_references, tuple):
             raise ArtifactValidationError("Invalid canonical child artifact references")
-        references = _parse_grant_references(list(cast(tuple[object, ...], raw_references)))
-        if references != raw_references:
-            raise ArtifactValidationError("Invalid canonical child artifact references")
+        _parse_grant_references(list(cast(tuple[object, ...], raw_references)))
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("Canonical child artifact input cannot be serialized")
@@ -1221,9 +1219,15 @@ class ArtifactHandoffReceipt:
             self._sealed
             or self._consumed
             or self._prepared_state is None
-            or source_store is not writer.store
+            or (
+                source_store is not writer.store
+                and not writer.store.shares_store_with(source_store)
+            )
         ):
             raise ArtifactValidationError("Artifact handoff settlement is unavailable")
+        # Retain the admitted writer's exact binding; a second wrapper over the
+        # same backend must not become the identity later acceptance checks.
+        source_store = writer.store
         from nanobot.agent.run_store import RunStore as RuntimeRunStore
 
         if type(run_store) is not RuntimeRunStore:

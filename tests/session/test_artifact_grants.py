@@ -4,36 +4,51 @@ import asyncio
 import hashlib
 import json
 import pickle
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.delegation import ForegroundAgentManager
+from nanobot.agent.child_sessions import ChildAdmission
+from nanobot.agent.loop import AgentLoop
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
+from nanobot.agent.tools.artifact import ReadArtifactTool
 from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
 from nanobot.agent.tools.delegation import DelegateTaskTool
 from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ToolOutcome, TurnContext
+from nanobot.agent.turn import (
+    RunRecord,
+    RunStatus,
+    SessionRunRef,
+    ToolOutcome,
+    TurnContext,
+    TurnRequest,
+    TurnSource,
+)
 from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
 from nanobot.session.artifact import ArtifactValidationError, parse_artifact_descriptor
 from nanobot.session.artifact_grants import (
+    ArtifactDirectChildBinding,
     ArtifactGrantSet,
     ArtifactHandoffCollector,
     ArtifactHandoffReceipt,
+    CanonicalChildArtifactInput,
 )
 from nanobot.session.artifact_reader import ArtifactReader
 from nanobot.session.artifact_store import PrivateArtifactStore
-from nanobot.session.execution_owner import acquire_execution
+from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
 from nanobot.session.manager import JsonlSessionStore, Session
 from nanobot.session.source_store import SourceSessionStore
 from nanobot.session.turn_writer import SourceTurnWriter
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent.test_migration_engine import ScriptedProvider
 from tests.session.test_artifact import fixture
+
+pytest_plugins = ("tests.agent.test_migration_engine",)
 
 
 @asynccontextmanager
@@ -89,6 +104,7 @@ async def published_artifact(tmp_path, *, child: bool = False):
             event_id=event["_event_id"],
             execution_id=event["_execution_id"],
             stream_id=writer.stream_id,
+            run_id=writer.run_id,
             byte_length=len(content),
             sha256=hashlib.sha256(content).hexdigest(),
             source_access=outcome.producer_receipt.to_dict()["source_access"],
@@ -108,6 +124,276 @@ async def published_artifact(tmp_path, *, child: bool = False):
                 session.key, snapshot.state, descriptor, owner=owner, blobs=blobs
             )
         yield parent, writer, tool, store, descriptor, content
+
+
+async def _publish_loop_artifact(loop: AgentLoop, session_key: str, text: str):
+    """Seed synthetic evidence in the loop's canonical source and artifact stores."""
+    session = loop.sessions.get_or_create(session_key)
+    loop.sessions.save(session)
+    backend = loop.sessions._jsonl_store
+    backend.source.upgrade_source_session(
+        session_key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    loop.sessions.invalidate(session_key)
+    (loop.workspace / "artifact-evidence.txt").write_text(text)
+    reader_factory = loop._artifact_reader_factory
+    read_file = loop.tools.get("read_file")
+    assert reader_factory is not None and type(read_file) is ReadFileTool
+
+    async with acquire_execution(backend, session_key, run_id="artifact-seed") as owner:
+        writer = SourceTurnWriter(backend.source, owner, run_id="artifact-seed")
+        outcome = await ToolRegistry.execute_prepared(
+            read_file,
+            {"path": "artifact-evidence.txt"},
+            SimpleNamespace(lock_owner=None),
+        )
+        writer.begin_tool_batch({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "artifact-read",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }],
+        })
+        await writer.record_tool_result_event(KnownToolResult(
+            0,
+            "artifact-read",
+            "read_file",
+            outcome,
+            outcome.content,
+            {"status": "ok"},
+            True,
+            outcome.producer_receipt,
+        ))
+        snapshot = owner.read_snapshot()
+        event = snapshot.events[-1]
+        content = event["content"].encode("utf-8")
+        raw, _ = fixture()
+        raw.update(
+            workspace_id=backend.sessions_dir.name,
+            session_key=session_key,
+            incarnation=snapshot.state.incarnation,
+            generation=snapshot.state.generation,
+            event_id=event["_event_id"],
+            execution_id=event["_execution_id"],
+            stream_id=writer.stream_id,
+            run_id=writer.run_id,
+            byte_length=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+            source_access=outcome.producer_receipt.to_dict()["source_access"],
+        )
+        descriptor = parse_artifact_descriptor(raw)
+        reader = reader_factory(writer, False, read_file)
+        assert reader is not None
+        source = SourceSessionStore(backend, artifact_store=reader.store)
+        with reader.store.transaction() as blobs:
+            blobs.put(descriptor, content)
+            source.commit_artifact_descriptor(
+                session_key, snapshot.state, descriptor, owner=owner, blobs=blobs
+            )
+    return backend, descriptor, content
+
+
+async def _reserve_loop_child(loop: AgentLoop, parent_key: str, run_id: str):
+    manager = loop._fork_dependencies.foreground_manager
+    tree = manager._delegation_tree
+    assert tree is not None
+    admission = await tree.reserve(
+        parent=loop.sessions.get_or_create(parent_key),
+        parent_key=parent_key,
+        assignment="Read or publish one synthetic artifact.",
+        attempt_id=run_id,
+        policy_facts={
+            "role": "worker",
+            "tools": ["read_file", "read_artifact", "handoff_artifact"],
+            "background": False,
+        },
+        runtime_generation=0,
+    )
+    assert isinstance(admission, ChildAdmission)
+    active = await tree.activate(admission.child_id)
+    assert active is not None
+    registered = await tree.register_run(admission.child_id, run_id)
+    assert registered is not None
+    backend = loop.sessions.source_backend(registered.session_key)
+    assert backend is not None
+    return tree, registered, backend
+
+
+async def _publish_artifact_for_writer(
+    loop: AgentLoop,
+    backend: JsonlSessionStore,
+    writer: SourceTurnWriter,
+    owner,
+    *,
+    artifact_id: str,
+    file_name: str,
+    text: str,
+    isolated: bool,
+):
+    (loop.workspace / file_name).write_text(text)
+    read_file = loop.tools.get("read_file")
+    reader_factory = loop._artifact_reader_factory
+    assert reader_factory is not None and type(read_file) is ReadFileTool
+    reader = reader_factory(writer, isolated, read_file)
+    assert reader is not None
+    outcome = await ToolRegistry.execute_prepared(
+        read_file,
+        {"path": file_name},
+        SimpleNamespace(lock_owner=None),
+    )
+    writer.begin_tool_batch({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "artifact-read",
+            "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"},
+        }],
+    })
+    await writer.record_tool_result_event(KnownToolResult(
+        0,
+        "artifact-read",
+        "read_file",
+        outcome,
+        outcome.content,
+        {"status": "ok"},
+        True,
+        outcome.producer_receipt,
+    ))
+    snapshot = owner.read_snapshot()
+    event = snapshot.events[-1]
+    content = event["content"].encode("utf-8")
+    raw, _ = fixture()
+    raw.update(
+        artifact_id=artifact_id,
+        workspace_id=backend.sessions_dir.name,
+        session_key=writer.owner.key,
+        incarnation=snapshot.state.incarnation,
+        generation=snapshot.state.generation,
+        event_id=event["_event_id"],
+        execution_id=event["_execution_id"],
+        stream_id=writer.stream_id,
+        run_id=writer.run_id,
+        byte_length=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+        source_access=outcome.producer_receipt.to_dict()["source_access"],
+    )
+    descriptor = parse_artifact_descriptor(raw)
+    source = SourceSessionStore(backend, artifact_store=reader.store)
+    with reader.store.transaction() as blobs:
+        blobs.put(descriptor, content)
+        source.commit_artifact_descriptor(
+            writer.owner.key, snapshot.state, descriptor, owner=owner, blobs=blobs
+        )
+    return reader, descriptor, content
+
+
+def _record_completed_child_run(loop: AgentLoop, child_key: str, run_id: str) -> None:
+    loop.run_store.save(RunRecord(
+        run_id=run_id,
+        status=RunStatus.COMPLETED,
+        source=TurnSource.DIRECT,
+        session_ref=SessionRunRef(session_key=child_key, run_id=run_id),
+        stop_reason="completed",
+        completed_at="2026-11-12T00:00:00+00:00",
+    ))
+
+
+async def _stage_loop_handoff(
+    loop: AgentLoop,
+    backend: JsonlSessionStore,
+    parent_key: str,
+    parent_reader: ArtifactReader,
+    *,
+    child_run_id: str,
+    fail_child_close: bool = False,
+    monkeypatch=None,
+):
+    tree, admission, child_backend = await _reserve_loop_child(
+        loop, parent_key, child_run_id,
+    )
+    child_stack = AsyncExitStack()
+    await child_stack.__aenter__()
+    child_owner = await child_stack.enter_async_context(acquire_execution(
+        child_backend, admission.session_key, run_id=child_run_id,
+    ))
+    child_writer = SourceTurnWriter(
+        child_backend.source, child_owner, run_id=child_run_id,
+    )
+    binding = ArtifactDirectChildBinding.capture(
+        admission, parent_reader, child_writer,
+    )
+    reader, descriptor, content = await _publish_artifact_for_writer(
+        loop,
+        child_backend,
+        child_writer,
+        child_owner,
+        artifact_id="c" * 32,
+        file_name=f"{child_run_id}-evidence.txt",
+        text="child synthetic evidence 🧪",
+        isolated=True,
+    )
+    child_grants = ArtifactGrantSet.issue_downward(
+        parent_reader, child_writer, [], child_binding=binding,
+    )
+    reader = replace(reader, grants=child_grants)
+    collector = ArtifactHandoffCollector(reader, child_binding=binding)
+    selected = collector.select([descriptor.reference])
+    child_writer.begin_tool_batch({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{
+            "id": "handoff",
+            "type": "function",
+            "function": {"name": "handoff_artifact", "arguments": "{}"},
+        }],
+    })
+    result = ToolOutcome(
+        content=json.dumps({"accepted": [descriptor.reference]}),
+        handoff_receipt=selected,
+    )
+    event_id = await child_writer.record_tool_result_event(KnownToolResult(
+        0,
+        "handoff",
+        "handoff_artifact",
+        result,
+        result.content,
+        {"status": "ok"},
+        True,
+        handoff_receipt=selected,
+    ))
+    collector.record(selected, event_id)
+    child_writer.append_message({"role": "assistant", "content": "child complete"})
+    candidate = collector.prepare_after_completion(stop_reason="completed")
+    assert candidate is not None
+    with pytest.raises(ArtifactValidationError):
+        parent_reader.read(descriptor.reference)
+    child_grants.close()
+
+    if fail_child_close:
+        assert monkeypatch is not None
+
+        def fail_source_persistence(self, _header, _events, *, root_authority=None):
+            raise OSError("child source settlement failed")
+
+        with monkeypatch.context() as patch:
+            # Owner close resolves its own store wrapper from the backend, so the
+            # failure must be installed on the shared class, not one instance.
+            patch.setattr(
+                SourceSessionStore,
+                "_write",
+                fail_source_persistence,
+            )
+            with pytest.raises(OSError, match="child source settlement failed"):
+                await child_stack.aclose()
+    else:
+        await child_stack.aclose()
+    return tree, admission, child_backend, candidate, descriptor, content
 
 
 async def test_direct_child_grant_reads_exact_parent_artifact_without_source_write(tmp_path):
@@ -583,15 +869,33 @@ async def test_runner_adopts_handoff_after_parent_result_and_adds_runtime_notice
         assert all(descriptor.reference not in str(event.get("content", "")) for event in events)
 
 
-async def test_foreground_child_uses_parent_admission_for_granted_artifact(tmp_path):
-    async with published_artifact(tmp_path) as (_, writer, tool, store, descriptor, content):
-        parent_grants = ArtifactGrantSet.for_reader(
-            ArtifactReader(writer, "root_history", store, tool)
+async def test_foreground_child_uses_parent_admission_for_granted_artifact(
+    tmp_path, engine_config,
+):
+    engine_config.artifacts.enabled = True
+    engine_config.artifacts.root = str(tmp_path / "private-artifacts")
+    parent_key = "cli:artifact-grants"
+    provider = ScriptedProvider([])
+    loop = AgentLoop.from_config(
+        engine_config, tool_registry=ToolRegistry(), provider=provider,
+    )
+    try:
+        backend, descriptor, content = await _publish_loop_artifact(
+            loop, parent_key, "parent synthetic evidence 中文 🌟",
         )
-        parent_reader = ArtifactReader(writer, "root_history", store, tool, grants=parent_grants)
-        provider = MagicMock()
-        provider.get_default_model.return_value = "test-model"
-        provider.chat_with_retry = AsyncMock(side_effect=[
+        provider.responses.extend([
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="delegate",
+                    name="delegate_task",
+                    arguments={
+                        "contract": "Read the supplied artifact and report its exact contents.",
+                        "write_scope": ["artifact-output.txt"],
+                        "artifact_references": [descriptor.reference],
+                    },
+                )],
+            ),
             LLMResponse(
                 content="",
                 tool_calls=[ToolCallRequest(
@@ -599,46 +903,284 @@ async def test_foreground_child_uses_parent_admission_for_granted_artifact(tmp_p
                     name="read_artifact",
                     arguments={"reference": descriptor.reference},
                 )],
-                usage=None,
             ),
-            LLMResponse(content="child complete", tool_calls=[], usage=None),
+            LLMResponse(content="child complete"),
+            LLMResponse(content="parent complete"),
         ])
-        manager = ForegroundAgentManager(provider=provider, workspace=tool._workspace)
-        tools = ToolRegistry()
-        tools.register(tool)
-        context = TurnContext(
-            execution_owner=writer.owner,
-            source_writer=writer,
-            artifact_read_allowed=True,
-            artifact_reader=parent_reader,
-            artifact_grants=parent_grants,
-        )
-        result = await manager._run_role(
-            role="worker",
-            prompt="worker prompt",
-            assignment="read the granted artifact",
-            tools=tools,
-            max_iterations=2,
-            turn_context=context,
-            artifact_references=[descriptor.reference],
-        )
+        result = await loop.execute_turn(TurnRequest(
+            content="Delegate an artifact read.", session_key=parent_key,
+        ))
 
-        assert result.final_content == "child complete"
-        names = {
+        assert result.stop_reason == "completed"
+        assert result.content == "parent complete"
+        tree = loop._fork_dependencies.foreground_manager._delegation_tree
+        assert tree is not None
+        children = tree.children_of(parent_key)
+        assert len(children) == 1
+        child = children[0]
+        parent_snapshot = backend.source.load_source_snapshot(parent_key)
+        child_snapshot = backend.source.load_source_snapshot(child.session_key)
+        assert parent_snapshot.state.session_key != child_snapshot.state.session_key
+        assert child.current_run_id is not None and child.current_run_id != result.run_id
+        child_tools = {
             definition["function"]["name"]
-            for definition in provider.chat_with_retry.await_args_list[0].kwargs["tools"]
+            for definition in provider.calls[1][1]
         }
-        assert {"read_artifact", "handoff_artifact"} <= names
+        assert {"read_artifact", "handoff_artifact"} <= child_tools
         artifact_reads = [
-            event for event in writer.owner.read_snapshot().events
+            event for event in child_snapshot.events
             if event.get("_artifact_read", {}).get("reference") == descriptor.reference
         ]
         assert len(artifact_reads) == 1
-        assert json.loads(artifact_reads[0]["content"])["text"] == content.decode()
-        crawler = await manager.run_crawler(
-            task="crawl public sources", artifact_references=[descriptor.reference]
+        assert json.loads(artifact_reads[0]["content"])["text"].encode() == content
+        crawler = await loop._fork_dependencies.foreground_manager.run_crawler(
+            task="crawl public sources", artifact_references=[descriptor.reference],
         )
         assert isinstance(crawler, ToolOutcome) and crawler.stop_reason == "tool_error"
+    finally:
+        await loop.aclose()
+
+
+async def test_canonical_child_runner_reads_parent_artifact_in_distinct_owner(
+    tmp_path, engine_config,
+):
+    engine_config.artifacts.enabled = True
+    engine_config.artifacts.root = str(tmp_path / "private-artifacts")
+    parent_key = "cli:artifact-owner-boundary"
+    provider = ScriptedProvider([])
+    loop = AgentLoop.from_config(
+        engine_config, tool_registry=ToolRegistry(), provider=provider,
+    )
+    try:
+        backend, descriptor, content = await _publish_loop_artifact(
+            loop, parent_key, "parent synthetic evidence 中文 🌟",
+        )
+        provider.responses.extend([
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCallRequest(
+                    id="read-artifact",
+                    name="read_artifact",
+                    arguments={"reference": descriptor.reference},
+                )],
+            ),
+            LLMResponse(content="child complete"),
+        ])
+        async with acquire_execution(backend, parent_key, run_id="parent-run") as parent_owner:
+            parent_writer = SourceTurnWriter(backend.source, parent_owner, run_id="parent-run")
+            read_file = loop.tools.get("read_file")
+            reader_factory = loop._artifact_reader_factory
+            assert reader_factory is not None and type(read_file) is ReadFileTool
+            parent_reader = reader_factory(parent_writer, False, read_file)
+            assert parent_reader is not None
+            parent_grants = ArtifactGrantSet.for_reader(parent_reader)
+            parent_reader = replace(parent_reader, grants=parent_grants)
+            tree, admission, child_backend = await _reserve_loop_child(
+                loop, parent_key, "artifact-child-run",
+            )
+            async with acquire_execution(
+                child_backend, admission.session_key, run_id="artifact-child-run",
+            ) as child_owner:
+                child_writer = SourceTurnWriter(
+                    child_backend.source, child_owner, run_id="artifact-child-run",
+                )
+                binding = ArtifactDirectChildBinding.capture(
+                    admission, parent_reader, child_writer,
+                )
+                assert binding.binds(parent_reader, child_writer)
+                artifact_input = CanonicalChildArtifactInput(
+                    admission=admission,
+                    parent_reader=parent_reader,
+                    references=(descriptor.reference,),
+                )
+                context = TurnContext(
+                    run_id="artifact-child-run",
+                    session_key=admission.session_key,
+                    execution_owner=child_owner,
+                    source_writer=child_writer,
+                    artifact_read_allowed=True,
+                )
+                tools = ToolRegistry()
+                tools.register(read_file)
+                result = await AgentRunner(
+                    artifact_reader_factory=reader_factory,
+                ).run(AgentRunSpec(
+                    initial_messages=[{"role": "user", "content": "Read the supplied artifact."}],
+                    tools=tools,
+                    runtime=LLMRuntime(
+                        provider=provider,
+                        model="test-model",
+                        generation=GenerationSettings(max_tokens=256),
+                        context_window_tokens=4096,
+                    ),
+                    max_iterations=2,
+                    max_tool_result_chars=16000,
+                    turn_context=context,
+                    source_writer=child_writer,
+                    artifact_read_allowed=True,
+                    canonical_child_artifact_input=artifact_input,
+                ))
+                assert result.final_content == "child complete"
+                assert context.artifact_reader is not None
+                assert context.artifact_reader.mode == "isolated_stream"
+                child_snapshot = child_owner.read_snapshot()
+                reads = [
+                    event for event in child_snapshot.events
+                    if event.get("_artifact_read", {}).get("reference") == descriptor.reference
+                ]
+                assert len(reads) == 1
+                assert json.loads(reads[0]["content"])["text"].encode() == content
+                assert child_snapshot.state.session_key != parent_owner.key
+                assert child_writer.run_id != parent_writer.run_id
+            await tree.complete(admission.child_id, outcome="artifact read completed")
+            parent_grants.close()
+    finally:
+        await loop.aclose()
+
+
+async def test_canonical_child_handoff_waits_for_settlement_and_parent_result(
+    tmp_path, engine_config,
+):
+    engine_config.artifacts.enabled = True
+    engine_config.artifacts.root = str(tmp_path / "private-artifacts")
+    parent_key = "cli:artifact-upward-adoption"
+    loop = AgentLoop.from_config(
+        engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]),
+    )
+    try:
+        backend, _, _ = await _publish_loop_artifact(
+            loop, parent_key, "parent synthetic evidence",
+        )
+        async with acquire_execution(backend, parent_key, run_id="artifact-parent-run") as parent_owner:
+            parent_writer = SourceTurnWriter(
+                backend.source, parent_owner, run_id="artifact-parent-run",
+            )
+            read_file = loop.tools.get("read_file")
+            reader_factory = loop._artifact_reader_factory
+            assert reader_factory is not None and type(read_file) is ReadFileTool
+            root_reader = reader_factory(parent_writer, False, read_file)
+            assert root_reader is not None
+            parent_grants = ArtifactGrantSet.for_reader(root_reader)
+            parent_reader = replace(root_reader, grants=parent_grants)
+
+            tree, admission, child_backend, candidate, descriptor, content = (
+                await _stage_loop_handoff(
+                    loop,
+                    backend,
+                    parent_key,
+                    parent_reader,
+                    child_run_id="artifact-upward-child-run",
+                )
+            )
+            with pytest.raises(ArtifactValidationError):
+                parent_reader.read(descriptor.reference)
+
+            with pytest.raises(ArtifactValidationError):
+                candidate.seal_after_settlement(
+                    run_store=loop.run_store,
+                    source_store=child_backend.source,
+                )
+            with pytest.raises(ArtifactValidationError):
+                parent_reader.read(descriptor.reference)
+
+            await tree.complete(admission.child_id, outcome="child response completed")
+            _record_completed_child_run(loop, admission.session_key, "artifact-upward-child-run")
+            candidate.seal_after_settlement(
+                run_store=loop.run_store,
+                source_store=child_backend.source,
+            )
+            with pytest.raises(ArtifactValidationError):
+                parent_reader.read(descriptor.reference)
+
+            parent_writer.begin_tool_batch({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "delegate",
+                    "type": "function",
+                    "function": {"name": "delegate_task", "arguments": "{}"},
+                }],
+            })
+            parent_result = ToolOutcome(content="child report")
+            parent_result_event_id = await parent_writer.record_tool_result_event(KnownToolResult(
+                0,
+                "delegate",
+                "delegate_task",
+                parent_result,
+                parent_result.content,
+                {"status": "ok"},
+                True,
+                handoff_receipt=candidate,
+            ))
+            assert parent_grants.accept_handoff(
+                candidate,
+                parent_result_event_id=parent_result_event_id,
+            ) == (descriptor.reference,)
+            with pytest.raises(ArtifactValidationError):
+                parent_grants.accept_handoff(
+                    candidate,
+                    parent_result_event_id=parent_result_event_id,
+                )
+
+            read_result = await ReadArtifactTool(parent_reader).execute_with_context(
+                SimpleNamespace(), reference=descriptor.reference,
+            )
+            assert read_result.stop_reason is None
+            assert json.loads(read_result.content)["text"].encode() == content
+            parent_grants.close()
+    finally:
+        await loop.aclose()
+
+
+async def test_failed_child_source_settlement_does_not_publish_handoff(
+    tmp_path, engine_config, monkeypatch,
+):
+    engine_config.artifacts.enabled = True
+    engine_config.artifacts.root = str(tmp_path / "private-artifacts")
+    parent_key = "cli:artifact-upward-settlement-failure"
+    loop = AgentLoop.from_config(
+        engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]),
+    )
+    try:
+        backend, _, _ = await _publish_loop_artifact(
+            loop, parent_key, "parent synthetic evidence",
+        )
+        async with acquire_execution(backend, parent_key, run_id="artifact-parent-run") as parent_owner:
+            parent_writer = SourceTurnWriter(
+                backend.source, parent_owner, run_id="artifact-parent-run",
+            )
+            read_file = loop.tools.get("read_file")
+            reader_factory = loop._artifact_reader_factory
+            assert reader_factory is not None and type(read_file) is ReadFileTool
+            root_reader = reader_factory(parent_writer, False, read_file)
+            assert root_reader is not None
+            parent_grants = ArtifactGrantSet.for_reader(root_reader)
+            parent_reader = replace(root_reader, grants=parent_grants)
+            tree, admission, child_backend, candidate, descriptor, _ = (
+                await _stage_loop_handoff(
+                    loop,
+                    backend,
+                    parent_key,
+                    parent_reader,
+                    child_run_id="artifact-failed-settlement-child-run",
+                    fail_child_close=True,
+                    monkeypatch=monkeypatch,
+                )
+            )
+            await tree.complete(admission.child_id, outcome="child response completed")
+            _record_completed_child_run(
+                loop, admission.session_key, "artifact-failed-settlement-child-run",
+            )
+            with pytest.raises(ExecutionOwnershipError):
+                candidate.seal_after_settlement(
+                    run_store=loop.run_store,
+                    source_store=child_backend.source,
+                )
+            with pytest.raises(ArtifactValidationError):
+                parent_reader.read(descriptor.reference)
+            parent_grants.close()
+    finally:
+        await loop.aclose()
 
 
 async def _run_child_with_downward_grant(tmp_path, response, *, max_iterations=2,

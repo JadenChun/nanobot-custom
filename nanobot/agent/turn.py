@@ -19,20 +19,23 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from nanobot.attachments.models import AttachmentRecord
 
 if TYPE_CHECKING:
+    from nanobot.agent.policy import ToolPolicy
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.base import ToolDenialKind
     from nanobot.agent.tools.filesystem_effect import FilesystemEffectFact
-    from nanobot.agent.policy import ToolPolicy
-    from nanobot.agent.tools.registry import CapturedToolBindings
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.agent.tools.registry import CapturedToolBindings
     from nanobot.agent.turn_admission import EffectApprovalAuthority
     from nanobot.providers.base import LLMUsage
     from nanobot.security.desktop_permissions import (
         WorkspaceFullAccessReference,
         WorkspaceTaskAccessReference,
-        WorkspaceTaskAccessReference,
     )
-    from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
+    from nanobot.session.artifact_grants import (
+        ArtifactGrantSet,
+        ArtifactHandoffReceipt,
+        CanonicalChildArtifactInput,
+    )
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.source_request import SourceTranscript
@@ -558,7 +561,9 @@ class TurnContext:
     active_tool_bindings: CapturedToolBindings | None = field(default=None, repr=False)
     forwarded_child_approval_id: str | None = field(default=None, repr=False)
     forwarded_child_id: str | None = field(default=None, repr=False)
-    workspace_task_reference: WorkspaceTaskAccessReference | None = field(default=None, repr=False)
+    canonical_child_artifact_input: CanonicalChildArtifactInput | None = field(
+        default=None, repr=False,
+    )
 
     def __post_init__(self) -> None:
         if self.request is not None:
@@ -889,6 +894,7 @@ class TurnResult:
     policy_metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
     messages: list[dict[str, Any]] | None = None
     llm_usage: LLMUsage | None = None
+    artifact_handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.status), RunStatus):

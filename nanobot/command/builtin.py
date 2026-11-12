@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from loguru import logger
 
 from nanobot import __version__
+from nanobot.agent.child_sessions import OriginalChatStopAdmission
 from nanobot.bus.events import INBOUND_META_USER_SHELL, OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter, normalize_command_text
 from nanobot.providers.base import LLMUsage
@@ -233,6 +234,28 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 metadata=metadata,
             )
 
+    capture_stop = getattr(type(loop), "_capture_original_chat_stop", None)
+    try:
+        stop_admission = cast(
+            OriginalChatStopAdmission | None,
+            capture_stop(
+                loop,
+                ctx.key,
+                target_turn_id if isinstance(target_turn_id, str) else None,
+            )
+            if callable(capture_stop)
+            else None
+        )
+    except Exception:
+        logger.exception("Stop request could not capture its source lifetime for {}", ctx.key)
+        return OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content="Could not complete the stop request. Please retry.",
+            metadata=metadata,
+        )
+    pending_at_admission = getattr(loop, "_pending_queues", {}).get(ctx.key)
+
     publisher = getattr(loop, "runtime_event_publisher", None)
 
     async def project(status: str) -> None:
@@ -243,7 +266,13 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
 
     await project("stopping")
     try:
-        total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+        if stop_admission is None:
+            total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+        else:
+            total = await loop._cancel_active_tasks(  # pyright: ignore[reportPrivateUsage]
+                ctx.key,
+                _stop_admission=stop_admission,
+            )
     except PendingFollowupStopError:
         logger.exception("Stop request failed for session {}", ctx.key)
         return OutboundMessage(
@@ -251,9 +280,38 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             content="Could not complete the stop request. Please retry.",
             metadata=metadata,
         )
-    await project("interrupted")
+    if stop_admission is not None:
+        validate_stop = getattr(type(loop), "_validate_original_chat_stop", None)
+        current_queue = getattr(loop, "_pending_queues", {}).get(ctx.key)
+        queue_replaced = current_queue is not None and current_queue is not pending_at_admission
+        stop_is_current = (
+            callable(validate_stop)
+            and validate_stop(loop, ctx.key, stop_admission)
+            and not queue_replaced
+        )
+        if not stop_is_current:
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+    if stop_admission is None:
+        await project("interrupted")
+    else:
+        live_owner_check = getattr(type(loop), "_original_chat_stop_has_live_owner", None)
+        if callable(live_owner_check) and not live_owner_check(loop, ctx.key, stop_admission):
+            await project("interrupted")
     # Also drain pending queue to prevent mid-turn injection deadlock
-    pending = loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+    pending = (
+        loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+        if stop_admission is None
+        else (
+            loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+            if loop._pending_queues.get(ctx.key) is pending_at_admission  # pyright: ignore[reportPrivateUsage]
+            else None
+        )
+    )
     if pending is not None:
         while not pending.empty():
             try:

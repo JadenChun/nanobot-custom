@@ -18,8 +18,10 @@ import asyncio
 import hashlib
 import math
 import re
+import threading
 import time
 import uuid
+import weakref
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Mapping, cast
 
@@ -43,6 +45,11 @@ _TERMINAL_STATES = frozenset({
     "completed", "failed", "uncertain", "stopped", "refused",
 })
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+STOP_SETTLE_TIMEOUT = 10.0
+_SHARED_TREE_LOCK = threading.RLock()
+_SHARED_TREES: weakref.WeakKeyDictionary[
+    SessionManager, weakref.ReferenceType[DelegationTree]
+] = weakref.WeakKeyDictionary()
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,44 @@ class ChildRefusal:
 
 
 @dataclass(frozen=True, slots=True)
+class ChildControlState:
+    """Expected source lifetimes and sequence for one existing child control."""
+
+    child_id: str
+    parent_key: str
+    parent_incarnation: str
+    parent_source_state: SourceState | None
+    parent_present: bool
+    root_key: str
+    root_source_state: SourceState | None
+    root_present: bool
+    child_source_state: SourceState
+    child_state_sequence: int
+    control_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChildStopAdmission:
+    """One admitted child-only Stop bound to its observed child state."""
+
+    expected: ChildControlState
+    control_epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class OriginalChatStopAdmission:
+    """One root Stop bound to its source lifetime and current active tasks."""
+
+    parent_key: str
+    parent_incarnation: str | None
+    parent_source_state: SourceState | None
+    control_epoch: int
+    active_root_identity: tuple[asyncio.Task[Any], ...]
+    target_turn_id: str | None = None
+    pending_queue_identity: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ChildAdmission:
     """One committed child identity and its current tree state."""
 
@@ -92,6 +137,7 @@ class ChildAdmission:
     assignment_digest: str
     policy_facts: dict[str, Any]
     runtime_generation: int
+    control_epoch: int = 0
     source_state: SourceState | None = None
     parent_source_state: SourceState | None = None
     root_source_state: SourceState | None = None
@@ -131,6 +177,7 @@ class ChildAdmission:
             "assignment_digest": self.assignment_digest,
             "policy_facts": dict(self.policy_facts),
             "runtime_generation": self.runtime_generation,
+            "control_epoch": self.control_epoch,
             "source_state": _source_state_payload(self.source_state),
             "parent_source_state": _source_state_payload(self.parent_source_state),
             "root_source_state": _source_state_payload(self.root_source_state),
@@ -217,7 +264,7 @@ def _parse_source_state(value: object) -> SourceState | None:
     )
 
 
-def _parse_child_admission(key: str, data: dict[str, Any]) -> ChildAdmission:
+def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmission:
     def text(name: str) -> str:
         value = data.get(name)
         if not isinstance(value, str) or not value:
@@ -290,9 +337,10 @@ def _parse_child_admission(key: str, data: dict[str, Any]) -> ChildAdmission:
     if not isinstance(raw_transcript, list):
         raise ValueError("child transcript is invalid")
     transcript: list[dict[str, str]] = []
-    for item in raw_transcript:
-        if not isinstance(item, Mapping):
+    for raw_item in cast(list[object], raw_transcript):
+        if not isinstance(raw_item, Mapping):
             raise ValueError("child transcript row is invalid")
+        item = cast(Mapping[str, object], raw_item)
         role = item.get("role")
         content = item.get("content")
         if not isinstance(role, str) or not isinstance(content, str):
@@ -321,6 +369,7 @@ def _parse_child_admission(key: str, data: dict[str, Any]) -> ChildAdmission:
         assignment_digest=digest,
         policy_facts=dict(cast(Mapping[str, Any], facts)),
         runtime_generation=counter("runtime_generation"),
+        control_epoch=counter("control_epoch"),
         source_state=source_state,
         parent_source_state=parent_source_state,
         root_source_state=root_source_state,
@@ -382,8 +431,29 @@ class DelegationTree:
         self._launching: set[str] = set()
         self._launch_cancelled: set[str] = set()
         self._stopping_sessions: set[str] = set()
+        self._control_epochs: dict[str, int] = {}
+        self._original_stop_admissions: dict[str, OriginalChatStopAdmission] = {}
         self._recovery_error: str | None = None
         self._restore()
+
+    @classmethod
+    def shared(
+        cls,
+        sessions: SessionManager,
+        *,
+        policy: DelegationTreePolicy | None = None,
+    ) -> DelegationTree:
+        """Return the one live child tree for this session owner."""
+        with _SHARED_TREE_LOCK:
+            tree_ref = _SHARED_TREES.get(sessions)
+            tree = tree_ref() if tree_ref is not None else None
+            if tree is not None:
+                if policy is not None and tree.policy != policy:
+                    raise ValueError("shared delegated child policy does not match")
+                return tree
+            tree = cls(sessions, policy=policy)
+            _SHARED_TREES[sessions] = weakref.ref(tree)
+            return tree
 
     def _restore(self) -> None:
         """Load durable child records; fence unresolved live states on restart."""
@@ -393,11 +463,12 @@ class DelegationTree:
             logger.exception("Delegated child recovery scan failed")
             self._recovery_error = "session index scan failed"
             return
-        for info in sessions:
-            if not isinstance(info, Mapping):
+        for raw_info in cast(list[object], sessions):
+            if not isinstance(raw_info, Mapping):
                 self._recovery_error = "session index contains a malformed row"
                 logger.warning("Delegated child recovery found a malformed session row")
                 continue
+            info = cast(Mapping[str, object], raw_info)
             key = info.get("key")
             if not isinstance(key, str):
                 self._recovery_error = "session index contains a malformed key"
@@ -406,16 +477,18 @@ class DelegationTree:
             if not key.startswith(CHILD_SESSION_PREFIX):
                 continue
             try:
-                raw = self.sessions.read_session_metadata(key)
-                if not isinstance(raw, Mapping):
+                raw_value = self.sessions.read_session_metadata(key)
+                if not isinstance(raw_value, Mapping):
                     raise ValueError("child source metadata is missing")
+                raw = cast(Mapping[str, object], raw_value)
                 metadata = raw.get("metadata")
                 if not isinstance(metadata, Mapping):
                     raise ValueError("child source metadata is malformed")
-                payload = metadata.get(DELEGATION_CHILD_METADATA_KEY)
+                typed_metadata = cast(Mapping[str, object], metadata)
+                payload = typed_metadata.get(DELEGATION_CHILD_METADATA_KEY)
                 if not isinstance(payload, Mapping):
                     raise ValueError("delegated child record is missing")
-                data = dict(cast(Mapping[str, Any], payload))
+                data = cast(Mapping[str, object], payload)
                 admission = _parse_child_admission(key, data)
             except Exception:
                 logger.warning("Ignoring admission for malformed delegated child {}", key)
@@ -437,6 +510,10 @@ class DelegationTree:
                 if not self._persist(admission):
                     self._recovery_error = f"child uncertainty could not be persisted: {key}"
             self._children[admission.child_id] = admission
+            self._control_epochs[admission.root_key] = max(
+                self._control_epochs.get(admission.root_key, 0),
+                admission.control_epoch,
+            )
             self._attempts[
                 (
                     admission.parent_key,
@@ -460,6 +537,7 @@ class DelegationTree:
                 return False
             self._children.clear()
             self._attempts.clear()
+            self._control_epochs.clear()
             self._recovery_error = None
             self._restore()
             return self._recovery_error is None
@@ -524,6 +602,299 @@ class DelegationTree:
             )
         )
 
+    def _source_state(self, key: str) -> SourceState | None:
+        backend = self.sessions.source_backend(key)
+        if backend is None:
+            return None
+        return backend.source.load_source_snapshot(key).state
+
+    def source_state(self, key: str) -> SourceState | None:
+        """Read the canonical source lifetime for one session key."""
+        return self._source_state(key)
+
+    def capture_child_control_state(self, child_id: str) -> ChildControlState | None:
+        """Capture the source lifetimes and epoch seen by an existing child control."""
+        child = self._children.get(child_id)
+        if child is None or child.source_state is None:
+            return None
+        try:
+            parent = self.sessions.read_session_snapshot(child.parent_key)
+            root = self.sessions.read_session_snapshot(child.root_key)
+            parent_state = self._source_state(child.parent_key)
+            root_state = self._source_state(child.root_key)
+            child_state = self._source_state(child.session_key)
+        except Exception:
+            logger.exception("Delegated child control source could not be read for {}", child_id)
+            return None
+        if child_state is None:
+            return None
+        return ChildControlState(
+            child_id=child_id,
+            parent_key=child.parent_key,
+            parent_incarnation=child.parent_incarnation,
+            parent_source_state=parent_state,
+            parent_present=parent is not None,
+            root_key=child.root_key,
+            root_source_state=root_state,
+            root_present=root is not None,
+            child_source_state=child_state,
+            child_state_sequence=child.state_sequence,
+            control_epoch=child.control_epoch,
+        )
+
+    def _child_control_state_matches(self, expected: ChildControlState) -> bool:
+        child = self._children.get(expected.child_id)
+        if (
+            child is None
+            or child.parent_key != expected.parent_key
+            or child.parent_incarnation != expected.parent_incarnation
+            or child.root_key != expected.root_key
+            or child.state_sequence != expected.child_state_sequence
+            or child.control_epoch != expected.control_epoch
+            or child.source_state is None
+            or not child.source_state.same_origin(expected.child_source_state)
+            or not self._same_origin_or_absent(
+                child.parent_source_state,
+                expected.parent_source_state,
+            )
+            or not self._same_origin_or_absent(
+                child.root_source_state,
+                expected.root_source_state,
+            )
+        ):
+            return False
+        try:
+            parent = self.sessions.read_session_snapshot(expected.parent_key)
+            root = self.sessions.read_session_snapshot(expected.root_key)
+            parent_state = self._source_state(expected.parent_key)
+            root_state = self._source_state(expected.root_key)
+            child_state = self._source_state(child.session_key)
+        except Exception:
+            return False
+        return (
+            (parent is not None) == expected.parent_present
+            and (root is not None) == expected.root_present
+            and parent is not None
+            and parent.incarnation == expected.parent_incarnation
+            and self._same_origin_or_absent(parent_state, expected.parent_source_state)
+            and self._same_origin_or_absent(root_state, expected.root_source_state)
+            and child_state is not None
+            and child_state.same_origin(expected.child_source_state)
+        )
+
+    @staticmethod
+    def _same_origin_or_absent(
+        current: SourceState | None,
+        expected: SourceState | None,
+    ) -> bool:
+        return (
+            current is None and expected is None
+            or current is not None and expected is not None and current.same_origin(expected)
+        )
+
+    def begin_child_stop(self, expected: ChildControlState) -> ChildStopAdmission | None:
+        """Fence one branch before Stop yields to cancellation or storage work."""
+        if not self._child_control_state_matches(expected):
+            return None
+        child = self._children.get(expected.child_id)
+        if child is None or not any(
+            victim.holds_capacity for victim in self._subtree_locked(child.child_id)
+        ):
+            return None
+        epoch = max(
+            child.control_epoch,
+            self._control_epochs.get(child.root_key, 0),
+        ) + 1
+        self._control_epochs[child.root_key] = epoch
+        for victim in self._subtree_locked(child.child_id):
+            self._stopping_sessions.add(victim.session_key)
+        return ChildStopAdmission(expected=expected, control_epoch=epoch)
+
+    def begin_original_chat_stop(
+        self,
+        *,
+        parent_key: str,
+        parent_incarnation: str | None,
+        parent_source_state: SourceState | None,
+        active_root_identity: tuple[asyncio.Task[Any], ...],
+        target_turn_id: str | None,
+        pending_queue_identity: int | None = None,
+    ) -> OriginalChatStopAdmission | None:
+        """Fence new child admission synchronously at the existing Stop entrypoint."""
+        candidate = OriginalChatStopAdmission(
+            parent_key=parent_key,
+            parent_incarnation=parent_incarnation,
+            parent_source_state=parent_source_state,
+            control_epoch=self._control_epochs.get(parent_key, 0) + 1,
+            active_root_identity=active_root_identity,
+            target_turn_id=target_turn_id,
+            pending_queue_identity=pending_queue_identity,
+        )
+        if not self._original_chat_stop_matches(candidate, active_root_identity):
+            return None
+        self._control_epochs[parent_key] = candidate.control_epoch
+        self._original_stop_admissions[parent_key] = candidate
+        self._stopping_sessions.add(parent_key)
+        for task in active_root_identity:
+            task.add_done_callback(
+                lambda _done, admission=candidate: self._maybe_release_original_chat_stop(
+                    admission,
+                )
+            )
+        return candidate
+
+    def validate_original_chat_stop(
+        self,
+        admission: OriginalChatStopAdmission,
+        active_root_identity: tuple[asyncio.Task[Any], ...],
+    ) -> bool:
+        """Reject a stale Stop before it cancels a later source or root task."""
+        return self._original_chat_stop_matches(admission, active_root_identity)
+
+    def _original_chat_stop_matches(
+        self,
+        admission: OriginalChatStopAdmission,
+        active_root_identity: tuple[asyncio.Task[Any], ...],
+    ) -> bool:
+        if (
+            self._control_epochs.get(admission.parent_key, 0) + 1
+            != admission.control_epoch
+            and self._control_epochs.get(admission.parent_key, 0) != admission.control_epoch
+        ):
+            return False
+        if not set(active_root_identity).issubset(admission.active_root_identity):
+            return False
+        try:
+            parent = self.sessions.read_session_snapshot(admission.parent_key)
+            source_state = self._source_state(admission.parent_key)
+        except Exception:
+            return False
+        if admission.parent_incarnation is None:
+            if parent is not None:
+                return False
+        elif parent is None or parent.incarnation != admission.parent_incarnation:
+            return False
+        return self._same_origin_or_absent(source_state, admission.parent_source_state)
+
+    def abort_original_chat_stop(self, admission: OriginalChatStopAdmission) -> None:
+        """Release only this Stop's root fence when its snapshot became stale."""
+        if self._control_epochs.get(admission.parent_key) == admission.control_epoch:
+            if self._original_stop_admissions.get(admission.parent_key) is admission:
+                self._original_stop_admissions.pop(admission.parent_key, None)
+                self._stopping_sessions.discard(admission.parent_key)
+
+    def _maybe_release_original_chat_stop(
+        self,
+        admission: OriginalChatStopAdmission,
+    ) -> None:
+        """Release a root fence only after its captured owners truly settle."""
+        if self._original_stop_admissions.get(admission.parent_key) is not admission:
+            return
+        if any(not task.done() for task in admission.active_root_identity):
+            return
+        for child in self._children.values():
+            if (
+                child.parent_key == admission.parent_key
+                and child.parent_incarnation == admission.parent_incarnation
+                and any(
+                    victim.holds_capacity
+                    for victim in self._subtree_locked(child.child_id)
+                )
+            ):
+                return
+        self._original_stop_admissions.pop(admission.parent_key, None)
+        self._stopping_sessions.discard(admission.parent_key)
+
+    async def fence_child_stop(
+        self,
+        admission: ChildStopAdmission,
+    ) -> tuple[ChildAdmission, ...] | None:
+        """Persist the stopping projection before cancelling an admitted branch."""
+        async with self._lock:
+            if not self._child_control_state_matches(admission.expected):
+                return None
+            victims = self._subtree_locked(admission.expected.child_id)
+            return self._mark_stopping_locked(victims, admission.control_epoch)
+
+    def child_session_keys_for_stop(self, child_id: str) -> tuple[str, ...]:
+        """Return the exact child branch that an admitted Stop fenced."""
+        return tuple(
+            victim.session_key
+            for victim in self._subtree_locked(child_id)
+        )
+
+    def child_session_keys_for_parent_stop(
+        self,
+        admission: OriginalChatStopAdmission,
+    ) -> tuple[str, ...]:
+        """Return source keys in the exact parent-incarnation subtree."""
+        keys: set[str] = set()
+        for child in self._children.values():
+            if (
+                child.parent_key == admission.parent_key
+                and child.parent_incarnation == admission.parent_incarnation
+            ):
+                keys.update(
+                    victim.session_key
+                    for victim in self._subtree_locked(child.child_id)
+                )
+        return tuple(sorted(keys))
+
+    async def fence_original_chat_stop(
+        self,
+        admission: OriginalChatStopAdmission,
+        active_root_identity: tuple[asyncio.Task[Any], ...],
+    ) -> tuple[ChildAdmission, ...] | None:
+        """Persist the full subtree's stopping state before root cancellation."""
+        async with self._lock:
+            if not self.validate_original_chat_stop(admission, active_root_identity):
+                return None
+            direct = [
+                child for child in self._children.values()
+                if child.parent_key == admission.parent_key
+                and child.parent_incarnation == admission.parent_incarnation
+            ]
+            victims: list[ChildAdmission] = []
+            seen: set[str] = set()
+            for child in direct:
+                for victim in self._subtree_locked(child.child_id):
+                    if victim.child_id not in seen:
+                        seen.add(victim.child_id)
+                        victims.append(victim)
+            for victim in victims:
+                self._stopping_sessions.add(victim.session_key)
+            return self._mark_stopping_locked(victims, admission.control_epoch)
+
+    def _mark_stopping_locked(
+        self,
+        victims: list[ChildAdmission],
+        control_epoch: int,
+    ) -> tuple[ChildAdmission, ...]:
+        updates: list[ChildAdmission] = []
+        for current in victims:
+            if not current.holds_capacity:
+                continue
+            if current.state == "stopping" and current.control_epoch == control_epoch:
+                updates.append(current)
+                continue
+            state = "uncertain" if current.state == "uncertain" else "stopping"
+            updated = replace(
+                current,
+                state=state,
+                control_epoch=control_epoch,
+                state_sequence=current.state_sequence + 1,
+                outcome=(current.outcome if state == "uncertain" else "stop_requested"),
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                self._recovery_error = self._recovery_error or (
+                    f"child stopping state could not be persisted: {current.child_id}"
+                )
+                continue
+            self._children[current.child_id] = updated
+            updates.append(updated)
+        return tuple(updates)
+
     async def reserve(
         self,
         *,
@@ -534,6 +905,7 @@ class DelegationTree:
         profile: str = DEFAULT_CHILD_PROFILE,
         policy_facts: Mapping[str, Any] | None = None,
         runtime_generation: int = 0,
+        expected_parent_source_state: SourceState | None = None,
     ) -> ChildAdmission | ChildRefusal:
         """Reserve one child slot before launch, or return an existing attempt."""
         if profile not in SUPPORTED_CHILD_PROFILES:
@@ -553,6 +925,25 @@ class DelegationTree:
                 "session_unavailable",
                 "The parent runtime identity is stale or malformed",
             )
+        if expected_parent_source_state is not None:
+            try:
+                current_parent = self.sessions.read_session_snapshot(parent_key)
+                current_parent_state = self._source_state(parent_key)
+            except Exception:
+                current_parent = None
+                current_parent_state = None
+            if (
+                parent.key != parent_key
+                or parent.incarnation != expected_parent_source_state.incarnation
+                or current_parent is None
+                or current_parent.incarnation != expected_parent_source_state.incarnation
+                or current_parent_state is None
+                or not current_parent_state.same_origin(expected_parent_source_state)
+            ):
+                return ChildRefusal(
+                    "stale_parent",
+                    "The captured parent source lifetime is no longer current",
+                )
         attempt_key = (
             parent_key,
             parent.incarnation,
@@ -601,6 +992,14 @@ class DelegationTree:
                     "session_unavailable",
                     "The parent or root canonical source could not be read",
                 )
+            if (
+                expected_parent_source_state is not None
+                and not parent_source_state.same_origin(expected_parent_source_state)
+            ):
+                return ChildRefusal(
+                    "stale_parent",
+                    "The captured parent source lifetime is no longer current",
+                )
             parent_children = [
                 child for child in self._children.values()
                 if child.parent_key == parent_key and child.holds_capacity
@@ -642,6 +1041,7 @@ class DelegationTree:
                 assignment_digest=digest,
                 policy_facts=facts,
                 runtime_generation=runtime_generation,
+                control_epoch=self._control_epochs.get(root_key, 0),
                 parent_source_state=parent_source_state,
                 root_source_state=root_source_state,
             )
@@ -978,7 +1378,7 @@ class DelegationTree:
     async def stop_all(
         self,
         *,
-        settle_timeout: float = 10.0,
+        settle_timeout: float = STOP_SETTLE_TIMEOUT,
     ) -> tuple[ChildAdmission, ...]:
         """Stop every live child under this owner, including background work."""
         async with self._lock:
@@ -995,40 +1395,90 @@ class DelegationTree:
         parent_key: str,
         *,
         parent_incarnation: str | None = None,
+        admission: OriginalChatStopAdmission | None = None,
+        active_root_identity: tuple[asyncio.Task[Any], ...] = (),
+        fenced: bool = False,
+        settle_timeout: float = STOP_SETTLE_TIMEOUT,
+        deadline: float | None = None,
     ) -> tuple[ChildAdmission, ...]:
         """Stop live children admitted under one exact parent incarnation."""
-        async with self._lock:
-            self._stopping_sessions.add(parent_key)
-            child_ids = [
-                child.child_id for child in self._children.values()
-                if child.parent_key == parent_key
-                and child.live
-                and (
-                    parent_incarnation is None
-                    or child.parent_incarnation == parent_incarnation
-                )
-            ]
+        if admission is None:
+            try:
+                parent = self.sessions.read_session_snapshot(parent_key)
+                source_state = self._source_state(parent_key)
+            except Exception:
+                return ()
+            if parent is None:
+                return ()
+            admission = self.begin_original_chat_stop(
+                parent_key=parent_key,
+                parent_incarnation=(parent_incarnation or parent.incarnation),
+                parent_source_state=source_state,
+                active_root_identity=active_root_identity,
+                target_turn_id=None,
+            )
+        if admission is None:
+            return ()
+        if not fenced:
+            updates = await self.fence_original_chat_stop(admission, active_root_identity)
+            if updates is None:
+                self.abort_original_chat_stop(admission)
+                return ()
+        child_ids = [
+            child.child_id for child in self._children.values()
+            if child.parent_key == parent_key
+            and child.parent_incarnation == admission.parent_incarnation
+            and any(
+                victim.holds_capacity
+                for victim in self._subtree_locked(child.child_id)
+            )
+        ]
         stopped: list[ChildAdmission] = []
-        try:
-            for child_id in child_ids:
-                stopped.extend(await self.stop_subtree(child_id))
-        finally:
-            async with self._lock:
-                self._stopping_sessions.discard(parent_key)
+        loop = asyncio.get_running_loop()
+        settle_deadline = (
+            deadline if deadline is not None else loop.time() + max(0.0, settle_timeout)
+        )
+        victims_by_root = [self._subtree_locked(child_id) for child_id in child_ids]
+        for victims in victims_by_root:
+            for victim in victims:
+                if victim.child_id in self._launching:
+                    self._launch_cancelled.add(victim.child_id)
+                task = self._tasks.get(victim.child_id)
+                if task is not None and not task.done() and not task.cancelling():
+                    task.cancel()
+        for child_id in child_ids:
+            stopped.extend(await self.stop_subtree(
+                child_id,
+                settle_timeout=settle_timeout,
+                fenced=True,
+                deadline=settle_deadline,
+                preserve_stopping_projection=True,
+            ))
+        self._maybe_release_original_chat_stop(admission)
         return tuple(stopped)
 
     async def stop_subtree(
         self,
         child_id: str,
         *,
-        settle_timeout: float = 10.0,
+        settle_timeout: float = STOP_SETTLE_TIMEOUT,
+        fenced: bool = False,
+        deadline: float | None = None,
+        preserve_stopping_projection: bool = False,
     ) -> tuple[ChildAdmission, ...]:
         """Cancel one child and its descendants; siblings remain independent.
 
-        The terminal state is committed only after the owned task settles. If a
-        runner ignores cancellation, the child stays visibly uncertain instead
-        of reporting a stopped state while work continues.
+        A resistant runner keeps its stopping projection, task handle, and slot.
         """
+        if not fenced:
+            expected = self.capture_child_control_state(child_id)
+            admission = self.begin_child_stop(expected) if expected is not None else None
+            if admission is None:
+                return ()
+            updates = await self.fence_child_stop(admission)
+            if updates is None:
+                self.abort_child_stop(admission)
+                return ()
         async with self._lock:
             victims = self._subtree_locked(child_id)
             self._stopping_sessions.update(victim.session_key for victim in victims)
@@ -1036,7 +1486,9 @@ class DelegationTree:
         retain_fence = False
         try:
             loop = asyncio.get_running_loop()
-            deadline = loop.time() + max(0.0, settle_timeout)
+            settle_deadline = (
+                deadline if deadline is not None else loop.time() + max(0.0, settle_timeout)
+            )
             tasks = {
                 victim.child_id: self._tasks.get(victim.child_id)
                 for victim in victims
@@ -1045,26 +1497,30 @@ class DelegationTree:
                 if victim.child_id in self._launching:
                     self._launch_cancelled.add(victim.child_id)
                 task = tasks[victim.child_id]
-                if task is not None and not task.done():
+                if task is not None and not task.done() and not task.cancelling():
                     task.cancel()
             for victim in victims:
                 task = tasks[victim.child_id]
                 settled = True
                 if task is not None and not task.done():
-                    remaining = max(0.0, deadline - loop.time())
+                    remaining = max(0.0, settle_deadline - loop.time())
                     done, _pending = await asyncio.wait({task}, timeout=remaining)
                     settled = task in done
-                updated = await self.complete(
-                    victim.child_id,
-                    outcome=("stopped_by_owner" if settled else "stop_unsettled"),
-                    state=("stopped" if settled else "uncertain"),
-                )
+                if settled:
+                    updated = await self.complete(
+                        victim.child_id,
+                        outcome="stopped_by_owner",
+                        state="stopped",
+                    )
+                else:
+                    updated = await self._transition(
+                        victim.child_id,
+                        "stopping" if preserve_stopping_projection else "uncertain",
+                        outcome="stop_unsettled",
+                    )
                 if updated is not None:
                     stopped.append(updated)
-                    expected_state = "stopped" if settled else "uncertain"
-                    if updated.state != expected_state or (
-                        not settled and updated.holds_capacity is not True
-                    ):
+                    if updated.holds_capacity:
                         retain_fence = True
                 else:
                     retain_fence = True
@@ -1075,6 +1531,18 @@ class DelegationTree:
                         victim.session_key for victim in victims
                     )
         return tuple(stopped)
+
+    def abort_child_stop(self, admission: ChildStopAdmission) -> None:
+        """Release a branch fence when its captured source state became stale."""
+        child = self._children.get(admission.expected.child_id)
+        if (
+            child is None
+            or self._control_epochs.get(child.root_key) != admission.control_epoch
+        ):
+            return
+        for victim in self._subtree_locked(child.child_id):
+            if victim.state != "stopping":
+                self._stopping_sessions.discard(victim.session_key)
 
     def _subtree_locked(self, child_id: str) -> list[ChildAdmission]:
         root = self._children.get(child_id)
@@ -1121,9 +1589,20 @@ class DelegationTree:
             if not self._persist(updated):
                 return current
             self._children[child_id] = updated
+        if not updated.holds_capacity:
+            stop_admission = self._original_stop_admissions.get(updated.root_key)
+            if stop_admission is not None:
+                self._maybe_release_original_chat_stop(stop_admission)
         return updated
 
     def _persist(self, admission: ChildAdmission, *, parent: Session | None = None) -> bool:
+        backend = self.sessions.source_backend(admission.session_key)
+        expected = admission.source_state
+        if backend is None or expected is None:
+            self._recovery_error = self._recovery_error or (
+                f"child source owner is unavailable: {admission.session_key}"
+            )
+            return False
         try:
             runtime = RuntimeSessionMetadata(
                 profile=admission.profile,
@@ -1135,19 +1614,43 @@ class DelegationTree:
                 runtime_generation=admission.runtime_generation,
                 recovery_disposition=self._recovery_disposition(admission),
             )
-            return self.sessions.upsert_session_metadata(
-                admission.session_key,
-                {
-                    DELEGATION_CHILD_METADATA_KEY: admission.metadata(),
-                    RUNTIME_SESSION_METADATA_KEY: runtime.payload(),
-                    "delegation_root_key": admission.root_key,
-                },
-                create_if_absent=True,
-            )
+            with self.sessions.locked_session_files():
+                snapshot = backend.source.load_source_snapshot(admission.session_key)
+                if not snapshot.state.same_origin(expected):
+                    current = self._children.get(admission.child_id)
+                    if current is not None and current.holds_capacity:
+                        self._children[admission.child_id] = replace(
+                            current,
+                            state="uncertain",
+                            outcome="child_source_lifetime_changed",
+                            holds_capacity=True,
+                            updated_at=time.time(),
+                        )
+                    self._recovery_error = self._recovery_error or (
+                        f"child source lifetime changed: {admission.session_key}"
+                    )
+                    return False
+                persisted = self.sessions.upsert_session_metadata(
+                    admission.session_key,
+                    {
+                        DELEGATION_CHILD_METADATA_KEY: admission.metadata(),
+                        RUNTIME_SESSION_METADATA_KEY: runtime.payload(),
+                        "delegation_root_key": admission.root_key,
+                    },
+                    create_if_absent=False,
+                )
+            if not persisted:
+                self._recovery_error = self._recovery_error or (
+                    f"child metadata write failed: {admission.session_key}"
+                )
+            return persisted
         except Exception:
             logger.exception(
                 "Delegated child {} could not be persisted",
                 admission.child_id,
+            )
+            self._recovery_error = self._recovery_error or (
+                f"child metadata write failed: {admission.session_key}"
             )
             return False
 

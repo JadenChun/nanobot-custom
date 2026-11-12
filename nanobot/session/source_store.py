@@ -494,6 +494,10 @@ class SourceSessionStore:
         """Observe exact backend identity only; this does not admit an operation."""
         return backend is self._backend
 
+    def shares_store_with(self, other: SourceSessionStore) -> bool:
+        """Observe one exact backend behind two validated store bindings."""
+        return type(other) is SourceSessionStore and other._backend is self._backend
+
     def select_artifact_location_metadata(self) -> ArtifactSourceLocation:
         """Retain this backend selection while observing only its live location values."""
         return _ArtifactSourceLocation(self._backend)
