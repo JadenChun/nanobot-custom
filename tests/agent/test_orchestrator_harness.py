@@ -1,13 +1,15 @@
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from nanobot.agent.delegation import ForegroundAgentManager
+from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
 from nanobot.agent.tools.explore import ExploreTool
-from nanobot.agent.turn import ToolOutcome, TurnContext
+from nanobot.agent.turn import RunStatus, ToolOutcome, TurnContext, TurnResult
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.security.folder_grants import FolderGrantStore
@@ -16,6 +18,8 @@ from nanobot.security.workspace_access import (
     reset_workspace_scope,
     validate_workspace_scope_payload,
 )
+from nanobot.session.execution_owner import acquire_execution
+from nanobot.session.manager import SessionManager
 
 
 def _provider() -> MagicMock:
@@ -34,6 +38,51 @@ def _make_loop(tmp_path, provider: MagicMock):
 
     with patch("nanobot.migration_guard.require_runtime_ready"):
         return AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path)
+
+
+class _RecordingChildExecutor:
+    """Record one canonical child request and return a fixed child result."""
+
+    def __init__(self, content: str) -> None:
+        self.requests = []
+        self._content = content
+
+    async def execute_child_turn(self, request, *, approval_resume=None):
+        self.requests.append(request)
+        return TurnResult(
+            run_id=request.run_id,
+            status=RunStatus.COMPLETED,
+            stop_reason="completed",
+            content=self._content,
+            messages=[],
+        )
+
+
+@asynccontextmanager
+async def _source_parent_context(manager, key):
+    """Yield a live parent turn context backed by a canonical source."""
+    sessions = manager._delegation_tree.sessions
+    parent = sessions.get_or_create(key)
+    sessions.save(parent)
+    backend = sessions._jsonl_store
+    backend.source.upgrade_source_session(
+        key,
+        expected_revision=parent.revision,
+        expected_generation=parent.generation,
+        expected_incarnation=parent.incarnation,
+    )
+    sessions.invalidate(key)
+    bindings = manager._worker_tools(
+        "parent",
+        manager._normalize_scopes(manager.workspace, ["placeholder"]),
+    ).capture_request_tools()
+    async with acquire_execution(backend, key, run_id="parent-turn") as owner:
+        yield TurnContext(
+            run_id="parent-turn",
+            session_key=key,
+            execution_owner=owner,
+            active_tool_bindings=bindings,
+        )
 
 
 @pytest.mark.asyncio
@@ -199,23 +248,33 @@ async def test_process_direct_does_not_run_automatic_verification(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_worker_is_foreground_scoped_and_sequential(tmp_path) -> None:
-    manager = ForegroundAgentManager(provider=_provider(), workspace=tmp_path)
-    manager.runner.run = AsyncMock(return_value=AgentRunResult(
-        final_content="complete",
-        messages=[],
-    ))
-
-    result = await manager.run_worker(
-        contract="# Contract\nUpdate the report template and test it.",
-        write_scope=["reports/"],
+    manager = ForegroundAgentManager(
+        provider=_provider(),
+        workspace=tmp_path,
+        sessions=SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions"),
     )
+    recorder = _RecordingChildExecutor("complete")
+    manager.bind_child_turn_executor(recorder)
+
+    async with _source_parent_context(manager, "websocket:worker") as context:
+        result = await manager.run_worker(
+            contract="# Contract\nUpdate the report template and test it.",
+            write_scope=["reports/"],
+            turn_context=context,
+        )
 
     assert result == "complete"
-    spec = manager.runner.run.await_args.args[0]
-    assert spec.concurrent_tools is False
-    assert spec.tools.get("write_file") is not None
-    assert spec.tools.get("message") is None
-    assert spec.tools.get("delegate_task") is None
+    request, = recorder.requests
+    assert request.role == "worker"
+    assert "You may modify only these declared targets" in request.instructions
+    assert str(tmp_path / "reports") in request.instructions
+    assert request.tools.get("write_file") is not None
+    assert request.tools.get("edit_file") is not None
+    assert request.tools.get("message") is None
+    assert request.tools.get("delegate_task") is None
+    # A canonical child turn binds a tool policy, so execute_tool_calls
+    # dispatches the worker's tool batch sequentially, not concurrently.
+    assert isinstance(request.policy, ToolPolicy)
 
 
 def test_delegated_read_only_roles_have_no_shell_tool(tmp_path) -> None:
@@ -290,7 +349,10 @@ async def test_worker_write_scope_normalizes_against_selected_project(tmp_path) 
         workspace=home,
         restrict_to_workspace=True,
         folder_grants=store.view,
+        sessions=SessionManager(home, sessions_root=tmp_path / "sessions"),
     )
+    recorder = _RecordingChildExecutor("complete")
+    manager.bind_child_turn_executor(recorder)
     scope = validate_workspace_scope_payload(
         {"project_path": str(project), "access_mode": "restricted"},
         default_workspace=home,
@@ -306,18 +368,17 @@ async def test_worker_write_scope_normalizes_against_selected_project(tmp_path) 
             workspace_scope=scope,
             persistent_session=True,
         )):
-            manager.runner.run = AsyncMock(return_value=AgentRunResult(
-                final_content="complete",
-                messages=[],
-            ))
-
-            result = await manager.run_worker(
-                contract="# Contract\nUpdate the report.",
-                write_scope=["reports/"],
-            )
-
+            async with _source_parent_context(
+                manager, "websocket:fixture-chat",
+            ) as context:
+                result = await manager.run_worker(
+                    contract="# Contract\nUpdate the report.",
+                    write_scope=["reports/"],
+                    turn_context=context,
+                )
             assert result == "complete"
-            write_file = manager.runner.run.await_args.args[0].tools.get("write_file")
+            request, = recorder.requests
+            write_file = request.tools.get("write_file")
             assert write_file is not None
             assert write_file.resolve_write_path("reports/report.md") == (
                 project / "reports" / "report.md"

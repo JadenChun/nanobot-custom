@@ -17,6 +17,9 @@ from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.security.workspace_access import build_workspace_scope
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent import test_migration_engine as engine_fixtures
+
+engine_config = engine_fixtures.engine_config
 
 
 def _runtime(provider: LLMProvider) -> LLMRuntime:
@@ -82,42 +85,67 @@ async def test_foreground_tools_isolate_file_read_state(tmp_path, role):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["planner", "reviewer", "explorer", "worker"])
-async def test_foreground_runner_receives_contents_already_read_by_parent(tmp_path, role):
-    (tmp_path / "note.txt").write_text("delegated evidence\n", encoding="utf-8")
-    provider = MagicMock(spec=LLMProvider)
-    provider.get_default_model.return_value = "test"
-    provider.supports_bound_conversation_state.return_value = False
-    provider.can_resume_conversation_state.return_value = False
-    provider.chat_with_retry = AsyncMock(side_effect=[
-        LLMResponse(content="reading", tool_calls=[ToolCallRequest(
-            id="read", name="read_file", arguments={"path": "note.txt"},
+async def test_foreground_runner_receives_contents_already_read_by_parent(engine_config, role):
+    """A delegated role must see file contents, not the parent's read stub."""
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.agent.turn import TurnRequest
+    from tests.agent.test_migration_engine import ScriptedProvider
+    from tests.agent.test_migration_source_engine import upgrade
+
+    (engine_config.workspace_path / "note.txt").write_text(
+        "delegated evidence\n", encoding="utf-8",
+    )
+    role_call = {
+        "planner": ToolCallRequest(id="role", name="plan_task", arguments={
+            "objective": "Inspect note.txt",
+        }),
+        "reviewer": ToolCallRequest(id="role", name="review_work", arguments={
+            "goal": "Inspect note.txt",
+            "acceptance_criteria": "Read note.txt",
+        }),
+        "explorer": ToolCallRequest(id="role", name="explore", arguments={
+            "task": "Inspect note.txt",
+        }),
+        "worker": ToolCallRequest(id="role", name="delegate_task", arguments={
+            "contract": "Read note.txt for delegated evidence and report it.",
+            "write_scope": ["note.txt"],
+        }),
+    }[role]
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="parent-read", name="read_file", arguments={"path": "note.txt"},
+        )]),
+        LLMResponse(content=None, tool_calls=[role_call]),
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="child-read", name="read_file", arguments={"path": "note.txt"},
         )]),
         LLMResponse(content="inspection finished"),
+        LLMResponse(content="parent complete"),
     ])
-    manager = ForegroundAgentManager(provider=provider, workspace=tmp_path, runtime=_runtime(provider))
-    parent_state = FileStates()
-    parent_read = ReadFileTool(workspace=tmp_path, file_states=parent_state)
-    token = bind_file_states(parent_state)
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    upgrade(loop, "cli:source")
     try:
-        assert "delegated evidence" in await parent_read.execute(path="note.txt")
-        tools = (manager._worker_tools("worker", manager._normalize_scopes(tmp_path, ["note.txt"]))
-                 if role == "worker" else manager._tools_for_role(role))
-        result = await manager._run_role(
-            role=role, prompt="Inspect files", assignment="Read note.txt",
-            tools=tools, max_iterations=3,
-        )
-        assert result.stop_reason == "completed"
-        assert provider.chat_with_retry.await_count == 2
-        messages = provider.chat_with_retry.await_args_list[1].kwargs["messages"]
-        tool_rows = [row for row in messages if row["role"] == "tool"]
+        result = await loop.execute_turn(TurnRequest(
+            content="inspect the delegated evidence", session_key="cli:source",
+        ))
+        assert result.content == "parent complete"
+        marker = {
+            "planner": "# Planning Role",
+            "reviewer": "# Review Role",
+            "explorer": "# Explore Role",
+            "worker": "# Worker Role",
+        }[role]
+        child_calls = [
+            messages for messages, _, _ in provider.calls
+            if any(marker in str(message.get("content")) for message in messages)
+        ]
+        assert len(child_calls) == 2
+        tool_rows = [row for row in child_calls[-1] if row.get("role") == "tool"]
         assert len(tool_rows) == 1
         assert "delegated evidence" in str(tool_rows[0]["content"])
         assert "File unchanged" not in str(tool_rows[0]["content"])
-        assert parent_read._file_states is parent_state
-        assert "File unchanged" in await parent_read.execute(path="note.txt")
     finally:
-        reset_file_states(token)
-        await manager.close()
+        await loop.aclose()
 
 
 def test_retired_subagent_preserves_file_toggle_without_loading_tools(tmp_path):
