@@ -1782,9 +1782,38 @@ class AgentLoop:
         request = current_request_context()
         if request is None or not request.chat_id:
             return
+        parent_source = child.parent_source_state
+        root_source = child.root_source_state
+        child_source = child.source_state
+        dependencies = getattr(self, "_fork_dependencies", None)
+        tree = (
+            dependencies.foreground_manager._delegation_tree
+            if dependencies is not None else None
+        )
+        can_stop = False
+        if child.live and tree is not None and not tree.is_stopping(child.child_id):
+            try:
+                current_parent = tree.source_state(child.parent_key)
+                current_root = tree.source_state(child.root_key)
+                can_stop = bool(
+                    parent_source is not None
+                    and current_parent is not None
+                    and current_parent.same_origin(parent_source)
+                    and root_source is not None
+                    and current_root is not None
+                    and current_root.same_origin(root_source)
+                )
+            except Exception:
+                can_stop = False
+        route_channel = request.channel
+        route_chat_id = request.chat_id
+        if child.parent_key != child.root_key or request.channel == "delegated":
+            root_key = child.root_key or child.parent_key
+            if isinstance(root_key, str) and ":" in root_key:
+                route_channel, route_chat_id = root_key.split(":", 1)
         await self.bus.publish_outbound(OutboundMessage(
-            channel=request.channel,
-            chat_id=request.chat_id,
+            channel=route_channel,
+            chat_id=route_chat_id,
             content="",
             event=DelegatedChildEvent(
                 parent_session_key=child.parent_key,
@@ -1797,6 +1826,49 @@ class AgentLoop:
                 turn_id=(
                     str(request.metadata.get(WEBUI_TURN_METADATA_KEY))
                     if isinstance(request.metadata.get(WEBUI_TURN_METADATA_KEY), str)
+                    else None
+                ),
+                parent_run_id=child.attempt_id or None,
+                child_run_id=child.current_run_id,
+                parent_store_identity=(
+                    parent_source.store_identity if parent_source is not None else ""
+                ),
+                parent_incarnation=(
+                    parent_source.incarnation if parent_source is not None else ""
+                ),
+                parent_generation=(
+                    parent_source.generation if parent_source is not None else 0
+                ),
+                root_key=child.root_key,
+                root_store_identity=(
+                    root_source.store_identity if root_source is not None else ""
+                ),
+                root_incarnation=(
+                    root_source.incarnation if root_source is not None else ""
+                ),
+                root_generation=(
+                    root_source.generation if root_source is not None else 0
+                ),
+                child_store_identity=(
+                    child_source.store_identity if child_source is not None else ""
+                ),
+                child_incarnation=(
+                    child_source.incarnation if child_source is not None else ""
+                ),
+                child_generation=(
+                    child_source.generation if child_source is not None else 0
+                ),
+                run_sequence=child.run_sequence,
+                state_sequence=child.state_sequence,
+                control_epoch=child.control_epoch,
+                holds_capacity=child.holds_capacity,
+                can_stop=can_stop,
+                owned_work=child.holds_capacity and child.current_run_id is not None,
+                pending_approval_id=child.pending_approval_id,
+                blocked_run_id=child.blocked_run_id,
+                result_disposition=(
+                    child.background_result.state
+                    if child.background_result is not None
                     else None
                 ),
             ),

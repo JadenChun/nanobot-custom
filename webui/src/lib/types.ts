@@ -79,6 +79,27 @@ export interface DelegatedChildPayload {
   outcome?: string;
   runtime_generation: number;
   turn_id?: string;
+  parent_run_id?: string;
+  child_run_id?: string;
+  parent_store_identity?: string;
+  parent_incarnation?: string;
+  parent_generation?: number;
+  root_key?: string;
+  root_store_identity?: string;
+  root_incarnation?: string;
+  root_generation?: number;
+  child_store_identity?: string;
+  child_incarnation?: string;
+  child_generation?: number;
+  run_sequence?: number;
+  state_sequence?: number;
+  control_epoch?: number;
+  holds_capacity?: boolean;
+  can_stop?: boolean;
+  owned_work?: boolean;
+  pending_approval_id?: string;
+  blocked_run_id?: string;
+  result_disposition?: string;
 }
 
 export interface UIMessage {
@@ -1734,6 +1755,27 @@ export type InboundEvent =
       outcome?: string;
       runtime_generation: number;
       turn_id?: string;
+      parent_run_id?: string;
+      child_run_id?: string;
+      parent_store_identity?: string;
+      parent_incarnation?: string;
+      parent_generation?: number;
+      root_key?: string;
+      root_store_identity?: string;
+      root_incarnation?: string;
+      root_generation?: number;
+      child_store_identity?: string;
+      child_incarnation?: string;
+      child_generation?: number;
+      run_sequence?: number;
+      state_sequence?: number;
+      control_epoch?: number;
+      holds_capacity?: boolean;
+      can_stop?: boolean;
+      owned_work?: boolean;
+      pending_approval_id?: string;
+      blocked_run_id?: string;
+      result_disposition?: string;
     }
   | {
       event: "user_message";
@@ -1953,6 +1995,12 @@ interface WebuiThreadPagePayload {
   loaded_message_count?: number;
   total_known_message_count?: number;
   user_message_offset?: number;
+}
+
+export interface WebuiDelegatedChildrenPayload {
+  schemaVersion: number;
+  parentSessionKey?: string;
+  children: DelegatedChildPayload[];
 }
 
 export interface WebuiThreadPersistedPayload {

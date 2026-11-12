@@ -5,6 +5,7 @@ import i18n from "@/i18n";
 import {
   ApiError,
   deleteSession as apiDeleteSession,
+  fetchDelegatedChildren,
   fetchSessionAutomations,
   fetchWebuiThread,
   listSessions,
@@ -14,6 +15,7 @@ import { hasPendingAgentActivity } from "@/lib/activity-timeline";
 import { deriveTitle } from "@/lib/format";
 import type {
   ChatSummary,
+  DelegatedChildPayload,
   FolderAccessRequest,
   SessionAutomationJob,
   SessionDeleteResult,
@@ -57,6 +59,35 @@ function persistedMessagesToUi(messages: UIMessage[]): UIMessage[] {
     id: m.id ?? `hist-${idx}`,
     createdAt: typeof m.createdAt === "number" ? m.createdAt : Date.now(),
   }));
+}
+
+function hydrateDelegatedChildren(
+  messages: UIMessage[],
+  children: DelegatedChildPayload[] | undefined,
+): UIMessage[] {
+  if (!children?.length) return messages;
+  const known = new Set(
+    messages
+      .map((message) => message.delegatedChild?.child_id)
+      .filter((childId): childId is string => Boolean(childId)),
+  );
+  const missing = children.filter((child) => !known.has(child.child_id));
+  if (!missing.length) return messages;
+  const now = Date.now();
+  return [
+    ...messages,
+    ...missing
+      .slice()
+      .reverse()
+      .map((child, index) => ({
+        id: `delegated-child-${child.child_id}`,
+        role: "assistant" as const,
+        kind: "delegated_child" as const,
+        content: "",
+        createdAt: now + index,
+        delegatedChild: child,
+      })),
+  ];
 }
 
 function sameSemanticMessage(a: UIMessage, b: UIMessage): boolean {
@@ -487,11 +518,23 @@ export function useSessionHistory(key: string | null): {
           signal: controller.signal,
         });
         if (cancelled) return;
+        let childBody: Awaited<ReturnType<typeof fetchDelegatedChildren>> = null;
+        try {
+          childBody = await fetchDelegatedChildren(getToken(), key, {
+            signal: controller.signal,
+          });
+        } catch {
+          childBody = null;
+        }
+        if (cancelled) return;
         historyVersionRef.current += 1;
         const responseVersion = historyVersionRef.current;
         const completedTurnIds = completedTurnIdsFromThread(body);
         const permissionProjection = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
-        const ui = persistedMessagesToUi(body?.messages ?? []);
+        const ui = hydrateDelegatedChildren(
+          persistedMessagesToUi(body?.messages ?? []),
+          childBody?.children,
+        );
         const hasPending = hasPendingToolCallsFromThread(body, ui);
         const forkBoundary = typeof body?.fork_boundary_message_count === "number"
           ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))

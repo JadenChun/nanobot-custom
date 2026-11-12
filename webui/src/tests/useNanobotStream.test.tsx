@@ -3582,6 +3582,17 @@ describe("useNanobotStream", () => {
       state: "active",
       runtime_generation: 0,
       turn_id: "turn-a",
+      parent_run_id: "parent-run",
+      child_run_id: "child-run",
+      parent_incarnation: "parent-inc",
+      child_incarnation: "child-inc",
+      run_sequence: 2,
+      state_sequence: 5,
+      control_epoch: 1,
+      holds_capacity: true,
+      can_stop: true,
+      owned_work: true,
+      result_disposition: "pending",
     };
 
     act(() => {
@@ -3595,6 +3606,17 @@ describe("useNanobotStream", () => {
       delegatedChild: {
         child_id: "child-a",
         state: "active",
+        parent_run_id: "parent-run",
+        child_run_id: "child-run",
+        parent_incarnation: "parent-inc",
+        child_incarnation: "child-inc",
+        run_sequence: 2,
+        state_sequence: 5,
+        control_epoch: 1,
+        holds_capacity: true,
+        can_stop: true,
+        owned_work: true,
+        result_disposition: "pending",
       },
       turnId: "turn-a",
     });
@@ -3604,6 +3626,9 @@ describe("useNanobotStream", () => {
         ...activeEvent,
         state: "completed",
         outcome: "completed",
+        holds_capacity: false,
+        can_stop: false,
+        owned_work: false,
       });
     });
 
@@ -3615,6 +3640,9 @@ describe("useNanobotStream", () => {
         child_id: "child-a",
         state: "completed",
         outcome: "completed",
+        can_stop: false,
+        holds_capacity: false,
+        owned_work: false,
       },
       turnId: "turn-a",
     });

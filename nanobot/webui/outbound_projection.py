@@ -30,6 +30,7 @@ from nanobot.webui.metadata import (
     WEBUI_TURN_METADATA_KEY,
 )
 from nanobot.webui.outbound_wire import (
+    DelegatedChildWirePayload,
     WebUIWirePayload,
     WebUIWirePersistence,
     encode_turn_end,
@@ -200,20 +201,90 @@ class WebUIOutboundProjector:
             return
         if isinstance(event, DelegatedChildEvent):
             if conns:
+                payload = cast(DelegatedChildWirePayload, {
+                    "event": "delegated_child",
+                    "chat_id": msg.chat_id,
+                    "parent_session_key": event.parent_session_key,
+                    "child_session_key": event.child_session_key,
+                    "child_id": event.child_id,
+                    "profile": event.profile,
+                    "state": event.state,
+                    "runtime_generation": event.runtime_generation,
+                    **({"outcome": event.outcome} if event.outcome else {}),
+                    **({"turn_id": event.turn_id} if event.turn_id else {}),
+                    **(
+                        {"parent_run_id": event.parent_run_id}
+                        if event.parent_run_id else {}
+                    ),
+                    **(
+                        {"child_run_id": event.child_run_id}
+                        if event.child_run_id else {}
+                    ),
+                    **(
+                        {"parent_store_identity": event.parent_store_identity}
+                        if event.parent_store_identity else {}
+                    ),
+                    **(
+                        {"parent_incarnation": event.parent_incarnation}
+                        if event.parent_incarnation else {}
+                    ),
+                    **(
+                        {"parent_generation": event.parent_generation}
+                        if event.parent_generation else {}
+                    ),
+                    **({"root_key": event.root_key} if event.root_key else {}),
+                    **(
+                        {"root_store_identity": event.root_store_identity}
+                        if event.root_store_identity else {}
+                    ),
+                    **(
+                        {"root_incarnation": event.root_incarnation}
+                        if event.root_incarnation else {}
+                    ),
+                    **(
+                        {"root_generation": event.root_generation}
+                        if event.root_generation else {}
+                    ),
+                    **(
+                        {"child_store_identity": event.child_store_identity}
+                        if event.child_store_identity else {}
+                    ),
+                    **(
+                        {"child_incarnation": event.child_incarnation}
+                        if event.child_incarnation else {}
+                    ),
+                    **(
+                        {"child_generation": event.child_generation}
+                        if event.child_generation else {}
+                    ),
+                    **({"run_sequence": event.run_sequence} if event.run_sequence else {}),
+                    **(
+                        {"state_sequence": event.state_sequence}
+                        if event.state_sequence else {}
+                    ),
+                    **(
+                        {"control_epoch": event.control_epoch}
+                        if event.control_epoch else {}
+                    ),
+                    "holds_capacity": event.holds_capacity,
+                    "can_stop": event.can_stop,
+                    "owned_work": event.owned_work,
+                    **(
+                        {"pending_approval_id": event.pending_approval_id}
+                        if event.pending_approval_id else {}
+                    ),
+                    **(
+                        {"blocked_run_id": event.blocked_run_id}
+                        if event.blocked_run_id else {}
+                    ),
+                    **(
+                        {"result_disposition": event.result_disposition}
+                        if event.result_disposition else {}
+                    ),
+                })
                 await self._transport.send_payload(
                     msg.chat_id,
-                    cast(WebUIWirePayload, {
-                        "event": "delegated_child",
-                        "chat_id": msg.chat_id,
-                        "parent_session_key": event.parent_session_key,
-                        "child_session_key": event.child_session_key,
-                        "child_id": event.child_id,
-                        "profile": event.profile,
-                        "state": event.state,
-                        **({"outcome": event.outcome} if event.outcome else {}),
-                        **({"turn_id": event.turn_id} if event.turn_id else {}),
-                        "runtime_generation": event.runtime_generation,
-                    }),
+                    cast(WebUIWirePayload, payload),
                     persistence="turn_activity",
                 )
             return

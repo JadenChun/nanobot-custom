@@ -117,6 +117,20 @@ export type InboundEvent =
       outcome?: string
       runtime_generation: number
       turn_id?: string
+      parent_run_id?: string
+      child_run_id?: string
+      parent_incarnation?: string
+      root_key?: string
+      child_incarnation?: string
+      run_sequence?: number
+      state_sequence?: number
+      control_epoch?: number
+      holds_capacity?: boolean
+      can_stop?: boolean
+      owned_work?: boolean
+      pending_approval_id?: string
+      blocked_run_id?: string
+      result_disposition?: string
     }
   | {
       event: "user_message"

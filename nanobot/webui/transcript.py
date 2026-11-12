@@ -373,6 +373,32 @@ def validate_retained_transcript_record(row: dict[str, object]) -> None:
                 or type(row.get("runtime_generation", 0)) is not int
                 or cast(int, row.get("runtime_generation", 0)) < 0):
             raise ValueError("invalid retained delegated-child activity")
+        optional_strings = (
+            "outcome", "parent_run_id", "child_run_id", "parent_store_identity",
+            "parent_incarnation", "root_key", "root_store_identity",
+            "root_incarnation", "child_store_identity", "child_incarnation",
+            "pending_approval_id", "blocked_run_id", "result_disposition",
+        )
+        if any(
+            row.get(name) is not None and not isinstance(row.get(name), str)
+            for name in optional_strings
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        integer_fields = (
+            "parent_generation", "root_generation", "child_generation",
+            "run_sequence", "state_sequence", "control_epoch",
+        )
+        if any(
+            row.get(name) is not None and type(row.get(name)) is not int
+            for name in integer_fields
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        boolean_fields = ("holds_capacity", "can_stop", "owned_work")
+        if any(
+            row.get(name) is not None and type(row.get(name)) is not bool
+            for name in boolean_fields
+        ):
+            raise ValueError("invalid retained delegated-child activity")
     if event == "context_compaction" and (
         not isinstance(row.get("compaction_id"), str) or not row.get("compaction_id")
         or row.get("phase") not in {"started", "succeeded", "failed", "cancelled"}
@@ -2798,6 +2824,26 @@ def replay_transcript_to_ui_messages(
             turn_id = rec.get("turn_id")
             if isinstance(turn_id, str) and turn_id:
                 child["turn_id"] = turn_id
+            for name in (
+                "parent_run_id", "child_run_id", "parent_store_identity",
+                "parent_incarnation", "root_key", "root_store_identity",
+                "root_incarnation", "child_store_identity", "child_incarnation",
+                "pending_approval_id", "blocked_run_id", "result_disposition",
+            ):
+                value = rec.get(name)
+                if isinstance(value, str) and value:
+                    child[name] = value
+            for name in (
+                "parent_generation", "root_generation", "child_generation",
+                "run_sequence", "state_sequence", "control_epoch",
+            ):
+                value = rec.get(name)
+                if type(value) is int:
+                    child[name] = value
+            for name in ("holds_capacity", "can_stop", "owned_work"):
+                value = rec.get(name)
+                if type(value) is bool:
+                    child[name] = value
             existing_index: int | None = None
             for index, message in enumerate(messages):
                 candidate_child = message.get("delegatedChild")

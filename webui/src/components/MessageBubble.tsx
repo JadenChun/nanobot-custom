@@ -98,6 +98,7 @@ function DelegatedChildRow({
   const [steerText, setSteerText] = useState("");
   const terminal = ["completed", "failed", "stopped", "uncertain", "refused"]
     .includes(child.state);
+  const canStop = child.can_stop ?? !terminal;
   const stateLabel = child.outcome
     ? `${child.state} (${child.outcome})`
     : child.state;
@@ -138,7 +139,7 @@ function DelegatedChildRow({
               type="button"
               className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-destructive transition-colors hover:bg-background disabled:opacity-50"
               onClick={() => onControl(child.child_id, child.runtime_generation, "stop")}
-              disabled={terminal}
+              disabled={!canStop}
             >
               {t("thread.delegatedChild.stop", { defaultValue: "Stop" })}
             </button>

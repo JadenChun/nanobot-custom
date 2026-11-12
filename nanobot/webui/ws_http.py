@@ -1369,6 +1369,10 @@ class GatewayHTTPHandler:
         request: WsRequest,
         got: str,
     ) -> Response | None:
+        m = re.match(r"^/api/sessions/([^/]+)/delegated-children$", got)
+        if m:
+            return self._handle_delegated_children_get(request, m.group(1))
+
         m = re.match(r"^/api/sessions/([^/]+)/webui-thread$", got)
         if m:
             return self._handle_webui_thread_get(request, m.group(1), connection=connection)
@@ -1485,6 +1489,71 @@ class GatewayHTTPHandler:
             cleaned.append(row)
         return {"sessions": cleaned}
 
+    def _handle_delegated_children_get(
+        self,
+        request: WsRequest,
+        key: str,
+    ) -> Response:
+        """Return durable child references for one WebSocket parent chat."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None or not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        if self.session_manager is None:
+            return _http_error(503, "session manager unavailable")
+        parent = self.session_manager.read_session_snapshot(decoded_key)
+        if parent is None:
+            return _http_error(404, "session not found")
+        try:
+            self.workspaces.scope_for_session_key(decoded_key)
+        except Exception:
+            self._log.exception("delegated child hydration scope projection failed")
+            return _http_error(503, "permission_state_unavailable")
+        try:
+            sessions = self.session_manager.list_sessions()
+        except Exception:
+            self._log.exception("delegated child hydration scan failed")
+            return _http_error(503, "session list unavailable")
+        children: list[dict[str, Any]] = []
+        for info in sessions:
+            child_key = info.get("key")
+            if not isinstance(child_key, str) or not child_key.startswith("delegated:"):
+                continue
+            metadata = self.session_manager.read_session_metadata(child_key)
+            metadata_value = metadata.get("metadata") if isinstance(metadata, dict) else None
+            if not isinstance(metadata_value, dict):
+                continue
+            payload_value = cast(dict[str, Any], metadata_value).get("delegation_child")
+            if not isinstance(payload_value, dict):
+                continue
+            payload = cast(dict[str, Any], payload_value)
+            if payload.get("parent_key") != decoded_key:
+                continue
+            recorded_incarnation = payload.get("parent_incarnation")
+            if (
+                isinstance(recorded_incarnation, str)
+                and recorded_incarnation
+                and recorded_incarnation != parent.incarnation
+            ):
+                continue
+            from nanobot.session.runtime_authority import read_runtime_session
+
+            runtime = read_runtime_session(self.session_manager, child_key)
+            child = _hydrated_child_payload(
+                child_key,
+                payload,
+                runtime_executable=(runtime.present and runtime.executable),
+            )
+            if child is not None:
+                children.append(child)
+        children.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        return _http_json_response({
+            "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+            "parentSessionKey": decoded_key,
+            "children": children[:50],
+        })
+
     def _handle_webui_thread_get(
         self,
         request: WsRequest,
@@ -1533,6 +1602,19 @@ class GatewayHTTPHandler:
                 or self.session_manager is None
             ):
                 return _http_error(404, "session not found")
+            parent_source = (
+                _payload_source_state(child_payload, "parent_source_state")
+                if child_payload is not None else None
+            )
+            if (
+                parent_source is not None
+                and not _source_state_is_current(
+                    self.session_manager,
+                    parent_key,
+                    parent_source,
+                )
+            ):
+                return _http_error(404, "session not found")
             root_key = resolve_child_root_key(self.session_manager, decoded_key)
             if root_key is None:
                 return _http_error(404, "session not found")
@@ -1557,8 +1639,20 @@ class GatewayHTTPHandler:
             self._log.exception("workspace thread scope projection failed")
             return _http_error(503, "permission_state_unavailable")
         allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(scope_key)
+        canonical_child_messages: list[dict[str, Any]] | None = None
+        if is_child and child_payload is not None and self.session_manager is not None:
+            try:
+                canonical_child_messages = load_canonical_child_messages(
+                    self.session_manager,
+                    decoded_key,
+                    child_payload,
+                )
+            except ValueError:
+                return _http_error(404, "session not found")
 
         def load_session_messages() -> list[dict[str, Any]] | None:
+            if canonical_child_messages is not None:
+                return canonical_child_messages
             if self.session_manager is None:
                 return None
             session_data = self.session_manager.read_session_file(decoded_key)
@@ -1582,13 +1676,18 @@ class GatewayHTTPHandler:
 
         if is_child:
             transcript = load_session_messages() or []
+            visible = (
+                transcript[-200:]
+                if canonical_child_messages is not None
+                else transcript[-2:]
+            )
             display_messages = [
                 {
                     "id": f"delegated-{index}",
                     "role": str(item.get("role")),
                     "content": str(item.get("content") or "")[:4000 if item["role"] == "user" else 8000],
                 }
-                for index, item in enumerate(transcript[-2:])
+                for index, item in enumerate(visible)
                 if item.get("role") in {"user", "assistant"}
             ]
             return _http_json_response({
@@ -3316,6 +3415,131 @@ def _positive_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value if value > 0 else None
+
+
+def _hydrated_child_payload(
+    child_key: str,
+    payload: Mapping[str, Any],
+    *,
+    runtime_executable: bool,
+) -> dict[str, Any] | None:
+    child_id = payload.get("child_id")
+    profile = payload.get("profile")
+    state = payload.get("state")
+    generation = payload.get("runtime_generation", 0)
+    if (
+        not isinstance(child_id, str)
+        or not child_id
+        or not isinstance(profile, str)
+        or not profile
+        or not isinstance(state, str)
+        or not state
+        or type(generation) is not int
+        or generation < 0
+    ):
+        return None
+    child: dict[str, Any] = {
+        "child_id": child_id,
+        "child_session_key": child_key,
+        "profile": profile,
+        "state": state,
+        "runtime_generation": generation,
+    }
+    for name in (
+        "outcome", "parent_run_id", "child_run_id", "pending_approval_id",
+        "blocked_run_id", "updated_at",
+    ):
+        value = payload.get(name)
+        if isinstance(value, str) and value:
+            child[name] = value
+    for name in ("run_sequence", "state_sequence", "control_epoch"):
+        value = payload.get(name)
+        if type(value) is int and value >= 0:
+            child[name] = value
+    if not child.get("child_run_id"):
+        child_run_id = payload.get("current_run_id")
+        if isinstance(child_run_id, str) and child_run_id:
+            child["child_run_id"] = child_run_id
+    holds_capacity = payload.get("holds_capacity")
+    if type(holds_capacity) is bool:
+        child["holds_capacity"] = holds_capacity
+        child["owned_work"] = bool(holds_capacity and child.get("child_run_id"))
+    child["can_stop"] = bool(
+        runtime_executable
+        and state in {"reserved", "active", "waiting_approval"}
+        and holds_capacity is not False
+    )
+    for name in ("parent", "root", "child"):
+        source = _payload_source_state(payload, f"{name}_source_state")
+        if source is None:
+            continue
+        child[f"{name}_store_identity"] = source["store_identity"]
+        child[f"{name}_incarnation"] = source["incarnation"]
+        child[f"{name}_generation"] = source["generation"]
+    result = payload.get("background_result")
+    if isinstance(result, dict):
+        disposition = cast(dict[str, Any], result).get("state")
+        if isinstance(disposition, str) and disposition:
+            child["result_disposition"] = disposition
+    return child
+
+
+def _payload_source_state(payload: Mapping[str, Any], name: str) -> dict[str, Any] | None:
+    value = payload.get(name)
+    if not isinstance(value, dict):
+        return None
+    state = cast(dict[str, Any], value)
+    if not all(
+        isinstance(state.get(field), str) and state.get(field)
+        for field in ("store_identity", "session_key", "incarnation")
+    ) or type(state.get("generation")) is not int:
+        return None
+    return state
+
+
+def _source_state_is_current(
+    session_manager: SessionManager,
+    key: str,
+    expected: Mapping[str, Any],
+) -> bool:
+    backend = session_manager.source_backend(key)
+    if backend is None:
+        return False
+    try:
+        state = backend.source.load_source_snapshot(key).state
+    except Exception:
+        return False
+    return (
+        state.store_identity == expected.get("store_identity")
+        and state.session_key == expected.get("session_key")
+        and state.incarnation == expected.get("incarnation")
+        and state.generation == expected.get("generation")
+    )
+
+
+def load_canonical_child_messages(
+    session_manager: SessionManager,
+    child_key: str,
+    payload: Mapping[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Read canonical child history, or return None for summary-only children."""
+    expected = _payload_source_state(payload, "source_state")
+    if expected is None:
+        return None
+    if not _source_state_is_current(session_manager, child_key, expected):
+        raise ValueError("child source lifetime changed")
+    backend = session_manager.source_backend(child_key)
+    if backend is None:
+        raise ValueError("child source is unavailable")
+    snapshot = backend.source.load_source_snapshot(child_key)
+    messages: list[dict[str, Any]] = []
+    for event in snapshot.events:
+        role = event.get("role")
+        content = event.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        messages.append({"role": role, "content": content})
+    return messages
 
 
 def resolve_child_root_key(

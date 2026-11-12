@@ -60,8 +60,44 @@ class ContextCompactionWirePayload(_ChatWirePayload):
     phase: Literal["started", "succeeded", "failed", "cancelled"]
 
 
+class DelegatedChildWirePayload(_ChatWirePayload):
+    event: Literal["delegated_child"]
+    parent_session_key: str
+    child_session_key: str
+    child_id: str
+    profile: str
+    state: str
+    runtime_generation: int
+    outcome: NotRequired[str]
+    parent_run_id: NotRequired[str]
+    child_run_id: NotRequired[str]
+    parent_store_identity: NotRequired[str]
+    parent_incarnation: NotRequired[str]
+    parent_generation: NotRequired[int]
+    root_key: NotRequired[str]
+    root_store_identity: NotRequired[str]
+    root_incarnation: NotRequired[str]
+    root_generation: NotRequired[int]
+    child_store_identity: NotRequired[str]
+    child_incarnation: NotRequired[str]
+    child_generation: NotRequired[int]
+    run_sequence: NotRequired[int]
+    state_sequence: NotRequired[int]
+    control_epoch: NotRequired[int]
+    holds_capacity: NotRequired[bool]
+    can_stop: NotRequired[bool]
+    owned_work: NotRequired[bool]
+    pending_approval_id: NotRequired[str]
+    blocked_run_id: NotRequired[str]
+    result_disposition: NotRequired[str]
+
+
 WebUIWirePayload: TypeAlias = (
-    RetryStatusWirePayload | ContextCompactionWirePayload | RecoveryStateWirePayload | TurnEndWirePayload
+    RetryStatusWirePayload
+    | ContextCompactionWirePayload
+    | RecoveryStateWirePayload
+    | TurnEndWirePayload
+    | DelegatedChildWirePayload
 )
 WebUIWirePersistence: TypeAlias = Literal[
     "transient",

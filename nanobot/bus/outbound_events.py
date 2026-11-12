@@ -99,7 +99,7 @@ class MessageAdmittedEvent(AgentEvent):
 
 @dataclass(frozen=True)
 class DelegatedChildEvent(AgentEvent):
-    """Typed reference from a parent activity row to one delegated child."""
+    """Typed, durable reference from a parent activity row to one child."""
 
     parent_session_key: str = ""
     child_session_key: str = ""
@@ -109,6 +109,27 @@ class DelegatedChildEvent(AgentEvent):
     outcome: str | None = None
     runtime_generation: int = 0
     turn_id: str | None = None
+    parent_run_id: str | None = None
+    child_run_id: str | None = None
+    parent_store_identity: str = ""
+    parent_incarnation: str = ""
+    parent_generation: int = 0
+    root_key: str = ""
+    root_store_identity: str = ""
+    root_incarnation: str = ""
+    root_generation: int = 0
+    child_store_identity: str = ""
+    child_incarnation: str = ""
+    child_generation: int = 0
+    run_sequence: int = 0
+    state_sequence: int = 0
+    control_epoch: int = 0
+    holds_capacity: bool = False
+    can_stop: bool = False
+    owned_work: bool = False
+    pending_approval_id: str | None = None
+    blocked_run_id: str | None = None
+    result_disposition: str | None = None
 
 
 @dataclass(frozen=True)

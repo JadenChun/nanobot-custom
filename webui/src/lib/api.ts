@@ -56,6 +56,7 @@ import type {
   WorkspaceOnceActionResult,
   WorkspaceOnceReceipt,
   WorkspacePermissionProjection,
+  WebuiDelegatedChildrenPayload,
   WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
 } from "./types";
@@ -806,6 +807,27 @@ export async function fetchWebuiThread(
       ? null
       : normalizeWorkspacePermissionProjection(payload.workspace_permissions),
   } as unknown as WebuiThreadPersistedPayload;
+}
+
+/** Canonical child references for one parent chat, used after reconnect. */
+export async function fetchDelegatedChildren(
+  token: string,
+  key: string,
+  options: { signal?: AbortSignal; base?: string } = {},
+): Promise<WebuiDelegatedChildrenPayload | null> {
+  const base = options.base ?? "";
+  const url = `${base}/api/sessions/${encodeURIComponent(key)}/delegated-children`;
+  const res = await fetchWithTimeout(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: "same-origin",
+    cache: "no-store",
+    signal: options.signal,
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  const payload: unknown = await res.json();
+  if (!isObjectRecord(payload)) return null;
+  return payload as unknown as WebuiDelegatedChildrenPayload;
 }
 
 export async function fetchFilePreview(

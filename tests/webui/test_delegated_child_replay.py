@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.webui.transcript import replay_transcript_to_ui_messages
+from nanobot.webui.transcript import (
+    replay_transcript_to_ui_messages,
+    validate_retained_transcript_record,
+)
 
 
 def _field(message: Any, name: str) -> Any:
@@ -78,6 +81,84 @@ def test_replay_collapses_child_lifecycle_to_one_row() -> None:
 
     assert any(_field(message, "content") == "done" for message in messages)
     assert _field(messages[-1], "content") == "done"
+
+
+def test_replay_preserves_durable_child_state() -> None:
+    lines = [
+        {
+            "event": "delegated_child",
+            "child_id": "child-a",
+            "child_session_key": "delegated:child-a",
+            "profile": "delegated",
+            "state": "active",
+            "runtime_generation": 1,
+            "parent_run_id": "parent-run",
+            "child_run_id": "child-run",
+            "parent_store_identity": "store",
+            "parent_incarnation": "parent-inc",
+            "parent_generation": 2,
+            "root_key": "websocket:parent",
+            "root_incarnation": "root-inc",
+            "root_generation": 2,
+            "child_incarnation": "child-inc",
+            "child_generation": 3,
+            "run_sequence": 2,
+            "state_sequence": 5,
+            "control_epoch": 1,
+            "holds_capacity": True,
+            "can_stop": True,
+            "owned_work": True,
+            "pending_approval_id": "approval",
+            "blocked_run_id": "child-run",
+            "result_disposition": "pending",
+            "turn_id": "turn-1",
+            "created_at_ms": 110,
+        },
+    ]
+
+    messages = replay_transcript_to_ui_messages(lines)
+    rows = _delegated_rows(messages)
+    assert len(rows) == 1
+    child = _field(rows[0], "delegatedChild")
+    assert child["parent_run_id"] == "parent-run"
+    assert child["child_run_id"] == "child-run"
+    assert child["parent_incarnation"] == "parent-inc"
+    assert child["root_key"] == "websocket:parent"
+    assert child["child_incarnation"] == "child-inc"
+    assert child["run_sequence"] == 2
+    assert child["state_sequence"] == 5
+    assert child["control_epoch"] == 1
+    assert child["holds_capacity"] is True
+    assert child["can_stop"] is True
+    assert child["owned_work"] is True
+    assert child["pending_approval_id"] == "approval"
+    assert child["blocked_run_id"] == "child-run"
+    assert child["result_disposition"] == "pending"
+
+
+def test_retained_delegated_row_accepts_durable_fields() -> None:
+    validate_retained_transcript_record({
+        "event": "delegated_child",
+        "child_id": "child-a",
+        "child_session_key": "delegated:child-a",
+        "profile": "delegated",
+        "state": "active",
+        "runtime_generation": 1,
+        "parent_run_id": "parent-run",
+        "child_run_id": "child-run",
+        "parent_incarnation": "parent-inc",
+        "root_key": "websocket:parent",
+        "child_incarnation": "child-inc",
+        "run_sequence": 2,
+        "state_sequence": 5,
+        "control_epoch": 1,
+        "holds_capacity": True,
+        "can_stop": True,
+        "owned_work": True,
+        "pending_approval_id": "approval",
+        "blocked_run_id": "child-run",
+        "result_disposition": "pending",
+    })
 
 
 def test_replay_keeps_distinct_rows_for_two_children() -> None:

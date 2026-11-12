@@ -14,6 +14,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     listSessions: vi.fn(),
     deleteSession: vi.fn(),
     fetchWebuiThread: vi.fn(),
+    fetchDelegatedChildren: vi.fn(),
   };
 });
 
@@ -65,6 +66,7 @@ describe("useSessions", () => {
     vi.mocked(api.listSessions).mockReset();
     vi.mocked(api.deleteSession).mockReset();
     vi.mocked(api.fetchWebuiThread).mockReset();
+    vi.mocked(api.fetchDelegatedChildren).mockReset();
   });
 
   it("does not use low-information greetings as fallback session titles", () => {
@@ -450,6 +452,42 @@ describe("useSessions", () => {
     expect(second.images).toBeUndefined();
     expect(third.role).toBe("user");
     expect(third.images).toBeUndefined();
+  });
+
+  it("hydrates a missing delegated child row after reconnect", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValue({
+      schemaVersion: 3,
+      messages: [],
+    });
+    vi.mocked(api.fetchDelegatedChildren).mockResolvedValue({
+      schemaVersion: 3,
+      children: [
+        {
+          child_id: "child-a",
+          child_session_key: "delegated:child-a",
+          profile: "delegated",
+          state: "active",
+          runtime_generation: 0,
+          can_stop: true,
+          control_epoch: 2,
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useSessionHistory("websocket:chat-child"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      kind: "delegated_child",
+      delegatedChild: {
+        child_id: "child-a",
+        can_stop: true,
+        control_epoch: 2,
+      },
+    });
   });
 
   it("passes through assistant video media from transcript replay", async () => {

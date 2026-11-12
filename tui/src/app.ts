@@ -514,6 +514,20 @@ export class NanobotTui {
     outcome?: string
     runtime_generation: number
     turn_id?: string
+    parent_run_id?: string
+    child_run_id?: string
+    parent_incarnation?: string
+    root_key?: string
+    child_incarnation?: string
+    run_sequence?: number
+    state_sequence?: number
+    control_epoch?: number
+    holds_capacity?: boolean
+    can_stop?: boolean
+    owned_work?: boolean
+    pending_approval_id?: string
+    blocked_run_id?: string
+    result_disposition?: string
   }>()
   private activeLabel = "Thinking"
   private retryStatus: RenderedRetryStatus | null = null
@@ -1062,6 +1076,10 @@ export class NanobotTui {
       return
     }
     const child = this.delegatedChildren.get(childId)!
+    if (sub === "stop" && child.can_stop === false) {
+      this.transcript.notice(`Delegated child ${childId} cannot be stopped now`, true)
+      return
+    }
     if (sub === "open") {
       try {
         const history = await fetchHistory(
@@ -1235,6 +1253,40 @@ export class NanobotTui {
           ...(event.outcome ? { outcome: event.outcome } : {}),
           runtime_generation: event.runtime_generation,
           ...(event.turn_id ? { turn_id: event.turn_id } : {}),
+          ...(event.parent_run_id ? { parent_run_id: event.parent_run_id } : {}),
+          ...(event.child_run_id ? { child_run_id: event.child_run_id } : {}),
+          ...(event.parent_incarnation
+            ? { parent_incarnation: event.parent_incarnation }
+            : {}),
+          ...(event.root_key ? { root_key: event.root_key } : {}),
+          ...(event.child_incarnation
+            ? { child_incarnation: event.child_incarnation }
+            : {}),
+          ...(event.run_sequence !== undefined
+            ? { run_sequence: event.run_sequence }
+            : {}),
+          ...(event.state_sequence !== undefined
+            ? { state_sequence: event.state_sequence }
+            : {}),
+          ...(event.control_epoch !== undefined
+            ? { control_epoch: event.control_epoch }
+            : {}),
+          ...(event.holds_capacity !== undefined
+            ? { holds_capacity: event.holds_capacity }
+            : {}),
+          ...(event.can_stop !== undefined ? { can_stop: event.can_stop } : {}),
+          ...(event.owned_work !== undefined
+            ? { owned_work: event.owned_work }
+            : {}),
+          ...(event.pending_approval_id
+            ? { pending_approval_id: event.pending_approval_id }
+            : {}),
+          ...(event.blocked_run_id
+            ? { blocked_run_id: event.blocked_run_id }
+            : {}),
+          ...(event.result_disposition
+            ? { result_disposition: event.result_disposition }
+            : {}),
         })
         const outcome = event.outcome ? ` (${event.outcome})` : ""
         this.transcript.notice(

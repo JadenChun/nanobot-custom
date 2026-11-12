@@ -28,6 +28,7 @@ import {
 import type { UIMessageTurnFields } from "@/lib/thread-event-projection";
 import { formatQuotedUserMessage } from "@/lib/user-message-quote";
 import type {
+  DelegatedChildPayload,
   InboundEvent,
   OutboundCliAppMention,
   OutboundMcpPresetMention,
@@ -919,7 +920,7 @@ export function useNanobotStream(
       }
 
       if (ev.event === "delegated_child") {
-        const child = {
+        const child: DelegatedChildPayload = {
           child_session_key: ev.child_session_key,
           child_id: ev.child_id,
           profile: ev.profile,
@@ -927,6 +928,51 @@ export function useNanobotStream(
           ...(ev.outcome ? { outcome: ev.outcome } : {}),
           runtime_generation: ev.runtime_generation,
           ...(ev.turn_id ? { turn_id: ev.turn_id } : {}),
+          ...(ev.parent_run_id ? { parent_run_id: ev.parent_run_id } : {}),
+          ...(ev.child_run_id ? { child_run_id: ev.child_run_id } : {}),
+          ...(ev.parent_store_identity
+            ? { parent_store_identity: ev.parent_store_identity }
+            : {}),
+          ...(ev.parent_incarnation
+            ? { parent_incarnation: ev.parent_incarnation }
+            : {}),
+          ...(ev.parent_generation !== undefined
+            ? { parent_generation: ev.parent_generation }
+            : {}),
+          ...(ev.root_key ? { root_key: ev.root_key } : {}),
+          ...(ev.root_store_identity
+            ? { root_store_identity: ev.root_store_identity }
+            : {}),
+          ...(ev.root_incarnation ? { root_incarnation: ev.root_incarnation } : {}),
+          ...(ev.root_generation !== undefined
+            ? { root_generation: ev.root_generation }
+            : {}),
+          ...(ev.child_store_identity
+            ? { child_store_identity: ev.child_store_identity }
+            : {}),
+          ...(ev.child_incarnation ? { child_incarnation: ev.child_incarnation } : {}),
+          ...(ev.child_generation !== undefined
+            ? { child_generation: ev.child_generation }
+            : {}),
+          ...(ev.run_sequence !== undefined ? { run_sequence: ev.run_sequence } : {}),
+          ...(ev.state_sequence !== undefined
+            ? { state_sequence: ev.state_sequence }
+            : {}),
+          ...(ev.control_epoch !== undefined
+            ? { control_epoch: ev.control_epoch }
+            : {}),
+          ...(ev.holds_capacity !== undefined
+            ? { holds_capacity: ev.holds_capacity }
+            : {}),
+          ...(ev.can_stop !== undefined ? { can_stop: ev.can_stop } : {}),
+          ...(ev.owned_work !== undefined ? { owned_work: ev.owned_work } : {}),
+          ...(ev.pending_approval_id
+            ? { pending_approval_id: ev.pending_approval_id }
+            : {}),
+          ...(ev.blocked_run_id ? { blocked_run_id: ev.blocked_run_id } : {}),
+          ...(ev.result_disposition
+            ? { result_disposition: ev.result_disposition }
+            : {}),
         };
         setMessages((prev) => {
           const index = prev.findIndex(

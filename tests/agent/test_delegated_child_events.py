@@ -18,10 +18,23 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import DeliveryTarget, TurnRequest
 from nanobot.bus.outbound_events import DelegatedChildEvent
 from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nanobot.session.source_store import SourceState
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
 
 pytest_plugins = ("tests.agent.test_migration_source_engine",)
+
+
+def _state(key: str, incarnation: str, generation: int) -> SourceState:
+    return SourceState(
+        store_identity="store-a",
+        session_key=key,
+        incarnation=incarnation,
+        revision=3,
+        generation=generation,
+        checkpoint_id="checkpoint-a",
+        checkpoint_fingerprint="fingerprint-a",
+    )
 
 
 def _make_admission() -> ChildAdmission:
@@ -33,10 +46,21 @@ def _make_admission() -> ChildAdmission:
         root_key="websocket:parent",
         profile="delegated",
         depth=1,
-        attempt_id="turn-1",
+        attempt_id="parent-run-a",
         assignment_digest="digest",
         policy_facts={},
         runtime_generation=0,
+        source_state=_state("delegated:child-a", "inc-child", 2),
+        parent_source_state=_state("websocket:parent", "inc-1", 1),
+        root_source_state=_state("websocket:parent", "inc-1", 1),
+        run_sequence=2,
+        state_sequence=4,
+        current_run_id="child-run-a",
+        holds_capacity=False,
+        pending_approval_id="approval-a",
+        blocked_run_id="child-run-a",
+        state="completed",
+        outcome="completed",
     )
 
 
@@ -113,3 +137,20 @@ async def test_parent_publisher_projects_child_reference():
     assert event.outcome == admission.outcome
     assert event.runtime_generation == admission.runtime_generation
     assert event.turn_id == "turn-a"
+    assert event.parent_run_id == "parent-run-a"
+    assert event.child_run_id == "child-run-a"
+    assert event.parent_store_identity == "store-a"
+    assert event.parent_incarnation == "inc-1"
+    assert event.parent_generation == 1
+    assert event.root_key == "websocket:parent"
+    assert event.root_incarnation == "inc-1"
+    assert event.child_incarnation == "inc-child"
+    assert event.child_generation == 2
+    assert event.run_sequence == 2
+    assert event.state_sequence == 4
+    assert event.control_epoch == 0
+    assert event.holds_capacity is False
+    assert event.can_stop is False
+    assert event.owned_work is False
+    assert event.pending_approval_id == "approval-a"
+    assert event.blocked_run_id == "child-run-a"
