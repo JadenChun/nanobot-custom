@@ -9,7 +9,12 @@ from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
+from nanobot.agent.tools.delegation import (
+    DelegateTaskTool,
+    FollowupChildTool,
+    PlanTaskTool,
+    ReviewWorkTool,
+)
 from nanobot.agent.tools.desktop_use import DesktopUseTool
 from nanobot.agent.tools.exec_session import ExecSessionTool, ListExecSessionsTool
 from nanobot.agent.tools.explore import ExploreTool
@@ -90,6 +95,11 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                       ("review_work", ReviewWorkTool)):
         entries.append(ToolFactory(name, lambda: True,
                                    lambda cls=cls: cls(deps.foreground_manager)))
+    entries.append(ToolFactory(
+        "followup_child",
+        lambda: True,
+        lambda: FollowupChildTool(deps.foreground_manager),
+    ))
     entries.append(ToolFactory("explore", lambda: True, lambda: ExploreTool(
         deps.foreground_manager, max_iterations=deps.explore_max_iterations)))
     result: list[Tool] = []

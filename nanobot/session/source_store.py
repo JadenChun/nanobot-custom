@@ -1780,14 +1780,19 @@ class SourceSessionStore:
             and event.get("role") == "user"
             and event.get("content") == record.content
             and event.get("media", []) == list(record.media)
+            and event.get("_child_followup") == (
+                record.child_followup.to_dict() if record.child_followup is not None else None
+            )
         )
 
     def discard_pending_followups(
         self,
         key: str,
         owner: ExecutionOwner,
+        *,
+        expected_records: tuple[PendingFollowupRecord, ...] | None = None,
     ) -> tuple[str, ...]:
-        """Explicitly discard pending rows before `/stop` releases the owner."""
+        """Discard all rows or exact observed rows before the owner is released."""
         from nanobot.session.execution_owner import execution_transaction
 
         with execution_transaction(self._backend, key, owner):
@@ -1795,13 +1800,33 @@ class SourceSessionStore:
             records = parse_pending_followup_records(
                 header["metadata"].get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, [])
             )
-            if not records:
+            if expected_records is None:
+                selected_ids = {record.identifier for record in records}
+            else:
+                expected_by_id = {record.identifier: record for record in expected_records}
+                if len(expected_by_id) != len(expected_records):
+                    raise SourceValidationError("Duplicate pending follow-up discard identity")
+                stored_by_id = {record.identifier: record for record in records}
+                if any(stored_by_id.get(identifier) != expected
+                       for identifier, expected in expected_by_id.items()):
+                    raise SourceValidationError("Pending follow-up changed before discard")
+                selected_ids = set(expected_by_id)
+            discarded = tuple(
+                record.identifier for record in records if record.identifier in selected_ids
+            )
+            if not discarded:
                 return ()
-            del header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY]
+            remaining = [record for record in records if record.identifier not in selected_ids]
+            if remaining:
+                header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY] = [
+                    record.to_dict() for record in remaining
+                ]
+            else:
+                del header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY]
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             self._write(header, events)
-            return tuple(record.identifier for record in records)
+            return discarded
 
     def update_metadata(
         self,

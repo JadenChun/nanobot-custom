@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.source_request import SourceTranscript
     from nanobot.session.source_store import SourceState
-    from nanobot.session.turn_writer import SourceTurnWriter
+    from nanobot.session.turn_writer import SourceToolIntentBinding, SourceTurnWriter
 
 __all__ = [
     "ApprovalDecision",
@@ -559,6 +559,14 @@ class TurnContext:
     internal_tool_policy: ToolPolicy | None = field(default=None, repr=False)
     internal_max_iterations: int | None = field(default=None, repr=False)
     active_tool_bindings: CapturedToolBindings | None = field(default=None, repr=False)
+    active_tool_intent_binding: SourceToolIntentBinding | None = field(default=None, repr=False)
+    request_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
+    followup_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
+    followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = field(
+        default=None, repr=False,
+    )
+    pending_followup_acknowledgments: list[str] = field(default_factory=list, repr=False)
+    child_followup_continuation: bool = field(default=False, repr=False)
     forwarded_child_approval_id: str | None = field(default=None, repr=False)
     forwarded_child_id: str | None = field(default=None, repr=False)
     canonical_child_artifact_input: CanonicalChildArtifactInput | None = field(

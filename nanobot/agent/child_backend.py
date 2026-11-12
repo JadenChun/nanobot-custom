@@ -17,7 +17,9 @@ from nanobot.agent.hook import AgentHook
 from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ApprovalDecision, DeliveryTarget, TurnResult
+from nanobot.bus.events import InboundMessage
 from nanobot.security.desktop_permissions import WorkspaceTaskAccessReference
+from nanobot.session.pending_followups import PendingFollowupRecord
 from nanobot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
@@ -76,6 +78,13 @@ class ChildTurnRequest:
     workspace_task_reference: WorkspaceTaskAccessReference | None = None
     approval_decision: ApprovalDecision | None = None
     artifact_input: CanonicalChildArtifactInput | None = None
+    followup_record: PendingFollowupRecord | None = None
+    followup_records: tuple[PendingFollowupRecord, ...] = ()
+    followup_records_to_admit: tuple[PendingFollowupRecord, ...] = ()
+    followup_records_to_discard: tuple[PendingFollowupRecord, ...] = ()
+    request_boundary_validator: Callable[[], bool] | None = None
+    followup_boundary_validator: Callable[[], bool] | None = None
+    followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +106,13 @@ class ChildTurnExecutor(Protocol):
         *,
         approval_resume: ChildApprovalResume | None = None,
     ) -> TurnResult: ...
+
+    async def submit_child_followup(
+        self,
+        admission: ChildAdmission,
+        record: PendingFollowupRecord,
+        message: InboundMessage,
+    ) -> str: ...
 
 
 RunCall = Callable[[], Coroutine[Any, Any, Any]]

@@ -475,6 +475,7 @@ def test_loader_registers_the_foreground_manifest_with_config_gates(loader_conte
         "exec", "exec_session", "list_exec_sessions",
         "web_search", "web_fetch",
         "message", "cron", "plan_task", "delegate_task", "review_work", "explore",
+        "followup_child",
         "repository_catalog", "save_knowledge",
         "create_goal", "update_goal",
     }

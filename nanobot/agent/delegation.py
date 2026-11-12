@@ -19,6 +19,7 @@ from nanobot.agent.capabilities import DELEGATED_READ_ONLY_ROLES, role_capabilit
 from nanobot.agent.child_backend import (
     ChildApprovalResume,
     ChildBackendBinding,
+    ChildBackendHandle,
     ChildBackendRegistry,
     ChildBackendUnavailableError,
     ChildTurnExecutor,
@@ -83,6 +84,7 @@ from nanobot.agent.turn import (
     TurnResult,
 )
 from nanobot.agent.write_guard import FileLockRegistry, WriteScope
+from nanobot.bus.events import InboundMessage
 from nanobot.config.schema import (
     AgentBrowserConfig,
     AgentDeviceConfig,
@@ -93,7 +95,19 @@ from nanobot.providers.base import LLMProvider, ToolCallRequest
 from nanobot.security.folder_grants import FolderGrantView
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.session.manager import SessionManager
-from nanobot.session.source_store import SourceState
+from nanobot.session.pending_followups import (
+    PendingChildFollowup,
+    PendingFollowupRecord,
+    mint_child_followup_id,
+    parse_pending_followup_records,
+)
+from nanobot.session.pending_followups import (
+    record_pending_followup as source_pending_followup_record,
+)
+from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
+from nanobot.session.source import validate_execution_links
+from nanobot.session.source_store import SourceSnapshot, SourceState
+from nanobot.session.turn_writer import SourceToolIntentBinding
 from nanobot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
@@ -325,6 +339,7 @@ class ForegroundAgentManager:
         self._child_event_sink: Callable[[Any], Awaitable[None]] | None = None
         self._child_task_references: dict[str, WorkspaceTaskAccessReference] = {}
         self._suspended_children: dict[str, _SuspendedChild] = {}
+        self._child_handles: dict[str, ChildBackendHandle] = {}
 
     def set_child_event_sink(
         self,
@@ -384,6 +399,28 @@ class ForegroundAgentManager:
     def bind_child_turn_executor(self, executor: ChildTurnExecutor) -> None:
         """Bind the trusted canonical AgentLoop child-turn adapter."""
         self._child_turn_executor = executor
+
+    def _track_child_handle(self, handle: ChildBackendHandle) -> None:
+        """Retain the native owner until its coroutine finishes settlement."""
+        self._child_handles[handle.child_id] = handle
+
+        def settled(task: asyncio.Task[Any]) -> None:
+            if self._child_handles.get(handle.child_id) is handle:
+                self._child_handles.pop(handle.child_id, None)
+
+        handle.task.add_done_callback(settled)
+
+    async def _await_child_settlement(self, child_id: str) -> None:
+        """Wait for the exact prior backend task after its tree state settles."""
+        handle = self._child_handles.get(child_id)
+        if handle is None or handle.task.done():
+            return
+        try:
+            await asyncio.shield(handle.task)
+        except Exception:
+            # The tree state is checked again by the caller. A failed task must
+            # not authorize continuation unless it left a healthy completed child.
+            return
 
     def _release_child_task_reference(self, child_id: str) -> None:
         reference = self._child_task_references.pop(child_id, None)
@@ -455,6 +492,16 @@ class ForegroundAgentManager:
             run_id=run_id,
             policy=role_policy,
             approval_target=approval_target,
+            followup_record=None,
+            followup_records=(),
+            followup_records_to_admit=(),
+            request_boundary_validator=lambda child_id=child_id, active_run=run_id: (
+                self._child_request_is_current(child_id, active_run)
+            ),
+            followup_boundary_validator=lambda child_id=child_id, active_run=run_id: (
+                self._child_followup_boundary_is_current(child_id, active_run)
+            ),
+            followup_request_acknowledged=None,
         )
         return ChildApprovalResume(
             request=resumed,
@@ -535,6 +582,7 @@ class ForegroundAgentManager:
                 ),
                 track=launch_fence.attach,
             )
+            self._track_child_handle(handle)
         except Exception:
             await tree.complete(
                 child_id,
@@ -644,6 +692,42 @@ class ForegroundAgentManager:
             )
         except Exception:
             return False
+
+    def _child_request_is_current(self, child_id: str, run_id: str) -> bool:
+        """Check the in-memory child and Stop fence before every child request."""
+        tree = self._delegation_tree
+        child = tree.child(child_id) if tree is not None else None
+        return bool(
+            tree is not None
+            and child is not None
+            and child.state == "active"
+            and child.holds_capacity
+            and child.current_run_id == run_id
+            and not tree.is_stopping(child_id)
+        )
+
+    def _child_followup_boundary_is_current(self, child_id: str, run_id: str) -> bool:
+        """Recheck every source lifetime only for a child follow-up continuation."""
+        tree = self._delegation_tree
+        child = tree.child(child_id) if tree is not None else None
+        if (
+            tree is None
+            or child is None
+            or child.state != "active"
+            or not child.holds_capacity
+            or child.current_run_id != run_id
+            or tree.is_stopping(child_id)
+            or not self._source_is_current(child.parent_key, child.parent_source_state)
+            or not self._source_is_current(child.root_key, child.root_source_state)
+            or not self._source_is_current(child.session_key, child.source_state)
+        ):
+            return False
+        parent_child = tree.child_for_session(child.parent_key)
+        return parent_child is None or (
+            parent_child.state == "active"
+            and parent_child.holds_capacity
+            and not tree.is_stopping(parent_child.child_id)
+        )
 
     def child_approval_authority_is_current(
         self,
@@ -1197,24 +1281,31 @@ class ForegroundAgentManager:
     # continue to use the private compatibility alias above.
     tools_for_role = _tools_for_role
 
-    def _worker_tools(self, call_id: str, scopes: tuple[WriteScope, ...]) -> ToolRegistry:
+    def _worker_tools(
+        self,
+        call_id: str,
+        scopes: tuple[WriteScope, ...],
+        *,
+        workspace: Path | None = None,
+    ) -> ToolRegistry:
         # Workers receive only file inspection and scoped file mutation.  Do
         # not inherit shell, browser, device, web, MCP, message, cron, or
         # delegation capabilities from the main/role registries.
         tools = ToolRegistry()
         file_states = FileStates()
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        worker_workspace = workspace or self.workspace
+        allowed_dir = worker_workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
         extra_write = self._extra_write_dirs(allowed_dir)
         tools.register(ReadFileTool(
-            workspace=self.workspace,
+            workspace=worker_workspace,
             allowed_dir=allowed_dir,
             extra_read_allowed_dirs=extra_read,
             resource_policy=self.resource_policy,
             file_states=file_states,
         ))
         tools.register(ListDirTool(
-            workspace=self.workspace,
+            workspace=worker_workspace,
             allowed_dir=allowed_dir,
             extra_read_allowed_dirs=extra_read,
             resource_policy=self.resource_policy,
@@ -1222,7 +1313,7 @@ class ForegroundAgentManager:
         ))
         lock_owner = f"foreground-worker:{call_id}"
         tools.register(WriteFileTool(
-            workspace=self.workspace,
+            workspace=worker_workspace,
             allowed_dir=allowed_dir,
             extra_write_allowed_dirs=extra_write,
             resource_policy=self.resource_policy,
@@ -1232,7 +1323,7 @@ class ForegroundAgentManager:
             allowed_write_scope=list(scopes),
         ))
         tools.register(EditFileTool(
-            workspace=self.workspace,
+            workspace=worker_workspace,
             allowed_dir=allowed_dir,
             extra_write_allowed_dirs=extra_write,
             resource_policy=self.resource_policy,
@@ -1480,6 +1571,7 @@ class ForegroundAgentManager:
         policy_facts: dict[str, Any] = {
             "role": role,
             "tools": sorted(effective_tool_names),
+            "max_iterations": max_iterations,
             "read_only": role in DELEGATED_READ_ONLY_ROLES,
             "authority": dict(authority or {}),
             "background": background,
@@ -1627,6 +1719,12 @@ class ForegroundAgentManager:
                 approval_target=turn_context.delivery.primary,
                 workspace_task_reference=child_task_reference,
                 artifact_input=artifact_input,
+                request_boundary_validator=lambda child_id=admission.child_id, active_run=run_id: (
+                    self._child_request_is_current(child_id, active_run)
+                ),
+                followup_boundary_validator=lambda child_id=admission.child_id, active_run=run_id: (
+                    self._child_followup_boundary_is_current(child_id, active_run)
+                ),
             )
 
             async def run_and_finalize() -> AgentRunResult:
@@ -1763,6 +1861,7 @@ class ForegroundAgentManager:
                 ),
                 track=track_child_task,
             )
+            self._track_child_handle(handle)
             handed_to_task = True
             def release_bindings_after_settlement(_done: asyncio.Task[Any]) -> None:
                 current = tree.child(admission.child_id)
@@ -2064,6 +2163,730 @@ class ForegroundAgentManager:
             return ToolOutcome(content=content, handoff_receipt=result.artifact_handoff_receipt)
         return content
 
+    @staticmethod
+    def _followup_disposition(disposition: str) -> str:
+        return {
+            "queued": "Follow-up queued.",
+            "recorded": "Follow-up recorded.",
+            "applied": "Follow-up applied.",
+        }.get(disposition, "Follow-up refused: the child or its authority is no longer current.")
+
+    async def followup_child(
+        self,
+        *,
+        child_id: str,
+        content: str,
+        turn_context: TurnContext | None = None,
+    ) -> str | ToolOutcome:
+        """Queue or continue one exact canonical child under current parent authority."""
+        context = turn_context or current_turn_context()
+        tree = self._delegation_tree
+        executor = self._child_turn_executor
+        if (
+            context is None
+            or not context.session_key
+            or not child_id
+            or not content.strip()
+            or tree is None
+            or executor is None
+            or context.source_writer is None
+            or context.execution_owner is None
+        ):
+            return self._followup_disposition("refused")
+        binding = context.active_tool_intent_binding
+        writer = context.source_writer
+        if type(binding) is not SourceToolIntentBinding:
+            return self._followup_disposition("refused")
+        try:
+            writer.validate_tool_intent_binding(
+                binding,
+                arguments={"child_id": child_id, "content": content},
+            )
+            parent_state = context.execution_owner.read_snapshot().state
+        except Exception as exc:
+            logger.debug("Child follow-up intent validation failed: {}", exc)
+            return self._followup_disposition("refused")
+        parent_key = context.session_key
+        parent_child = tree.child_for_session(parent_key)
+        if (
+            writer.owner is not context.execution_owner
+            or writer.run_id != binding.run_id
+            or context.run_id != binding.run_id
+            or context.execution_owner.key != parent_key
+            or not self._parent_source_owner_is_current(
+                parent_key=parent_key,
+                owner=context.execution_owner,
+                expected_parent_state=parent_state,
+                child_admission=parent_child,
+            )
+        ):
+            logger.debug("Child follow-up parent source authority is stale")
+            return self._followup_disposition("refused")
+        child = tree.child(child_id)
+        if (
+            child is None
+            or child.parent_key != parent_key
+            or child.parent_incarnation != parent_state.incarnation
+            or child.source_state is None
+            or child.pending_approval_id is not None
+            or child.pending_effect_id is not None
+            or tree.is_stopping(child_id)
+        ):
+            logger.debug("Child follow-up target is not a healthy direct child")
+            return self._followup_disposition("refused")
+        child_backend = tree.sessions.source_backend(child.session_key)
+        if child_backend is None:
+            return self._followup_disposition("refused")
+        try:
+            child_snapshot = child_backend.source.load_source_snapshot(child.session_key)
+        except Exception as exc:
+            logger.debug("Child follow-up source read failed: {}", exc)
+            return self._followup_disposition("refused")
+        child_state = child_snapshot.state
+        if (
+            not child_state.same_origin(child.source_state)
+            or child_state.store_identity != child.source_state.store_identity
+            or child_state.incarnation != child.source_state.incarnation
+            or child_state.generation != child.source_state.generation
+            or not self._source_is_current(child.root_key, child.root_source_state)
+        ):
+            logger.debug("Child follow-up source or root lifetime changed")
+            return self._followup_disposition("refused")
+
+        stale_pending_records: dict[str, PendingFollowupRecord] = {}
+
+        def current_pending_records(
+            snapshot: SourceSnapshot,
+            current_child: ChildAdmission,
+            current_state: SourceState,
+        ) -> list[PendingFollowupRecord]:
+            """Separate exact old Stop-epoch rows from rows still admissible."""
+            parsed = parse_pending_followup_records(
+                snapshot.header["metadata"].get(
+                    SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
+                    [],
+                ),
+            )
+            retained: list[PendingFollowupRecord] = []
+            for pending in parsed:
+                pending_intent = pending.child_followup
+                if (
+                    pending_intent is None
+                    or pending_intent.child_id != current_child.child_id
+                    or pending_intent.child_key != current_child.session_key
+                    or pending_intent.parent_key != current_child.parent_key
+                    or pending_intent.parent_incarnation != current_child.parent_incarnation
+                    or pending_intent.parent_store_identity != parent_state.store_identity
+                    or pending_intent.parent_incarnation != parent_state.incarnation
+                    or pending_intent.parent_generation != parent_state.generation
+                    or pending_intent.child_store_identity != current_state.store_identity
+                    or pending_intent.child_incarnation != current_state.incarnation
+                    or pending_intent.child_generation != current_state.generation
+                    or pending_intent.child_control_epoch > current_child.control_epoch
+                ):
+                    raise ValueError("Pending child follow-up authority changed")
+                if pending_intent.child_control_epoch < current_child.control_epoch:
+                    stale_pending_records[pending.identifier] = pending
+                else:
+                    retained.append(pending)
+            return retained
+
+        intent = PendingChildFollowup(
+            child_id=child.child_id,
+            parent_key=parent_key,
+            parent_store_identity=parent_state.store_identity,
+            parent_incarnation=parent_state.incarnation,
+            parent_generation=parent_state.generation,
+            parent_run_id=binding.run_id,
+            parent_tool_event_id=binding.event_id,
+            parent_execution_id=binding.execution_id,
+            parent_dispatch_ordinal=binding.ordinal,
+            child_key=child.session_key,
+            child_store_identity=child_state.store_identity,
+            child_incarnation=child_state.incarnation,
+            child_generation=child_state.generation,
+            child_run_id=child.current_run_id or "unavailable",
+            child_state_sequence=child.state_sequence,
+            child_control_epoch=child.control_epoch,
+        )
+        message = InboundMessage(
+            channel="system",
+            sender_id="subagent",
+            chat_id=child.session_key,
+            content=content,
+            session_key_override=child.session_key,
+            input_role="user",
+        )
+        try:
+            identifier = mint_child_followup_id(message, intent)
+            record = source_pending_followup_record(message)
+            pending_records = current_pending_records(child_snapshot, child, child_state)
+        except (KeyError, TypeError, ValueError):
+            return self._followup_disposition("refused")
+
+        matching_row = next(
+            (item for item in pending_records if item.identifier == identifier),
+            None,
+        )
+        matching_events = [
+            event for event in child_snapshot.events
+            if event.get("_pending_followup_id") == identifier
+        ]
+        if matching_row is not None:
+            existing_intent = matching_row.child_followup
+            if (
+                matching_row.content != content
+                or matching_row.media
+                or existing_intent is None
+                or not existing_intent.same_intent(intent)
+                or existing_intent.child_control_epoch != child.control_epoch
+            ):
+                return self._followup_disposition("refused")
+            if child.state == "active":
+                if intent.child_run_id == child.current_run_id:
+                    disposition = await executor.submit_child_followup(child, matching_row, message)
+                    if disposition != "refused":
+                        return self._followup_disposition(disposition)
+                return self._followup_disposition("queued")
+            if child.state == "completed" and child.outcome == "completed" and not child.holds_capacity:
+                return self._followup_disposition("queued")
+            return self._followup_disposition("refused")
+        if matching_events:
+            if len(matching_events) != 1:
+                return self._followup_disposition("refused")
+            event = matching_events[0]
+            event_intent_value = event.get("_child_followup")
+            try:
+                event_intent = PendingChildFollowup.from_value(event_intent_value)
+            except ValueError:
+                return self._followup_disposition("refused")
+            if (
+                event.get("role") != "user"
+                or event.get("content") != content
+                or event_intent.child_control_epoch != child.control_epoch
+                or not event_intent.same_intent(intent)
+            ):
+                return self._followup_disposition("refused")
+            return self._followup_disposition("recorded")
+
+        for pending in pending_records:
+            pending_intent = pending.child_followup
+            if (
+                pending_intent is None
+                or pending_intent.child_id != child.child_id
+                or pending_intent.child_key != child.session_key
+                or pending_intent.child_store_identity != child_state.store_identity
+                or pending_intent.child_incarnation != child_state.incarnation
+                or pending_intent.child_generation != child_state.generation
+                or pending_intent.child_control_epoch != child.control_epoch
+            ):
+                return self._followup_disposition("refused")
+
+        if child.state == "active" and child.holds_capacity:
+            disposition = await executor.submit_child_followup(child, record, message)
+            if disposition in {"queued", "recorded", "applied"}:
+                return self._followup_disposition(disposition)
+            if disposition == "settling":
+                await self._await_child_settlement(child_id)
+            latest = tree.child(child_id)
+            if latest is None or latest.state != "completed" or latest.outcome != "completed":
+                return self._followup_disposition("refused")
+            child = latest
+            try:
+                child_snapshot = child_backend.source.load_source_snapshot(child.session_key)
+                child_state = child_snapshot.state
+            except Exception:
+                return self._followup_disposition("refused")
+            if (
+                child.source_state is None
+                or not child_state.same_origin(child.source_state)
+                or child_state.store_identity != intent.child_store_identity
+                or child_state.incarnation != intent.child_incarnation
+                or child_state.generation != intent.child_generation
+            ):
+                return self._followup_disposition("refused")
+            # The source activity worker refused before its durable write. A
+            # healthy settlement can now claim one serialized same-source run.
+            intent = replace(
+                intent,
+                child_run_id=child.current_run_id or "unavailable",
+                child_state_sequence=child.state_sequence,
+                child_control_epoch=child.control_epoch,
+            )
+            message = InboundMessage(
+                channel="system",
+                sender_id="subagent",
+                chat_id=child.session_key,
+                content=content,
+                session_key_override=child.session_key,
+                input_role="user",
+            )
+            identifier = mint_child_followup_id(message, intent)
+            record = source_pending_followup_record(message)
+            try:
+                pending_records = current_pending_records(child_snapshot, child, child_state)
+            except (KeyError, TypeError, ValueError):
+                return self._followup_disposition("refused")
+
+        if (
+            child.state != "completed"
+            or child.outcome != "completed"
+            or child.holds_capacity
+            or child.current_run_id is None
+            or child.pending_approval_id is not None
+            or child.pending_effect_id is not None
+            or tree.is_stopping(child_id)
+        ):
+            return self._followup_disposition("refused")
+        try:
+            if validate_execution_links(child_snapshot.events):
+                return self._followup_disposition("refused")
+        except Exception:
+            return self._followup_disposition("refused")
+        await self._await_child_settlement(child_id)
+        child = tree.child(child_id)
+        if (
+            child is None
+            or child.state != "completed"
+            or child.outcome != "completed"
+            or child.current_run_id is None
+            or child.source_state is None
+            or tree.is_stopping(child_id)
+        ):
+            return self._followup_disposition("refused")
+        try:
+            writer.validate_tool_intent_binding(
+                binding,
+                arguments={"child_id": child_id, "content": content},
+            )
+            child_snapshot = child_backend.source.load_source_snapshot(child.session_key)
+            if (
+                not child_snapshot.state.same_origin(child.source_state)
+                or child_snapshot.state.store_identity != child.source_state.store_identity
+                or child_snapshot.state.incarnation != child.source_state.incarnation
+                or child_snapshot.state.generation != child.source_state.generation
+            ):
+                return self._followup_disposition("refused")
+            pending_records = current_pending_records(
+                child_snapshot,
+                child,
+                child_snapshot.state,
+            )
+        except Exception:
+            return self._followup_disposition("refused")
+        matching_row = next(
+            (item for item in pending_records if item.identifier == identifier),
+            None,
+        )
+        if matching_row is not None:
+            existing_intent = matching_row.child_followup
+            if (
+                matching_row.content != content
+                or matching_row.media
+                or existing_intent is None
+                or not existing_intent.same_intent(intent)
+                or existing_intent.child_control_epoch != child.control_epoch
+            ):
+                return self._followup_disposition("refused")
+            return self._followup_disposition("queued")
+        matching_events = [
+            event for event in child_snapshot.events
+            if event.get("_pending_followup_id") == identifier
+        ]
+        if matching_events:
+            if len(matching_events) != 1:
+                return self._followup_disposition("refused")
+            event = matching_events[0]
+            try:
+                event_intent = PendingChildFollowup.from_value(
+                    event.get("_child_followup"),
+                )
+            except ValueError:
+                return self._followup_disposition("refused")
+            if (
+                event.get("role") != "user"
+                or event.get("content") != content
+                or event_intent.child_control_epoch != child.control_epoch
+                or not event_intent.same_intent(intent)
+            ):
+                return self._followup_disposition("refused")
+            return self._followup_disposition("recorded")
+        try:
+            if validate_execution_links(child_snapshot.events):
+                return self._followup_disposition("refused")
+        except Exception:
+            return self._followup_disposition("refused")
+        expected = tree.capture_child_control_state(child_id)
+        if (
+            expected is None
+            or tree.is_stopping(child_id)
+            or not self._source_is_current(parent_key, child.parent_source_state)
+            or not self._source_is_current(child.root_key, child.root_source_state)
+        ):
+            return self._followup_disposition("refused")
+
+        authority_candidate: object = child.policy_facts.get("authority")
+        tools_candidate: object = child.policy_facts.get("tools")
+        role_value: object = child.policy_facts.get("role")
+        if (
+            not isinstance(authority_candidate, dict)
+            or not isinstance(tools_candidate, list)
+            or not isinstance(role_value, str)
+        ):
+            return self._followup_disposition("refused")
+        authority_value = cast(dict[str, object], authority_candidate)
+        tool_values: list[str] = []
+        for name_value in cast(list[object], tools_candidate):
+            if not isinstance(name_value, str) or not name_value:
+                return self._followup_disposition("refused")
+            tool_values.append(name_value)
+        role = role_value
+        try:
+            role_profile = role_capabilities(role)
+            parent_bindings = context.active_tool_bindings
+            if not isinstance(parent_bindings, CapturedToolBindings):
+                return self._followup_disposition("refused")
+            if role == "crawler":
+                # Crawler state includes a separate provider and serialized gate.
+                # Historical child rows do not retain a safe reopen authority.
+                return self._followup_disposition("refused")
+            if role == "worker":
+                scope_candidate: object = authority_value.get("write_scope")
+                project_candidate: object = authority_value.get("write_scope_project")
+                target_candidate: object = authority_value.get("write_scope_targets")
+                if not isinstance(scope_candidate, list):
+                    return self._followup_disposition("refused")
+                raw_scope: list[str] = []
+                for path_value in cast(list[object], scope_candidate):
+                    if not isinstance(path_value, str) or not path_value:
+                        return self._followup_disposition("refused")
+                    raw_scope.append(path_value)
+                if not raw_scope or not isinstance(project_candidate, str) or not project_candidate:
+                    return self._followup_disposition("refused")
+                if not isinstance(target_candidate, list):
+                    return self._followup_disposition("refused")
+                expected_targets: list[tuple[str, bool]] = []
+                for target_value in cast(list[object], target_candidate):
+                    if not isinstance(target_value, dict):
+                        return self._followup_disposition("refused")
+                    target = cast(dict[str, object], target_value)
+                    path_value = target.get("path")
+                    recursive_value = target.get("recursive")
+                    if (
+                        set(target) != {"path", "recursive"}
+                        or not isinstance(path_value, str)
+                        or not path_value
+                        or type(recursive_value) is not bool
+                    ):
+                        return self._followup_disposition("refused")
+                    expected_targets.append((path_value, recursive_value))
+                if not expected_targets:
+                    return self._followup_disposition("refused")
+                raw_project = project_candidate
+                current_project = current_tool_workspace(
+                    self.workspace,
+                    restrict_to_workspace=self.restrict_to_workspace,
+                ).project_path or self.workspace
+                workspace = Path(raw_project).resolve()
+                if workspace != current_project.resolve():
+                    return self._followup_disposition("refused")
+                scopes = self._normalize_scopes(workspace, raw_scope)
+                resolved_targets = [(str(scope.path), scope.recursive) for scope in scopes]
+                if resolved_targets != expected_targets:
+                    return self._followup_disposition("refused")
+                role_tools = self._worker_tools(
+                    f"followup-{uuid.uuid4().hex[:8]}",
+                    scopes,
+                    workspace=workspace,
+                )
+            else:
+                scopes = ()
+                role_tools = self._tools_for_role(role)
+            admitted_names: set[str] = set(tool_values)
+            parent_names: set[str] = set(parent_bindings.tool_names)
+            owned_names: set[str] = admitted_names & set(role_profile.owned_tools)
+            effective_names: set[str] = (
+                admitted_names & set(role_tools.tool_names) & parent_names
+            ) | owned_names
+            read_only_mcp_names: tuple[str, ...] = tuple(
+                name
+                for name in admitted_names & parent_names
+                if role_profile.allow_read_only_mcp
+                and (tool := parent_bindings.get(name)) is not None
+                and is_read_only_mcp_tool(tool)
+            )
+            effective_names.update(read_only_mcp_names)
+            role_tools, child_bindings = self._scope_child_tools(
+                parent_bindings,
+                role_tools,
+                allowed_names=effective_names,
+                owned_names=role_profile.owned_tools,
+                read_only_mcp_names=read_only_mcp_names,
+            )
+            if role == "worker":
+                allowed = "\n".join(f"- {scope.describe()}" for scope in scopes)
+                instructions = self._base_prompt("Worker Role") + f"""
+
+## Write access
+
+You may modify only these admitted targets:
+{allowed}
+
+Continue the original assignment in the source history. Keep every write inside these targets.
+Use no shell, browser, device, or external delegation tool."""
+            else:
+                instructions = self._base_prompt(f"{role.title()} Role") + f"""
+
+Continue the original {role} assignment in the source history. Preserve the role's admitted
+capability boundary and report the work that the follow-up changes."""
+            if role in DELEGATED_READ_ONLY_ROLES:
+                instructions += (
+                    "\n\n## Enforced capability boundary\n"
+                    f"Role {role!r} may call only these tools: "
+                    f"{', '.join(role_tools.tool_names) or '(none)'}. "
+                    "State-changing and unknown actions remain blocked."
+                )
+        except Exception:
+            return self._followup_disposition("refused")
+
+        run_id = f"{child.child_id}-{uuid.uuid4().hex}"
+        launch_fence = tree.begin_launch(child_id)
+        claimed = await tree.begin_followup_run(
+            child_id,
+            run_id=run_id,
+            expected_run_id=child.current_run_id,
+            expected=expected,
+        )
+        if claimed is None or launch_fence.cancelled:
+            launch_fence.release()
+            child_bindings.release()
+            return self._followup_disposition("refused")
+        activated = await tree.activate(child_id)
+        if activated is None or launch_fence.cancelled:
+            launch_fence.release()
+            child_bindings.release()
+            await tree.complete(child_id, outcome="followup_activation_failed", state="uncertain")
+            return self._followup_disposition("refused")
+        child = activated
+        intent = replace(
+            intent,
+            child_run_id=run_id,
+            child_state_sequence=child.state_sequence,
+            child_control_epoch=child.control_epoch,
+        )
+        message = InboundMessage(
+            channel="system",
+            sender_id="subagent",
+            chat_id=child.session_key,
+            content=content,
+            session_key_override=child.session_key,
+            input_role="user",
+        )
+        identifier = mint_child_followup_id(message, intent)
+        record = source_pending_followup_record(message)
+        ordered_records = tuple(pending_records) + (record,)
+        ack_event = asyncio.Event()
+        turn_result: asyncio.Future[TurnResult] = asyncio.get_running_loop().create_future()
+
+        child_policies: list[ToolPolicy] = [
+            _ChildAuthorityPolicy(
+                tree=tree,
+                admission=child,
+                run_id=run_id,
+                parent_bindings=child_bindings,
+            ),
+        ]
+        if role in DELEGATED_READ_ONLY_ROLES:
+            child_policies.append(
+                DelegatedReadOnlyPolicy(allowed_tools=role_tools.tool_names, role=role)
+            )
+        child_policy = (
+            child_policies[0]
+            if len(child_policies) == 1
+            else cast(ToolPolicy, CompositeToolPolicy(tuple(child_policies)))
+        )
+
+        def acknowledge_request(identifiers: tuple[str, ...]) -> None:
+            if identifier in identifiers:
+                ack_event.set()
+
+        request_context = current_request_context()
+        runtime = (
+            self._crawler_runtime
+            if role == "crawler"
+            else request_context.runtime
+            if request_context is not None and request_context.runtime is not None
+            else self._baseline_runtime
+        )
+        max_iterations_value = child.policy_facts.get("max_iterations")
+        max_iterations = (
+            max_iterations_value
+            if type(max_iterations_value) is int and 1 <= max_iterations_value <= 100
+            else {"planner": 12, "reviewer": 15, "explorer": 12, "crawler": self.crawler_max_iterations,
+                  "worker": 30}.get(role, 12)
+        )
+        request = ChildTurnRequest(
+            admission=child,
+            run_id=run_id,
+            role=role,
+            instructions=instructions,
+            assignment=ordered_records[0].content,
+            tools=role_tools,
+            runtime=runtime,
+            max_iterations=max_iterations,
+            hook=_DelegationHook(role, f"followup-{identifier[:8]}"),
+            policy=child_policy,
+            approval_target=context.delivery.primary,
+            followup_records=ordered_records,
+            followup_records_to_admit=(record,),
+            followup_records_to_discard=tuple(stale_pending_records.values()),
+            request_boundary_validator=lambda child_id=child_id, active_run=run_id: (
+                self._child_request_is_current(child_id, active_run)
+            ),
+            followup_boundary_validator=lambda child_id=child_id, active_run=run_id: (
+                self._child_followup_boundary_is_current(child_id, active_run)
+            ),
+            followup_request_acknowledged=acknowledge_request,
+        )
+        backend = self._child_backends.resolve(child.profile)
+
+        async def run_and_finalize() -> TurnResult:
+            try:
+                result = await executor.execute_child_turn(request)
+            except asyncio.CancelledError:
+                await tree.complete(child_id, outcome="followup_settlement_unconfirmed", state="uncertain")
+                raise
+            except Exception:
+                await tree.complete(child_id, outcome="followup_settlement_unconfirmed", state="uncertain")
+                raise
+            if not turn_result.done():
+                turn_result.set_result(result)
+            agent_result = AgentRunResult(
+                final_content=result.content if isinstance(result.content, str) else None,
+                messages=list(result.messages or ()),
+                tools_used=list(result.tools_used),
+                stop_reason=result.stop_reason or result.status.value,
+                policy_metadata=dict(result.policy_metadata),
+                error=result.error,
+            )
+            if result.status is RunStatus.APPROVAL_REQUIRED:
+                approval_id = result.policy_metadata.get("approval_id")
+                effect_id = result.policy_metadata.get("effect_id")
+                if isinstance(approval_id, str) and isinstance(effect_id, str):
+                    self._suspended_children[child_id] = _SuspendedChild(
+                        request=request,
+                        parent_bindings=child_bindings,
+                    )
+                    waiting = await tree.wait_for_approval(
+                        child_id,
+                        approval_id=approval_id,
+                        effect_id=effect_id,
+                        summary=str(result.policy_metadata.get("summary") or "risky action"),
+                        blocked_run_id=run_id,
+                    )
+                    if waiting is not None and waiting.state == "waiting_approval":
+                        self._suspended_children[child_id] = _SuspendedChild(
+                            request=replace(request, admission=waiting),
+                            parent_bindings=child_bindings,
+                        )
+                        result.policy_metadata = {
+                            **result.policy_metadata,
+                            "delegated_child": waiting.metadata(),
+                        }
+                        await self._emit_child(waiting)
+                        return result
+                    self._suspended_children.pop(child_id, None)
+                    await tree.complete(
+                        child_id,
+                        outcome="followup_approval_persistence_failed",
+                        state="uncertain",
+                    )
+                    return result
+            await self._finalize_admission(
+                child,
+                agent_result,
+                role=role,
+                assignment="\n\n".join(item.content for item in ordered_records),
+                source_writer=None,
+                canonical=True,
+            )
+            return result
+
+        def track_child_task(task: asyncio.Task[Any]) -> None:
+            launch_fence.attach(task)
+
+        try:
+            if launch_fence.cancelled:
+                await tree.complete(child_id, outcome="followup_stopped_before_dispatch", state="stopped")
+                return self._followup_disposition("refused")
+            handle = await backend.start(
+                child,
+                run_and_finalize,
+                ChildBackendBinding(
+                    runtime_generation=child.runtime_generation,
+                    proof="ordered-followup",
+                ),
+                track=track_child_task,
+            )
+            self._track_child_handle(handle)
+            await asyncio.wait(
+                {turn_result, handle.task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if turn_result.done():
+                result_value = turn_result.result()
+            else:
+                completed = await asyncio.gather(handle.task, return_exceptions=True)
+                result_value = completed[0]
+                if not isinstance(result_value, TurnResult):
+                    return self._followup_disposition("refused")
+            disposition = "applied" if ack_event.is_set() else "recorded"
+            if result_value.status is RunStatus.APPROVAL_REQUIRED:
+                await backend.wait(handle)
+                settled = await asyncio.gather(handle.task, return_exceptions=True)
+                settled_result = settled[0]
+                current = tree.child(child_id)
+                if current is not None and current.state == "waiting_approval" and isinstance(
+                    settled_result, TurnResult,
+                ):
+                    approval_id = settled_result.policy_metadata.get("approval_id")
+                    child_meta = settled_result.policy_metadata.get("delegated_child")
+                    if isinstance(approval_id, str) and isinstance(child_meta, dict):
+                        context.forwarded_child_approval_id = approval_id
+                        context.forwarded_child_id = child_id
+                    return ToolOutcome(
+                        content=self._followup_disposition(disposition),
+                        stop_reason="approval_required",
+                        policy_metadata=dict(settled_result.policy_metadata),
+                    )
+                return self._followup_disposition("refused")
+            if result_value.stop_reason in {"policy_blocked", "tool_error", "cancelled"}:
+                await backend.wait(handle)
+                settled = await asyncio.gather(handle.task, return_exceptions=True)
+                settled_result = settled[0]
+                if isinstance(settled_result, TurnResult):
+                    return ToolOutcome(
+                        content=self._followup_disposition(disposition),
+                        stop_reason=settled_result.stop_reason,
+                        policy_metadata=dict(settled_result.policy_metadata),
+                    )
+                return self._followup_disposition("refused")
+            return self._followup_disposition(disposition)
+        except Exception:
+            current = tree.child(child_id)
+            if current is not None and current.live:
+                await tree.complete(
+                    child_id,
+                    outcome="followup_launch_unsettled",
+                    state="uncertain",
+                )
+            return self._followup_disposition("refused")
+        finally:
+            launch_fence.release()
+            current = tree.child(child_id)
+            if current is None or not current.holds_capacity:
+                child_bindings.release()
+
     async def run_plan(
         self,
         *,
@@ -2112,10 +2935,8 @@ Do not include internal system state or pretend unverified assumptions are facts
                 self.workspace,
                 restrict_to_workspace=self.restrict_to_workspace,
             )
-            scopes = self._normalize_scopes(
-                access.project_path or self.workspace,
-                write_scope,
-            )
+            scope_project = (access.project_path or self.workspace).resolve()
+            scopes = self._normalize_scopes(scope_project, write_scope)
         except ValueError as exc:
             return f"Error: {exc}"
         call_id = str(uuid.uuid4())[:8]
@@ -2144,7 +2965,14 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
             max_iterations=30,
             turn_context=turn_context,
             artifact_references=artifact_references,
-            authority={"write_scope": list(write_scope)},
+            authority={
+                "write_scope": list(write_scope),
+                "write_scope_project": str(scope_project),
+                "write_scope_targets": [
+                    {"path": str(scope.path), "recursive": scope.recursive}
+                    for scope in scopes
+                ],
+            },
             background=background,
         )
         return self._role_result(result, "worker", turn_context)

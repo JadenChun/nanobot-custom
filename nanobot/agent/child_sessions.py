@@ -28,6 +28,8 @@ from typing import Any, Literal, Mapping, cast
 from loguru import logger
 
 from nanobot.session.manager import Session, SessionManager
+from nanobot.session.pending_followups import parse_pending_followup_records
+from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
 from nanobot.session.runtime_authority import (
     RUNTIME_SESSION_METADATA_KEY,
     RuntimeSessionMetadata,
@@ -873,6 +875,26 @@ class DelegationTree:
         updates: list[ChildAdmission] = []
         for current in victims:
             if not current.holds_capacity:
+                if not self._has_current_pending_child_followup(current):
+                    continue
+                if control_epoch <= current.control_epoch:
+                    self._recovery_error = self._recovery_error or (
+                        f"child Stop epoch did not advance: {current.child_id}"
+                    )
+                    continue
+                updated = replace(
+                    current,
+                    control_epoch=control_epoch,
+                    state_sequence=current.state_sequence + 1,
+                    updated_at=time.time(),
+                )
+                if not self._persist(updated):
+                    self._recovery_error = self._recovery_error or (
+                        f"child Stop epoch could not be persisted: {current.child_id}"
+                    )
+                    continue
+                self._children[current.child_id] = updated
+                updates.append(updated)
                 continue
             if current.state == "stopping" and current.control_epoch == control_epoch:
                 updates.append(current)
@@ -894,6 +916,45 @@ class DelegationTree:
             self._children[current.child_id] = updated
             updates.append(updated)
         return tuple(updates)
+
+    def _has_current_pending_child_followup(self, child: ChildAdmission) -> bool:
+        """Find a queued row that a terminal child could otherwise replay."""
+        if child.source_state is None:
+            return False
+        backend = self.sessions.source_backend(child.session_key)
+        if backend is None:
+            return False
+        try:
+            snapshot = backend.source.load_source_snapshot(child.session_key)
+            state = snapshot.state
+            if (
+                not state.same_origin(child.source_state)
+                or state.store_identity != child.source_state.store_identity
+                or state.incarnation != child.source_state.incarnation
+                or state.generation != child.source_state.generation
+            ):
+                return False
+            metadata_value: object = snapshot.header.get("metadata")
+            if not isinstance(metadata_value, dict):
+                return False
+            metadata = cast(dict[str, object], metadata_value)
+            records = parse_pending_followup_records(
+                metadata.get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, []),
+            )
+        except Exception:
+            return False
+        return any(
+            intent is not None
+            and intent.child_id == child.child_id
+            and intent.child_key == child.session_key
+            and intent.parent_key == child.parent_key
+            and intent.parent_incarnation == child.parent_incarnation
+            and intent.child_store_identity == state.store_identity
+            and intent.child_incarnation == state.incarnation
+            and intent.child_generation == state.generation
+            and intent.child_control_epoch == child.control_epoch
+            for intent in (record.child_followup for record in records)
+        )
 
     async def reserve(
         self,
@@ -1113,6 +1174,64 @@ class DelegationTree:
                 state_sequence=current.state_sequence + 1,
                 current_run_id=run_id,
                 last_run_id=run_id,
+                updated_at=time.time(),
+            )
+            if not self._persist(updated):
+                return None
+            self._children[child_id] = updated
+            return updated
+
+    async def begin_followup_run(
+        self,
+        child_id: str,
+        *,
+        run_id: str,
+        expected_run_id: str,
+        expected: ChildControlState,
+    ) -> ChildAdmission | None:
+        """Claim one new run on a settled healthy child source."""
+        if not _SAFE_RUN_ID.fullmatch(run_id):
+            raise ValueError("delegated child run id is not filename safe")
+        async with self._lock:
+            current = self._children.get(child_id)
+            if (
+                current is None
+                or current.state != "completed"
+                or current.outcome != "completed"
+                or current.holds_capacity
+                or current.current_run_id != expected_run_id
+                or expected.child_id != child_id
+                or not self._child_control_state_matches(expected)
+                or self.is_stopping(child_id)
+                or self._recovery_error is not None
+            ):
+                return None
+            parent_children = [
+                child for child in self._children.values()
+                if child.parent_key == current.parent_key and child.holds_capacity
+            ]
+            root_descendants = [
+                child for child in self._children.values()
+                if child.root_key == current.root_key and child.holds_capacity
+            ]
+            gateway_children = [
+                child for child in self._children.values() if child.holds_capacity
+            ]
+            if (
+                len(parent_children) >= self.policy.max_live_children_per_parent
+                or len(root_descendants) >= self.policy.max_live_descendants
+                or len(gateway_children) >= self.policy.max_live_children_per_gateway
+            ):
+                return None
+            updated = replace(
+                current,
+                state="joining",
+                state_sequence=current.state_sequence + 1,
+                run_sequence=current.run_sequence + 1,
+                current_run_id=run_id,
+                last_run_id=run_id,
+                holds_capacity=True,
+                outcome=None,
                 updated_at=time.time(),
             )
             if not self._persist(updated):

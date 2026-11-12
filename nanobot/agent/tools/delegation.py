@@ -140,6 +140,39 @@ class DelegateTaskTool(_ForegroundTool):
         return await self.execute(turn_context=context, **kwargs)
 
 
+class FollowupChildTool(_ForegroundTool):
+    _tool_name = "followup_child"
+    _tool_description = (
+        "Send an ordered follow-up to one canonical child owned by this chat. "
+        "Use the child_id from its delegated result."
+    )
+    _tool_parameters = {
+        "type": "object",
+        "properties": {
+            "child_id": {"type": "string", "minLength": 1},
+            "content": {"type": "string", "minLength": 1},
+        },
+        "required": ["child_id", "content"],
+        "additionalProperties": False,
+    }
+
+    async def execute(
+        self,
+        child_id: str,
+        content: str,
+        turn_context: TurnContext | None = None,
+        **_: Any,
+    ) -> str | ToolOutcome:
+        return await self._manager.followup_child(
+            child_id=child_id,
+            content=content,
+            turn_context=turn_context,
+        )
+
+    async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
+        return await self.execute(turn_context=context, **kwargs)
+
+
 class ReviewWorkTool(_ForegroundTool):
     _tool_name = "review_work"
     _tool_description = (
@@ -186,4 +219,4 @@ class ReviewWorkTool(_ForegroundTool):
         return await self.execute(turn_context=context, **kwargs)
 
 
-__all__ = ["DelegateTaskTool", "PlanTaskTool", "ReviewWorkTool"]
+__all__ = ["DelegateTaskTool", "FollowupChildTool", "PlanTaskTool", "ReviewWorkTool"]

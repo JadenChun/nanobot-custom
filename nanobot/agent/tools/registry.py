@@ -37,7 +37,7 @@ MANAGED_WEBUI_TOOL_NAMES = frozenset({
     "exec_session", "list_exec_sessions", "web_search", "web_fetch",
     "message", "cron", "generate_image", "repository_catalog",
     "save_knowledge", "select_workspace", "plan_task", "delegate_task",
-    "request_folder_access", "review_work", "explore",
+    "request_folder_access", "review_work", "explore", "followup_child",
 })
 
 _MANAGED_CAPABILITY_DENIAL = (

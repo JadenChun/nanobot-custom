@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.session.artifact_grants import ArtifactHandoffReceipt
+    from nanobot.session.turn_writer import SourceToolIntentBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +146,7 @@ async def execute_tool_calls(
     turn_context: TurnContext | None = None,
     fail_on_tool_error: bool = False,
     tool_result_callback: ToolResultCallback | None = None,
+    tool_intent_bindings: Sequence[SourceToolIntentBinding | None] | None = None,
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Execute one model response's tool calls in stable result order."""
     if turn_context is not None and turn_context.execution_owner is not None and tool_result_callback is None:
@@ -184,8 +186,14 @@ async def execute_tool_calls(
                     context,
                     turn_context,
                     tool_policy=tool_policy,
+                    tool_intent_binding=(
+                        tool_intent_bindings[ordinal + index]
+                        if tool_intent_bindings is not None
+                        and ordinal + index < len(tool_intent_bindings)
+                        else None
+                    ),
                 )
-                for tool_call in batch
+                for index, tool_call in enumerate(batch)
             ))
             terminal = next((value for value, _ in batch_results
                              if isinstance(value, ToolOutcome) and value.stop_reason
@@ -212,6 +220,12 @@ async def execute_tool_calls(
                             tool_result_callback,
                             ordinal,
                             tool_policy=tool_policy,
+                            tool_intent_binding=(
+                                tool_intent_bindings[ordinal]
+                                if tool_intent_bindings is not None
+                                and ordinal < len(tool_intent_bindings)
+                                else None
+                            ),
                         )
                         ordinal += 1
                         outcome, event = result
@@ -241,6 +255,12 @@ async def execute_tool_calls(
                     tool_result_callback,
                     ordinal,
                     tool_policy=tool_policy,
+                    tool_intent_binding=(
+                        tool_intent_bindings[ordinal]
+                        if tool_intent_bindings is not None
+                        and ordinal < len(tool_intent_bindings)
+                        else None
+                    ),
                 )
                 ordinal += 1
                 outcome, event = result
@@ -287,6 +307,7 @@ async def _execute_tool_call(
     tool_result_callback: ToolResultCallback | None = None,
     ordinal: int = 0,
     tool_policy: ToolPolicy | None = None,
+    tool_intent_binding: SourceToolIntentBinding | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     lookup_error = repeated_external_lookup_error(
         tool_call.name,
@@ -427,12 +448,19 @@ async def _execute_tool_call(
                 return refused, event
         try:
             binding_token = set_assessed_write_target(assessed_write_target)
+            previous_intent = (
+                turn_context.active_tool_intent_binding if turn_context is not None else None
+            )
+            if turn_context is not None:
+                turn_context.active_tool_intent_binding = tool_intent_binding
             try:
                 if tool is not None:
                     result = await tools.execute_prepared(tool, params, turn_context)
                 else:
                     result = await tools.execute(tool_call.name, params)
             finally:
+                if turn_context is not None:
+                    turn_context.active_tool_intent_binding = previous_intent
                 reset_assessed_write_target(binding_token)
         except FilesystemEffectCancelled as exc:
             raw = ToolOutcome(

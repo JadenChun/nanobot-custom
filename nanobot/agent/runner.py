@@ -269,6 +269,9 @@ class AgentRunSpec:
     events: EventSink = NO_EVENTS
     tool_result_callback: ToolResultCallback | None = None
     source_writer: SourceTurnWriter | None = None
+    request_boundary_validator: Callable[[], bool] | None = None
+    followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = None
+    pending_followup_acknowledgments: list[str] = field(default_factory=list, repr=False)
     source_transcript: SourceTranscript | None = None
     source_initial_eligible_ids: frozenset[str] = frozenset()
     source_isolated: bool = False
@@ -431,6 +434,8 @@ class AgentRunner:
                     binding = spec.source_writer.validate_injection_binding(item)
                     injections.append(dict(binding.message))
                     source_event_ids.append(binding.event_id)
+                    if binding.followup_id is not None:
+                        spec.pending_followup_acknowledgments.append(binding.followup_id)
                 else:
                     injections.append(item)
                     source_event_ids.append(None)
@@ -908,6 +913,13 @@ class AgentRunner:
             # The previous response's results/source have settled before this
             # next sampling boundary. Exceptions/terminal exits use the stack.
             response_owners.close()
+            if (
+                spec.request_boundary_validator is not None
+                and not spec.request_boundary_validator()
+            ):
+                raise SourceValidationError(
+                    "Canonical child authority changed before the model request"
+                )
             # A continuation starts a new attempt. A prior attempt's terminal
             # disposition must not leak into this attempt's public result.
             stop_reason = "completed"
@@ -934,6 +946,13 @@ class AgentRunner:
                 request_state=request_state,
                 transcript=messages,
             )
+            acknowledged = tuple(dict.fromkeys(spec.pending_followup_acknowledgments))
+            spec.pending_followup_acknowledgments.clear()
+            if acknowledged and spec.followup_request_acknowledged is not None:
+                try:
+                    spec.followup_request_acknowledged(acknowledged)
+                except Exception:
+                    logger.exception("follow-up request acknowledgment failed")
             response_owners.callback(recorded_response.release)
             response = recorded_response.response
             assert request_state.messages is not None
@@ -997,6 +1016,12 @@ class AgentRunner:
 
                 result_ids: dict[int, str] = {}
                 source_writer = spec.source_writer
+                tool_intent_bindings = (
+                    source_writer.bind_tool_intents(recorded_response.source_event_id)
+                    if source_writer is not None
+                    and recorded_response.source_event_id is not None
+                    else None
+                )
 
                 async def record_result(value: KnownToolResult) -> None:
                     assert source_writer is not None
@@ -1048,6 +1073,7 @@ class AgentRunner:
                         fail_on_tool_error=spec.fail_on_tool_error,
                         tool_result_callback=(record_result if source_writer is not None
                                               else spec.tool_result_callback),
+                        tool_intent_bindings=tool_intent_bindings,
                     )
                 finally:
                     if turn_context is not None:
