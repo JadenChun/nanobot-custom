@@ -1,5 +1,43 @@
 # A3 implementation correction handoff
 
+## Canonical child projection checkpoint (2026-11-12)
+
+Resume from `b5119be1` on `codex/staging-audit-implementation`. This checkpoint
+completes the AC8 projection and history slice of `A3-PLAN-2026-11-11`. Staging is at
+`f1a6bb85`.
+
+- `DelegatedChildEvent` now carries the parent, root, and child source lifetimes;
+  parent and child run references; run and state sequence; control epoch; capacity;
+  stop eligibility; owned work; approval identity; and result disposition.
+- Nested child events route to the original root chat. They no longer target the
+  delegated child route.
+- The WebUI transcript persists and replays the complete event. The TUI and WebUI
+  clients merge the new fields and use `can_stop` for the Stop action.
+- The authorized child thread route reads canonical child history when the child
+  source lifetime matches. It rejects a stale child source and keeps summary-only
+  history read-only.
+- The parent exposes a delegated-children hydration endpoint. The WebUI fetches it
+  on reconnect and appends child rows that the transcript does not contain.
+
+Verification on the Linux worktree with Python 3.14.10, BasedPyright 1.40.2, and
+pytest 9.2.0:
+
+| Check | Result |
+| --- | --- |
+| Full `tests/webui` suite | **554 passed**. |
+| Child event, history, route, AC4, and AC5 set | **169 passed**. |
+| WebSocket HTTP route suite | **109 passed**. |
+| WebUI TypeScript suites | **167 passed**. |
+| TUI suite and type check | **80 passed**, type check pass. |
+| WebUI production build | **Passed**. |
+| Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
+| Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
+
+The crawler admission and prompt isolation fix, uncertain-run recovery proof,
+combined backend review, the remaining mobile/detail client work, and release
+qualification remain open.
+
 ## Background result delivery checkpoint (2026-11-12)
 
 Resume from `67524f1a` on `codex/staging-audit-implementation`. This checkpoint
