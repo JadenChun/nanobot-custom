@@ -89,7 +89,12 @@ from nanobot.utils.runtime import (
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.filesystem import ReadFileTool
-    from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
+    from nanobot.session.artifact_grants import (
+        ArtifactGrantSet,
+        ArtifactHandoffCollector,
+        ArtifactHandoffReceipt,
+        CanonicalChildArtifactInput,
+    )
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.source_request import SourceTranscript
 
@@ -278,7 +283,10 @@ class AgentRunSpec:
     artifact_reader_factory: Callable[
         [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
     ] | None = field(default=None, repr=False)
-    artifact_handoff_collector: object | None = field(default=None, repr=False)
+    artifact_handoff_collector: ArtifactHandoffCollector | None = field(default=None, repr=False)
+    canonical_child_artifact_input: CanonicalChildArtifactInput | None = field(
+        default=None, repr=False,
+    )
     allow_pre_dispatch_recovery: bool = False
 
 
@@ -594,7 +602,82 @@ class AgentRunner:
                 raise ValueError("Execution ownership requires durable tool-result recording")
             # Never inherit an invocation-bound reader from a parent registry.
             artifact_reader_factory = spec.artifact_reader_factory or self.artifact_reader_factory
-            if artifact_reader_factory is not None or 'read_artifact' in spec.tools.tool_names:
+            canonical_input = spec.canonical_child_artifact_input
+            if canonical_input is not None:
+                from nanobot.agent.tools.artifact import ReadArtifactTool
+                from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
+                from nanobot.agent.tools.filesystem import ReadFileTool
+                from nanobot.session.artifact import ArtifactValidationError
+                from nanobot.session.artifact_grants import (
+                    ArtifactDirectChildBinding,
+                    ArtifactGrantSet,
+                    ArtifactHandoffCollector,
+                    CanonicalChildArtifactInput,
+                )
+                from nanobot.session.artifact_reader import ArtifactReader
+
+                if (
+                    type(canonical_input) is not CanonicalChildArtifactInput
+                    or spec.source_writer is None
+                    or spec.source_writer.parent_stream_id is not None
+                    or spec.source_isolated
+                    or spec.artifact_grants is not None
+                    or not spec.artifact_read_allowed
+                    or artifact_reader_factory is None
+                ):
+                    raise ArtifactValidationError(
+                        'Canonical child artifact input is not admitted for this turn'
+                    )
+                if spec.turn_context is not None:
+                    spec.turn_context.artifact_reader = None
+                    spec.turn_context.artifact_grants = None
+                    spec.turn_context.artifact_handoff_notices.clear()
+
+                tools = spec.tools.filtered([
+                    name for name in spec.tools.tool_names
+                    if name not in {'read_artifact', 'handoff_artifact'}
+                ])
+                read_file = tools.get('read_file')
+                if type(read_file) is not ReadFileTool:
+                    raise ArtifactValidationError(
+                        'Canonical child artifact input requires admitted file read access'
+                    )
+                binding = ArtifactDirectChildBinding.capture(
+                    canonical_input.admission,
+                    canonical_input.parent_reader,
+                    spec.source_writer,
+                )
+                grants = ArtifactGrantSet.issue_downward(
+                    canonical_input.parent_reader,
+                    spec.source_writer,
+                    list(canonical_input.references),
+                    child_binding=binding,
+                )
+                child_artifact_grants = grants
+                reader = artifact_reader_factory(spec.source_writer, True, read_file)
+                if (
+                    type(reader) is not ArtifactReader
+                    or reader.writer is not spec.source_writer
+                    or reader.mode != 'isolated_stream'
+                    or reader.read_file is not read_file
+                ):
+                    raise ArtifactValidationError(
+                        'Canonical child artifact reader does not match admitted invocation'
+                    )
+                reader = replace(reader, grants=grants)
+                collector = ArtifactHandoffCollector(reader, child_binding=binding)
+                tools.register(ReadArtifactTool(reader))
+                tools.register(ArtifactHandoffTool(collector))
+                if spec.turn_context is not None:
+                    spec.turn_context.artifact_reader = reader
+                    spec.turn_context.artifact_grants = grants
+                spec = replace(
+                    spec,
+                    tools=tools,
+                    artifact_grants=grants,
+                    artifact_handoff_collector=collector,
+                )
+            elif artifact_reader_factory is not None or 'read_artifact' in spec.tools.tool_names:
                 from nanobot.agent.tools.artifact import ReadArtifactTool
                 from nanobot.agent.tools.filesystem import ReadFileTool
 
@@ -926,7 +1009,11 @@ class AgentRunner:
                             ArtifactHandoffCollector,
                         )
 
-                        if isinstance(collector, ArtifactHandoffCollector):
+                        if value.name == 'handoff_artifact':
+                            if not isinstance(collector, ArtifactHandoffCollector):
+                                raise SourceValidationError(
+                                    'Artifact handoff has no local child collector'
+                                )
                             collector.record(value.handoff_receipt, event_id)
                         elif spec.turn_context is not None and isinstance(
                             spec.turn_context.artifact_grants, ArtifactGrantSet
@@ -1570,9 +1657,14 @@ class AgentRunner:
             from nanobot.session.artifact_grants import ArtifactHandoffCollector
 
             collector = spec.artifact_handoff_collector
-            if not isinstance(collector, ArtifactHandoffCollector):
+            if not isinstance(cast(object, collector), ArtifactHandoffCollector):
                 raise SourceValidationError('Invalid artifact handoff collector')
-            artifact_handoff_receipt = collector.finalize(stop_reason=stop_reason)
+            if spec.canonical_child_artifact_input is not None:
+                artifact_handoff_receipt = collector.prepare_after_completion(
+                    stop_reason=stop_reason
+                )
+            else:
+                artifact_handoff_receipt = collector.finalize(stop_reason=stop_reason)
 
         return AgentRunResult(
             final_content=final_content,

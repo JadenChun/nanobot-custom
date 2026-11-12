@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Mapping, NoReturn, SupportsIndex, cast
 
 from nanobot.session.artifact import (
@@ -70,6 +70,39 @@ def _parse_grant_references(references: object) -> tuple[str, ...]:
     if len(set(parsed)) != len(parsed):
         raise ArtifactValidationError("Artifact references must be unique")
     return parsed
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalChildArtifactInput:
+    """Trusted, in-memory artifact input for one awaited canonical child turn."""
+
+    admission: ChildAdmission = field(repr=False, compare=False)
+    parent_reader: ArtifactReader = field(repr=False, compare=False)
+    references: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        from nanobot.agent.child_sessions import ChildAdmission as RuntimeChildAdmission
+        from nanobot.session.artifact_reader import ArtifactReader as RuntimeArtifactReader
+
+        if (
+            type(self.admission) is not RuntimeChildAdmission
+            or type(self.parent_reader) is not RuntimeArtifactReader
+            or self.admission.policy_facts.get("background") is not False
+        ):
+            raise ArtifactValidationError("Canonical child artifact input requires awaited execution")
+        raw_references = cast(object, self.references)
+        if not isinstance(raw_references, tuple):
+            raise ArtifactValidationError("Invalid canonical child artifact references")
+        references = _parse_grant_references(list(cast(tuple[object, ...], raw_references)))
+        if references != raw_references:
+            raise ArtifactValidationError("Invalid canonical child artifact references")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("Canonical child artifact input cannot be serialized")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        _ = protocol
+        raise TypeError("Canonical child artifact input cannot be serialized")
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +231,7 @@ class ArtifactDirectChildBinding:
             or not admission.live
             or admission.state != "active"
             or not admission.holds_capacity
+            or admission.policy_facts.get("background") is not False
             or admission.session_key != child_writer.owner.key
             or admission.parent_key != parent_writer.owner.key
             or admission.current_run_id != child_writer.run_id
@@ -1427,6 +1461,7 @@ class ArtifactHandoffCollector:
 
 
 __all__ = [
+    "CanonicalChildArtifactInput",
     "ArtifactDirectChildBinding",
     "ArtifactGrantSet",
     "ArtifactHandoffCollector",
