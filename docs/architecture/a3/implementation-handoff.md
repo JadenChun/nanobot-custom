@@ -1,5 +1,43 @@
 # A3 implementation correction handoff
 
+## Ordered child follow-up checkpoint (2026-11-12)
+
+Resume from `0a1137444ae877fac299cd74d22fe0ccdcac11fe` on
+`codex/staging-audit-implementation`. This checkpoint completes the AC4
+follow-up slice of `A3-PLAN-2026-11-11`. Staging is at `f1a6bb85`.
+
+- The original chat calls `followup_child` through a recorded parent tool
+  intent. The active child owner writes ordered input to its canonical journal.
+  Identical retries reconcile. Conflicting input refuses.
+- A healthy idle child can start one run on the same source. Input that arrives
+  during settlement stays durable or enters a serialized run after settlement.
+  An unresolved effect fences the next model request.
+- Original-chat Stop fences consumption before cancellation. A persisted
+  control epoch also fences a retained row after restart. The next authorized
+  run discards that exact stale row and preserves other journal entries.
+- Idle worker continuation checks the originally resolved write targets and
+  recursion flags. A retargeted link or a historical record without that scope
+  evidence causes refusal. Crawler idle continuation remains fenced pending
+  the crawler provider and browser lifecycle correction.
+
+The frozen Linux candidate passed **397 affected tests**, including **eight
+AC4 integration cases**. Full Ruff and whitespace checks passed. BasedPyright
+1.40.2 with Python 3.14.10 reported **zero diagnostics across 545 files**.
+The full-source comparisons against `225ea3f9` and immutable integration
+`685bee92` introduced zero diagnostics under the same dependency inventory.
+The retarget regression fails on the frozen source before the scope fix.
+
+Local evidence is under
+`a3-evidence/ordered-followups-2026-11-12-225ea3f9.ayn119hr/` beside the
+implementation worktree. Use the `ac4-checkpoint-*` manifests, command receipts,
+comparison reports, and test logs. `requirements-only-cases.md` records the
+isolated acceptance cases.
+
+Continue with AC5 durable background result delivery to the exact original
+parent and route. Then finish AC8 projection, reconnect and canonical history.
+The crawler admission and prompt isolation fixes, uncertain-run recovery proof,
+combined backend review, clients, and release qualification remain open.
+
 ## Continuation checkpoint: artifact handoff wired (2026-11-12)
 
 Resume from `751ea75c` on `codex/staging-audit-implementation`. Staging remains
