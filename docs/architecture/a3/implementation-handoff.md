@@ -2,10 +2,10 @@
 
 ## Combined backend review corrections (2026-11-13)
 
-Resume from `c92d1fe6` on `codex/staging-audit-implementation`. An independent
+Resume from `0a68f298` on `codex/staging-audit-implementation`. An independent
 combined review of `225ea3f9..8652b8b1` returned **CORRECT** with two P1 and four
 P2 findings. This checkpoint closes them, including the delta findings from the
-fix review.
+fix review. The final delta review returned **PASS**.
 
 - A cancelled follow-up claim before dispatch now settles the child as stopped and
   releases capacity. Follow-up tool bindings also release when the backend task
