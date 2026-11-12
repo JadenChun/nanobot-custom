@@ -2398,6 +2398,10 @@ class ForegroundAgentManager:
                 or record.session_ref.session_key != child.session_key
                 or record.session_ref.run_id != run_id
                 or backend is None
+                or (
+                    record.status is RunStatus.CANCELLED
+                    and child.state == "stopped"
+                )
             ):
                 continue
             try:
@@ -2464,7 +2468,11 @@ class ForegroundAgentManager:
             pending = 0
             for child in tree.background_results():
                 record = child.background_result
-                if record is None or record.state != "pending":
+                if (
+                    record is None
+                    or record.state == "stale"
+                    or (record.state == "admitted" and record.published)
+                ):
                     continue
                 disposition = await self._reconcile_background_result(child, record)
                 if disposition == "admitted":
@@ -2489,12 +2497,14 @@ class ForegroundAgentManager:
             *,
             journal_id: str | None = None,
             stale_reason: str | None = None,
+            published: bool | None = None,
         ) -> bool:
             updated = await tree.mark_background_result(
                 child.child_id,
                 state=state,
                 journal_id=journal_id,
                 stale_reason=stale_reason,
+                published=published,
             )
             if (
                 updated is None
@@ -2525,7 +2535,8 @@ class ForegroundAgentManager:
             event.get("_pending_followup_id") == record.outbox_id
             for event in snapshot.events
         ):
-            await mark("admitted", journal_id=record.outbox_id)
+            if not await mark("admitted", journal_id=record.outbox_id):
+                return "pending"
             return "admitted"
         try:
             existing = next(
@@ -2603,7 +2614,7 @@ class ForegroundAgentManager:
                 return "pending"
         if not await mark("admitted", journal_id=pending_record.identifier):
             return "pending"
-        if existing is None:
+        if existing is None or not record.published:
             sink = self._background_result_sink
             if sink is not None:
                 try:
@@ -2613,6 +2624,13 @@ class ForegroundAgentManager:
                         "Background child result publication failed for {}",
                         child.child_id,
                     )
+                    return "pending"
+            if not await mark(
+                "admitted",
+                journal_id=pending_record.identifier,
+                published=True,
+            ):
+                return "pending"
         return "admitted"
 
     @staticmethod
@@ -3174,7 +3192,16 @@ capability boundary and report the work that the follow-up changes."""
             expected_run_id=child.current_run_id,
             expected=expected,
         )
-        if claimed is None or launch_fence.cancelled:
+        if claimed is None:
+            launch_fence.release()
+            child_bindings.release()
+            return self._followup_disposition("refused")
+        if launch_fence.cancelled:
+            await tree.complete(
+                child_id,
+                outcome="followup_stopped_before_dispatch",
+                state="stopped",
+            )
             launch_fence.release()
             child_bindings.release()
             return self._followup_disposition("refused")
@@ -3191,8 +3218,12 @@ capability boundary and report the work that the follow-up changes."""
             raise
         if activated is None or launch_fence.cancelled:
             launch_fence.release()
+            await tree.complete(
+                child_id,
+                outcome="followup_stopped_before_dispatch",
+                state="stopped",
+            )
             child_bindings.release()
-            await tree.complete(child_id, outcome="followup_activation_failed", state="uncertain")
             return self._followup_disposition("refused")
         child = activated
         intent = replace(

@@ -189,6 +189,7 @@ class PendingBackgroundResult:
     state: Literal["pending", "admitted", "stale"] = "pending"
     journal_id: str | None = None
     stale_reason: str | None = None
+    published: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -215,13 +216,14 @@ class PendingBackgroundResult:
             "state": self.state,
             "journal_id": self.journal_id,
             "stale_reason": self.stale_reason,
+            "published": self.published,
         }
 
     def same_result(self, other: object) -> bool:
         """Compare the exact delivery intent without its reconciliation state."""
         if type(other) is not PendingBackgroundResult:
             return False
-        ignored = {"state", "journal_id", "stale_reason", "created_at"}
+        ignored = {"state", "journal_id", "stale_reason", "created_at", "published"}
         return {
             key: value for key, value in self.to_dict().items() if key not in ignored
         } == {
@@ -257,7 +259,7 @@ class PendingBackgroundResult:
             "created_at",
             "state",
         }
-        optional = {"journal_id", "stale_reason"}
+        optional = {"journal_id", "stale_reason", "published"}
         if not required <= set(raw) or set(raw) - required - optional:
             raise ValueError("Invalid background child result record")
         string_fields = (
@@ -325,6 +327,9 @@ class PendingBackgroundResult:
             not isinstance(stale_reason, str) or not stale_reason
         ):
             raise ValueError("Invalid background child result record")
+        published = raw.get("published", False)
+        if type(published) is not bool:
+            raise ValueError("Invalid background child result record")
         return cls(
             outbox_id=strings["outbox_id"],
             parent_key=strings["parent_key"],
@@ -349,6 +354,7 @@ class PendingBackgroundResult:
             state=cast(Literal["pending", "admitted", "stale"], state),
             journal_id=journal_id,
             stale_reason=stale_reason,
+            published=published,
         )
 
 

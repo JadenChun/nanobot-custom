@@ -6,8 +6,16 @@ from unittest.mock import AsyncMock
 from nanobot.agent.child_sessions import DelegationTree
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.turn import RunStatus
+from nanobot.bus.events import InboundMessage
 from nanobot.providers.base import LLMResponse
-from nanobot.session.pending_followups import decode_pending_followups
+from nanobot.session.execution_owner import acquire_execution
+from nanobot.session.pending_followups import (
+    BACKGROUND_RESULT_INBOUND_METADATA_KEY,
+    background_result_content,
+    decode_pending_followups,
+    mint_background_result_id,
+    record_pending_followup,
+)
 from nanobot.session.source_store import SourceSessionStore
 from tests.agent.test_delegation_child_followups import (
     _FollowupProvider,
@@ -382,6 +390,62 @@ async def test_missing_failed_result_is_rebuilt(engine_config):
             assert child.background_result.outcome == "failed"
         finally:
             await restarted.close()
+    finally:
+        await loop.aclose()
+
+
+async def test_admitted_but_unpublished_result_is_published_once(engine_config):
+    parent_key = "websocket:ac5-unpublished"
+    loop, manager, _provider, child_id, original = await _start_without_delivery(
+        engine_config, parent_key,
+    )
+    try:
+        tree = manager._delegation_tree
+        assert tree is not None
+        child = tree.child(child_id)
+        assert child is not None and child.background_result is not None
+        record = child.background_result
+        backend = loop.sessions.source_backend(parent_key)
+        assert backend is not None
+        message = InboundMessage(
+            channel=record.route_channel,
+            sender_id="subagent",
+            chat_id=record.route_chat_id,
+            content=background_result_content(record),
+            metadata={
+                BACKGROUND_RESULT_INBOUND_METADATA_KEY: record.outbox_id,
+                "background_child_id": record.child_id,
+            },
+            session_key_override=parent_key,
+            require_existing_session=True,
+        )
+        mint_background_result_id(message, record)
+        pending = record_pending_followup(message)
+        async with acquire_execution(
+            backend,
+            parent_key,
+            run_id="manual-outbox-admission",
+        ) as owner:
+            backend.source.admit_pending_followup(parent_key, owner, pending)
+
+        published = []
+        manager.set_background_result_sink(
+            lambda item: _collect(published, item),
+        )
+        first = await original()
+        assert first == (1, 0, 0), first
+        assert len(published) == 1
+        child = tree.child(child_id)
+        assert child is not None and child.background_result is not None
+        assert child.background_result.state == "admitted"
+        assert child.background_result.published is True
+
+        second = await original()
+        assert second == (0, 0, 0), second
+        assert len(published) == 1
+        snapshot = backend.source.load_source_snapshot(parent_key)
+        rows = snapshot.header["metadata"].get("source_pending_followups", [])
+        assert len(rows) == 1
     finally:
         await loop.aclose()
 

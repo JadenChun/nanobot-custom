@@ -825,6 +825,7 @@ class DelegationTree:
         state: Literal["admitted", "stale"],
         journal_id: str | None = None,
         stale_reason: str | None = None,
+        published: bool | None = None,
     ) -> ChildAdmission | None:
         """Advance one result disposition without changing the child run."""
         async with self._lock:
@@ -846,6 +847,9 @@ class DelegationTree:
                     state=state,
                     journal_id=journal_id if journal_id is not None else existing.journal_id,
                     stale_reason=stale_reason if state == "stale" else None,
+                    published=(
+                        published if published is not None else existing.published
+                    ),
                 ),
                 updated_at=time.time(),
             )
