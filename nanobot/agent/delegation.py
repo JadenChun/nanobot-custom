@@ -2498,6 +2498,7 @@ class ForegroundAgentManager:
             journal_id: str | None = None,
             stale_reason: str | None = None,
             published: bool | None = None,
+            emit: bool = True,
         ) -> bool:
             updated = await tree.mark_background_result(
                 child.child_id,
@@ -2510,9 +2511,14 @@ class ForegroundAgentManager:
                 updated is None
                 or updated.background_result is None
                 or updated.background_result.state != state
+                or (
+                    published is not None
+                    and updated.background_result.published != published
+                )
             ):
                 return False
-            await self._emit_child_for_route(updated, record)
+            if emit:
+                await self._emit_child_for_route(updated, record)
             return True
 
         backend = tree.sessions.source_backend(record.parent_key)
@@ -2535,7 +2541,11 @@ class ForegroundAgentManager:
             event.get("_pending_followup_id") == record.outbox_id
             for event in snapshot.events
         ):
-            if not await mark("admitted", journal_id=record.outbox_id):
+            if not await mark(
+                "admitted",
+                journal_id=record.outbox_id,
+                published=True,
+            ):
                 return "pending"
             return "admitted"
         try:
@@ -2612,7 +2622,11 @@ class ForegroundAgentManager:
                     child.child_id,
                 )
                 return "pending"
-        if not await mark("admitted", journal_id=pending_record.identifier):
+        if not await mark(
+            "admitted",
+            journal_id=pending_record.identifier,
+            emit=False,
+        ):
             return "pending"
         if existing is None or not record.published:
             sink = self._background_result_sink
