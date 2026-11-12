@@ -2,9 +2,9 @@
 
 ## Continuation checkpoint: artifact handoff wired (2026-11-12)
 
-Resume from `8dd53dd6` on `codex/staging-audit-implementation`. Staging remains
-`f1a6bb85`. This checkpoint supersedes the artifact status in the stop record below.
-The plan stays frozen as `A3-PLAN-2026-11-11`.
+Resume from `751ea75c` on `codex/staging-audit-implementation`. Staging remains
+`f1a6bb85`. This checkpoint supersedes the artifact status and the known-red list in
+the stop record below. The plan stays frozen as `A3-PLAN-2026-11-11`.
 
 Completed in this checkpoint:
 
@@ -19,42 +19,32 @@ Completed in this checkpoint:
 - Settlement accepts a second `SourceSessionStore` wrapper over the same backend.
   It retains the admitted writer binding for later acceptance checks.
 - `nanobot/extensions/crawler.py` no longer passes the removed `runner` argument.
+- The crawler keeps its role-owned `social_crawl` tool. All other role tools remain
+  narrowed by the live parent binding.
+- The retired inline delegation tests now use canonical `AgentLoop` turns,
+  source-backed trees, or recorded `ChildTurnRequest` values. Two cases were retired
+  with named canonical coverage.
 
 Verification on the Linux worktree with Python 3.14.10, BasedPyright 1.40.2, and
 pytest 9.2.0:
 
 | Check | Result |
 | --- | --- |
+| Migrated delegation suite plus canonical child and artifact suites | **240 passed**. |
 | Artifact grant, handoff, reader, origin tests | **118 passed**. |
 | Canonical child authority, controls, sessions, capacity, events, config | **46 passed**. |
 | Child lifecycle and follow-up backend set | **68 passed**. |
 | Full Ruff over `nanobot tests conftest.py` | **Passed**. |
+| Whitespace check | **Passed**. |
 | Configured strict check (`tool.basedpyright`, `nanobot`) | **0 errors / 545 files**, exit 0. |
 
 The configured strict result is not the old full-source count in the stop record.
 Reproduce it with the recorded environment before treating P6 as closed.
 
-### Known red tests
-
-These tests still drive the retired inline delegation path or expect child events
-in the parent source. They are the next migration task:
-
-- `tests/agent/test_crawler_subagent.py` (4 tests).
-- `tests/agent/test_migration_policy_dispatch.py` (1 test).
-- `tests/agent/test_delegation_inline_stop.py` (3 tests).
-- `tests/agent/test_delegation_recursive_background.py` (3 tests).
-- `tests/agent/test_delegation_stale_parent.py` (1 test).
-- `tests/agent/test_migration_foreground.py` (1 test).
-- `tests/agent/test_migration_source_engine.py` (2 tests).
-
-Port each case to a canonical `AgentLoop` and source-backed tree fixture. Do not
-restore a non-canonical `_run_role` fallback. If a case is fully covered by the
-canonical suite, retire it with an explicit reason and keep the behavior assertion.
-
 ### Next work
 
-1. Migrate or retire the 15 known red tests.
-2. Continue AC4 ordered follow-up and AC5 durable background result delivery.
+1. Continue AC4 ordered follow-up from the existing canonical journal and source owner.
+2. Implement AC5 durable background result delivery with restart reconciliation.
 3. Finish AC8 projection, hydration, and canonical history access.
 4. Then implement the client work and the remaining release gates.
 
