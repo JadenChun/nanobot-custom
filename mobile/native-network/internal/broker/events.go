@@ -27,6 +27,13 @@ func (c *Core) PollEvent(out []byte) (int, error) {
 	}
 }
 
+// PendingEventSize returns the size of the event retained after a short poll.
+func (c *Core) PendingEventSize() int {
+	c.eventMu.Lock()
+	defer c.eventMu.Unlock()
+	return len(c.pending)
+}
+
 func (c *Core) copyPending(out []byte) (int, error) {
 	if len(c.pending) > len(out) {
 		return 0, ErrBufferSmall
