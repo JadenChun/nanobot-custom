@@ -184,6 +184,7 @@ from nanobot.session.pending_followups import (
     copy_pending_followup_proof,
     mint_pending_followup_id,
     parse_pending_followup_records,
+    pending_background_result,
     pending_child_followup,
     pending_followup_id,
     restore_pending_child_followup,
@@ -4013,6 +4014,17 @@ class AgentLoop:
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
+                background_source = (
+                    msg.source_state if pending_background_result(msg) is not None else None
+                )
+                if background_source is not None:
+                    try:
+                        self._read_expected_source(effective_key, background_source)
+                    except SourceOriginMismatchError:
+                        continue
+                    except Exception:
+                        logger.exception("Could not read background result source for {}", effective_key)
+                        continue
                 if "approval_decision" in msg.metadata and await self._dispatch_bus_approval_control(
                     msg, effective_key,
                 ):
@@ -4078,6 +4090,7 @@ class AgentLoop:
                 if (
                     msg.require_existing_session
                     and continuation is None
+                    and background_source is None
                     and self.sessions.get_cached(effective_key) is None
                 ):
                     continue
@@ -5225,6 +5238,13 @@ class AgentLoop:
                                 raise RuntimeError(
                                     "Canonical child follow-up authority changed before admission"
                                 )
+                            if (
+                                record.background_result is not None
+                                and not record.background_result.targets(owner.read_snapshot().state)
+                            ):
+                                if not item.result.done():
+                                    item.result.set_result(_ForegroundActivityResult(followup_pending=False))
+                                continue
                             followup_pending = source_writer.store.admit_pending_followup(
                                 key,
                                 owner,

@@ -2531,12 +2531,7 @@ class ForegroundAgentManager:
             snapshot = backend.source.load_source_snapshot(record.parent_key)
         except Exception:
             return "pending"
-        if (
-            snapshot.state.session_key != record.parent_key
-            or snapshot.state.store_identity != record.parent_store_identity
-            or snapshot.state.incarnation != record.parent_incarnation
-            or snapshot.state.generation != record.parent_generation
-        ):
+        if not record.targets(snapshot.state):
             await mark("stale", stale_reason="parent_source_changed")
             return "stale"
         if any(
@@ -2573,11 +2568,6 @@ class ForegroundAgentManager:
         ):
             await mark("stale", stale_reason="parent_journal_conflict")
             return "stale"
-        try:
-            tree.sessions.get_or_create(record.parent_key)
-        except Exception:
-            return "pending"
-
         message = InboundMessage(
             channel=record.route_channel,
             sender_id="subagent",
@@ -2589,6 +2579,7 @@ class ForegroundAgentManager:
             },
             session_key_override=record.parent_key,
             require_existing_session=True,
+            source_state=snapshot.state,
         )
         try:
             mint_background_result_id(message, record)

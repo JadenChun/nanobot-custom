@@ -7,13 +7,16 @@ import json
 import math
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from uuid import uuid4
 
 from pydantic import TypeAdapter
 
 from nanobot.bus.events import InboundMessage
 from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
+
+if TYPE_CHECKING:
+    from nanobot.session.source_store import SourceState
 
 BACKGROUND_RESULT_INBOUND_METADATA_KEY = "background_child_result"
 MAX_BACKGROUND_RESULT_CHARS = 16000
@@ -192,6 +195,14 @@ class PendingBackgroundResult:
     journal_id: str | None = None
     stale_reason: str | None = None
     published: bool = False
+
+    def targets(self, state: SourceState) -> bool:
+        return (
+            self.parent_key == state.session_key
+            and self.parent_store_identity == state.store_identity
+            and self.parent_incarnation == state.incarnation
+            and self.parent_generation == state.generation
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -689,7 +700,9 @@ def background_result_content(intent: PendingBackgroundResult) -> str:
     return f"Background child {intent.child_id} {label}.\n\n{text}"
 
 
-def decode_pending_followups(value: object, session_key: str) -> list[InboundMessage]:
+def decode_pending_followups(
+    value: object, session_key: str, *, source_state: SourceState | None = None,
+) -> list[InboundMessage]:
     """Restore WebUI rows for recovery without replaying child tool intents."""
     messages: list[InboundMessage] = []
     for record in parse_pending_followup_records(value):
@@ -697,6 +710,8 @@ def decode_pending_followups(value: object, session_key: str) -> list[InboundMes
             continue
         if record.background_result is not None:
             intent = record.background_result
+            if source_state is not None and not intent.targets(source_state):
+                continue
             message = InboundMessage(
                 channel=intent.route_channel,
                 sender_id="subagent",
@@ -708,6 +723,7 @@ def decode_pending_followups(value: object, session_key: str) -> list[InboundMes
                 },
                 session_key_override=session_key,
                 require_existing_session=True,
+                source_state=source_state,
             )
             restore_pending_background_result(message, record.identifier, intent)
             messages.append(message)

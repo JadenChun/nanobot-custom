@@ -64,8 +64,15 @@ class NativeNetworkPlugin : Plugin() {
     private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
     private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
     @Volatile private var activePairing: PairingChallenge? = null
-    private val refreshLock = Any()
-    private var refreshInFlight: CompletableFuture<CustodyRecord>? = null
+    private data class RefreshAttempt(
+        val origin: String,
+        val installationId: String,
+        val generation: Long,
+        val handle: Long,
+    ) {
+        val result = CompletableFuture<Unit>()
+    }
+    private var refreshInFlight: RefreshAttempt? = null
     private var pollTask: ScheduledFuture<*>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val custody by lazy { CustodyStore(context) }
@@ -122,129 +129,149 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    @Synchronized
     fun refresh(call: PluginCall) {
+        val generation = custody.attemptGeneration()
         val record = try {
             custody.load()
         } catch (exception: Exception) {
             call.reject(exception.message ?: "custody is unavailable")
             return
         }
-        if (record == null || (record.accessToken.isBlank() && record.refreshToken.isBlank())) {
+        if (record == null || record.revocationPending ||
+            (record.accessToken.isBlank() && record.refreshToken.isBlank())
+        ) {
             call.reject("No paired device.")
             return
         }
-        val shared: CompletableFuture<CustodyRecord>
-        synchronized(refreshLock) {
-            val existing = refreshInFlight
-            if (existing != null) {
-                shared = existing
-            } else {
-                shared = CompletableFuture()
-                refreshInFlight = shared
-                operationExecutor.execute {
-                    try {
-                        shared.complete(performRefresh())
-                    } catch (exception: Exception) {
-                        shared.completeExceptionally(exception)
-                    } finally {
-                        synchronized(refreshLock) {
-                            if (refreshInFlight === shared) refreshInFlight = null
-                        }
+        val candidate = RefreshAttempt(record.origin, record.installationId, generation, transportHandle)
+        val existing = refreshInFlight
+        val attempt = if (existing != null && existing == candidate) {
+            existing
+        } else {
+            refreshInFlight = candidate
+            operationExecutor.execute {
+                try {
+                    performRefresh(record, candidate)
+                    candidate.result.complete(Unit)
+                } catch (exception: Exception) {
+                    candidate.result.completeExceptionally(settleRefreshFailure(candidate, exception))
+                } finally {
+                    synchronized(this) {
+                        if (refreshInFlight === candidate) refreshInFlight = null
                     }
                 }
             }
+            candidate
         }
-        shared.whenComplete { _updated, error ->
-            if (error == null) {
-                mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
-                return@whenComplete
+        attempt.result.whenComplete { _, error ->
+            mainHandler.post {
+                if (error == null) {
+                    call.resolve(JSObject().put("refreshed", true))
+                } else {
+                    call.reject(error.message ?: "Access renewal failed.")
+                }
             }
-            val failure = error as? Exception ?: Exception(error)
-            val message = failure.message ?: "token refresh failed"
-            if (RefreshAuthority.requiresRepair(httpStatus(failure), message)) {
-                // A confirmed owner revocation and a v1 upgrade requirement both
-                // end local bearer authority. Transient failures keep custody so
-                // a raced invalid_refresh cannot orphan encrypted tsnet state.
-                try {
+        }
+    }
+
+    private fun settleRefreshFailure(attempt: RefreshAttempt, failure: Exception): Exception {
+        val status = httpStatus(failure)
+        if (!RefreshAuthority.requiresRepair(status, failure.message.orEmpty())) return failure
+        val clearedGeneration = try {
+            synchronized(this) {
+                custody.withAuthority(attempt.generation) {
+                    val current = custody.load()
+                    if (current?.installationId != attempt.installationId || current.origin != attempt.origin ||
+                        attempt.handle == 0L || transportHandle != attempt.handle
+                    ) return@withAuthority null
+                    custody.cancelPairing()
+                    activePairing = null
+                    RunKeepAliveRegistry.clear()
+                    RunKeepAliveService.stop(context.applicationContext)
+                    NativeNetwork.mediaPurge(attempt.handle)
+                    stopInternal()
                     custody.logout(serverReachable = true)
                     custody.purgeMedia()
-                    val current = transportHandle
-                    if (current != 0L) {
-                        NativeNetwork.mediaPurge(current)
+                    custody.attemptGeneration()
+                }
+            }
+        } catch (_: Exception) {
+            null
+        } ?: return failure
+        mainHandler.post {
+            synchronized(this) {
+                try {
+                    custody.withAuthority(clearedGeneration) {
+                        if (transportHandle == 0L) {
+                            (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
+                        }
                     }
-                } catch (_: Exception) {
-                    // Custody may already be gone; the reload still resets UI.
+                } catch (_: IllegalStateException) {
+                    // A newer pairing already owns the app.
                 }
-                mainHandler.post {
-                    call.reject(
-                        if (message.contains("upgrade_required")) {
-                            "pairing upgrade required"
-                        } else {
-                            "pairing was revoked"
-                        },
-                    )
-                    (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
-                }
-            } else {
-                mainHandler.post { call.reject(message) }
+            }
+        }
+        val message = if (status == 426) "pairing upgrade required" else "pairing was revoked"
+        return IllegalStateException(message, failure)
+    }
+
+    private fun performRefresh(record: CustodyRecord, attempt: RefreshAttempt) {
+        custody.requireAuthority(attempt.generation)
+        val useDeviceProof = record.refreshToken.isBlank()
+        val refreshed = if (useDeviceProof) {
+            recoverAccess(record, attempt)
+        } else {
+            refreshBearer(record, attempt)
+        }
+        synchronized(this) {
+            check(attempt.handle == transportHandle) { "Native transport changed." }
+            custody.withAuthority(attempt.generation) {
+                val saved = custody.saveRefreshedTokens(
+                    attempt.origin,
+                    attempt.installationId,
+                    refreshed.getString("access_token"),
+                    if (useDeviceProof) refreshed.optString("refresh_token") else refreshed.getString("refresh_token"),
+                    refreshed.optInt("expires_in", 600),
+                    refreshed.optInt("refresh_expires_in", if (useDeviceProof) 0 else 30 * 24 * 60 * 60),
+                    expectedGeneration = attempt.generation,
+                )
+                NativeNetwork.mediaSetToken(attempt.handle, saved.accessToken)
             }
         }
     }
 
-    private fun performRefresh(): CustodyRecord {
-        val generation = custody.attemptGeneration()
-        var active = custody.load() ?: throw CustodyException("no refresh credential")
-        if (active.revocationPending || (active.accessToken.isBlank() && active.refreshToken.isBlank())) {
-            throw CustodyException("no refresh credential")
-        }
-        val handle = transportHandle
-        val saved = if (active.refreshToken.isBlank()) {
-            recoverAccess(active, generation)
-        } else {
-            refreshBearer(active, generation)
-        }
-        custody.requireAuthority(generation)
-        if (handle != 0L && handle == transportHandle) {
-            NativeNetwork.mediaSetToken(handle, saved.accessToken)
-        }
-        return saved
-    }
-
-    private fun refreshBearer(record: CustodyRecord, generation: Long): CustodyRecord {
-        var active = record
-        val refreshed = try {
-            requestRefresh(active)
+    private fun refreshBearer(record: CustodyRecord, attempt: RefreshAttempt): JSONObject {
+        return try {
+            requestRefresh(record, attempt.handle)
         } catch (first: Exception) {
             if (!isUnauthorized(first)) throw first
-            // Another device may have rotated the token. Retry once with the
-            // latest live record before treating the installation as revoked.
+            custody.requireAuthority(attempt.generation)
             val latest = custody.load()
-            if (latest == null || latest.refreshToken == active.refreshToken) throw first
-            active = latest
-            requestRefresh(active)
+            if (latest == null || latest.revocationPending || latest.installationId != attempt.installationId ||
+                latest.origin != attempt.origin || latest.refreshToken.isBlank() || latest.refreshToken == record.refreshToken
+            ) throw first
+            requestRefresh(latest, attempt.handle)
         }
-        return custody.saveRefreshedTokens(
-            active.origin,
-            active.installationId,
-            refreshed.getString("access_token"),
-            refreshed.getString("refresh_token"),
-            refreshed.optInt("expires_in", 600),
-            refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
-            expectedGeneration = generation,
-        )
     }
 
     @PluginMethod
     fun start(call: PluginCall) {
         val origin = call.getString("origin")
         val installationId = call.getString("installationId")
-        val hostname = call.getString("hostname") ?: "nanobot-android"
         if (origin.isNullOrBlank() || installationId.isNullOrBlank()) {
             call.reject("origin and installationId are required")
             return
         }
         try {
-            startTransport(origin, installationId, hostname)
+            synchronized(this) {
+                val record = requireTransportTarget(origin, installationId)
+                check(record.accessToken.isNotBlank()) { "No paired device." }
+                val current = transportHandle
+                val state = if (current == 0L) "" else
+                    NativeNetwork.status(current)?.let { JSONObject(String(it, Charsets.UTF_8)).optString("state") }
+                if (state !in setOf("starting", "needs_login", "ready")) startTransport(record)
+            }
         } catch (exception: Exception) {
             call.reject(exception.message ?: "native custody rejected the installation")
             return
@@ -441,17 +468,11 @@ class NativeNetworkPlugin : Plugin() {
         }
         operationExecutor.execute {
             try {
-                val existing = custody.load()
-                if (
-                    transportHandle == 0L ||
-                    existing == null ||
-                    existing.origin != origin ||
-                    existing.installationId != installationId
-                ) {
-                    startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6))
+                val current = synchronized(this) {
+                    val record = requireTransportTarget(origin, installationId)
+                    if (transportHandle == 0L) startTransport(record)
+                    transportHandle
                 }
-                val current = transportHandle
-                if (current == 0L) throw IllegalStateException("transport is not started")
                 val deadline = System.currentTimeMillis() + 5_000
                 var status = JSONObject()
                 while (System.currentTimeMillis() < deadline) {
@@ -574,12 +595,13 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
-    private fun recoverAccess(record: CustodyRecord, generation: Long): CustodyRecord {
+    private fun recoverAccess(record: CustodyRecord, attempt: RefreshAttempt): JSONObject {
         val installationId = record.installationId
         val begun = jsonRequest(
             "mobile_pair_recover",
             "/mobile/v1/pair/recover",
             body = null,
+            expectedHandle = attempt.handle,
             headers = mapOf(
                 "X-Nanobot-Installation" to installationId,
                 "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
@@ -589,27 +611,19 @@ class NativeNetworkPlugin : Plugin() {
         val canonical = DeviceProofCanonicalizer.canonicalBytes(
             DeviceProofCanonicalizer.fromJson(claims)
         )
-        validateProofBinding(claims, record, generation)
+        validateProofBinding(claims, record, attempt.generation)
         val signature = custody.signDeviceProof(canonical)
-        custody.requireAuthority(generation)
-        val completed = jsonRequest(
+        custody.requireAuthority(attempt.generation)
+        return jsonRequest(
             "mobile_pair_recover_complete",
             "/mobile/v1/pair/recover/complete",
             body = null,
+            expectedHandle = attempt.handle,
             headers = mapOf(
                 "X-Nanobot-Installation" to installationId,
                 "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
                 "X-Nanobot-Proof-Claims" to DeviceProofCanonicalizer.encode(canonical),
             ),
-        )
-        return custody.saveRefreshedTokens(
-            record.origin,
-            installationId,
-            completed.getString("access_token"),
-            completed.optString("refresh_token"),
-            completed.optInt("expires_in", 600),
-            completed.optInt("refresh_expires_in", 0),
-            expectedGeneration = generation,
         )
     }
 
@@ -1214,6 +1228,7 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    @Synchronized
     fun logout(call: PluginCall) {
         RunKeepAliveRegistry.clear()
         RunKeepAliveService.stop(context.applicationContext)
@@ -1225,12 +1240,7 @@ class NativeNetworkPlugin : Plugin() {
         if (current != 0L) {
             NativeNetwork.mediaPurge(current)
         }
-        transportHandle = 0L
-        pollTask?.cancel(false)
-        pollTask = null
-        if (current != 0L) {
-            NativeNetwork.stop(current)
-        }
+        stopInternal()
         val pending = try {
             custody.logout(serverReachable)
         } catch (exception: Exception) {
@@ -1315,12 +1325,13 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
-    private fun requestRefresh(record: CustodyRecord): JSONObject = jsonRequest(
+    private fun requestRefresh(record: CustodyRecord, handle: Long): JSONObject = jsonRequest(
         "remote_refresh",
         "/remote/v1/refresh",
         body = JSONObject()
             .put("installation_id", record.installationId)
             .put("refresh_token", record.refreshToken),
+        expectedHandle = handle,
     )
 
     private fun isUnauthorized(exception: Exception): Boolean =
@@ -1331,12 +1342,23 @@ class NativeNetworkPlugin : Plugin() {
         return match.groupValues.getOrNull(1)?.toIntOrNull() ?: 0
     }
 
-    private fun startTransport(origin: String, installationId: String, hostname: String, generation: Long? = null): CustodyRecord {
+    private fun requireTransportTarget(origin: String, installationId: String): CustodyRecord {
+        val record = custody.load() ?: throw CustodyMismatchException("Custody target is missing.")
+        check(record.origin == origin && record.installationId == installationId) { "Custody target changed." }
+        return record
+    }
+
+    @Synchronized
+    private fun startTransport(origin: String, installationId: String, hostname: String, generation: Long) {
+        custody.withPairing(generation) {
+            startTransport(custody.loadOrCreate(origin, installationId, hostname))
+        }
+    }
+
+    private fun startTransport(record: CustodyRecord) {
         stopInternal()
         requests = NativeRequestCorrelator()
         val stateRoot = context.filesDir.resolve("network-state")
-        val record = if (generation == null) custody.loadOrCreate(origin, installationId, hostname) else
-            custody.withPairing(generation) { custody.loadOrCreate(origin, installationId, hostname) }
         val safeInstallation = record.installationId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
         val stateDir = stateRoot.resolve(safeInstallation)
         if (!stateDir.exists() && !stateDir.mkdirs()) {
@@ -1362,7 +1384,6 @@ class NativeNetworkPlugin : Plugin() {
         NativeNetwork.mediaSetToken(newHandle, record.accessToken)
         NativeMediaInterceptor.transportHandle = newHandle
         startPoller()
-        return record
     }
 
     private fun waitUntilReady(timeoutMs: Long = 90_000) {
@@ -1417,9 +1438,11 @@ class NativeNetworkPlugin : Plugin() {
         body: JSONObject?,
         headers: Map<String, String> = emptyMap(),
         timeoutSeconds: Long = 30,
+        expectedHandle: Long? = null,
     ): JSONObject {
-        val current = transportHandle
-        if (current == 0L) throw IllegalStateException("transport is not started")
+        val (current, requestOwner) = synchronized(this) { transportHandle to requests }
+        check(current != 0L) { "transport is not started" }
+        check(expectedHandle == null || current == expectedHandle) { "Native transport changed." }
         val request = JSONObject()
             .put("operation", operation)
             .put("method", if (body == null) "GET" else "POST")
@@ -1436,7 +1459,6 @@ class NativeNetworkPlugin : Plugin() {
                 Base64.encodeToString(body.toString().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             )
         }
-        val requestOwner = requests
         val admission = requestOwner.launch(true) { NativeNetwork.http(current, request.toString()) }
         val requestId = admission.id
         val future = admission.future
@@ -1464,6 +1486,7 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
+    @Synchronized
     private fun stopInternal() {
         requests.close()
         pollTask?.cancel(false)

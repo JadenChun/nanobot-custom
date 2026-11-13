@@ -155,6 +155,8 @@ class CustodyStore(context: Context) {
     fun cancelPairing() { attemptFence.cancel() }
     fun requirePairing(generation: Long) { attemptFence.withCurrent(generation) {} }
     fun requireAuthority(generation: Long) { attemptFence.withCurrent(generation, requireActive = false) {} }
+    fun <T> withAuthority(generation: Long, action: () -> T): T =
+        attemptFence.withCurrent(generation, requireActive = false, write = action)
     fun <T> withPairing(generation: Long, action: () -> T): T = attemptFence.withCurrent(generation, write = action)
 
     fun beginPairing(origin: String, installationId: String, challenge: String = "", code: String = "", label: String = ""): Long {

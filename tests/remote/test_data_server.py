@@ -123,3 +123,49 @@ async def test_data_server_recovery_replay_and_revoke(tmp_path: Path) -> None:
     finally:
         data.stop()
         owner.stop()
+
+
+@pytest.mark.parametrize("matching_key", [True, False])
+def test_recovery_completion_after_revocation(tmp_path: Path, matching_key: bool) -> None:
+    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner.start()
+    data = MobileDataServer(owner, port=0)
+    try:
+        owner.store.set_enabled(True)
+        port = data.start()
+        host = f"127.0.0.1:{port}"
+        installation = "install-recovery-race"
+        approved_key, public_der = new_device_key()
+        owner.tokens.issue_device(
+            installation,
+            ("chat.read",),
+            device_fingerprint=device_proof_fingerprint(public_der),
+            device_generation=1,
+            origin=f"https://{host}",
+        )
+        with httpx.Client(base_url=f"http://{host}", timeout=5.0) as client:
+            recovery = client.get("/mobile/v1/pair/recover", headers={
+                "Host": host,
+                "X-Nanobot-Installation": installation,
+                "X-Nanobot-Device-Key": encode_proof_base64url(public_der),
+            })
+            assert recovery.status_code == 200
+            payload = recovery.json()["proof_challenge"]
+            claims = DeviceProofClaims.from_payload(payload)
+            assert owner.tokens.revoke(installation)
+            signing_key = approved_key if matching_key else new_device_key()[0]
+            response = client.get("/mobile/v1/pair/recover/complete", headers={
+                "Host": host,
+                "X-Nanobot-Installation": installation,
+                "X-Nanobot-Device-Signature": encode_proof_base64url(sign_claims(signing_key, claims)),
+                "X-Nanobot-Proof-Claims": encode_proof_base64url(
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+                ),
+            })
+            assert response.status_code == 403
+            assert response.json() == {
+                "error": "device_revoked" if matching_key else "pairing_rejected"
+            }
+    finally:
+        data.stop()
+        owner.stop()

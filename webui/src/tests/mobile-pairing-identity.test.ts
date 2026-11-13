@@ -100,16 +100,22 @@ function installPairedPlugin(
     | "needs_login" = "revoked",
 ) {
   let emit: ((event: Record<string, unknown>) => void) | null = null;
+  let paired = true;
   const refresh = vi.fn(async () => {
-    throw new Error(mode === "revoked" ? "pairing was revoked" : "network");
+    if (mode === "revoked") {
+      paired = false;
+      window.location.reload();
+      throw new Error("pairing was revoked");
+    }
+    throw new Error("network");
   });
   const logout = vi.fn(async () => ({ serverRevocationPending: false }));
   const plugin = {
-    target: vi.fn(async () => ({
+    target: vi.fn(async () => paired ? ({
       origin: "https://desktop.example",
       installationId: "phone-local-id",
       hasAccess: true,
-    })),
+    }) : null),
     start: vi.fn(async () => {
       if (mode === "start_error") throw new Error("native start failed");
       return {};
@@ -655,11 +661,11 @@ describe("mobile pairing identity", () => {
 
   it("clears a revoked pairing before the app shell opens", async () => {
     const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
-    const { refresh, logout } = installPairedPlugin();
+    const { plugin, refresh } = installPairedPlugin();
     window.eval(bootstrapSource);
 
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(logout).toHaveBeenCalledWith({ serverReachable: true }));
+    expect(await plugin.target()).toBeNull();
     expect(reload).toHaveBeenCalledTimes(1);
     reload.mockRestore();
   });

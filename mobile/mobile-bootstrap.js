@@ -931,27 +931,16 @@
       var probe = await probeHandshake();
       if (probe.error) return "unreachable";
       if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
-      var refreshed = false;
       try {
-        refreshed = await plugin.refresh();
+        await plugin.refresh();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
-        if (message.indexOf("pairing was revoked") < 0) {
-          return "unreachable";
-        }
+        return message === "pairing was revoked" || message === "pairing upgrade required"
+          ? "revoked"
+          : "unreachable";
       }
-      if (refreshed) {
-        probe = await probeHandshake();
-        if (probe.error) return "unreachable";
-        if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
-      }
-      try {
-        await plugin.logout({ serverReachable: true });
-      } catch (_) {
-        /* The next launch still starts from the stored pairing state. */
-      }
-      window.location.reload();
-      return "revoked";
+      probe = await probeHandshake();
+      return probe.status === 200 ? "ok" : "unreachable";
     }
 
     function presentReauth(link, initialMessage) {
