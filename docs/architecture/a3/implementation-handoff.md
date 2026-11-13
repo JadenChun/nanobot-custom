@@ -5,13 +5,16 @@
 The branch includes staging `f1a6bb855`. The current verified source is
 `484a1476618946377db7906dcb449a01fae4eb67` (tree
 `46f2064bd432892765a2493371f15bc2eb743597`). It contains the Android pairing
-repair and the process journal startup repair in `20ffe0de`.
+repair and the process journal startup repair in `20ffe0de`. Android event
+delivery was verified at `6faec5774e510aa33f177ab53633482d9fb97266`.
+That commit changes the native transport and JNI bridge.
 
 | Check | Result |
 | --- | --- |
 | Linux | 18,297 tests passed, 22 skipped, and six subtests passed. Strict BasedPyright reported zero diagnostics across 546 files before and after the changes. Ruff passed. A single startup failure in the first full run led to the journal repair. The final full run passed. |
 | Android 16 x86_64 | The emulator held a native proof response before the WebView saw approval. After an owner restart, Cancel revoked the issued device. The late response and an app restart left chat closed. Fresh proof restored chat after loss of the initial response and after loss of a renewal. A manual code attempt resumed across both restarts without re-entry. |
 | Android build and tests | The signed APK passed signature and alignment checks, installed, and launched on the emulator. The race tests used a separate debug build with the same app code, a fixed loopback dialer, and a fixture TLS certificate. The 20 JVM tests passed. The instrumentation runner discovered 39 cases. It completed 29 and skipped ten that require live credentials. |
+| Android event delivery | The old bridge returned no binary events. The repaired bridge delivered a 36 MiB binary message and the following 11-byte message on one authorized WebSocket. Both payload hashes matched. The Go suite, C ABI smoke test, and signed APK build, install, and launch passed. |
 | Installed WebSocket | The mobile socket accepted an authorized attachment. After the owner reduced its scope to chat read, the same socket rejected a second attachment. The attachment store kept the same bytes. |
 | WebUI | All 1,550 tests passed. The installed Linux browser replay passed all seven scenarios after the harness waited for canonical Stop settlement before checking the button. |
 | Artifacts | The installed Linux wheel passed its dependency check. It matched 546 Python sources and 590 WebUI files. The APK included the current bootstrap and matched 534 shared WebUI files. |
@@ -19,25 +22,26 @@ repair and the process journal startup repair in `20ffe0de`.
 The Android fixture proves cancellation and recovery for the tested transport.
 The [earlier verification](#linux-and-android-emulator-verification) records live
 Tailscale pairing, renewal, and revocation. Local receipts and artifacts are in
-`a3-evidence/linux-android-2026-11-13/ar5-pairing-lifetime/` beside the worktree.
+`a3-evidence/linux-android-2026-11-13/` beside the worktree. See the
+`ar5-pairing-lifetime/` and `android-event-bound/` subdirectories.
+
+Hosted Linux Python 3.11 and 3.14 passed at `484a1476`. The broad Windows
+job failed. [Test suite run](https://github.com/JadenChun/nanobot-custom/actions/runs/43502303978)
 
 | Artifact | SHA-256 |
 | --- | --- |
 | Linux wheel | `e8a1a72996db6b0e96834d893f1ff4a0474ae21def72c8f0a4c83195d33f69ed` |
 | Source archive | `66ff3b7624f80491c70d6b821db709fd64e34b91ec900ac2150cdcf4f567e0c5` |
-| Signed Android APK | `f6cbc5ae984c6527e0683bf6239b267d560c1627574c1b46fb4583082bff128e` |
+| Signed Android APK at `6faec577` | `b3120900ed519f60c09cdb8e11aaaa9bd6293de93ac4016f4b00df684dbdb6ac` |
 
 ### Remaining acceptance work
 
 1. The [current review](review.md#pairing-lifetime-and-live-websocket-checks)
    records the AR5 and AR6 repairs and their verification. The live Tailscale
    delivery race on the new signed APK remains unverified.
-2. The [frozen ledger](evidence.json) has acceptance evidence for 15 of its
-   136 findings. Review the 121 remaining entries against the source and their
+2. The [frozen ledger](evidence.json) has acceptance evidence for 16 of its
+   136 findings. Review the 120 remaining entries against the source and their
    acceptance criteria. An unverified entry can still have an implementation.
-   R01-F10 has a reproduced size mismatch. A Linux JNI probe passed a
-   13 MiB event to the 12 MiB poll buffer. The event stayed queued and
-   blocked later events. The broker admits 36 MiB frames before Base64 encoding.
 3. Complete the A3 stage reviews and P6 release decision using the current
    qualification evidence. [A3 release and rollback criteria](implementation-plan.md#rollback-and-requalification)
    · [P6 completion checklist](../../migration/p6-completion-checklist.md)

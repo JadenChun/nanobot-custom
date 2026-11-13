@@ -65,6 +65,15 @@ authorized attachment. After a scope reduction, the same connection returned
 The [handoff](implementation-handoff.md#pairing-cancellation-and-linux-verification)
 records build hashes and the Android transport used for each check.
 
+### Android event delivery at the frame limit
+
+The emulator received no binary messages with the old JNI poll buffer.
+The test sent one 36 MiB message and one 11-byte message on an authorized
+WebSocket. At `6faec577`, the bridge read both in order on the same
+connection. Both payload hashes matched. The JNI bridge now asks the broker
+for the retained event size before it retries. This closes R01-F10 in the
+loopback TLS fixture.
+
 ### AR5 server-authority probe (2026-11-14)
 
 Before the repair, a Linux owner-boundary probe completed an approved,
