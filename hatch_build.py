@@ -14,8 +14,7 @@ Behavior:
 - Skips when `NANOBOT_SKIP_WEBUI_BUILD=1` is set.
 - Reuses `nanobot/web/dist/` only when it is already fresh, unless
   `NANOBOT_FORCE_WEBUI_BUILD=1` is set.
-- Uses `bun` when available, otherwise falls back to `npm`. The chosen tool
-  performs `install` followed by `run build`.
+- Uses `bun install --frozen-lockfile` or `npm ci` before it runs the build.
 """
 
 from __future__ import annotations
@@ -94,6 +93,7 @@ class WebUIBuildHook(BuildHookInterface):
             built = webui_build.build_webui_bundle(
                 source_dir=webui_dir,
                 dist_dir=dist_dir,
+                frozen=True,
                 output=self.app.display_info,
             )
             if require_fresh:

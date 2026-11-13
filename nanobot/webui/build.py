@@ -202,6 +202,7 @@ def build_webui_bundle(
     source_dir: Path | None = None,
     dist_dir: Path | None = None,
     runner: str | None = None,
+    frozen: bool = False,
     subprocess_run: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
     output: Callable[[str], None] | None = None,
 ) -> WebUIBundleStatus:
@@ -214,9 +215,14 @@ def build_webui_bundle(
             "`cd webui && bun run build` manually"
         )
 
+    install_args = ["install"]
+    if frozen:
+        manager = Path(command_runner.replace("\\", "/")).stem.lower()
+        install_args = ["install", "--frozen-lockfile"] if manager == "bun" else ["ci"]
+
     _emit(output, f"Building bundled WebUI with `{command_runner}`...")
     _run_frontend_command(
-        [command_runner, "install"],
+        [command_runner, *install_args],
         cwd=resolved_source,
         subprocess_run=subprocess_run,
     )
@@ -277,6 +283,7 @@ def ensure_webui_bundle(
             source_dir=status.source_dir,
             dist_dir=status.dist_dir,
             runner=runner,
+            frozen=require_fresh,
             subprocess_run=subprocess_run,
             output=output,
         )
