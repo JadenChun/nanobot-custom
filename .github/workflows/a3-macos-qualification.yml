@@ -1,0 +1,163 @@
+name: A3 macOS qualification
+
+on:
+  push:
+    branches:
+      - codex/a3-macos-qualification-20261113
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 019a004e562cdebc9f3561248be1dc841db57e3b
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.10"
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.13.6"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - name: Build from pinned source and lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/a3"
+          git rev-parse HEAD HEAD^{tree} | tee "$RUNNER_TEMP/a3/source.txt"
+          shasum -a 256 uv.lock webui/bun.lock > "$RUNNER_TEMP/a3/locks.sha256"
+          uname -smr > "$RUNNER_TEMP/a3/host.txt"
+          uv sync --frozen --extra dev
+          (cd webui && bun install --frozen-lockfile && bun run build)
+          NANOBOT_REQUIRE_FRESH_WEBUI=1 uv build --wheel --out-dir "$RUNNER_TEMP/a3/wheel"
+          shasum -a 256 "$RUNNER_TEMP"/a3/wheel/*.whl | tee "$RUNNER_TEMP/a3/wheel.sha256"
+          uv pip install --no-deps --reinstall "$RUNNER_TEMP"/a3/wheel/*.whl
+          uv pip freeze > "$RUNNER_TEMP/a3/dependencies.txt"
+      - name: Check installed gateway and native owner on macOS
+        shell: bash
+        env:
+          A3_SOURCE: ${{ github.workspace }}
+          A3_RECEIPTS: ${{ runner.temp }}/a3
+        run: |
+          set -euo pipefail
+          cd "$A3_RECEIPTS"
+          "$A3_SOURCE/.venv/bin/python" - <<'PY' | tee "$A3_RECEIPTS/macos-checks.log"
+          import os, subprocess, sys, zipfile
+          from pathlib import Path
+          import nanobot
+          from nanobot.agent.tools.native_process import native_supervisor_available
+          import pytest
+          src = Path(os.environ["A3_SOURCE"])
+          installed = Path(nanobot.__file__).parent
+          assert "site-packages" in installed.parts, installed
+          wheel, = (Path.cwd() / "wheel").glob("*.whl")
+          with zipfile.ZipFile(wheel) as archive:
+              py = [name for name in archive.namelist() if name.startswith("nanobot/") and name.endswith(".py")]
+              contract = "nanobot/remote/contracts/operations-v1.json"
+              bundle = [name for name in archive.namelist() if name.startswith("nanobot/web/dist/")]
+              assert len(py) == 546 and "nanobot/web/dist/index.html" in bundle
+              for name in [*py, *bundle, contract]:
+                  assert archive.read(name) == (src / name).read_bytes(), name
+                  assert archive.read(name) == (installed.parent / name).read_bytes(), name
+          print("Installed source, bundle and operations contract match")
+          assert sys.platform == "darwin" and not native_supervisor_available()
+          print("Native Full supervisor unavailable on Darwin")
+          tests = [
+              "tests/remote/test_peer_credentials.py",
+              "tests/session/test_execution_owner.py",
+              "tests/migration/test_local_runtime_activation.py",
+              "tests/migration/test_p5_stage1_composition.py",
+              "tests/test_nanobot_facade.py::test_aclose_concurrent_callers_join_the_same_cleanup_attempt",
+          ]
+          import tempfile
+          temp = tempfile.mkdtemp(prefix="a3.", dir="/tmp")
+          raise SystemExit(pytest.main([
+              "-q", "-p", "no:cacheprovider", "--import-mode=importlib",
+              "-c", str(src / "pyproject.toml"), "--basetemp", temp,
+              *[str(src / name) for name in tests],
+          ]))
+          PY
+      - name: Exercise installed gateway startup and restart
+        shell: bash
+        env:
+          A3_SOURCE: ${{ github.workspace }}
+          A3_RECEIPTS: ${{ runner.temp }}/a3
+        run: |
+          set -euo pipefail
+          cd "$A3_RECEIPTS"
+          "$A3_SOURCE/.venv/bin/python" - <<'PY'
+          import json, os, signal, socket, subprocess, time, urllib.request
+          from pathlib import Path
+          work = Path.cwd()
+          cli = Path(os.environ["A3_SOURCE"]) / ".venv/bin/nanobot"
+          def port():
+              with socket.socket() as sock:
+                  sock.bind(("127.0.0.1", 0))
+                  return sock.getsockname()[1]
+          ws, health = port(), port()
+          state = work / "state"
+          state.mkdir()
+          workspace = state / "workspace"
+          workspace.mkdir()
+          config = state / "config.json"
+          config.write_text(json.dumps({
+              "agents": {"defaults": {"workspace": str(workspace), "provider": "custom",
+                  "model": "custom/qualification-offline", "idleCompactAfterMinutes": 0,
+                  "idleCompaction": {"enabled": False}, "dream": {"enabled": False}}},
+              "providers": {"custom": {"apiKey": "offline-smoke", "apiBase": "http://127.0.0.1:9/v1"}},
+              "channels": {"websocket": {"enabled": True, "host": "127.0.0.1",
+                  "port": ws, "allowFrom": ["*"], "tokenIssueSecret": "offline-smoke"}},
+              "gateway": {"host": "127.0.0.1", "port": health, "heartbeat": {"enabled": False}},
+              "tools": {"mcpServers": {}, "agentBrowser": {"enabled": False},
+                  "agentDevice": {"enabled": False}, "desktopUse": {"enabled": False}},
+          }))
+          print(subprocess.check_output([cli, "--version"], text=True).strip())
+          output = []
+          for phase in ("startup", "restart"):
+              with (work / f"{phase}.log").open("wb") as log:
+                  proc = subprocess.Popen([cli, "gateway", "--foreground", "--config", config],
+                                          cwd=state, stdout=log, stderr=log)
+                  try:
+                      for _ in range(120):
+                          assert proc.poll() is None, proc.returncode
+                          try:
+                              with urllib.request.urlopen(f"http://127.0.0.1:{health}/health", timeout=1) as r:
+                                  if json.load(r).get("ready"):
+                                      break
+                          except OSError:
+                              pass
+                          time.sleep(0.25)
+                      else:
+                          raise RuntimeError("gateway did not become ready")
+                      origin = f"http://127.0.0.1:{ws}"
+                      with urllib.request.urlopen(origin, timeout=5) as r:
+                          assert b"<!doctype html>" in r.read().lower()
+                      request = urllib.request.Request(origin + "/webui/bootstrap",
+                          headers={"X-Nanobot-Auth": "offline-smoke"})
+                      with urllib.request.urlopen(request, timeout=5) as r:
+                          assert json.load(r)["api_token"]
+                      output.append({"phase": phase, "ready": True, "static": True, "bootstrap": True})
+                  finally:
+                      proc.send_signal(signal.SIGTERM)
+                      assert proc.wait(timeout=20) == 0
+          (work / "gateway-result.json").write_text(json.dumps(output, indent=2))
+          print(json.dumps(output))
+          PY
+      - name: Preserve qualification receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a3-macos-019a004e
+          path: |
+            ${{ runner.temp }}/a3/*.txt
+            ${{ runner.temp }}/a3/*.sha256
+            ${{ runner.temp }}/a3/*.log
+            ${{ runner.temp }}/a3/*.json
+            ${{ runner.temp }}/a3/wheel/*.whl
