@@ -1,5 +1,183 @@
 # A3 implementation correction handoff
 
+## Latest handoff: paused after client-control corrections (2026-11-13)
+
+**Implementation is paused at the user's request, after the current GUI worker
+finished.** Resume on `codex/staging-audit-implementation` from code checkpoint
+`9da0f514dbfe77b433ef78945d35bf89ad6f9a95` (tree
+`92cc6d85976b8307c9778aaa5c3e652b283c45fb`). The documentation checkpoint immediately
+after it records this handoff. The previous origin head was
+`000dde873caa6b84e17d083f0460d61ae014b0c3`; a fresh fetch found no remote advancement.
+Staging remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+
+The plan remains frozen as `A3-PLAN-2026-11-11`. Original-chat control, optional
+read-only child detail, and session-based future SuperAgent coordination retain
+their accepted boundaries. This checkpoint does not establish final integrated
+acceptance, P6 completion, or release readiness. Keep the implementation merge on
+HOLD. All delegated writers released ownership; all disposable qualification
+gateways/providers/proxies were stopped with clean shutdown records.
+
+### Code completed in this checkpoint
+
+- Canonical child activity, results, replay, paginated hydration and history now
+  carry source/run identities across the backend, GUI, TUI and authorized mobile
+  read routes. Genuine summary-only children remain readable without invented
+  canonical provenance or control authority. Unavailable message timestamps are
+  omitted. Remote operations and broker policies retain explicit scope checks.
+- Original-chat Stop uses a versioned exact snapshot of the root source, current
+  invocation, descendants and pending-work inventory. Stale requests refuse before
+  cancellation effects. The omitted-expectation compatibility path is restricted
+  to verified root-only work. Explicit null modern targets cannot fall back to
+  legacy Stop. Refresh restores eligibility without automatically sending Stop.
+- Typed child approvals pass through real ingress, bus and canonical child owners
+  independently of a streaming parent. Controls do not become parent input or
+  replace its run, permissions, queue or lifecycle. The public decision requires
+  approval ID, decision, child session/incarnation/run/generation. Private effect
+  and inner-turn echoes are optional corroboration; supplied values must match.
+  The server still requires a valid canonical effect fingerprint matching the
+  child and rechecks source, run, capability and Stop state after scheduling.
+- GUI and TUI expose original-chat activity and independent approvals, plus
+  read-only canonical detail and return navigation. TUI message frames no longer
+  include forbidden cached per-message workspace scope. Its delayed HTTP
+  hydration is discarded before mutation when a newer live target, attachment or
+  connection supersedes the request. Refusal/reconnect recovery keeps attempts
+  separate and requires a new explicit action.
+- The final GUI correction removes one passive `setStopNotice("unavailable")`
+  assignment from accepted `stop_target: null` handling. Normal successful child
+  settlement no longer creates a failure banner. Target clearing, pending-state
+  settlement, projection refresh, genuine refusal notices and control fences
+  remain intact. Three event-order regressions and a rendered refresh regression
+  cover this repair.
+
+The earlier broad review returned **CORRECT**. Its findings were addressed in the
+code and focused tests, but the final narrow integrated recheck is still open.
+In particular, recheck the public approval guard, TUI hydration ordering and GUI
+passive-null notice correction together. Do not infer final acceptance from a
+worker's completion report or from the test totals below.
+
+### Verification available at handoff
+
+Python evidence uses the unchanged 183-distribution runtime at
+`/Users/jaden/Documents/github/nanobot/.venv/bin/python` (Python 3.13.2,
+BasedPyright 1.40.1). WebUI uses Bun 1.3.10, Node 22.14.0 and TypeScript 5.9.3;
+TUI checks use pinned Bun 1.3.13. No dependency, lockfile, checker-policy or baseline
+refresh was included; no formatter was run.
+
+| Boundary | Evidence and limit |
+| --- | --- |
+| Final approval guard | Worker: **55 focused + 444 affected tests passed**, including public client-shaped controls, held parent/child, independent sibling denial, Stop and negative identity/revocation cases. |
+| Independent Python critical set | **260 passed** on `control-recovery-python`; full Ruff over `nanobot tests conftest.py` passed. |
+| Last full Python run | Earlier `combined-final`: **17,758 passed, 78 skipped, 1 failed**, 81 warnings and 6 subtests passed. This precedes the last approval/TUI/GUI corrections; the final full run remains open. |
+| Known full-suite failure | `tests/test_nanobot_facade.py::test_aclose_concurrent_callers_join_the_same_cleanup_attempt` expects one cleanup and observes two. Independently reproduced on origin. It remains an open gate, not a passing full suite. Seven introduced fixture/event-expectation failures were repaired; missing generated-asset failures disappeared after a fresh WebUI build. |
+| Configured Python strict check | **962 diagnostics / 546 files; exit 1.** Global comparisons against origin and the immutable accepted integration both report **zero introduced, zero resolved**. This is regression attribution, not strict-clean/P6 acceptance. |
+| TUI | Independent frozen full run: **238 passed / 1,177 assertions**, type check passed. Exact TUI/package input hashes match the final handoff. |
+| GUI tests | Worker full suite: **1,550 passed / 101 files**, exit 0. After final fixture typing corrections, the two affected modules passed **208 tests**; root independently repeated those **208** on the immutable `control-recovery` snapshot, exit 0 with source parity. |
+| GUI coverage | Retained output reports the same 1,550 passing tests and **88.73% statements / 81.69% branches / 85.88% functions**. The final coverage-process exit was not retained. Capture a fresh final coverage receipt before closing this check. |
+| GUI lint/build | Passed; the existing Vite chunk-size warning remains. Final installed GUI proof is still open. |
+| Configured GUI TypeScript | `node_modules/.bin/tsc -b --force --pretty false`: **104 inherited diagnostics, exit 1**. Full multiline diagnostic/signature comparison against origin: **zero introduced, zero resolved**. |
+| Go broker/mobile parity | Passed on unchanged relevant inputs; hash-based reuse is recorded in `control-recovery-reused-checks.json`. No new physical-device qualification was performed. |
+| Actual TUI/gateway crossing | Real PTY, real installed gateway, scripted provider: distinct completed results, read-only canonical tool/result history and Escape return; original-chat Stop settles two siblings plus a nested child with provider gates unreleased; public approve changes only the build file, independent deny leaves the test-plan file unchanged under the same held parent. A stale Stop refuses; refreshed attachment sends nothing until another explicit Stop settles remaining work. Controls do not become parent user input. |
+| Installed macOS evidence | Previous wheel `0a35e3dd732cc5122a86f72ca303f01beaf36e6a65fdd5c5721b83706014dd41`: 546 packaged Python files, bounded ordinary selected-execution smoke, **36 owner/state tests**, public CLI gateway health/static/authenticated request and same-state restart passed. Native supervisor is unavailable; Full correctly refuses `supervisor_unavailable` without issuing authority. This wheel contains the older GUI bundle. |
+
+Nanobot's qualification model is **`custom/qualification-offline`**, a scripted
+loopback OpenAI-compatible provider. No paid or real external LLM was called.
+Implementation workers used Luna Max for the bounded client work and Sol Max for
+the backend authority correction; these are separate from Nanobot's test model.
+
+Source evidence is immutable: `control-recovery` contains 2,730 files, manifest
+SHA-256 `b3cb970c499e0d9073983aa1dfb12ec836653baab0b760084a5ce7714ae47c99`.
+Its Python inputs match `control-recovery-python`, and its TUI inputs match
+`control-recovery-tui`. During staging, the new-file whitespace check found one
+extra EOF newline in `nanobot/agent/stop_target.py`; only that byte was removed,
+with unchanged Python AST. The committed `handoff-final` snapshot has manifest
+SHA-256 `58b3676e9119bda143e4a7fe7556a0a5105a8b2f9874bd13a149216a3307c089`.
+`handoff-eof-normalization.json` records the exact before/after hashes. Earlier
+reports and artifacts retain their original source pins; final full-source and
+artifact checks must use the committed bytes. Staged whitespace checking passed.
+
+### Remaining work, in order
+
+1. Fetch origin, verify this checkpoint on the implementation branch and compare
+   with latest staging. Read the frozen plan/product contract and this latest
+   section before historical handoffs. Finish one bounded integrated recheck of
+   the three latest corrections and their affected criteria. Existing broad
+   review findings and correction contracts are in the local QA archive; do not
+   restart the entire historical audit as a substitute for this recheck.
+2. Freeze the resumed source/environment and capture final check receipts. Build
+   matching WebUI assets **before** the final full Python suite. Capture the
+   coverage exit code, configured full TypeScript report and full Python strict
+   report. Use `scripts/check_type_regressions.py` and the P6 attribution rules
+   without refreshing a baseline to absorb new diagnostics. Reproduce/dispose of
+   the inherited facade cleanup failure separately. P6 remains open until unchanged
+   strict checking exits zero and the required local full suite passes.
+3. Build and install a **new matching wheel** containing the final Python bytes,
+   GUI bundle and operation contract. Recheck package/bundle parity, installed
+   owner/state behavior and ordinary macOS CLI startup/restart. The old wheel can
+   supply only its stated earlier evidence; it cannot attest the final GUI fix
+   or the post-verification EOF normalization.
+4. On that wheel, complete the actual GUI scenarios: two distinct background
+   completions; canonical tool/result detail and return preserving the parent
+   draft/attachments/scroll/focus; replay/reconnect without duplication; narrow
+   layout; parent-already-replied Stop of siblings plus nested work with gates
+   held and **no false banner after settlement/Refresh**; and sibling approve,
+   deny and Stop while the **same parent and approved child remain held**.
+   Record actual public request/response frames, canonical state and file effects.
+   The earlier `browser-recorded` approval run timed out its parent before the
+   second decision, so it is partial evidence only. The fixture now explicitly
+   sets provider timeout 600 and emits valid nonterminal SSE keepalives; its child
+   task budget remains 300 seconds, so complete held-child interactions promptly.
+5. Record the bounded acceptance verdict and remaining release gates. Native
+   Full/whole-tree confinement, matching physical Android/device evidence,
+   real-model qualification where required, remaining A3 stage/finding acceptance
+   and full release qualification are not closed here. Linux/Android evidence
+   previously confirmed by the user retains its original scope. Keep staging
+   separate until the remaining gates are explicitly accepted.
+
+Useful commands from a prepared checkout (capture commands, source/dependency
+hashes, exit codes and raw outputs; use a fresh short `/tmp` pytest basetemp):
+
+```bash
+# webui/
+bun run build
+bun run test:coverage
+bun run lint
+node_modules/.bin/tsc -b --force --pretty false
+
+# repository root, same frozen Python environment
+python -m pytest -p no:cacheprovider -q -n 4 --dist loadfile
+python -m ruff check nanobot tests conftest.py
+python -m basedpyright --outputjson --pythonpath /path/to/the/frozen/python
+
+# tui/
+npm exec --yes --package bun@1.3.13 -- bun test
+npm exec --yes --package bun@1.3.13 -- bun run check
+```
+
+### Local QA archive for the next agent
+
+`/private/tmp/nb-a3-client-20261113-9ageutn4` contains the immutable snapshots,
+contracts, raw logs, manifests, installed artifacts and disposable fixture records.
+Important entries are:
+
+- `handoff-final-{context,hashes}.json`, `handoff-eof-normalization.json`,
+  `handoff-stop-record.json`, `handoff-webui-focused-receipt.json`,
+  `control-recovery-reused-checks.json`, and `control-recovery-*-receipt.json`.
+- `approval-wire-recovery/completion-report.md`,
+  `tui-refresh-round2/completion-report.md`, and
+  `QA/QA/gui-null-notice-recovery/{completion-report.md,manifest.json,validation-ledger.md}`.
+- `tui-actual-qualification-receipt.json`, `tui-accepted/`, `tui-completion/`,
+  `browser-recovery/`, `browser-recorded/`, and `artifact-control-recovery-python/`.
+- `control-recovery-replan.md`, the original four package contracts,
+  `integrated-review.md`, and the approval/Stop specialist analyses. Earlier
+  correction budgets were exhausted; the final repairs are explicit bounded
+  replans from new evidence. Use Sol Max for consequential analysis/review and
+  Luna Max for clear bounded follow-on fixes, as the user requested.
+
+Local QA artifacts are supplemental and are not committed. If this archive is
+unavailable to the next agent, regenerate the evidence from the committed tests
+and commands instead of treating a historical count as current acceptance. The
+following sections retain earlier checkpoints unchanged.
+
 ## Combined backend review corrections (2026-11-13)
 
 Resume from `0a68f298` on `codex/staging-audit-implementation`. An independent

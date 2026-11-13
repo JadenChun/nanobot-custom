@@ -1,8 +1,9 @@
 # A3 architecture record
 
-This is the current, reviewable record of the A3 audit and candidate refactor, as of
-2026-11-11. It collects the design, reasons, implementation order and evidence in the
-repository. **The plan is frozen as `A3-PLAN-2026-11-11`; the implementation merge is on HOLD.**
+This records the A3 audit and candidate refactor. The architecture baseline is
+dated 2026-11-11; implementation progress is updated through 2026-11-13. It collects
+the design, reasons, implementation order and evidence in the repository.
+**The plan is frozen as `A3-PLAN-2026-11-11`; the implementation merge is on HOLD.**
 The [freeze record](plan-review.md#frozen-baseline-and-subsequent-work) identifies the
 documentation baseline. Implementation and release acceptance remain open.
 
@@ -29,12 +30,15 @@ their behavior or become a first-release coordinator requirement.
 Candidate-code findings and runtime qualification are later work and do not select
 planning requirements.
 
-**Implementation correction status (2026-11-12): user-requested pause.** The
-[latest handoff](implementation-handoff.md#latest-handoff-stopped-with-unfinished-backend-work-2026-11-12)
-records accepted foundations, the isolated Dream verification, unfinished canonical-child
-and artifact integration, current failing checks and backend-first continuation order.
-The WIP remains on `codex/staging-audit-implementation`, separate from staging; no combined
-backend or A3 acceptance is claimed.
+**Implementation correction status (2026-11-13): paused for handoff after the
+current GUI worker completed.** The
+[latest handoff](implementation-handoff.md#latest-handoff-paused-after-client-control-corrections-2026-11-13)
+pins code checkpoint `9da0f514d`, records completed canonical-child, approval, Stop
+and client corrections, and separates passing bounded checks from inherited
+failures and remaining acceptance work. Continue with the narrow integrated
+recheck, final full-source checks and a new matching installed GUI artifact/browser
+qualification. The implementation remains on `codex/staging-audit-implementation`,
+separate from staging; final A3, P6 and release acceptance remain open.
 
 | Read | Purpose |
 | --- | --- |
@@ -45,7 +49,7 @@ backend or A3 acceptance is claimed.
 | [Design and alternatives](design.md) | Ownership, data flow, required invariants, observed mechanisms and smaller options. |
 | [D1–D7 decisions](decisions.md) | Accepted architectural direction/defaults and historical candidate observations. |
 | [Implementation plan](implementation-plan.md) | A3-0 plus ten stages, dependencies, owner boundaries, acceptance and rollback. |
-| [Implementation correction handoff](implementation-handoff.md) | Latest paused work, verification limits, unfinished acceptance criteria and continuation order; earlier checkpoints remain historical. |
+| [Implementation correction handoff](implementation-handoff.md) | Latest committed checkpoint, verification limits, remaining acceptance criteria and continuation order; earlier checkpoints remain historical. |
 | [Review and merge gates](review.md) | Independent findings, inspected evidence, reported claims and conditions for acceptance. |
 | [Evidence and finding ledger](evidence.json) | Machine-readable pins, 136 finding/package/stage assignments, qualifications and evidence states. |
 | [Archive manifest](audit-manifest.json) | Exact Git blob and SHA-256 identities for the 138 imported audit files. |
