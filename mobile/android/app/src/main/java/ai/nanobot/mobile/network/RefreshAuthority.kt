@@ -12,6 +12,6 @@ internal object RefreshAuthority {
         if (status == 426) return true
         val lower = message.lowercase()
         if (lower.contains("upgrade_required")) return true
-        return status == 401 && lower.contains("device_revoked")
+        return (status == 401 || status == 403) && lower.contains("device_revoked")
     }
 }

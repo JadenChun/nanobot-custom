@@ -119,7 +119,7 @@ async def test_data_server_recovery_replay_and_revoke(tmp_path: Path) -> None:
                 headers=recovery_headers,
             )
             assert refused_recovery.status_code == 403
-            assert refused_recovery.json()["error"] == "pairing_rejected"
+            assert refused_recovery.json() == {"error": "device_revoked"}
     finally:
         data.stop()
         owner.stop()

@@ -89,7 +89,7 @@ _PAIRING_STATUS = {
     "pairing_busy": 409,
     "pairing_code_invalid": 403,
     "pairing_denied": 403,
-    "device_revoked": 401,
+    "device_revoked": 403,
     "remote_access_disabled": 503,
     "pairing_rejected": 403,
     "owner_required": 403,

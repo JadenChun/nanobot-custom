@@ -3281,7 +3281,8 @@ export function ThreadShell({
       {composerPortalTarget ? createPortal(
         <div
           hidden={!composerActive}
-          aria-hidden={!composerActive}
+          aria-hidden={!composerActive || activeChildHistoryInspection !== null}
+          style={activeChildHistoryInspection ? { visibility: "hidden" } : undefined}
           data-testid={composerActive ? "active-pane-composer" : undefined}
         >
           {composer}
