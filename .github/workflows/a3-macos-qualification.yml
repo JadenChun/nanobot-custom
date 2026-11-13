@@ -17,6 +17,11 @@ jobs:
         with:
           ref: 019a004e562cdebc9f3561248be1dc841db57e3b
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .a3-qualification
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14.10"
@@ -32,6 +37,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/a3"
           git rev-parse HEAD HEAD^{tree} | tee "$RUNNER_TEMP/a3/source.txt"
+          cp .a3-qualification/.github/qualification/uv.lock uv.lock
           shasum -a 256 uv.lock webui/bun.lock > "$RUNNER_TEMP/a3/locks.sha256"
           uname -smr > "$RUNNER_TEMP/a3/host.txt"
           uv sync --frozen --extra dev
