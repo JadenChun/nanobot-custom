@@ -19,6 +19,42 @@ and session-based SuperAgent compatibility. Future coordination must preserve or
 subagent behavior. Its task-routing/direct-session UI features remain later work;
 only the mapped foundation contracts belong to current A3 implementation review.
 
+## Current candidate dispositions
+
+These checks apply to `f40c229c` and its runtime checkpoint `5e3c51d6`
+on the Linux host and Android emulator.
+The [verification record](implementation-handoff.md#linux-and-android-emulator-verification)
+identifies the tested artifacts and the release work that remains.
+
+| Review finding | Current evidence |
+| --- | --- |
+| AR1 | The exact-effect approval suite checks racing decisions, repeated dispatch, and one file replacement per consent. |
+| AR2 | The installed WebUI held two worker actions under the same parent. Approval changed one file. Denial left the other file intact. |
+| AR3 | The browser and emulator read canonical child tool and result rows. The child-source and recovery suites cover terminal and uncertain outcomes. |
+| AR4 | The MCP request-binding suite checks captured definitions, replacement, revocation, and release after the old request settles. |
+| AR5 | Native instrumentation checks the durable Cancel fence across a custody reopen. Owner tests check pending restart and Cancel, expiry, and revoke. The combined native Cancel and proof-delivery race remains open. |
+| AR6 | The production scope tests reject attachment and other mutations after scope reduction. The installed remote path passed pairing, renewal, and canonical reads. |
+| RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |
+| RR2 | The process completion test rejects an old result after reuse of its session key. |
+| RR3 | The retired attachment migration route and CLI preview tests leave the whole tree intact. |
+
+The six staging repairs are present through `685bee92`. The source comparison
+and passing checks give these dispositions.
+
+| Staging repair | Current disposition |
+| --- | --- |
+| `2d9da620f` | Preserved. The shared WebUI pager continues across retained sessions. The server tests cover continuation and invalid cursors through the current asset owner. |
+| `184f22683` | Preserved. The catalog hook, skill update events, and mixed clipboard behavior keep their staging contracts. The settings detail view also checks its selected skill before it applies a delayed result. |
+| `5d95a1069` | Preserved. The cron runtime and local trigger owners retain their gateway paths and focused tests. Those tests cover scheduled jobs, manual jobs, and local trigger delivery. |
+| `d5576f1d2` | The Darwin peer credential path is present in source. Platform verification in this pass used Linux. |
+| `b45519af2` | The Linux test isolation checks pass in the full suite. The current fixtures cover optional installer isolation, native availability, and the later WebSocket scope contract. |
+| `d3380eb69` | The feature-repair audit remains in the archive. |
+
+Staging's later `ab959821` cancellation check remains in the runner before tool
+error recovery. The integrated agent tests and the full Linux suite passed.
+
+## Original candidate review
+
 Two independent reviews judge the small-core, edge-owned direction viable, but require
 corrections before the candidate can meet its own authority, canonical-history and
 durability contracts. This is not an all-architecture PASS. The nine findings below

@@ -30,15 +30,12 @@ their behavior or become a first-release coordinator requirement.
 Candidate-code findings and runtime qualification are later work and do not select
 planning requirements.
 
-**Implementation correction status (2026-11-13): paused for handoff after the
-current GUI worker completed.** The
-[latest handoff](implementation-handoff.md#latest-handoff-paused-after-client-control-corrections-2026-11-13)
-pins code checkpoint `9da0f514d`, records completed canonical-child, approval, Stop
-and client corrections, and separates passing bounded checks from inherited
-failures and remaining acceptance work. Continue with the narrow integrated
-recheck, final full-source checks and a new matching installed GUI artifact/browser
-qualification. The implementation remains on `codex/staging-audit-implementation`,
-separate from staging; final A3, P6 and release acceptance remain open.
+**Linux and Android emulator verification (2026-11-13).** The implementation
+branch includes current staging. The full Linux suite, strict Python check, and
+installed WebUI scenarios passed. The Android emulator exercised signed pairing,
+access renewal, child history, and owner revocation across the recorded builds.
+The handoff pins the artifacts and lists the remaining release acceptance work.
+[Latest handoff](implementation-handoff.md#linux-and-android-emulator-verification)
 
 | Read | Purpose |
 | --- | --- |
@@ -71,18 +68,14 @@ does not make that candidate merged behavior.
 | Migration CI exercise | [`dee68697157dccb0b49a6782c8dd13a594c9cf92`](https://github.com/JadenChun/nanobot-custom/commit/dee68697157dccb0b49a6782c8dd13a594c9cf92) descends from `980b491d01cdf308041bd9ba7a2ccdd5998d6a99` and adds only two lines/comment to the baseline script. It lacks the later `7fbb00c2a` and `0518de5f` fixes and is a CI exercise, not a separate architectural implementation. |
 
 The six repairs ending at [`d3380eb69d3c8416a9ca72522001234ce30a8eeb`](https://github.com/JadenChun/nanobot-custom/tree/d3380eb69d3c8416a9ca72522001234ce30a8eeb)
-are included in the updated pre-refactor staging baseline. Their
-[reconciliation dispositions](review.md#repair-branch-reconciliation) still apply to the
-separate refactor candidate. Commit ancestry alone does not establish whether that
-candidate preserves each correction semantically.
+are included in the updated pre-refactor staging baseline. The current review
+records the disposition of each repair against the implementation branch.
+[Current candidate dispositions](review.md#current-candidate-dispositions)
 
-Future refactor acceptance must compare against the latest `staging`, including these
-pre-refactor repairs and the [integration validation](review.md#pre-refactor-staging-validation).
-The existing refactor review and its source links remain pinned to
-`0518de5f5013b77cbc20d2c5b456e973f33c68f5`; they do not attest reconciliation with the
-updated baseline. The implementation branch and PR #27 remain separate. The immutable
-138-file manifest covers the architecture audit history; the feature-repair records
-under `docs/audits/feature-implementation-2026-11-05/` retain their separate provenance.
+The original refactor review and its source links retain their
+`0518de5f5013b77cbc20d2c5b456e973f33c68f5` pin. The 138-file manifest covers the
+architecture audit history. The feature-repair records under
+`docs/audits/feature-implementation-2026-11-05/` retain their own source history.
 
 ## Evidence vocabulary
 

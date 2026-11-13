@@ -1,6 +1,81 @@
 # A3 implementation correction handoff
 
-## Latest handoff: paused after client-control corrections (2026-11-13)
+## Linux and Android emulator verification
+
+The Linux release build source is `f40c229c25a1aaa2ef03336bd255614297dfbece` (tree
+`2a844815b1fae9f30e9593494c8e95c489bcba94`). The Android build uses `3d8df881`.
+The last Linux commit changes only cron artifact reads and their regression test.
+The branch includes staging `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+The user selected Linux and the
+Android emulator for this pass. The A3 plan and its release acceptance criteria
+remain in the [implementation plan](implementation-plan.md).
+
+The branch now makes concurrent SDK close calls wait for the same cleanup.
+Child approvals publish activity to the original chat. The WebUI hides the
+parent composer during child inspection and restores the draft on return.
+Background results follow the original parent source through queueing and restart.
+Android renews access with its device key. The native app clears custody once
+after confirmed revocation and checks the pairing again before it reloads.
+Hatch uses the frontend lockfile when it rebuilds the bundle. The Gradle wrapper
+checks the distribution against the release toolchain checksum.
+Cron reconciliation accepts ordinary access-time changes during artifact reads.
+The reader still checks file permissions, size, content digest, and modification metadata.
+
+### Verification results
+
+| Check | Result |
+| --- | --- |
+| Linux source | The final full run passed **18,286 tests**, with 22 skips and six passing subtests. Ruff passed. BasedPyright reported zero diagnostics across 546 files. The global diagnostic comparison passed with the same Python dependency inventory. A public plan-read regression reproduced the access-time failure before the repair. All 23 focused cron reconciliation tests passed after it. |
+| WebUI | 1,550 tests passed across 101 files. Coverage was 88.73% statements, 81.67% branches, and 85.87% functions. Coverage, lint, and build passed. The configured TypeScript build reported the same 103 diagnostics as `93b21895`. |
+| Installed Linux gateway | Seven browser scenarios covered sibling results, read-only child history, draft/attachment/scroll/focus restoration, narrow layout, reconnect and restart, nested Stop, and exact approval and denial. With both children released together, the old build left one result pending. The final installed build integrated both once after one parent message. Three consecutive full runs of the corrected qualification harness passed all seven scenarios. The earlier harness raced the main and background Stop controls and a new-topic transition. The correction waits for the post-reply background Stop and an idle thread. No product code changed. |
+| TUI, native execution, and mobile protocol | TUI passed 238 tests and type checking. Go broker tests and the 131-row route parity check passed. Linux exercised the native supervisor and managed bubblewrap with real descendant processes. The installed `5e3c51d6` CLI read a fixture through `read_file` with the local Qwen3.8 model. |
+| Android 16 x86_64 emulator | The signed `93b21895` build paired and read canonical child history. A proof renewal reopened the socket after seven minutes. The app sent a new message 659 seconds after launch, after the initial ten-minute lease. The revocation correction and matching Linux owner returned `403 device_revoked` and opened the pairing screen. The final native bridge rejected stale starts with custody still absent. The signed `3d8df881` build installed and opened the pairing screen. The JVM suite passed 20 tests. The Android runner passed 39 cases and skipped ten that require live fixture credentials. |
+| Artifact and rollback checks | The installed wheel matched all 546 packaged Python files and 590 WebUI files. The APK shared 534 files byte for byte with the WebUI bundle. The wheel, source archive, and service unit passed inspection. The signed APK passed alignment and signature checks. On disposable copies, rollback retained five histories, four archives, and revoked device state. The earlier development executable read both scheduler exports. It retained prior receipts and ran the next due occurrence once. |
+| Release build inputs | Forced wheel builds passed with the committed Bun and npm lockfiles. Both builds refused a manifest that disagreed with its lockfile. Each lockfile kept its original bytes. The editable install passed without a frontend build. The Gradle wrapper refused an archive with a different checksum. |
+
+The emulator renewal, revocation, and final update used successive signed builds.
+The independent delta review passed the final custody and transport changes.
+Artifact SHA-256 values for the tested source are below.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Linux wheel | `d838690c1ac2336c08d5eb35a44a27f69faab7208e9faf1c82d24bb79aa06b76` |
+| Source archive | `2fb2aa55171ff0ee7dcb02b32bca2139ab62415050dafea8ee0a7ac60d858864` |
+| Signed Android APK | `b7d9feff54a32faae3a6ff31928308a4863537a9f8d3329a49ee1f79ec866926` |
+| Signing certificate | `8c30d04957e9724d1668e585890913b0581676c9460789f658c4ed9f84ba0c81` |
+| Mobile operation contract | `2cc8ba5ceb27ab9334de2b06f6a2e13b8655b556813c8d12bc3f3542d11b47cc` |
+
+The hosted Linux Python 3.11 and 3.14 jobs, WebUI, TUI, Docker, and Windows
+process-compatibility jobs passed on `f40c229c`. The broad Windows Python 3.14
+job failed 22 CLI command tests with `SessionModeError: session authority lease
+is unavailable`. That job is outside this Linux and Android pass and remains a
+release check.
+[Runtime CI](https://github.com/JadenChun/nanobot-custom/actions/runs/43448353028)
+· [Current code CI](https://github.com/JadenChun/nanobot-custom/actions/runs/43453527871)
+
+Local receipts and artifacts are in the
+`a3-evidence/linux-android-2026-11-13/` directory beside the implementation
+worktree. The `final-f40c229c/` subdirectory holds the corrected qualification
+harness, its three passing logs, and the final browser evidence.
+The earlier handoffs below retain their original scope and results.
+
+### Work before release acceptance
+
+1. The Android Cancel race still needs a native run that overlaps Cancel
+   with owner approval and proof delivery, then restarts both ends. Exercise
+   loss of the initial proof response after approval and verify the app recovers.
+   The native fence, server restart tests, and live renewal and revoke cover parts
+   of these cases.
+2. Continue the [136-finding ledger](evidence.json) from the 11 entries with
+   current acceptance evidence. The
+   [current review dispositions](review.md#current-candidate-dispositions)
+   record the six staging repairs and the later authority and recovery findings.
+3. The strict and full local test gates now pass. Formal A3 stage acceptance and
+   P6 release acceptance still need the remaining evidence and a release decision.
+   [A3 release and rollback criteria](implementation-plan.md#rollback-and-requalification)
+   · [P6 completion checklist](../../migration/p6-completion-checklist.md)
+
+## Paused after client-control corrections (2026-11-13)
 
 **Implementation is paused at the user's request, after the current GUI worker
 finished.** Resume on `codex/staging-audit-implementation` from code checkpoint
