@@ -21,9 +21,9 @@ only the mapped foundation contracts belong to current A3 implementation review.
 
 ## Current candidate dispositions
 
-These checks apply to `f40c229c` and its runtime checkpoint `5e3c51d6`
-on the Linux host and Android emulator.
-The [verification record](implementation-handoff.md#linux-and-android-emulator-verification)
+The Linux and Android checks below include the earlier `f40c229c` and
+`5e3c51d6` checkpoints. The pairing lifetime and WebSocket checks use
+`484a1476`. The [verification record](implementation-handoff.md#pairing-cancellation-and-linux-verification)
 identifies the tested artifacts and the release work that remains.
 
 | Review finding | Current evidence |
@@ -32,11 +32,38 @@ identifies the tested artifacts and the release work that remains.
 | AR2 | The installed WebUI held two worker actions under the same parent. Approval changed one file. Denial left the other file intact. |
 | AR3 | The browser and emulator read canonical child tool and result rows. The child-source and recovery suites cover terminal and uncertain outcomes. |
 | AR4 | The MCP request-binding suite checks captured definitions, replacement, revocation, and release after the old request settles. |
-| AR5 | Native instrumentation checks the durable Cancel fence across a custody reopen. The repaired edge route now forwards `pair/cancel` to the owner. The owner revokes an issued device and its access grant before it removes the challenge. The store also accepts a new pairing for a revoked installation. The Linux probe and a native emulator run confirmed that Cancel removes authority and that a fresh attempt pairs. The owner-boundary probe completes an approved, proof-bound pairing, cancels, and observes a rejected token, a revoked device, and an accepted new attempt. The combined native Cancel and proof-delivery race remains open. |
-| AR6 | The production scope tests reject attachment and other mutations after scope reduction. The installed remote path passed pairing, renewal, and canonical reads. |
+| AR5 | The owner revokes only the device issued for the cancelled attempt. The Android bridge waits for UI acceptance before it saves access. The emulator verified the race across owner restart. A fresh attempt recovered from a dropped proof response. |
+| AR6 | The installed mobile WebSocket accepted an authorized attachment. It rejected another attachment after a scope reduction. The stored bytes stayed the same. |
 | RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |
 | RR2 | The process completion test rejects an old result after reuse of its session key. |
 | RR3 | The retired attachment migration route and CLI preview tests leave the whole tree intact. |
+
+### Pairing lifetime and live WebSocket checks
+
+The Linux regressions reproduced two defects at `6a3334c6`. Cancel for an
+old attempt revoked the newer pairing on the same installation. An owner
+restart lost the record needed to cancel an issued device. Both regressions
+passed at `484a1476`. The owner now writes the device proof and cancel
+digest in one transaction. It rejects access grants from earlier generations.
+
+The Android 16 emulator held the native approval while the app still showed
+the waiting screen. Cancel revoked the device after the owner restarted.
+The late response and app restart left chat closed. A fresh attempt reused
+the installation. A dropped initial response recovered with fresh proof after
+both sides restarted. The independent review accepted this initial-delivery
+evidence for R01-F01 under the v2 contract.
+
+The fixture also dropped a renewal response after the owner issued access.
+After both sides restarted, fresh proof reopened chat. The owner refused the
+superseded credentials. The emulator then collected a manual pairing code
+and resumed the same pending approval after both sides restarted. The user
+could complete pairing without re-entering the code.
+
+The installed wheel exercised the production WebSocket route. It stored one
+authorized attachment. After a scope reduction, the same connection returned
+`scope_denied` and the stored bytes matched. The 131-row parity check passed.
+The [handoff](implementation-handoff.md#pairing-cancellation-and-linux-verification)
+records build hashes and the Android transport used for each check.
 
 ### AR5 server-authority probe (2026-11-14)
 
