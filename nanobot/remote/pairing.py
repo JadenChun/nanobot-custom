@@ -575,10 +575,49 @@ class PairingService:
 
     def cancel(self, pairing_id: str) -> bool:
         with self._lock:
-            cancelled = self._challenges.pop(pairing_id, None) is not None
-            if cancelled:
-                self._save_locked()
-            return cancelled
+            challenge = self._challenges.get(pairing_id)
+            if challenge is None:
+                return False
+            self._revoke_pending_device_locked(challenge)
+            self._challenges.pop(pairing_id, None)
+            self._save_locked()
+            return True
+
+    def cancel_attempt(
+        self,
+        *,
+        pairing_id: str,
+        nonce: str,
+        collector_secret: str,
+    ) -> bool:
+        """Cancel one collector attempt and remove any authority it created.
+
+        The caller must present the same nonce and collector secret that bound
+        the attempt. A device issued by an overlapping proof is revoked before
+        the challenge is removed, so a late token delivery cannot leave usable
+        server authority behind.
+        """
+        with self._lock:
+            challenge = self._challenges.get(pairing_id)
+            if challenge is None:
+                raise PairingNotFoundError("pairing challenge is not known")
+            if not constant_time_equal(nonce, challenge.offer.nonce):
+                raise PairingRejectedError("challenge nonce is not current")
+            if not constant_time_equal(collector_secret, challenge.offer.collector_secret):
+                raise PairingRejectedError("collector secret is not current")
+            self._revoke_pending_device_locked(challenge)
+            self._challenges.pop(pairing_id, None)
+            self._save_locked()
+            return True
+
+    def _revoke_pending_device_locked(self, challenge: _Challenge) -> None:
+        installation_id = challenge.pending_installation
+        if installation_id is None:
+            return
+        device = self.store.get_device(installation_id)
+        if device is None or device.revoked_at is not None:
+            return
+        self.tokens.revoke(installation_id)
 
     def _bind_collector(
         self,
@@ -601,7 +640,8 @@ class PairingService:
             validate_installation_id(installation_id)
         except ContractError as exc:
             raise PairingRejectedError(str(exc)) from exc
-        if self.store.get_device(installation_id) is not None:
+        existing = self.store.get_device(installation_id)
+        if existing is not None and existing.revoked_at is None:
             raise PairingBusyError("installation already has a device; revoke it before re-pairing")
         challenge.pending_installation = installation_id
         challenge.pending_label = _clean_label(label) or challenge.offer.label

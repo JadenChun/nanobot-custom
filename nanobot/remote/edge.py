@@ -68,6 +68,7 @@ _PAIRING_ROUTES = {
     "/mobile/v1/pair/collect",
     "/mobile/v1/pair/poll",
     "/mobile/v1/pair/code",
+    "/mobile/v1/pair/cancel",
     "/mobile/v1/pair/prove",
     "/mobile/v1/pair/recover",
     "/mobile/v1/pair/recover/complete",
@@ -651,6 +652,27 @@ class MobileGatewayEdge:
                 status = _PAIRING_STATUS.get(exc.code, 400)
                 return http_json_response({"error": exc.code}, status=status)
             return await self._pairing_delivery(request, result)
+        if path.endswith("/cancel"):
+            pairing_id = header("X-Nanobot-Pairing-Id")
+            nonce = header("X-Nanobot-Pairing-Nonce")
+            collector_secret = header("X-Nanobot-Pairing-Secret")
+            if not pairing_id or not nonce or not collector_secret:
+                return http_json_response({"error": "bad_request"}, status=400)
+            try:
+                cancelled = await asyncio.to_thread(
+                    self.validator.client.cancel_pairing_attempt,
+                    pairing_id=pairing_id,
+                    nonce=nonce,
+                    collector_secret=collector_secret,
+                )
+            except OwnerUnavailableError:
+                return http_json_response({"error": "owner_unavailable"}, status=503)
+            except OwnerRequestError as exc:
+                if exc.code == "pairing_not_found":
+                    return http_json_response({"cancelled": True})
+                status = _PAIRING_STATUS.get(exc.code, 400)
+                return http_json_response({"error": exc.code}, status=status)
+            return http_json_response({"cancelled": bool(cancelled)})
         if path.endswith("/prove"):
             pairing_id = header("X-Nanobot-Pairing-Id")
             signature = header("X-Nanobot-Device-Signature")

@@ -120,6 +120,11 @@ var routes = map[string]route{
 		pattern:    regexp.MustCompile(`^/mobile/v1/pair/poll$`),
 		nativeOnly: true,
 	},
+	"mobile_pair_cancel": {
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/cancel$`),
+		nativeOnly: true,
+	},
 	"mobile_pair_code": {
 		method:     http.MethodGet,
 		pattern:    regexp.MustCompile(`^/mobile/v1/pair/code$`),

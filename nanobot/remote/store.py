@@ -210,9 +210,10 @@ class RemoteAccessStore:
     ) -> RemoteDevice:
         with self._locked():
             state = self._require_state()
-            if installation_id in state.devices:
+            existing = state.devices.get(installation_id)
+            if existing is not None and existing.revoked_at is None:
                 raise StoreError("installation already exists")
-            if len(state.devices) >= MAX_DEVICES:
+            if existing is None and len(state.devices) >= MAX_DEVICES:
                 raise StoreError("device limit reached")
             try:
                 validate_scopes(scopes)

@@ -363,6 +363,25 @@ class OwnerIPCServer:
                     "scopes": list(pair.scopes),
                 },
             }
+        if method == "pair_cancel_attempt":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            nonce = _string_param(params, "nonce")
+            collector_secret = _string_param(params, "collector_secret")
+            if None in (pairing_id, nonce, collector_secret):
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing fields are required"}}
+            try:
+                cancelled = self.pairing.cancel_attempt(
+                    pairing_id=cast(str, pairing_id),
+                    nonce=cast(str, nonce),
+                    collector_secret=cast(str, collector_secret),
+                )
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            except AuthRejectedError as exc:
+                return {"ok": False, "error": {"code": "unavailable", "message": str(exc)}}
+            return {"ok": True, "result": {"cancelled": cancelled}}
         if method == "pair_prove":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
@@ -676,7 +695,11 @@ class OwnerIPCServer:
             pairing_id = _string_param(params, "pairing_id")
             if pairing_id is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id is required"}}
-            return {"ok": True, "result": {"cancelled": self.pairing.cancel(pairing_id)}}
+            try:
+                cancelled = self.pairing.cancel(pairing_id)
+            except AuthRejectedError as exc:
+                return {"ok": False, "error": {"code": "unavailable", "message": str(exc)}}
+            return {"ok": True, "result": {"cancelled": cancelled}}
         if method == "set_enabled":
             enabled = _bool_param(params, "enabled")
             if enabled is None:

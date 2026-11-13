@@ -29,7 +29,7 @@ The reader still checks file permissions, size, content digest, and modification
 | WebUI | 1,550 tests passed across 101 files. Coverage was 88.73% statements, 81.67% branches, and 85.87% functions. Coverage, lint, and build passed. The configured TypeScript build reported the same 103 diagnostics as `93b21895`. |
 | Installed Linux gateway | Seven browser scenarios covered sibling results, read-only child history, draft/attachment/scroll/focus restoration, narrow layout, reconnect and restart, nested Stop, and exact approval and denial. With both children released together, the old build left one result pending. The final installed build integrated both once after one parent message. Three consecutive full runs of the corrected qualification harness passed all seven scenarios. The earlier harness raced the main and background Stop controls and a new-topic transition. The correction waits for the post-reply background Stop and an idle thread. No product code changed. |
 | TUI, native execution, and mobile protocol | TUI passed 238 tests and type checking. Go broker tests and the 131-row route parity check passed. Linux exercised the native supervisor and managed bubblewrap with real descendant processes. The installed `5e3c51d6` CLI read a fixture through `read_file` with the local Qwen3.8 model. |
-| Android 16 x86_64 emulator | The signed `93b21895` build paired and read canonical child history. A proof renewal reopened the socket after seven minutes. The app sent a new message 659 seconds after launch, after the initial ten-minute lease. The revocation correction and matching Linux owner returned `403 device_revoked` and opened the pairing screen. The final native bridge rejected stale starts with custody still absent. The signed `3d8df881` build installed and opened the pairing screen. The JVM suite passed 20 tests. The Android runner passed 39 cases and skipped ten that require live fixture credentials. |
+| Android 16 x86_64 emulator | The signed `93b21895` build paired and read canonical child history. A proof renewal reopened the socket after seven minutes. The app sent a new message 659 seconds after launch, after the initial ten-minute lease. The revocation correction and matching Linux owner returned `403 device_revoked` and opened the pairing screen. The final native bridge rejected stale starts with custody still absent. The signed `3d8df881` build installed and opened the pairing screen. The JVM suite passed 20 tests. The Android runner passed 39 cases and skipped ten that require live fixture credentials. The AR5 run used a debug build with the repaired cancel path. It overlapped approval with Cancel, created no device or proof, paired a fresh attempt, and returned to pairing after owner revoke and app restart. The JVM suite passed after that change. |
 | Artifact and rollback checks | The installed wheel matched all 546 packaged Python files and 590 WebUI files. The APK shared 534 files byte for byte with the WebUI bundle. The wheel, source archive, and service unit passed inspection. The signed APK passed alignment and signature checks. On disposable copies, rollback retained five histories, four archives, and revoked device state. The earlier development executable read both scheduler exports. It retained prior receipts and ran the next due occurrence once. |
 | Release build inputs | Forced wheel builds passed with the committed Bun and npm lockfiles. Both builds refused a manifest that disagreed with its lockfile. Each lockfile kept its original bytes. The editable install passed without a frontend build. The Gradle wrapper refused an archive with a different checksum. |
 
@@ -61,17 +61,14 @@ The earlier handoffs below retain their original scope and results.
 
 ### Work before release acceptance
 
-1. AR5 remains an open code blocker. A Linux owner-boundary probe completed an
-   approved, proof-bound pairing, then cancelled the challenge. The access token
-   still validated. The device stayed unrevoked and blocked a new attempt for the
-   same installation. Local mobile cancellation does not revoke server authority.
-   The A3-7 plan keeps AR5 and AR6 on hold for implementation review. A server-side
-   cancel and revoke path is required before a native run can pass. That run must
-   overlap Cancel with approval and proof delivery, restart both ends, verify that
-   no usable authority survives, and pair a deliberately new attempt. It must also
-   exercise loss of the initial proof response after approval.
-   The probe and log are in
-   `a3-evidence/linux-android-2026-11-13/ar5-cancel-authority/`.
+1. AR5 has a verified repair on this branch. The owner now revokes an issued
+   device and its access grant when a collector cancels the attempt. The edge
+   route, native broker policy, and Android cancel are wired to it. The Linux
+   probe and a native emulator run confirmed that no authority survives Cancel,
+   that a fresh attempt pairs, and that owner revoke returns the app to pairing
+   after restart. Nine requirements-only tests cover the cancel contract. A
+   release review must still decide whether to accept the repair. AR6 remains
+   open for implementation review.
 2. Continue the [136-finding ledger](evidence.json) from the 11 entries with
    current acceptance evidence. The
    [current review dispositions](review.md#current-candidate-dispositions)

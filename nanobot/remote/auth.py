@@ -114,7 +114,8 @@ class TokenService:
             state = self.store.load()
             if state is None or not state.enabled:
                 raise AuthRejectedError("remote access is disabled")
-            if self.store.get_device(installation_id) is not None:
+            existing = self.store.get_device(installation_id)
+            if existing is not None and existing.revoked_at is None:
                 raise AuthConflictError("installation already has a device record")
             access_token = f"nbm_at_{secrets.token_urlsafe(32)}"
             try:

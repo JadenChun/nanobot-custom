@@ -32,7 +32,7 @@ identifies the tested artifacts and the release work that remains.
 | AR2 | The installed WebUI held two worker actions under the same parent. Approval changed one file. Denial left the other file intact. |
 | AR3 | The browser and emulator read canonical child tool and result rows. The child-source and recovery suites cover terminal and uncertain outcomes. |
 | AR4 | The MCP request-binding suite checks captured definitions, replacement, revocation, and release after the old request settles. |
-| AR5 | Native instrumentation checks the durable Cancel fence across a custody reopen. A Linux owner-boundary probe completed an approved, proof-bound device pairing, then cancelled the challenge. The access token still validated, the device stayed unrevoked, and the same installation could not start a new attempt. The combined native Cancel and proof-delivery race remains open. |
+| AR5 | Native instrumentation checks the durable Cancel fence across a custody reopen. The repaired edge route now forwards `pair/cancel` to the owner. The owner revokes an issued device and its access grant before it removes the challenge. The store also accepts a new pairing for a revoked installation. The Linux probe and a native emulator run confirmed that Cancel removes authority and that a fresh attempt pairs. The owner-boundary probe completes an approved, proof-bound pairing, cancels, and observes a rejected token, a revoked device, and an accepted new attempt. The combined native Cancel and proof-delivery race remains open. |
 | AR6 | The production scope tests reject attachment and other mutations after scope reduction. The installed remote path passed pairing, renewal, and canonical reads. |
 | RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |
 | RR2 | The process completion test rejects an old result after reuse of its session key. |
@@ -40,15 +40,29 @@ identifies the tested artifacts and the release work that remains.
 
 ### AR5 server-authority probe (2026-11-14)
 
-A Linux owner-boundary probe completed an approved, proof-bound device pairing,
-then cancelled the pairing challenge. The issued access token still validated.
-The device stayed unrevoked. A new attempt for the same installation returned
-`PairingBusyError`. The probe calls `PairingService` directly. It does not
-exercise the Android UI. It shows that local mobile cancellation and the current
-owner-side `PairingService.cancel` remove only the challenge, not issued server
-authority. The A3-7 plan keeps AR5 and AR6 on hold for implementation review.
-The probe and log are in
-`a3-evidence/linux-android-2026-11-13/ar5-cancel-authority/`.
+Before the repair, a Linux owner-boundary probe completed an approved,
+proof-bound device pairing and then cancelled the pairing challenge. The issued
+access token still validated. The device stayed unrevoked. A new attempt for the
+same installation returned `PairingBusyError`. The probe calls `PairingService`
+directly. It does not exercise the Android UI.
+
+The repair adds `PairingService.cancel_attempt` with the attempt nonce and
+collector secret. It revokes any device and access grant that an overlapping
+proof created before it removes the challenge. The edge forwards
+`/mobile/v1/pair/cancel` to the owner through the `pair_cancel_attempt` IPC
+method. The native broker policy admits that route. The Android cancel now
+persists the local fence, sends the cancel, and fails visibly when the owner
+does not confirm it. A revoked device no longer blocks a new pairing for the
+same installation.
+
+After the repair, the probe reports a rejected token, a revoked device, and an
+accepted new attempt. A native emulator run overlapped owner approval with the
+app Cancel tap. The owner recorded the approval but created no device and no
+proof. A fresh offer then paired, reached the chat UI, and returned to pairing
+after owner revoke, including after an app restart. Nine requirements-only tests
+cover the cancel contract. The probe, captures, owner state, and logs are in
+`a3-evidence/linux-android-2026-11-13/ar5-cancel-authority/` and
+`a3-evidence/linux-android-2026-11-13/ar5-native-race/`.
 
 The six staging repairs are present through `685bee92`. The source comparison
 and passing checks give these dispositions.

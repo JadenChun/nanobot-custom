@@ -201,6 +201,24 @@ class RemoteAccessClient:
             role="pairing",
         )
 
+    def cancel_pairing_attempt(
+        self,
+        *,
+        pairing_id: str,
+        nonce: str,
+        collector_secret: str,
+    ) -> bool:
+        result = self._call(
+            "pair_cancel_attempt",
+            {
+                "pairing_id": pairing_id,
+                "nonce": nonce,
+                "collector_secret": collector_secret,
+            },
+            role="pairing",
+        )
+        return bool(result.get("cancelled"))
+
     def create_pairing(
         self,
         *,

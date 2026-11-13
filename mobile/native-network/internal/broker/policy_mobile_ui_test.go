@@ -137,6 +137,7 @@ func TestMobilePairingProofHeadersAndRoutesAreAllowlisted(t *testing.T) {
 		path      string
 	}{
 		{"mobile_pair_prove", "/mobile/v1/pair/prove"},
+		{"mobile_pair_cancel", "/mobile/v1/pair/cancel"},
 		{"mobile_pair_recover", "/mobile/v1/pair/recover"},
 		{"mobile_pair_recover_complete", "/mobile/v1/pair/recover/complete"},
 	}

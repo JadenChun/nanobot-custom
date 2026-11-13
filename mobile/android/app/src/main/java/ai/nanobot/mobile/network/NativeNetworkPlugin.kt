@@ -493,12 +493,46 @@ class NativeNetworkPlugin : Plugin() {
 
     @PluginMethod
     fun pairCancel(call: PluginCall) {
+        val challenge = activePairing ?: try {
+            custody.load()?.let { record ->
+                if (record.pendingPairingChallenge.isBlank()) null
+                else PairingChallengeCodec.decode(record.pendingPairingChallenge)
+            }
+        } catch (_: Exception) {
+            null
+        }
         try {
             custody.cancelPairing()
             activePairing = null
-            call.resolve(JSObject().put("status", "cancelled"))
         } catch (exception: Exception) {
             call.reject(exception.message ?: "pairing cancellation could not be persisted")
+            return
+        }
+        if (challenge == null) {
+            call.resolve(JSObject().put("status", "cancelled"))
+            return
+        }
+        operationExecutor.execute {
+            try {
+                val result = jsonRequest(
+                    "mobile_pair_cancel",
+                    "/mobile/v1/pair/cancel",
+                    body = null,
+                    headers = mapOf(
+                        "X-Nanobot-Pairing-Id" to challenge.pairingId,
+                        "X-Nanobot-Pairing-Nonce" to challenge.nonce,
+                        "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
+                    ),
+                )
+                if (!result.optBoolean("cancelled", false)) {
+                    throw IllegalStateException("owner did not cancel the pairing")
+                }
+                mainHandler.post { call.resolve(JSObject().put("status", "cancelled")) }
+            } catch (exception: Exception) {
+                mainHandler.post {
+                    call.reject(exception.message ?: "pairing cancellation did not reach the owner")
+                }
+            }
         }
     }
 
