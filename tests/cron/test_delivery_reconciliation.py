@@ -206,6 +206,47 @@ def test_claimed_plan_requires_confirmation_and_reapplies_idempotently(tmp_path:
     assert outbox.get(current.outbox_id).record_revision == revision
 
 
+def test_show_plan_accepts_ordinary_artifact_access_time_updates(tmp_path: Path) -> None:
+    probe = tmp_path / "atime-probe"
+    probe.write_text("probe")
+    modified = probe.stat().st_mtime_ns
+    os.utime(probe, ns=(modified - 2_000_000_000, modified))
+    access_before = probe.stat().st_atime_ns
+    probe.read_bytes()
+    if probe.stat().st_atime_ns == access_before:
+        pytest.skip("filesystem does not update access time on read")
+
+    outbox, current, _claim = _claimed(tmp_path)
+    destination = current.destinations[0]
+    artifacts = tmp_path / "artifacts"
+    evidence = import_evidence(
+        outbox.root,
+        namespace=NAMESPACE,
+        artifacts_root=artifacts,
+        outbox_id=current.outbox_id,
+        destination_id=destination.destination_id,
+        outcome="confirmed_not_sent",
+    )
+    plan = create_plan(
+        outbox.root, namespace=NAMESPACE, artifacts_root=artifacts, evidence_ref=evidence.reference,
+    )
+    assert plan.semantic_id is not None
+    originals = {path: path.read_bytes() for path in artifacts.rglob("*.json")}
+    assert originals
+    for path in originals:
+        modified = path.stat().st_mtime_ns
+        os.utime(path, ns=(modified - 2_000_000_000, modified))
+
+    shown = show_plan(
+        outbox.root, namespace=NAMESPACE, artifacts_root=artifacts, plan_id=plan.semantic_id,
+    )
+
+    assert shown["plan_id"] == plan.semantic_id
+    assert shown["outcome"] == "confirmed_not_sent"
+    assert {path: path.read_bytes() for path in artifacts.rglob("*.json")} == originals
+    assert outbox.get(current.outbox_id) == current
+
+
 def test_unsafe_artifact_binding_and_invalid_outcome_fail_closed(tmp_path: Path) -> None:
     outbox, current, _claim = _claimed(tmp_path)
     destination = current.destinations[0]
