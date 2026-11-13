@@ -568,11 +568,29 @@ class RuntimeComposition:
                 )
             raise RuntimeNotReadyError(f"runtime is not ready ({self._state.name})")
 
+    def close_if_idle(self) -> bool:
+        """Close without scheduling cleanup if the composition holds no work."""
+        loop = asyncio.get_running_loop()
+        with self._state_lock:
+            return self._close_if_idle_locked(loop)
+
+    def _close_if_idle_locked(self, loop: asyncio.AbstractEventLoop) -> bool:
+        if self._state not in {RuntimeState.NEW, RuntimeState.CLOSED} and (
+            self._state is not RuntimeState.FAILED or self._closers
+        ):
+            return False
+        if self._owner_loop is not None:
+            self._require_owner(loop)
+        self._state = RuntimeState.CLOSED
+        return True
+
     async def aclose(self) -> None:
         loop = asyncio.get_running_loop()
         leader = False
         with self._state_lock:
-            if self._state is RuntimeState.READY:
+            if self._close_if_idle_locked(loop):
+                return
+            if self._state in {RuntimeState.READY, RuntimeState.FAILED}:
                 self._require_owner(loop)
                 self._state = RuntimeState.CLOSING
                 self._close_waiter = loop.create_future()
@@ -585,23 +603,6 @@ class RuntimeComposition:
                 self._require_owner(loop)
                 assert self._close_waiter is not None
                 waiter = self._close_waiter
-            elif self._state is RuntimeState.CLOSED:
-                if self._owner_loop is not None:
-                    self._require_owner(loop)
-                return
-            elif self._state is RuntimeState.NEW:
-                self._state = RuntimeState.CLOSED
-                return
-            elif self._state is RuntimeState.FAILED:
-                self._require_owner(loop)
-                if self._closers:
-                    self._state = RuntimeState.CLOSING
-                    self._close_waiter = loop.create_future()
-                    self._close_waiter.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
-                    waiter, leader = self._close_waiter, True
-                else:
-                    self._state = RuntimeState.CLOSED
-                    return
             else:
                 raise RuntimeLifecycleError("cannot close runtime while acquisition is building")
         if not leader:

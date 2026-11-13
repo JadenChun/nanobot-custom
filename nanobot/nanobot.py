@@ -395,15 +395,19 @@ class Nanobot:
         """Release resources held by this instance."""
         if getattr(self, "_closed", False):
             return
-        if self._loop is None and self._mcp_provider is None:
-            # A definition-only facade has no SDK-owned cleanup task to join.
-            # Composition, if present, already owns and shields its teardown.
-            self._closing = True
-            await self._finish_close()
-            return
         task = getattr(self, "_close_task", None)
         if task is None or task.done():
             self._closing = True
+            if self._loop is None and self._mcp_provider is None:
+                from nanobot.runtime_composition import RuntimeComposition
+
+                composition = self._composition
+                if composition is None or (
+                    type(composition) is RuntimeComposition and composition.close_if_idle()
+                ):
+                    self._closed = True
+                    self._closing = False
+                    return
             task = asyncio.create_task(self._finish_close())
             task.add_done_callback(
                 lambda completed: (

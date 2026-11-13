@@ -149,16 +149,18 @@ async def siblings(engine_config, monkeypatch, *, pending_turn_id=None):
         turns.clear_websocket_turns(CHAT)
 
 
-async def wait_refusal(loop):
+async def wait_refusal(loop, *, channel=None):
     while True:
         message = await asyncio.wait_for(loop.bus.consume_outbound(), timeout=5)
         if isinstance(message.event, WebUIAdmissionRejectedEvent):
             return message.event
+        if channel is not None:
+            await channel.send(message)
 
 
-async def wait_child_approval(loop, held):
+async def wait_child_approval(loop, held, *, channel=None):
     reached = asyncio.create_task(held.wait())
-    refused = asyncio.create_task(wait_refusal(loop))
+    refused = asyncio.create_task(wait_refusal(loop, channel=channel))
     try:
         done, _ = await asyncio.wait(
             {reached, refused}, timeout=5, return_when=asyncio.FIRST_COMPLETED,
@@ -324,7 +326,7 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
         await channel._dispatch_envelope(connection, "client", raw)
         errors = [frame for frame in frames(connection) if frame.get("event") == "error"]
         assert not errors, errors
-        await wait_child_approval(loop, provider.alpha_held)
+        await wait_child_approval(loop, provider.alpha_held, channel=channel)
         assert parent_facts(loop, channel) == facts
         assert not provider.parent_release.is_set() and not provider.alpha_release.is_set()
         accepted = [frame for frame in frames(connection) if frame.get("event") == "message_accepted"]
@@ -354,6 +356,23 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
         assert [messages for messages, _, _ in provider.calls
                 if not any("Worker Role" in str(row.get("content")) for row in messages)] == parent_inputs
         assert not [event for event in lifecycle if event.context.session_key == KEY]
+        while loop.bus.outbound_size:
+            await channel.send(loop.bus.outbound.get_nowait())
+        live_updates = {
+            (frame["child_session_key"], frame["state"])
+            for frame in frames(connection)
+            if frame.get("event") == "delegated_child"
+            and frame.get("chat_id") == CHAT
+            and frame.get("pending_approval_id") is None
+        }
+        assert (pending["alpha"].session_key, "active") in live_updates
+        assert (pending["beta"].session_key, "stopped") in live_updates
+        decisions = [
+            frame for frame in frames(connection)
+            if frame.get("event") == "message_accepted"
+            and frame.get("turn_id") in {"decide-alpha", "decide-beta"}
+        ]
+        assert len(decisions) == 2 and all(frame["starts_turn"] is False for frame in decisions)
         retire.assert_not_called()
         invalidate.assert_not_called()
         transcript.assert_not_called()

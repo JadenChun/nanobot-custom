@@ -77,6 +77,7 @@ from nanobot.agent.tools.context import (
     RequestContext,
     bind_request_context,
     current_request_context,
+    request_context,
     reset_request_context,
 )
 from nanobot.agent.tools.exec_session import ExecCompletionSink, ExecSessionManager
@@ -1421,12 +1422,14 @@ class AgentLoop:
                 approval_resume,
             )
 
+            approval_route = current_request_context()
+
             async def activate_resume(context: RunTurnContext, action: str) -> bool:
-                return await manager.activate_child_approval_resume(
-                    approval_resume,
-                    context,
-                    action,
-                )
+                # The approval hook runs inside the child's turn context.
+                with request_context(approval_route) if approval_route else nullcontext():
+                    return await manager.activate_child_approval_resume(
+                        approval_resume, context, action,
+                    )
 
             on_approval_consumed = activate_resume
         if request.artifact_input is not None and approval_resume is not None:
@@ -4513,13 +4516,19 @@ class AgentLoop:
                 ):
                     await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
                     return
-                result = await manager.resume_child_approval_decision(
-                    child_id=expected.child_id,
-                    approval_id=pending.approval_id,
-                    blocked_run_id=pending.run_id or "",
-                    decision=decision,
-                    approval_target=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id),
-                )
+                # Carry the original chat route into child activity publication.
+                with request_context(RequestContext(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=key,
+                )):
+                    result = await manager.resume_child_approval_decision(
+                        child_id=expected.child_id,
+                        approval_id=pending.approval_id,
+                        blocked_run_id=pending.run_id or "",
+                        decision=decision,
+                        approval_target=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id),
+                    )
                 if result is None or result.stop_reason == "approval_stale":
                     await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
             except asyncio.CancelledError:
