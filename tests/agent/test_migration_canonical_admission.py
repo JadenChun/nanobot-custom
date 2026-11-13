@@ -23,7 +23,7 @@ from nanobot.session.manager import SessionManager
 def host(tmp_path):
     loop = object.__new__(AgentLoop)
     loop._fork_dependencies = SimpleNamespace(
-        foreground_manager=SimpleNamespace(new_budget=DelegationBudget),
+        foreground_manager=SimpleNamespace(new_budget=DelegationBudget, _delegation_tree=None),
         resource_policy=SimpleNamespace(workspace=tmp_path, context_manager=object()))
     loop.approval_admission = ApprovalAdmission()
     loop.sessions = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
@@ -31,6 +31,12 @@ def host(tmp_path):
     loop._session_locks = weakref.WeakValueDictionary()
     loop._bus_cleanup_tasks = {}
     loop._pending_republish = {}
+    # This host has no delegated children to reconcile. Keep its canonical
+    # execution bookkeeping explicit rather than bypassing runtime guards.
+    loop._background_results_reconciled = True
+    loop._uncertain_children_reconciled = True
+    loop._active_root_bindings = {}
+    loop._source_activity_admissions = {}
     loop.tools = ToolRegistry()
     loop._process_turn = AsyncMock(return_value=SimpleNamespace(
         run_result=AgentRunResult(final_content='answer', messages=[]), outbound=None))

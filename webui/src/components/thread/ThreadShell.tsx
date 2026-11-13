@@ -7,6 +7,13 @@ import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailab
 import { FilePreviewPanel } from "@/components/FilePreviewPanel";
 import { ApprovalRequestCard } from "@/components/thread/ApprovalRequestCard";
 import {
+  DelegatedChildHistoryOverlay,
+  delegatedChildHasValidAncestry,
+  delegatedChildSummaryIsAuthorized,
+  delegatedChildSource,
+  findDelegatedChildApprovalPrompt,
+} from "@/components/thread/DelegatedChildHistoryOverlay";
+import {
   FolderAccessRequestCard,
   type CorrelatedFolderAccessResult,
   type FolderAccessResolveIntent,
@@ -24,7 +31,11 @@ import type {
 import type { ModelPresetOption } from "@/components/thread/ModelPresetBadge";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
-import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
+import {
+  ThreadViewport,
+  type ThreadViewportHandle,
+  type ThreadViewportState,
+} from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
 import {
@@ -53,14 +64,25 @@ import {
 import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
 import { inferProviderFromModelName, providerDisplayLabel } from "@/lib/provider-brand";
 import { parseRiskyApprovalPrompt } from "@/lib/risky-approval";
+import {
+  delegatedChildReferences,
+  delegatedChildRows,
+  parseDelegatedChildSummaryPayload,
+  parseDelegatedChildPayload,
+  sameSourceOrigin,
+} from "@/lib/delegated-child-projection";
 import type {
   ChatSummary,
+  DelegatedChildReference,
+  DelegatedChildPayload,
+  DelegatedChildSummaryPayload,
   FolderAccessRequest,
   RoundUsage,
   SettingsPayload,
   SlashCommand,
   SkillSummary,
   UIMessage,
+  SourceOrigin,
   WorkspaceScopePayload,
   WorkspaceAccessMode,
   WorkspaceOnceReceipt,
@@ -70,6 +92,27 @@ import { projectWebuiThreadMessages } from "@/lib/thread-display-compat";
 import { useClient } from "@/providers/ClientProvider";
 
 type MessageShape = Pick<UIMessage, "role" | "kind" | "content" | "isStreaming" | "turnId">;
+
+interface ChildHistoryInspection {
+  parentKey: string;
+  child: DelegatedChildReference;
+  rootRows: DelegatedChildReference[];
+  expectedRoot: SourceOrigin | null;
+}
+
+interface ChildApprovalPrompt {
+  child: DelegatedChildPayload;
+  requestKey: string;
+  status: "loading" | "ready" | "unavailable";
+  approvalId: string | null;
+  summary: string;
+}
+
+interface PendingChildApprovalDecision {
+  requestKey: string;
+  turnId: string;
+  admitted: boolean;
+}
 
 interface PendingCanonicalHydrate {
   historyLineage: number;
@@ -139,6 +182,56 @@ function sameWorkspaceFocus(
     && right !== null
     && left.project_path === right.project_path
     && left.access_mode === right.access_mode;
+}
+
+function sameDelegatedChildProvenance(
+  left: DelegatedChildPayload,
+  right: DelegatedChildPayload,
+): boolean {
+  const leftSource = delegatedChildSource(left);
+  const rightSource = delegatedChildSource(right);
+  return left.parent_session_key === right.parent_session_key
+    && left.parent_store_identity === right.parent_store_identity
+    && left.parent_incarnation === right.parent_incarnation
+    && left.parent_generation === right.parent_generation
+    && left.root_key === right.root_key
+    && left.root_store_identity === right.root_store_identity
+    && left.root_incarnation === right.root_incarnation
+    && left.root_generation === right.root_generation
+    && leftSource !== null
+    && rightSource !== null
+    && sameSourceOrigin(leftSource, rightSource);
+}
+
+function sameDelegatedChildSummary(
+  left: DelegatedChildSummaryPayload,
+  right: DelegatedChildSummaryPayload,
+): boolean {
+  return JSON.stringify(parseDelegatedChildSummaryPayload(left))
+    === JSON.stringify(parseDelegatedChildSummaryPayload(right));
+}
+
+function childApprovalCandidateKey(child: DelegatedChildPayload): string {
+  return JSON.stringify([
+    child.child_id,
+    child.pending_approval_id,
+    child.blocked_run_id,
+    child.state,
+    child.run_sequence,
+    child.state_sequence,
+    child.parent_session_key,
+    child.parent_store_identity,
+    child.parent_incarnation,
+    child.parent_generation,
+    child.root_key,
+    child.root_store_identity,
+    child.root_incarnation,
+    child.root_generation,
+    child.child_session_key,
+    child.child_store_identity,
+    child.child_incarnation,
+    child.child_generation,
+  ]);
 }
 
 function sameManagedAccess(
@@ -633,7 +726,6 @@ interface ThreadShellProps {
     options?: { fullAccess?: boolean },
   ) => Promise<string | null>;
   onForkChat?: (sourceChatId: string, beforeUserIndex: number) => Promise<string | null>;
-  onOpenChildSession?: (sessionKey: string) => void;
   onTurnEnd?: () => void;
   theme?: "light" | "dark";
   onToggleTheme?: () => void;
@@ -936,7 +1028,6 @@ export function ThreadShell({
   onToggleSidebar,
   onCreateChat,
   onForkChat,
-  onOpenChildSession,
   onTurnEnd,
   theme = "light",
   onToggleTheme = () => {},
@@ -999,6 +1090,9 @@ export function ThreadShell({
     continuity: historyContinuity,
     lineage: historyLineage,
     activeTurnId: historyActiveTurnId,
+    stopTarget: historyStopTarget,
+    stopTargetSnapshotAvailable: historyStopTargetSnapshotAvailable,
+    delegatedChildrenError,
     workspaceAccessRequest,
     workspaceAccessRequestLoading,
     workspaceAccessRequestError,
@@ -1168,6 +1262,22 @@ export function ThreadShell({
   const [settings, setSettings] = useState<SettingsPayload | null>(settingsSnapshot);
   const [heroGreetingKey, setHeroGreetingKey] = useState(randomHeroGreetingKey);
   const [submittedViewportTurnId, setSubmittedViewportTurnId] = useState<string | null>(null);
+  const [childHistoryInspection, setChildHistoryInspection] =
+    useState<ChildHistoryInspection | null>(null);
+  const [childHistoryError, setChildHistoryError] = useState<string | null>(null);
+  const [childApprovalPrompts, setChildApprovalPrompts] = useState<ChildApprovalPrompt[]>([]);
+  const [pendingChildApprovalIds, setPendingChildApprovalIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const pendingChildApprovalTurnsRef = useRef<Map<string, PendingChildApprovalDecision>>(
+    new Map(),
+  );
+  const previousInspectionActiveRef = useRef(false);
+  const inspectionReturnRef = useRef<{
+    parentKey: string;
+    viewportState: ThreadViewportState | null;
+    trigger: HTMLButtonElement;
+  } | null>(null);
   const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
@@ -1208,6 +1318,26 @@ export function ThreadShell({
   const showTemporaryChatControl =
     !hideHeader && !session && !loading && !!onTemporaryChatEnabledChange;
 
+  const clearPendingChildApproval = useCallback((approvalId: string): void => {
+    pendingChildApprovalTurnsRef.current.delete(approvalId);
+    setPendingChildApprovalIds((current) => {
+      if (!current.has(approvalId)) return current;
+      const next = new Set(current);
+      next.delete(approvalId);
+      return next;
+    });
+  }, []);
+  const rejectChildApprovalPresentation = useCallback((
+    requestKey: string,
+    detail: string,
+  ): void => {
+    setChildApprovalPrompts((current) => current.map((prompt) => (
+      prompt.requestKey === requestKey
+        ? { ...prompt, status: "unavailable", approvalId: null, summary: detail }
+        : prompt
+    )));
+  }, []);
+
   const initial = useMemo(() => {
     if (!chatId) return historical;
     return messageCacheRef.current.get(chatId) ?? historical;
@@ -1231,6 +1361,13 @@ export function ThreadShell({
     messages,
     messagesReady,
     isStreaming,
+    hasOwnedWork,
+    stopCanBeSent,
+    stopPending,
+    stopNotice,
+    dismissStopNotice,
+    stopTarget,
+    connectionOpen,
     runStartedAt,
     retryStatus,
     goalState,
@@ -1244,7 +1381,16 @@ export function ThreadShell({
     setMessages,
     streamError,
     dismissStreamError,
-  } = useNanobotStream(chatId, initial, hasPendingToolCalls, handleTurnEnd);
+  } = useNanobotStream(
+    chatId,
+    initial,
+    hasPendingToolCalls,
+    handleTurnEnd,
+    historyKey,
+    historyStopTarget,
+    () => refreshHistory(),
+    historyStopTargetSnapshotAvailable,
+  );
 
   const admissionRejectedTurn = useMemo(() => {
     if (
@@ -1318,6 +1464,113 @@ export function ThreadShell({
   }, []);
 
   const displayMessages = useMemo(() => projectWebuiThreadMessages(messages), [messages]);
+  const currentDelegatedChildren = useMemo(
+    () => delegatedChildRows(displayMessages),
+    [displayMessages],
+  );
+  const currentDelegatedChildReferences = useMemo(
+    () => delegatedChildReferences(displayMessages),
+    [displayMessages],
+  );
+  const childApprovalCandidates = useMemo(() => {
+    if (!historyKey || temporary) return [];
+    const expectedRoot = stopTarget?.source ?? historyStopTarget?.source ?? null;
+    if (!expectedRoot) return [];
+    return currentDelegatedChildren.filter((child) => (
+      child.state === "waiting_approval"
+      && typeof child.pending_approval_id === "string"
+      && child.pending_approval_id.length > 0
+      && typeof child.blocked_run_id === "string"
+      && child.blocked_run_id.length > 0
+      && child.blocked_run_id === child.child_run_id
+      && delegatedChildHasValidAncestry(
+        child,
+        currentDelegatedChildren,
+        historyKey,
+        expectedRoot,
+      )
+    ));
+  }, [
+    currentDelegatedChildren,
+    historyKey,
+    historyStopTarget?.source,
+    stopTarget?.source,
+    temporary,
+  ]);
+  const childApprovalCandidateSignature = JSON.stringify(
+    childApprovalCandidates.map(childApprovalCandidateKey),
+  );
+  const childApprovalCandidatesRef = useRef(childApprovalCandidates);
+  childApprovalCandidatesRef.current = childApprovalCandidates;
+  useEffect(() => {
+    const candidates = childApprovalCandidatesRef.current;
+    for (const [approvalId, pending] of pendingChildApprovalTurnsRef.current) {
+      const stillCurrent = candidates.some((child) => (
+        child.pending_approval_id === approvalId
+        && childApprovalCandidateKey(child) === pending.requestKey
+      ));
+      if (!stillCurrent) clearPendingChildApproval(approvalId);
+    }
+    setChildApprovalPrompts(candidates.map((child) => ({
+      child,
+      requestKey: childApprovalCandidateKey(child),
+      status: "loading",
+      approvalId: null,
+      summary: "",
+    })));
+    if (candidates.length === 0 || !historyKey) return;
+
+    const controller = new AbortController();
+    let active = true;
+    for (const child of candidates) {
+      const requestKey = childApprovalCandidateKey(child);
+      void findDelegatedChildApprovalPrompt(
+        token,
+        child,
+        historyKey,
+        controller.signal,
+      ).then((prompt) => {
+        if (!active || controller.signal.aborted) return;
+        setChildApprovalPrompts((current) => current.map((entry) => (
+          entry.requestKey !== requestKey
+            ? entry
+            : prompt
+              ? {
+                  ...entry,
+                  status: "ready",
+                  approvalId: prompt.approvalId,
+                  summary: prompt.summary,
+                }
+              : {
+                  ...entry,
+                  status: "unavailable",
+                  summary: "Approval details could not be verified. Refresh the parent chat before deciding.",
+                }
+        )));
+      }).catch(() => {
+        if (!active || controller.signal.aborted) return;
+        setChildApprovalPrompts((current) => current.map((entry) => (
+          entry.requestKey === requestKey
+            ? {
+                ...entry,
+                status: "unavailable",
+                summary: "Approval details could not be verified. Refresh the parent chat before deciding.",
+              }
+            : entry
+        )));
+      });
+    }
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    childApprovalCandidateSignature,
+    clearPendingChildApproval,
+    historyVersion,
+    historyKey,
+    token,
+  ]);
   const composerContextUsage = useMemo(
     () => latestComposerContextUsage(displayMessages),
     [displayMessages],
@@ -1336,6 +1589,129 @@ export function ThreadShell({
   const turnActive = messagesReady
     && !recoveryNeedsDecision
     && (isStreaming || currentRunStartedAt !== null);
+  const activeChildHistoryInspection = childHistoryInspection?.parentKey === historyKey
+    ? childHistoryInspection
+    : null;
+  const inspectedCurrentChild = activeChildHistoryInspection
+    ? currentDelegatedChildReferences.find((child) => (
+        child.child_id === activeChildHistoryInspection.child.child_id
+      )) ?? null
+    : null;
+  const inspectedExpectedRoot = stopTarget?.source
+    ?? historyStopTarget?.source
+    ?? activeChildHistoryInspection?.expectedRoot
+    ?? null;
+  const childHistoryProvenanceComplete = Boolean(activeChildHistoryInspection
+    && inspectedCurrentChild
+    && !delegatedChildrenError
+    && (activeChildHistoryInspection.child.history_kind === "summary"
+      ? inspectedCurrentChild.history_kind === "summary"
+        && sameDelegatedChildSummary(
+          activeChildHistoryInspection.child,
+          inspectedCurrentChild,
+        )
+        && delegatedChildSummaryIsAuthorized(
+          inspectedCurrentChild,
+          historyKey ?? "",
+        )
+      : inspectedCurrentChild.history_kind !== "summary"
+        && sameDelegatedChildProvenance(
+          activeChildHistoryInspection.child,
+          inspectedCurrentChild,
+        )
+        && delegatedChildHasValidAncestry(
+          activeChildHistoryInspection.child,
+          currentDelegatedChildren,
+          historyKey ?? "",
+          inspectedExpectedRoot,
+        )));
+  const handleOpenChildHistory = useCallback((
+    childValue: DelegatedChildReference,
+    trigger: HTMLButtonElement,
+  ) => {
+    if (!historyKey || temporary) {
+      setChildHistoryError("Delegated history is only available inside its original parent chat.");
+      return;
+    }
+    const isSummary = childValue.history_kind === "summary";
+    const child = isSummary
+      ? parseDelegatedChildSummaryPayload(childValue)
+      : parseDelegatedChildPayload(childValue);
+    const current = child
+      ? currentDelegatedChildReferences.find((row) => row.child_id === child.child_id)
+      : undefined;
+    const expectedRoot = isSummary
+      ? null
+      : stopTarget?.source ?? historyStopTarget?.source ?? null;
+    const candidate = isSummary
+      ? current?.history_kind === "summary"
+        ? parseDelegatedChildSummaryPayload(current)
+        : null
+      : current?.history_kind !== "summary"
+        ? parseDelegatedChildPayload(current)
+        : null;
+    const authorized = isSummary
+      ? child?.history_kind === "summary"
+        && candidate?.history_kind === "summary"
+        && sameDelegatedChildSummary(child, candidate)
+        && delegatedChildSummaryIsAuthorized(candidate, historyKey)
+      : child?.history_kind !== "summary"
+        && candidate?.history_kind !== "summary"
+        && !!child
+        && !!candidate
+        && sameDelegatedChildProvenance(child, candidate)
+        && delegatedChildHasValidAncestry(
+          candidate,
+          currentDelegatedChildren,
+          historyKey,
+          expectedRoot,
+        );
+    if (!authorized || !child || !candidate || delegatedChildrenError) {
+      setChildHistoryError("This delegated history cannot be verified from complete current parent records. Refresh the parent chat and try again.");
+      return;
+    }
+    const viewportState = viewportRef.current?.captureViewState() ?? null;
+    inspectionReturnRef.current = { parentKey: historyKey, viewportState, trigger };
+    setChildHistoryError(null);
+    setChildHistoryInspection({
+      parentKey: historyKey,
+      child: candidate,
+      rootRows: currentDelegatedChildReferences,
+      expectedRoot,
+    });
+  }, [
+    currentDelegatedChildren,
+    currentDelegatedChildReferences,
+    delegatedChildrenError,
+    historyKey,
+    historyStopTarget?.source,
+    stopTarget?.source,
+    temporary,
+  ]);
+  const handleCloseChildHistory = useCallback(() => {
+    setChildHistoryInspection(null);
+    setChildHistoryError(null);
+  }, []);
+  useEffect(() => {
+    if (childHistoryInspection && childHistoryInspection.parentKey !== historyKey) {
+      setChildHistoryInspection(null);
+      inspectionReturnRef.current = null;
+    }
+  }, [childHistoryInspection, historyKey]);
+  useLayoutEffect(() => {
+    const isActive = activeChildHistoryInspection !== null;
+    if (previousInspectionActiveRef.current && !isActive) {
+      const returnState = inspectionReturnRef.current;
+      if (returnState?.parentKey === historyKey) {
+        viewportRef.current?.restoreViewState(returnState.viewportState);
+        window.requestAnimationFrame(() => {
+          if (returnState.trigger.isConnected) returnState.trigger.focus();
+        });
+      }
+      inspectionReturnRef.current = null;
+    }
+    previousInspectionActiveRef.current = isActive;
+  }, [activeChildHistoryInspection, historyKey]);
   const riskyApproval = useMemo(() => {
     if (turnActive || booting) return null;
     for (let index = displayMessages.length - 1; index >= 0; index -= 1) {
@@ -1347,6 +1723,72 @@ export function ThreadShell({
     }
     return null;
   }, [booting, displayMessages, turnActive]);
+  const submitChildApprovalDecision = useCallback((
+    prompt: ChildApprovalPrompt,
+    decision: "approve" | "deny",
+  ) => {
+    const current = currentDelegatedChildren.find(
+      (child) => child.child_id === prompt.child.child_id,
+    );
+    const expectedRoot = stopTarget?.source ?? historyStopTarget?.source ?? null;
+    const rejectGuard = (detail: string) => {
+      rejectChildApprovalPresentation(prompt.requestKey, detail);
+      void refreshHistory();
+    };
+    if (
+      !chatId
+      || !historyKey
+      || !messagesReady
+      || !connectionOpen
+      || prompt.status !== "ready"
+      || !prompt.approvalId
+      || !current
+      || childApprovalCandidateKey(current) !== prompt.requestKey
+      || current.pending_approval_id !== prompt.approvalId
+      || !delegatedChildHasValidAncestry(
+        current,
+        currentDelegatedChildren,
+        historyKey,
+        expectedRoot,
+      )
+      || !current.child_incarnation
+      || typeof current.child_generation !== "number"
+      || !current.blocked_run_id
+    ) {
+      rejectGuard("The exact child approval is no longer available. Refresh status before deciding again.");
+      return;
+    }
+    if (pendingChildApprovalIds.has(prompt.approvalId)) return;
+
+    try {
+      const turnId = client.sendApprovalDecision(chatId, prompt.approvalId, decision, {
+        sessionKey: current.child_session_key,
+        sessionIncarnation: current.child_incarnation,
+        runId: current.blocked_run_id,
+        generation: current.child_generation,
+      });
+      pendingChildApprovalTurnsRef.current.set(prompt.approvalId, {
+        requestKey: prompt.requestKey,
+        turnId,
+        admitted: false,
+      });
+      setPendingChildApprovalIds((existing) => new Set(existing).add(prompt.approvalId!));
+    } catch {
+      rejectGuard("The approval decision could not be sent. Refresh status before deciding again.");
+    }
+  }, [
+    chatId,
+    client,
+    connectionOpen,
+    currentDelegatedChildren,
+    historyKey,
+    historyStopTarget?.source,
+    messagesReady,
+    pendingChildApprovalIds,
+    refreshHistory,
+    rejectChildApprovalPresentation,
+    stopTarget?.source,
+  ]);
   const restoredViewportTurnId = useMemo(
     () => turnActive ? latestActiveTurnId(displayMessages, currentRunStartedAt) : null,
     [currentRunStartedAt, displayMessages, turnActive],
@@ -1500,6 +1942,65 @@ export function ThreadShell({
       setFallbackModelName(event.model_name);
     });
   }, [chatId, client]);
+
+  useEffect(() => {
+    if (!chatId || !historyKey) return;
+    return client.onChat(chatId, (event) => {
+      const turnId = "turn_id" in event && typeof event.turn_id === "string"
+        ? event.turn_id
+        : null;
+      if (!turnId) return;
+      const pending = [...pendingChildApprovalTurnsRef.current.entries()]
+        .find(([, decision]) => decision.turnId === turnId);
+      if (!pending) return;
+      const [approvalId, decision] = pending;
+
+      if (event.event === "message_accepted" || event.event === "message_admitted") {
+        // An outer starts_turn:false acknowledgement confirms admission only.
+        // The exact child row remains the authority for the decision outcome.
+        pendingChildApprovalTurnsRef.current.set(approvalId, {
+          ...decision,
+          admitted: true,
+        });
+        return;
+      }
+      if (event.event === "error") {
+        clearPendingChildApproval(approvalId);
+        rejectChildApprovalPresentation(
+          decision.requestKey,
+          "The approval decision was refused. Refresh the parent chat before deciding again.",
+        );
+        void refreshHistory();
+        return;
+      }
+      if (event.event === "turn_end") {
+        clearPendingChildApproval(approvalId);
+        void refreshHistory();
+      }
+    });
+  }, [
+    chatId,
+    clearPendingChildApproval,
+    client,
+    historyKey,
+    refreshHistory,
+    rejectChildApprovalPresentation,
+  ]);
+
+  useEffect(() => {
+    if (connectionOpen || pendingChildApprovalTurnsRef.current.size === 0) return;
+    for (const [approvalId, decision] of pendingChildApprovalTurnsRef.current) {
+      clearPendingChildApproval(approvalId);
+      rejectChildApprovalPresentation(
+        decision.requestKey,
+        "Approval outcome is unknown after disconnect. Refresh status before deciding again.",
+      );
+    }
+  }, [
+    clearPendingChildApproval,
+    connectionOpen,
+    rejectChildApprovalPresentation,
+  ]);
 
   useEffect(() => {
     if (!historyKey || !chatId || loading) return;
@@ -1910,6 +2411,25 @@ export function ThreadShell({
   useEffect(() => {
     if (!historyKey || !chatId) return;
     return client.onError((error) => {
+      if (
+        (error.kind === "connection_closed" || error.kind === "message_too_big")
+        && error.chatId === chatId
+        && error.turnId
+      ) {
+        const pending = [...pendingChildApprovalTurnsRef.current.entries()]
+          .find(([, decision]) => decision.turnId === error.turnId);
+        if (pending) {
+          const [approvalId, decision] = pending;
+          clearPendingChildApproval(approvalId);
+          rejectChildApprovalPresentation(
+            decision.requestKey,
+            error.kind === "connection_closed"
+              ? "Approval outcome is unknown after disconnect. Refresh status before deciding again."
+              : "The approval decision was not sent. Refresh status before deciding again.",
+          );
+          void refreshHistory();
+        }
+      }
       if (error.kind === "workspace_scope_rejected" && error.chatId === chatId) {
         if (
           pendingRecoveryInvalidationRef.current?.kind === "focus"
@@ -1930,7 +2450,16 @@ export function ThreadShell({
         void refreshRecoveryProjection();
       }
     });
-  }, [chatId, client, historyKey, pendingRecoveryInvalidationRef, refreshRecoveryProjection]);
+  }, [
+    chatId,
+    clearPendingChildApproval,
+    client,
+    historyKey,
+    pendingRecoveryInvalidationRef,
+    refreshHistory,
+    refreshRecoveryProjection,
+    rejectChildApprovalPresentation,
+  ]);
 
   const wasPageHiddenRef = useRef(document.visibilityState === "hidden");
   useEffect(() => {
@@ -2332,22 +2861,6 @@ export function ThreadShell({
     };
   }, [filePreviewPath]);
 
-  const handleChildControl = useCallback((
-    childId: string,
-    runtimeGeneration: number,
-    action: "wait" | "steer" | "stop",
-    content?: string,
-  ) => {
-    if (!session?.key) return;
-    void client.controlDelegatedChild(
-      session.key,
-      childId,
-      runtimeGeneration,
-      action,
-      content,
-    ).catch(() => {});
-  }, [client, session?.key]);
-
   const handleForkFromMessage = useCallback(
     async (beforeUserIndex: number) => {
       if (!chatId || !onForkChat) return;
@@ -2374,6 +2887,46 @@ export function ThreadShell({
           error={streamError}
           onDismiss={dismissStreamError}
         />
+      ) : null}
+      {stopNotice ? (
+        <div role="alert" className="mx-4 flex items-center gap-2 rounded-control border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          <span className="min-w-0 flex-1">
+            {stopNotice === "stale_target"
+              ? t("thread.stop.targetChanged", {
+                  defaultValue: "The owned-work snapshot changed. Refresh status, then click Stop again.",
+                })
+              : t("thread.stop.unavailable", {
+                  defaultValue: "Stop is unavailable until the current owned-work identity can be verified.",
+                })}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded px-2 py-1 font-medium underline underline-offset-2"
+            onClick={() => void refreshHistory()}
+          >
+            {t("thread.stop.refresh", { defaultValue: "Refresh status" })}
+          </button>
+          <button
+            type="button"
+            className="shrink-0 rounded px-2 py-1"
+            aria-label={t("thread.stop.dismiss", { defaultValue: "Dismiss Stop status" })}
+            onClick={dismissStopNotice}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+      {delegatedChildrenError ? (
+        <p role="status" className="mx-4 rounded-control border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          {t("thread.delegatedChild.refreshRequired", {
+            defaultValue: "Delegated activity could not be fully verified. Refresh the conversation to update task status.",
+          })}
+        </p>
+      ) : null}
+      {childHistoryError ? (
+        <p role="alert" className="mx-4 rounded-control border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          {childHistoryError}
+        </p>
       ) : null}
       {session ? (
         <>
@@ -2402,6 +2955,49 @@ export function ThreadShell({
             }}
           />
         ) : null}
+        {!temporary ? childApprovalPrompts.map((prompt) => {
+          const taskLabel = prompt.child.task_label?.trim() || prompt.child.profile || "Delegated task";
+          const requestLabel = t("thread.delegatedChild.approvalFor", {
+            defaultValue: "Approval for {{task}}",
+            task: taskLabel,
+          });
+          const description = prompt.status === "loading"
+            ? t("thread.delegatedChild.verifyingApproval", {
+                defaultValue: "Verifying this exact child request…",
+              })
+            : prompt.status === "unavailable"
+              ? t("thread.delegatedChild.approvalUnavailable", {
+                  defaultValue: "Approval details could not be verified. Refresh the parent chat before deciding.",
+                })
+              : undefined;
+          return (
+            <ApprovalRequestCard
+              key={`${prompt.child.child_id}:${prompt.approvalId ?? prompt.requestKey}`}
+              summary={prompt.summary || taskLabel}
+              approvalId={prompt.status === "ready" ? prompt.approvalId : null}
+              requestLabel={requestLabel}
+              contextLabel={t("thread.delegatedChild.approvalTask", {
+                defaultValue: "Delegated task: {{task}}",
+                task: taskLabel,
+              })}
+              description={description}
+              busy={
+                prompt.status !== "ready"
+                || pendingChildApprovalIds.has(prompt.approvalId ?? "")
+                || !messagesReady
+                || !connectionOpen
+                || !delegatedChildHasValidAncestry(
+                  prompt.child,
+                  currentDelegatedChildren,
+                  historyKey ?? "",
+                  stopTarget?.source ?? historyStopTarget?.source ?? null,
+                )
+              }
+              onApprove={() => submitChildApprovalDecision(prompt, "approve")}
+              onCancel={() => submitChildApprovalDecision(prompt, "deny")}
+            />
+          );
+        }) : null}
         {!temporary && workspaceAccessRequest ? (
           <FolderAccessRequestCard
             chatId={chatId}
@@ -2437,6 +3033,9 @@ export function ThreadShell({
           disabled={!chatId}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
+          stopAvailable={hasOwnedWork}
+          stopDisabled={!stopCanBeSent}
+          stopPending={stopPending}
           placeholder={
             composerVariant === "hero"
               ? t("thread.composer.placeholderHero")
@@ -2587,6 +3186,18 @@ export function ThreadShell({
       onJumpToPrompt={(promptId) => viewportRef.current?.jumpToUserPrompt(promptId)}
     />
   ) : undefined;
+  const childHistoryOverlay = activeChildHistoryInspection ? (
+    <DelegatedChildHistoryOverlay
+      key={`${activeChildHistoryInspection.child.child_id}:${activeChildHistoryInspection.child.child_session_key}:${activeChildHistoryInspection.child.child_generation}`}
+      child={activeChildHistoryInspection.child}
+      rootKey={activeChildHistoryInspection.parentKey}
+      rootRows={currentDelegatedChildren}
+      expectedRoot={inspectedExpectedRoot}
+      provenanceComplete={childHistoryProvenanceComplete}
+      token={token}
+      onClose={handleCloseChildHistory}
+    />
+  ) : null;
 
   const threadHeader = !hideHeader ? (
     <ThreadHeader
@@ -2637,6 +3248,7 @@ export function ThreadShell({
             ref={viewportRef}
             messages={displayMessages}
             temporary={temporary}
+            inspectionOverlay={childHistoryOverlay}
             isStreaming={turnActive}
             runStartedAt={currentRunStartedAt}
             retryStatus={retryStatus}
@@ -2657,8 +3269,8 @@ export function ThreadShell({
             onLoadOlder={loadOlder}
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
             onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
-            onOpenChildSession={onOpenChildSession}
-            onChildControl={handleChildControl}
+            onOpenChildHistory={handleOpenChildHistory}
+            delegatedStatusAvailable={connectionOpen && !delegatedChildrenError}
             onQuoteSelection={session ? handleQuoteSelection : undefined}
           />
         </FilePreviewAvailabilityProvider>

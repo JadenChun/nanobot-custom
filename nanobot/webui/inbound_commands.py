@@ -17,8 +17,14 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from loguru import logger
 from websockets.asyncio.server import ServerConnection
 
+from nanobot.agent.stop_target import StopExpectation, parse_stop_expectation
+from nanobot.agent.turn import ApprovalDecision
 from nanobot.attachments.models import AttachmentRecord
-from nanobot.bus.events import INBOUND_META_USER_SHELL
+from nanobot.bus.events import (
+    INBOUND_META_STOP_CLIENT,
+    INBOUND_META_STOP_EXPECTATION,
+    INBOUND_META_USER_SHELL,
+)
 from nanobot.command.builtin import USER_SHELL_COMMAND, builtin_command_starts_agent_turn
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_INPUT_META,
@@ -833,6 +839,8 @@ class WebUICommandRouter:
         chat_id: str,
         turn_id: str | None,
         envelope: dict[str, Any],
+        *,
+        stop_expectation: StopExpectation | None = None,
     ) -> tuple[str, str] | None:
         """Bind one attempt ID to its payload; reject changed repeated input."""
         if not turn_id:
@@ -850,10 +858,14 @@ class WebUICommandRouter:
                 "request_intent",
                 "target_turn_id",
                 "approval_decision",
+                "stop_expectation",
                 "user_shell",
                 "webui",
             )
         }
+        payload["stop_expectation"] = (
+            stop_expectation.to_dict() if stop_expectation is not None else None
+        )
         digest = hashlib.sha256(
             json.dumps(
                 payload,
@@ -895,10 +907,37 @@ class WebUICommandRouter:
             "chat_id": chat_id,
             **({"turn_id": turn_id} if turn_id else {}),
         }
+        is_stop = _is_stop_control(envelope)
+        raw_stop_expectation = envelope.get("stop_expectation")
+        has_stop_expectation = "stop_expectation" in envelope
+        duplicate_keys = getattr(envelope, "duplicate_keys", ())
+        stop_expectation: StopExpectation | None = None
+        if has_stop_expectation or "stop_expectation" in duplicate_keys:
+            if not is_stop or "stop_expectation" in duplicate_keys:
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="not_admitted",
+                    reason="invalid_stop_expectation",
+                    **rejection_fields,
+                )
+                return
+            try:
+                stop_expectation = parse_stop_expectation(raw_stop_expectation)
+            except (TypeError, ValueError):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="not_admitted",
+                    reason="invalid_stop_expectation",
+                    **rejection_fields,
+                )
+                return
         attempt_error = self._bind_message_attempt(
             str(chat_id),
             turn_id,
             envelope,
+            stop_expectation=stop_expectation,
         )
         if attempt_error is not None:
             detail, reason = attempt_error
@@ -937,9 +976,42 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        approval_control = "approval_decision" in envelope or "approval_decision" in duplicate_keys
+        if approval_control:
+            raw_decision: object = envelope.get("approval_decision")
+            try:
+                if (
+                    "approval_decision" in duplicate_keys
+                    or not isinstance(raw_decision, dict)
+                    or getattr(cast(dict[object, object], raw_decision), "duplicate_keys", ())
+                    or set(cast(dict[object, object], raw_decision)) - {
+                        "approval_id", "decision", "session_key", "session_incarnation",
+                        "run_id", "turn_id", "effect_id", "generation",
+                    }
+                ):
+                    raise ValueError("invalid approval control")
+                ApprovalDecision.from_mapping(raw_decision)
+                if (
+                    is_stop
+                    or envelope.get("webui") is not True
+                    or connection not in self._webui_connections
+                    or not turn_id
+                    or turn_id == websocket_turn_id(chat_id)
+                    or request_intent == "steer"
+                    or temporary_owned
+                ):
+                    raise ValueError("invalid approval control context")
+            except (TypeError, ValueError):
+                await self._transport.webui_send_event(
+                    connection, "error", detail="not_admitted",
+                    reason="invalid_approval_decision", **rejection_fields,
+                )
+                return
         if (
             request_intent == "new"
+            and not approval_control
             and not _is_targeted_stop(envelope)
+            and stop_expectation is None
             and (
                 websocket_turn_wall_started_at(chat_id) is not None
                 or websocket_turn_reserved(chat_id)
@@ -969,6 +1041,45 @@ class WebUICommandRouter:
                 detail="message_rejected",
                 reason=message_rejection,
                 **rejection_fields,
+            )
+            return
+
+        if approval_control:
+            # Decisions carry no new parent input or workspace authority. Read
+            # only the current scope; the canonical approval owner resolves the
+            # exact child and revalidates its source after independent scheduling.
+            try:
+                scope = self._workspaces.scope_for_session_key(webui_session_key(chat_id))
+                if (
+                    current_source_token is None
+                    or self._workspaces.source_token(chat_id) != current_source_token
+                    or not self._transport.is_allowed(client_id)
+                ):
+                    raise ValueError("approval source changed")
+            except Exception:
+                await self._transport.webui_send_event(
+                    connection, "error", detail="not_admitted",
+                    reason="approval_source_unavailable", **rejection_fields,
+                )
+                return
+            metadata = {
+                "remote": getattr(connection, "remote_address", None),
+                "webui": True,
+                **self._transcripts.client_turn_metadata(turn_id),
+                WEBUI_SOURCE_TOKEN_METADATA_KEY: current_source_token,
+                "approval_decision": dict(cast(dict[str, Any], envelope["approval_decision"])),
+            }
+            self._transport.webui_attach(connection, chat_id)
+            await self._transport.webui_dispatch_message(
+                sender_id=client_id, chat_id=chat_id, content=content,
+                media=None, attachments=None, metadata=metadata, is_dm=False,
+                # Exact pending ownership is resolved before ordinary dispatch.
+                # A valid settled root need not remain in the ephemeral cache.
+                session_key=None, require_existing_session=False, workspace_scope=scope,
+            )
+            await self._transport.webui_send_event(
+                connection, "message_accepted", chat_id=chat_id, turn_id=turn_id,
+                starts_turn=False,
             )
             return
 
@@ -1223,6 +1334,10 @@ class WebUICommandRouter:
                 metadata.update(self._transcripts.client_turn_metadata(envelope.get("turn_id")))
             if isinstance(request_intent, str):
                 metadata[WEBUI_REQUEST_INTENT_METADATA_KEY] = request_intent
+            if is_stop:
+                metadata[INBOUND_META_STOP_CLIENT] = True
+                if stop_expectation is not None:
+                    metadata[INBOUND_META_STOP_EXPECTATION] = stop_expectation
             target_turn_id = envelope.get("target_turn_id")
             if isinstance(target_turn_id, str):
                 metadata[WEBUI_TARGET_TURN_METADATA_KEY] = target_turn_id

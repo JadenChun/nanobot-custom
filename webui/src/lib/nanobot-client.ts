@@ -14,6 +14,7 @@ import type {
   WorkspaceScopePayload,
   WorkspacePermissionProjection,
   WebUIMutationOutcome,
+  StopExpectation,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
 import {
@@ -216,6 +217,15 @@ export interface CanonicalRunSnapshot {
   hasPendingToolCalls: boolean;
   /** Exact active turn when supplied by a current gateway. */
   activeTurnId?: string | null;
+}
+
+export interface ApprovalDecisionIdentity {
+  sessionKey?: string;
+  sessionIncarnation?: string;
+  runId?: string;
+  turnId?: string;
+  effectId?: string;
+  generation?: number;
 }
 
 type PendingMessageState = "queued" | "sent" | "unknown" | "accepted";
@@ -1278,6 +1288,7 @@ export class NanobotClient {
       targetTurnId?: string;
       turnId?: string;
       approvalDecision?: ApprovalDecisionPayload;
+      stopExpectation?: StopExpectation;
       /** False for side-channel or injected messages that do not own a lifecycle. */
       startsNewRun?: boolean;
       /** Internal/side-channel turns never raise completion notifications. */
@@ -1303,6 +1314,9 @@ export class NanobotClient {
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
       ...(options?.approvalDecision
         ? { approval_decision: options.approvalDecision }
+        : {}),
+      ...(options?.stopExpectation
+        ? { stop_expectation: options.stopExpectation }
         : {}),
       // System commands are internal chat controls, not workspace requests.
       ...(systemCommand
@@ -1342,17 +1356,32 @@ export class NanobotClient {
     chatId: string,
     approvalId: string,
     decision: "approve" | "deny",
-    sessionKey?: string,
-  ): void {
+    identity?: string | ApprovalDecisionIdentity,
+  ): string {
+    const sourceIdentity = typeof identity === "string"
+      ? { sessionKey: identity }
+      : identity;
+    const turnId = crypto.randomUUID();
     this.sendMessage(chatId, "approval_decision", undefined, {
+      turnId,
       approvalDecision: {
         approval_id: approvalId,
         decision,
-        ...(sessionKey ? { session_key: sessionKey } : {}),
+        ...(sourceIdentity?.sessionKey ? { session_key: sourceIdentity.sessionKey } : {}),
+        ...(sourceIdentity?.sessionIncarnation
+          ? { session_incarnation: sourceIdentity.sessionIncarnation }
+          : {}),
+        ...(sourceIdentity?.runId ? { run_id: sourceIdentity.runId } : {}),
+        ...(sourceIdentity?.turnId ? { turn_id: sourceIdentity.turnId } : {}),
+        ...(sourceIdentity?.effectId ? { effect_id: sourceIdentity.effectId } : {}),
+        ...(sourceIdentity?.generation !== undefined
+          ? { generation: sourceIdentity.generation }
+          : {}),
       },
       startsNewRun: false,
       sideChannel: true,
     });
+    return turnId;
   }
 
   sendSystemCommand(chatId: string, command: string, timeoutMs = 5_000): Promise<void> {

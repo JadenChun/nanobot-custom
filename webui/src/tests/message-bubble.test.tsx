@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -1055,39 +1055,43 @@ describe("MessageBubble", () => {
     expect(screen.queryByLabelText("File attachment")).not.toBeInTheDocument();
   });
 
-  it("renders a delegated child row and opens the child session", async () => {
+  it("renders a labeled delegated task row and opens its read-only history", async () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();
+    const child = {
+      child_session_key: "delegated:child-a",
+      child_id: "child-a",
+      profile: "delegated",
+      state: "active",
+      task_label: "Inspect the API contract",
+      runtime_generation: 0,
+      turn_id: "turn-a",
+      result_summary: "Two compatible routes were found.",
+    };
     const message: UIMessage = {
       id: "delegated-child-a",
       role: "assistant",
       content: "",
       createdAt: Date.now(),
       kind: "delegated_child",
-      delegatedChild: {
-        child_session_key: "delegated:child-a",
-        child_id: "child-a",
-        profile: "delegated",
-        state: "active",
-        runtime_generation: 0,
-        turn_id: "turn-a",
-      },
+      delegatedChild: child,
     };
 
-    render(<MessageBubble message={message} onOpenChildSession={onOpen} />);
+    render(<MessageBubble message={message} onOpenChildHistory={onOpen} />);
 
-    expect(screen.getByText("Delegated child")).toBeInTheDocument();
-    expect(screen.getByText(/delegated/)).toBeInTheDocument();
+    const row = screen.getByRole("region", { name: "Inspect the API contract" });
+    expect(within(row).getByText("active")).toBeInTheDocument();
+    expect(within(row).getByText("Two compatible routes were found.")).toBeInTheDocument();
+    const inspect = within(row).getByRole("button", {
+      name: "Inspect Inspect the API contract activity",
+    });
 
-    await user.click(screen.getByRole("button", { name: "Open" }));
+    await user.click(inspect);
 
-    expect(onOpen).toHaveBeenCalledWith("delegated:child-a");
+    expect(onOpen).toHaveBeenCalledWith(child, inspect);
   });
 
-  it("routes typed wait, steer, and stop child controls", async () => {
-    const user = userEvent.setup();
-    const onControl = vi.fn();
-    const onOpen = vi.fn();
+  it("keeps delegated rows read-only and marks stale status unavailable", () => {
     const message: UIMessage = {
       id: "delegated-child-controls",
       role: "assistant",
@@ -1099,48 +1103,20 @@ describe("MessageBubble", () => {
         child_id: "child-a",
         profile: "delegated",
         state: "active",
+        task_label: "Review test coverage",
         runtime_generation: 0,
         turn_id: "turn-a",
       },
     };
 
-    const { rerender } = render(
-      <MessageBubble
-        message={message}
-        onChildControl={onControl}
-        onOpenChildSession={onOpen}
-      />,
-    );
+    render(<MessageBubble message={message} delegatedStatusAvailable={false} />);
 
-    await user.click(screen.getByRole("button", { name: "Wait" }));
-    expect(onControl).toHaveBeenCalledWith("child-a", 0, "wait");
-
-    await user.click(screen.getByRole("button", { name: "Stop" }));
-    expect(onControl).toHaveBeenCalledWith("child-a", 0, "stop");
-
-    await user.click(screen.getByRole("button", { name: "Steer" }));
-    await user.type(screen.getByLabelText("Child guidance"), "focus");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(onControl).toHaveBeenCalledWith("child-a", 0, "steer", "focus");
-
-    rerender(
-      <MessageBubble
-        message={{
-          ...message,
-          delegatedChild: {
-            ...message.delegatedChild!,
-            state: "completed",
-          },
-        }}
-        onChildControl={onControl}
-        onOpenChildSession={onOpen}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "Wait" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Open" })).not.toBeDisabled();
+    expect(screen.getByRole("region", { name: "Review test coverage" })).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known active)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Inspect Review test coverage activity" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   });
 
 });

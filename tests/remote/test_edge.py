@@ -79,6 +79,7 @@ def edge_setup(tmp_path: Path):
         model_settings_handler=lambda identity: _model_settings(identity),
         workspaces_handler=lambda identity: _workspaces(identity),
         thread_handler=lambda identity, key, query: _thread(identity, key, query),
+        delegated_children_handler=lambda identity, key, query: _delegated_children(identity, key, query),
         api_handler=lambda identity, path: _api(identity, path),
         feature_handler=lambda identity, path: _feature(identity, path),
     )
@@ -117,6 +118,19 @@ def _proof_headers(owner: RemoteAccessOwner, pairing_id: str, key, public_der: b
 
 async def _read(identity: AccessIdentity, query: dict[str, list[str]]) -> dict[str, Any]:
     return {"items": [identity.installation_id], "cursor": query.get("cursor", [None])[0]}
+
+
+async def _delegated_children(
+    identity: AccessIdentity,
+    key: str,
+    query: dict[str, list[str]],
+) -> tuple[int, dict[str, Any]]:
+    return 200, {
+        "key": key,
+        "installation_id": identity.installation_id,
+        "limit": query.get("limit", [None])[0],
+        "before": query.get("before", [None])[0],
+    }
 
 
 async def _media(identity: AccessIdentity, sig: str, payload: str, range_header: str | None) -> MediaResult:
@@ -221,6 +235,30 @@ async def test_edge_mobile_ui_reads_and_thread(edge_setup) -> None:
     assert body(thread)["key"] == "websocket:chat-1"
     assert body(thread)["limit"] == "2"
 
+    delegated = await edge.handle(
+        None,
+        request(
+            f"/mobile/v1/sessions/{key}/delegated-children?limit=20&before=cursor",
+            pair.access_token,
+        ),
+    )
+    assert delegated is not None and delegated.status_code == 200
+    assert body(delegated) == {
+        "key": "websocket:chat-1",
+        "installation_id": "install-0001",
+        "limit": "20",
+        "before": "cursor",
+    }
+
+    invalid_query = await edge.handle(
+        None,
+        request(
+            f"/mobile/v1/sessions/{key}/delegated-children?path=%2Fetc%2Fpasswd",
+            pair.access_token,
+        ),
+    )
+    assert invalid_query is not None and invalid_query.status_code == 400
+
     missing = await edge.handle(
         None,
         request(f"/mobile/v1/sessions/{quote('missing', safe='')}/thread", pair.access_token),
@@ -234,6 +272,83 @@ async def test_edge_mobile_ui_reads_and_thread(edge_setup) -> None:
     for path in ("/mobile/v1/model-settings", "/mobile/v1/workspaces", f"/mobile/v1/sessions/{key}/thread"):
         denied = await edge.handle(None, request(path, write_only.access_token))
         assert denied is not None and denied.status_code == 403
+    denied_children = await edge.handle(
+        None,
+        request(f"/mobile/v1/sessions/{key}/delegated-children", write_only.access_token),
+    )
+    assert denied_children is not None and denied_children.status_code == 403
+
+    wrong_origin = await edge.handle(
+        None,
+        request(
+            f"/mobile/v1/sessions/{key}/delegated-children",
+            pair.access_token,
+            [("Host", ORIGIN_HOST), ("Origin", "https://other.example.test")],
+        ),
+    )
+    assert wrong_origin is not None and wrong_origin.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_delegated_children_revalidates_access_before_delivery(edge_setup) -> None:
+    owner, edge, pair = edge_setup
+
+    async def revoke_during_read(identity, key, query):
+        owner.tokens.revoke(identity.installation_id)
+        return 200, {"private": "must not be delivered", "key": key, "query": query}
+
+    guarded = MobileGatewayEdge(
+        edge.validator,
+        generation_provider=lambda: int(owner.store.snapshot()["revision"]),
+        delegated_children_handler=revoke_during_read,
+    )
+    key = quote("websocket:chat-1", safe="")
+    response = await guarded.handle(
+        None,
+        request(
+            f"/mobile/v1/sessions/{key}/delegated-children?limit=5",
+            pair.access_token,
+        ),
+    )
+    assert response is not None and response.status_code == 401
+    assert body(response)["error"] == "invalid_access"
+    assert "private" not in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_delegated_children_uses_its_registered_response_bound(edge_setup) -> None:
+    _owner, edge, pair = edge_setup
+    payload = {"children": "x" * 1_600_000}
+    assert edge._fits(payload, "sessions.thread")
+    assert not edge._fits(payload, "sessions.delegated_children")
+
+    async def oversized_children(identity, key, query):
+        return 200, payload
+
+    edge.delegated_children_handler = oversized_children
+    key = quote("websocket:chat-1", safe="")
+    response = await edge.handle(
+        None,
+        request(f"/mobile/v1/sessions/{key}/delegated-children?limit=100", pair.access_token),
+    )
+    assert response is not None and response.status_code == 413
+    assert body(response)["error"] == "response_too_large"
+
+
+@pytest.mark.asyncio
+async def test_chat_read_cannot_send_stop_or_other_mutation_frames(edge_setup) -> None:
+    _owner, edge, _pair = edge_setup
+    identity = AccessIdentity("install-readonly", ("chat.read",), 1e12, 1, ORIGIN)
+    stop = await edge.handle_ws_frame(identity, 7, {"type": "stop"})
+    assert stop == {"ok": False, "error": "unknown_frame"}
+
+    from nanobot.remote.operations import mobile_frame_allowed
+
+    assert not mobile_frame_allowed(
+        identity.scopes,
+        {"type": "webui_request", "action": "session.delete"},
+    )
+    assert not mobile_frame_allowed(identity.scopes, {"type": "message", "content": "stop"})
 
 
 @pytest.mark.asyncio

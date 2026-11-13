@@ -423,6 +423,7 @@ function activityDurationMs(
     return Math.round(completedLatencyMs!);
   }
   const timestamps = messages
+    .filter((message) => message.timestampAvailable !== false)
     .map((message) => message.createdAt)
     .filter((value) => Number.isFinite(value));
   if (!timestamps.length) {

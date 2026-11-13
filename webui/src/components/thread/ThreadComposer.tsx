@@ -220,6 +220,10 @@ interface ThreadComposerProps {
   placeholder?: string;
   inputAriaLabel?: string;
   isStreaming?: boolean;
+  /** A server-owned root/child snapshot permits Stop after the root reply. */
+  stopAvailable?: boolean;
+  stopDisabled?: boolean;
+  stopPending?: boolean;
   modelLabel?: string | null;
   modelDetail?: string | null;
   modelPreset?: string | null;
@@ -934,6 +938,9 @@ export function ThreadComposer({
   placeholder,
   inputAriaLabel,
   isStreaming = false,
+  stopAvailable = false,
+  stopDisabled = false,
+  stopPending = false,
   modelLabel = null,
   modelDetail = null,
   modelPreset = null,
@@ -984,6 +991,7 @@ export function ThreadComposer({
   onQuotedContextChange,
 }: ThreadComposerProps) {
   const { t } = useTranslation();
+  const hasStopAction = isStreaming || stopAvailable;
   const mobileComposer = isMobileRuntimeActive();
   const composerChromeHidden = useThreadComposerChromeHidden();
   const [value, setValue] = useState("");
@@ -1214,14 +1222,14 @@ export function ThreadComposer({
   }, [cursorPosition, interactionDisabled, slashMenuDismissed, value]);
 
   const visibleSlashCommands = useMemo(() => {
-    if (!(isStreaming && onStop)) return slashCommands;
+    if (!(hasStopAction && onStop)) return slashCommands;
     const stopCommand = slashCommands.find((command) => command.command === "/stop");
     if (!stopCommand) return slashCommands;
     return [
       stopCommand,
       ...slashCommands.filter((command) => command.command !== "/stop"),
     ];
-  }, [isStreaming, onStop, slashCommands]);
+  }, [hasStopAction, onStop, slashCommands]);
 
   const filteredSlashCommands = useMemo<SlashPaletteCommand[]>(() => {
     if (skillQuery !== null) {
@@ -1269,7 +1277,7 @@ export function ThreadComposer({
           slashQuery === ""
           && (
             command.command === "/restart"
-            || (command.command === "/stop" && !(isStreaming && onStop))
+            || (command.command === "/stop" && !(hasStopAction && onStop))
           )
         ) {
           return false;
@@ -1305,7 +1313,7 @@ export function ThreadComposer({
           detail = goalState?.active
             ? t("thread.composer.slash.details.goalActive")
             : t("thread.composer.slash.details.goalReady");
-        } else if (command.command === "/stop" && isStreaming) {
+        } else if (command.command === "/stop" && hasStopAction) {
           detail = t("thread.composer.slash.details.stopRunning");
         } else if (command.command === "/history") {
           detail = t("thread.composer.slash.details.history");
@@ -1318,7 +1326,7 @@ export function ThreadComposer({
         };
       })
       .sort((a, b) => {
-        if (isStreaming) {
+        if (hasStopAction) {
           if (a.command === "/stop") return -1;
           if (b.command === "/stop") return 1;
         }
@@ -1335,7 +1343,7 @@ export function ThreadComposer({
 
     return withDetails
       .slice(0, 8);
-  }, [goalState?.active, isStreaming, modelLabel, recentSlashCommands, skills, skillQuery, slashQuery, t, visibleSlashCommands]);
+  }, [goalState?.active, hasStopAction, modelLabel, recentSlashCommands, skills, skillQuery, slashQuery, t, visibleSlashCommands]);
 
   const showSlashMenu = filteredSlashCommands.length > 0;
   const cliAppMention = useMemo<CliAppMentionQuery | null>(() => {
@@ -1696,7 +1704,7 @@ export function ThreadComposer({
 
   const chooseSlashCommand = useCallback(
     (command: SlashPaletteCommand) => {
-      if (command.command === "/stop" && isStreaming && onStop) {
+      if (command.command === "/stop" && hasStopAction && onStop) {
         onStop();
         setValue("");
         setSlashMenuDismissed(true);
@@ -1734,7 +1742,7 @@ export function ThreadComposer({
       setInlineError(null);
       resizeTextarea();
     },
-    [isStreaming, onStop, recentSlashCommands, resizeTextarea, skillQuery, value],
+    [hasStopAction, onStop, recentSlashCommands, resizeTextarea, skillQuery, value],
   );
 
   const insertMentionCandidate = useCallback(
@@ -2319,6 +2327,7 @@ export function ThreadComposer({
         ? t("thread.composer.voice.transcribing")
         : t("thread.composer.voice.hint");
   const showStopButton = isStreaming && !!onStop;
+  const showBackgroundStopButton = !isStreaming && stopAvailable && !!onStop;
   const relaxedHeroInput = isHero && images.length === 0 && !isStreaming;
   const inputTextClasses = cn(
     "w-full resize-none bg-transparent",
@@ -2779,13 +2788,34 @@ export function ThreadComposer({
                 </Tooltip>
               </TooltipProvider>
             ) : null}
+            {showBackgroundStopButton ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                disabled={interactionDisabled || stopDisabled}
+                aria-label={stopPending
+                  ? t("thread.composer.stopping", { defaultValue: "Stopping" })
+                  : t("thread.composer.stop")}
+                onClick={handleStop}
+                className="thread-composer-background-stop touch-target h-9 w-9 shrink-0 rounded-full"
+              >
+                {stopPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  : <Square className="h-3.5 w-3.5 fill-current stroke-current" aria-hidden />}
+              </Button>
+            ) : null}
             <Button
               type={showStopButton || modelNeedsSetup ? "button" : "submit"}
               size="icon"
-              disabled={showStopButton ? interactionDisabled : !canSend && !canOpenModelSettings}
+              disabled={showStopButton
+                ? interactionDisabled || stopDisabled
+                : !canSend && !canOpenModelSettings}
               aria-label={
                 showStopButton
-                  ? t("thread.composer.stop")
+                  ? stopPending
+                    ? t("thread.composer.stopping", { defaultValue: "Stopping" })
+                    : t("thread.composer.stop")
                   : modelNeedsSetup
                     ? t("thread.composer.configureModel", { defaultValue: "Configure model" })
                     : t("thread.composer.send")
@@ -2802,7 +2832,9 @@ export function ThreadComposer({
                 (canSend || canOpenModelSettings || showStopButton) && "hover:scale-[1.03] active:scale-95",
               )}
             >
-              {showStopButton ? (
+              {showStopButton ? stopPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
                 <Square className={cn("fill-current stroke-current", isHero ? "h-3 w-3" : "h-3.5 w-3.5")} />
               ) : isStreaming ? (
                 <Loader2 className={cn(isHero ? "h-4 w-4" : "h-4 w-4", "animate-spin")} />

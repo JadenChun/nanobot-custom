@@ -3162,6 +3162,30 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
   });
 
+  it("keeps the send action available while background child work can be stopped", () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={onStop}
+        isStreaming={false}
+        stopAvailable
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "check the result" } });
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue("check the result");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("queues plain guidance while a task is running", () => {
     const onSend = vi.fn();
     render(

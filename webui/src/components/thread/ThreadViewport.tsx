@@ -27,11 +27,26 @@ import {
   promptTop,
 } from "@/components/thread/promptNavigation";
 import { cn } from "@/lib/utils";
-import type { CliAppInfo, McpPresetInfo, RetryStatus, SlashCommand, UIMessage } from "@/lib/types";
+import type {
+  CliAppInfo,
+  DelegatedChildReference,
+  McpPresetInfo,
+  RetryStatus,
+  SlashCommand,
+  UIMessage,
+} from "@/lib/types";
 
 export interface ThreadViewportHandle {
   jumpToUserPrompt: (promptId: string) => void;
   cancelAutoScroll: () => void;
+  captureViewState: () => ThreadViewportState;
+  restoreViewState: (state: ThreadViewportState | null) => void;
+}
+
+export interface ThreadViewportState {
+  scrollTop: number;
+  anchorKey: string | null;
+  anchorOffsetTop: number | null;
 }
 
 interface ThreadViewportProps {
@@ -42,6 +57,7 @@ interface ThreadViewportProps {
   runStartedAt?: number | null;
   retryStatus?: RetryStatus | null;
   composer?: ReactNode;
+  inspectionOverlay?: ReactNode;
   emptyState?: ReactNode;
   scrollToBottomSignal?: number;
   activeTurnId?: string | null;
@@ -59,13 +75,8 @@ interface ThreadViewportProps {
   onLoadOlder?: () => Promise<void> | void;
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
-  onOpenChildSession?: (sessionKey: string) => void;
-  onChildControl?: (
-    childId: string,
-    runtimeGeneration: number,
-    action: "wait" | "steer" | "stop",
-    content?: string,
-  ) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable?: boolean;
   onQuoteSelection?: (text: string) => void;
 }
 
@@ -232,6 +243,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   runStartedAt = null,
   retryStatus = null,
   composer,
+  inspectionOverlay,
   emptyState,
   scrollToBottomSignal = 0,
   activeTurnId = null,
@@ -249,8 +261,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   onLoadOlder,
   onOpenFilePreview,
   onForkFromMessage,
-  onOpenChildSession,
-  onChildControl,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
   onQuoteSelection,
 }, ref) {
   const { t } = useTranslation();
@@ -344,6 +356,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       ? forkBoundaryMessageCount - hiddenMessageCount
       : null;
   const hasComposer = composer !== null && composer !== undefined;
+  const inspectionActive = inspectionOverlay !== null && inspectionOverlay !== undefined;
   const scrollButtonBottom =
     keyboardInsetBottom
     + (composerDockHeight > 0
@@ -503,13 +516,54 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     threadMotionRef.current?.takeUserControl();
   }, []);
 
+  const captureViewState = useCallback((): ThreadViewportState => {
+    const scroller = scrollRef.current;
+    const content = messageContentRef.current;
+    if (!scroller || !content) {
+      return { scrollTop: 0, anchorKey: null, anchorOffsetTop: null };
+    }
+    const bounds = scroller.getBoundingClientRect();
+    const anchor = visibleHistoryUnit(content, bounds);
+    const anchorKey = anchor?.dataset.threadDisplayUnit ?? null;
+    return {
+      scrollTop: scroller.scrollTop,
+      anchorKey,
+      anchorOffsetTop: anchor
+        ? anchor.getBoundingClientRect().top - bounds.top
+        : null,
+    };
+  }, []);
+
+  const restoreViewState = useCallback((state: ThreadViewportState | null) => {
+    const scroller = scrollRef.current;
+    if (!scroller || !state) return;
+    const content = messageContentRef.current;
+    const anchor = state.anchorKey && content
+      ? Array.from(content.querySelectorAll<HTMLElement>(THREAD_DISPLAY_UNIT_SELECTOR))
+          .find((unit) => unit.dataset.threadDisplayUnit === state.anchorKey)
+      : null;
+    let nextTop = state.scrollTop;
+    if (anchor && state.anchorOffsetTop !== null) {
+      const bounds = scroller.getBoundingClientRect();
+      nextTop += anchor.getBoundingClientRect().top - bounds.top - state.anchorOffsetTop;
+    }
+    nextTop = Math.min(
+      Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+      Math.max(0, nextTop),
+    );
+    threadMotionRef.current?.jumpTo(nextTop);
+    historyScrollAnchorRef.current = null;
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
       jumpToUserPrompt,
       cancelAutoScroll,
+      captureViewState,
+      restoreViewState,
     }),
-    [cancelAutoScroll, jumpToUserPrompt],
+    [cancelAutoScroll, captureViewState, jumpToUserPrompt, restoreViewState],
   );
 
   useLayoutEffect(() => {
@@ -876,14 +930,21 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
               ref={messageRegionRef}
               data-testid="thread-message-region"
               className={cn(
-                "thread-message-viewport thread-viewport-scrollbar row-start-1 flex min-h-0 min-w-0 flex-col",
+                "thread-message-viewport thread-viewport-scrollbar relative row-start-1 flex min-h-0 min-w-0 flex-col",
                 "scroll-auto justify-start overflow-x-hidden px-3 pb-0 pt-3 sm:px-4",
                 "[overflow-anchor:none] [scrollbar-width:none]",
                 "[&::-webkit-scrollbar]:hidden",
-                hasVerticalOverflow ? "overflow-y-auto" : "overflow-hidden",
+                inspectionActive
+                  ? "overflow-hidden"
+                  : hasVerticalOverflow ? "overflow-y-auto" : "overflow-hidden",
               )}
             >
-              <div ref={messageContentRef} className="mx-auto w-full max-w-[49.5rem]">
+              <div
+                ref={messageContentRef}
+                className="mx-auto w-full max-w-[49.5rem]"
+                aria-hidden={inspectionActive || undefined}
+                style={inspectionActive ? { visibility: "hidden" } : undefined}
+              >
                 <ThreadMessages
                   messages={visibleMessages}
                   temporary={temporary}
@@ -898,8 +959,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   forkBoundaryMessageCount={visibleForkBoundaryMessageCount}
                   onOpenFilePreview={onOpenFilePreview}
                   onForkFromMessage={onForkFromMessage}
-                  onOpenChildSession={onOpenChildSession}
-                  onChildControl={onChildControl}
+                  onOpenChildHistory={onOpenChildHistory}
+                  delegatedStatusAvailable={delegatedStatusAvailable}
                   onQuoteSelection={onQuoteSelection}
                 />
               </div>
@@ -923,6 +984,8 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
             <div
               ref={composerDockRef}
               data-testid="thread-composer-dock"
+              aria-hidden={inspectionActive || undefined}
+              {...(inspectionActive ? { inert: "" } : {})}
               onInputCapture={(event) => {
                 if (event.target instanceof HTMLTextAreaElement) {
                   composerInputScrollTopRef.current = scrollRef.current?.scrollTop ?? null;
@@ -981,7 +1044,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         className="pointer-events-none absolute inset-x-0 top-0 h-3 bg-gradient-to-b from-background to-transparent"
       />
 
-      {hasMessages ? (
+      {hasMessages && !inspectionActive ? (
         <PromptRail
           messages={visibleMessages}
           scrollRef={scrollRef}
@@ -990,7 +1053,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         />
       ) : null}
 
-      {showScrollToBottomButton && !atBottom && (
+      {showScrollToBottomButton && !inspectionActive && !atBottom && (
         <div
           className="absolute left-1/2 z-20 -translate-x-1/2"
           style={{ bottom: scrollButtonBottom }}
@@ -1010,6 +1073,11 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           </Button>
         </div>
       )}
+      {inspectionActive ? (
+        <div className="absolute inset-0 z-30 overflow-hidden bg-background">
+          {inspectionOverlay}
+        </div>
+      ) : null}
     </div>
   );
 });

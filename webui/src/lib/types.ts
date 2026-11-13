@@ -71,16 +71,50 @@ export interface RetryStatus extends WireRetryStatus {
   next_retry_at?: number;
   turn_id?: string;
 }
+
+export interface SourceOrigin {
+  store_identity: string;
+  session_key: string;
+  incarnation: string;
+  generation: number;
+}
+
+export interface StopExpectationChild {
+  child_id: string;
+  source: SourceOrigin;
+  child_run_id: string | null;
+  run_sequence: number;
+  control_epoch: number;
+}
+
+/** Live, server-derived snapshot echoed unchanged with an original-chat Stop. */
+export interface StopExpectation {
+  version: 1;
+  source: SourceOrigin;
+  control_epoch: number;
+  active_root_present: boolean;
+  active_turn_id: string | null;
+  active_root_run_ids: string[];
+  children: StopExpectationChild[];
+  pending_work_digest: string;
+}
+
 export interface DelegatedChildPayload {
+  history_kind?: "canonical";
+  parent_session_key?: string;
   child_session_key: string;
   child_id: string;
   profile: string;
   state: string;
-  outcome?: string;
+  task_label?: string;
+  task_label_truncated?: boolean;
+  result_summary?: string | null;
+  result_summary_truncated?: boolean;
+  outcome?: string | null;
   runtime_generation: number;
-  turn_id?: string;
-  parent_run_id?: string;
-  child_run_id?: string;
+  turn_id?: string | null;
+  parent_run_id?: string | null;
+  child_run_id?: string | null;
   parent_store_identity?: string;
   parent_incarnation?: string;
   parent_generation?: number;
@@ -97,10 +131,45 @@ export interface DelegatedChildPayload {
   holds_capacity?: boolean;
   can_stop?: boolean;
   owned_work?: boolean;
-  pending_approval_id?: string;
-  blocked_run_id?: string;
-  result_disposition?: string;
+  pending_approval_id?: string | null;
+  blocked_run_id?: string | null;
+  result_disposition?: string | null;
 }
+
+/** Explicit source-less history projection; it never carries client control authority. */
+export interface DelegatedChildSummaryPayload {
+  history_kind: "summary";
+  parent_session_key: string;
+  child_session_key: string;
+  child_id: string;
+  profile: string;
+  state: string;
+  task_label: string | null;
+  task_label_truncated: boolean;
+  result_summary: string | null;
+  result_summary_truncated: boolean;
+  outcome: string | null;
+  runtime_generation: number | null;
+  turn_id?: string | null;
+  parent_run_id: string | null;
+  child_run_id: string | null;
+  parent_store_identity: string | null;
+  parent_incarnation: string | null;
+  parent_generation: number | null;
+  root_key: string;
+  root_store_identity: string | null;
+  root_incarnation: string | null;
+  root_generation: number | null;
+  child_store_identity: string | null;
+  child_incarnation: string | null;
+  child_generation: number | null;
+  run_sequence: number | null;
+  state_sequence: number | null;
+  control_epoch: number | null;
+  can_stop: false;
+}
+
+export type DelegatedChildReference = DelegatedChildPayload | DelegatedChildSummaryPayload;
 
 export interface UIMessage {
   id: string;
@@ -109,6 +178,8 @@ export interface UIMessage {
   kind?: MessageKind;
   isStreaming?: boolean;
   createdAt: number;
+  /** Explicit server timestamp availability for read-only delegated history. */
+  timestampAvailable?: boolean;
   /** For trace rows: each individual hint line, so consecutive hints can
    * render as a single collapsible group. */
   traces?: string[];
@@ -125,7 +196,7 @@ export interface UIMessage {
   /** Context-compaction lifecycle rendered as a standalone channel notice. */
   compaction?: UIContextCompaction;
   /** Typed delegated-child reference projected from the parent activity owner. */
-  delegatedChild?: DelegatedChildPayload;
+  delegatedChild?: DelegatedChildReference;
   /** Display-only localization marker for fixed /compact command replies. */
   compactReply?: "empty" | "failed";
   /** User turn: optimistic blob URLs for preview. Replay: placeholder chips. */
@@ -1725,6 +1796,7 @@ export type InboundEvent =
       temporary?: boolean;
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
+      stop_target?: StopExpectation | null;
     }
   | {
       event: "message_accepted";
@@ -1748,15 +1820,20 @@ export type InboundEvent =
   | {
       event: "delegated_child";
       chat_id: string;
+      parent_session_key: string;
       child_session_key: string;
       child_id: string;
       profile: string;
       state: string;
-      outcome?: string;
+      task_label: string;
+      task_label_truncated: boolean;
+      result_summary: string | null;
+      result_summary_truncated: boolean;
+      outcome?: string | null;
       runtime_generation: number;
-      turn_id?: string;
-      parent_run_id?: string;
-      child_run_id?: string;
+      turn_id?: string | null;
+      parent_run_id?: string | null;
+      child_run_id?: string | null;
       parent_store_identity?: string;
       parent_incarnation?: string;
       parent_generation?: number;
@@ -1773,9 +1850,14 @@ export type InboundEvent =
       holds_capacity?: boolean;
       can_stop?: boolean;
       owned_work?: boolean;
-      pending_approval_id?: string;
-      blocked_run_id?: string;
-      result_disposition?: string;
+      pending_approval_id?: string | null;
+      blocked_run_id?: string | null;
+      result_disposition?: string | null;
+    }
+  | {
+      event: "stop_target";
+      chat_id: string;
+      stop_target: StopExpectation | null;
     }
   | {
       event: "user_message";
@@ -1997,10 +2079,14 @@ interface WebuiThreadPagePayload {
   user_message_offset?: number;
 }
 
+export type WebuiThreadSourcePayload = SourceOrigin;
+
 export interface WebuiDelegatedChildrenPayload {
   schemaVersion: number;
   parentSessionKey?: string;
-  children: DelegatedChildPayload[];
+  children: DelegatedChildReference[];
+  page?: WebuiThreadPagePayload;
+  stop_target?: StopExpectation | null;
 }
 
 export interface WebuiThreadPersistedPayload {
@@ -2014,6 +2100,12 @@ export interface WebuiThreadPersistedPayload {
   has_pending_tool_calls?: boolean;
   /** Exact active turn when supplied by a current gateway. */
   active_turn_id?: string | null;
+  stop_target?: StopExpectation | null;
+  read_only?: boolean;
+  history_kind?: "canonical" | "summary";
+  parent_session_key?: string;
+  root_key?: string;
+  source?: WebuiThreadSourcePayload | null;
   page?: WebuiThreadPagePayload;
   workspace_scope?: WorkspaceScopePayload;
   /** Local authenticated UI projection; absent on remote/temporary reads. */
@@ -2099,6 +2191,7 @@ export type Outbound =
       request_intent?: "new" | "steer";
       target_turn_id?: string;
       approval_decision?: ApprovalDecisionPayload;
+      stop_expectation?: StopExpectation;
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;

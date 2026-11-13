@@ -145,6 +145,7 @@ class ChannelManager:
         webui_child_control: (
             Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
         ) = None,
+        webui_stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
         config_path: Path | None = None,
     ):
         if config_path is None:
@@ -169,6 +170,7 @@ class ChannelManager:
         self._webui_skill_state_action = webui_skill_state_action
         self._webui_recovery_action = webui_recovery_action
         self._webui_child_control = webui_child_control
+        self._webui_stop_target_for_key = webui_stop_target_for_key
         self.channels: dict[str, BaseChannel] = {}
         self._channel_owners: dict[str, str] = {}
         self._channel_runtime_specs: dict[str, tuple[str, str]] = {}
@@ -229,6 +231,7 @@ class ChannelManager:
                 config=parsed,
                 bus=self.bus,
                 session_manager=self._session_manager,
+                stop_target_for_key=self._webui_stop_target_for_key,
                 child_control=self._webui_child_control,
                 static_dist_path=static_path,
                 workspace_path=workspace,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import subprocess
 import sys
@@ -15,7 +16,15 @@ from loguru import logger
 
 from nanobot import __version__
 from nanobot.agent.child_sessions import OriginalChatStopAdmission
-from nanobot.bus.events import INBOUND_META_USER_SHELL, OutboundMessage
+from nanobot.agent.stop_target import StopExpectation, parse_stop_expectation
+from nanobot.bus.events import (
+    INBOUND_META_STOP_CLIENT,
+    INBOUND_META_STOP_EXPECTATION,
+    INBOUND_META_USER_SHELL,
+    InboundMessage,
+    OutboundMessage,
+)
+from nanobot.bus.outbound_events import WebUIAdmissionRejectedEvent
 from nanobot.command.router import CommandContext, CommandRouter, normalize_command_text
 from nanobot.providers.base import LLMUsage
 from nanobot.session.manager import SESSION_MODEL_PRESET_METADATA_KEY
@@ -223,6 +232,49 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     from nanobot.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
 
     target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+    protocol_client = metadata.get(INBOUND_META_STOP_CLIENT) is True
+    expectation_present = INBOUND_META_STOP_EXPECTATION in metadata
+    if protocol_client:
+        raw_expectation = metadata.get(INBOUND_META_STOP_EXPECTATION)
+        if expectation_present and type(raw_expectation) is not StopExpectation:
+            return _stop_admission_rejection(
+                msg,
+                metadata,
+                "invalid_stop_expectation",
+            )
+        if not expectation_present:
+            current_turn_id = websocket_turn_id(str(msg.chat_id))
+            # Older clients may still use the guarded turn-targeted root path.
+            # They cannot use omission to stop children or pending-only work.
+            if (
+                not isinstance(target_turn_id, str)
+                or not target_turn_id
+                or current_turn_id != target_turn_id
+            ):
+                return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+        else:
+            current_target_fn = getattr(type(loop), "stop_target_for_key", None)
+            current_target = (
+                current_target_fn(loop, ctx.key)
+                if callable(current_target_fn)
+                else None
+            )
+            try:
+                current_expectation = (
+                    parse_stop_expectation(current_target)
+                    if current_target is not None else None
+                )
+            except (TypeError, ValueError):
+                current_expectation = None
+            if (
+                current_expectation != raw_expectation
+                or (
+                    isinstance(target_turn_id, str)
+                    and target_turn_id
+                    and websocket_turn_id(str(msg.chat_id)) != target_turn_id
+                )
+            ):
+                return _stop_admission_rejection(msg, metadata, "stale_stop_target")
     if isinstance(target_turn_id, str) and target_turn_id:
         current_turn_id = websocket_turn_id(str(msg.chat_id))
         if current_turn_id != target_turn_id:
@@ -242,19 +294,40 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 loop,
                 ctx.key,
                 target_turn_id if isinstance(target_turn_id, str) else None,
+                **({"require_root_only": True} if protocol_client and not expectation_present else {}),
             )
             if callable(capture_stop)
             else None
         )
     except Exception:
         logger.exception("Stop request could not capture its source lifetime for {}", ctx.key)
+        if protocol_client:
+            return _stop_admission_rejection(msg, metadata, "stale_stop_target")
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
             content="Could not complete the stop request. Please retry.",
             metadata=metadata,
         )
+    if protocol_client and stop_admission is None:
+        return _stop_admission_rejection(msg, metadata, "stale_stop_target")
     pending_at_admission = getattr(loop, "_pending_queues", {}).get(ctx.key)
+
+    if protocol_client:
+        # The exact expectation and source/queue viability were checked above,
+        # synchronously with Stop admission. Only this admitted input may retire
+        # the captured source's authority and access request.
+        try:
+            loop.retire_workspace_task_after_stop_admission(
+                ctx.key, active_turn=pending_at_admission is not None,
+            )
+            loop.sessions.invalidate_workspace_access_request(ctx.key)
+        except Exception:
+            logger.exception("Admitted Stop could not retire workspace authority for {}", ctx.key)
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="Could not complete the stop request. Please retry.", metadata=metadata,
+            )
 
     publisher = getattr(loop, "runtime_event_publisher", None)
 
@@ -320,9 +393,35 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             except Exception:
                 break
     content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    publish_target = getattr(type(loop), "_publish_stop_target_for_key", None)
+    if callable(publish_target):
+        with suppress(Exception):
+            publication = publish_target(loop, ctx.key)
+            if inspect.isawaitable(publication):
+                await publication
     return OutboundMessage(
         channel=msg.channel, chat_id=msg.chat_id, content=content,
         metadata=metadata
+    )
+
+
+def _stop_admission_rejection(
+    msg: InboundMessage,
+    metadata: dict[str, Any],
+    reason: str,
+) -> OutboundMessage:
+    """Return the existing typed WebUI refusal envelope before Stop mutation."""
+    turn_id = metadata.get("webui_turn_id")
+    return OutboundMessage(
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+        content="",
+        metadata=metadata,
+        event=WebUIAdmissionRejectedEvent(
+            detail="not_admitted",
+            reason=reason,
+            turn_id=turn_id if isinstance(turn_id, str) and turn_id else None,
+        ),
     )
 
 

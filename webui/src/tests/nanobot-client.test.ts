@@ -142,6 +142,61 @@ describe("NanobotClient", () => {
     await expect(pending).resolves.toEqual({ saved: true });
   });
 
+  it("sends a typed approval decision with the exact child source and run identity", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+
+    const firstTurnId = client.sendApprovalDecision("parent-chat", "approval-child-1", "approve", {
+      sessionKey: "delegated:child-1",
+      sessionIncarnation: "child-incarnation-1",
+      runId: "child-run-1",
+      generation: 7,
+    });
+    const secondTurnId = client.sendApprovalDecision("parent-chat", "approval-child-2", "deny", {
+      sessionKey: "delegated:child-2",
+      sessionIncarnation: "child-incarnation-2",
+      runId: "child-run-2",
+      generation: 3,
+    });
+
+    const firstFrame = JSON.parse(socket.sent.at(-2) as string);
+    const secondFrame = JSON.parse(socket.sent.at(-1) as string);
+    expect(firstFrame).toMatchObject({
+      type: "message",
+      chat_id: "parent-chat",
+      content: "approval_decision",
+      request_intent: "new",
+      turn_id: firstTurnId,
+      approval_decision: {
+        approval_id: "approval-child-1",
+        decision: "approve",
+        session_key: "delegated:child-1",
+        session_incarnation: "child-incarnation-1",
+        run_id: "child-run-1",
+        generation: 7,
+      },
+    });
+    expect(secondFrame).toMatchObject({
+      turn_id: secondTurnId,
+      approval_decision: {
+        approval_id: "approval-child-2",
+        decision: "deny",
+        session_key: "delegated:child-2",
+        session_incarnation: "child-incarnation-2",
+        run_id: "child-run-2",
+        generation: 3,
+      },
+    });
+    expect(firstTurnId).not.toBe(secondTurnId);
+    expect(client.getRunTurnId("parent-chat")).toBeNull();
+  });
+
   it("surfaces correlated WebUI mutation errors with status", async () => {
     const client = new NanobotClient({
       url: "ws://test",

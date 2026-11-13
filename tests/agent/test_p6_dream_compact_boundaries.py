@@ -17,6 +17,7 @@ from nanobot.agent.memory import MemoryStore
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
 from nanobot.bus.events import InboundMessage
+from nanobot.bus.outbound_events import ContextCompactionEvent, StopTargetEvent
 from nanobot.bus.runtime_events import TurnCompleted
 from nanobot.command.builtin import cmd_stop
 from nanobot.command.router import CommandContext
@@ -311,6 +312,8 @@ async def test_queued_compact_settles_once_without_admitted_effects(loop, wait):
         assert (context.channel, context.chat_id, context.session_key) == ("websocket", "route", key)
         assert context.metadata == metadata
         assert completions[0].outcome == "completed"
+        target_event = loop.bus.outbound.get_nowait().event
+        assert isinstance(target_event, StopTargetEvent) and target_event.stop_target is None
         assert loop.bus.outbound_size == 0
         loop.provider.chat_with_retry.assert_not_awaited()
         assert not loop._pending_queues
@@ -386,9 +389,14 @@ async def test_cancellation_during_awaited_settlement_waits_and_preserves_cancel
 
     loop.bus.subscribe(subscriber, TurnCompleted)
     queued = loop._enqueue_bus_dispatch(message(), "websocket:test")
+    state = loop._compact_dispatches[queued]
     queued.cancel()
+    await asyncio.gather(queued, return_exceptions=True)
+    assert queued.done() and queued.cancelled()
+    assert loop._compact_dispatches.get(queued) is state
+    assert queued in loop._active_root_task_identity("websocket:test")
     stopper = asyncio.create_task(stop(loop))
-    await entered.wait()
+    await asyncio.wait_for(entered.wait(), timeout=2)
     stopper.cancel()
     await asyncio.sleep(0)
     assert not stopper.done()
@@ -405,6 +413,55 @@ async def test_cancellation_during_awaited_settlement_waits_and_preserves_cancel
         await stopper
     assert len(completions) == 1
     assert not loop._compact_dispatches and not loop._active_tasks
+
+
+@pytest.mark.asyncio
+async def test_done_compact_receipt_stop_never_claims_successor(loop):
+    key = "websocket:test"
+    entered, release = asyncio.Event(), asyncio.Event()
+    completed = []
+
+    async def subscriber(event):
+        entered.set()
+        await release.wait()
+        completed.append(event)
+
+    loop.bus.subscribe(subscriber, TurnCompleted)
+    async with loop._get_session_lock(key):
+        queued = loop._enqueue_bus_dispatch(message(), key)
+        state = loop._compact_dispatches[queued]
+        queued.cancel()
+        await asyncio.gather(queued, return_exceptions=True)
+        assert queued.done() and queued.cancelled()
+        assert loop._compact_dispatches.get(queued) is state
+        stopper = asyncio.create_task(stop(loop))
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        completion = state.completion
+        assert completion is not None and not completion.done()
+        successor = loop._enqueue_bus_dispatch(message(), key)
+        successor_state = loop._compact_dispatches[successor]
+        await asyncio.sleep(0)
+        for _ in range(3):
+            stopper.cancel()
+            await asyncio.sleep(0)
+            assert not stopper.done()
+            assert state.completion is completion
+            assert not completion.cancelling() and not completion.done()
+            assert not successor.done() and not successor.cancelling()
+            assert loop._compact_dispatches.get(successor) is successor_state
+            assert successor_state.completion is None
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(stopper, timeout=2)
+        assert len(completed) == 1
+        assert queued not in loop._compact_dispatches
+        assert loop._compact_dispatches.get(successor) is successor_state
+        assert not successor.done() and not successor.cancelling()
+        successor.cancel()
+        await asyncio.gather(successor, return_exceptions=True)
+        await loop._settle_queued_compact(successor, successor_state)
+    assert len(completed) == 2
+    assert not loop._compact_dispatches
 
 
 @pytest.mark.asyncio
@@ -579,6 +636,11 @@ async def test_claimed_compact_scope_remains_only_completion_publisher(loop, can
         await task
     assert len(completed) == 1
     events = [loop.bus.outbound.get_nowait().event for _ in range(loop.bus.outbound_size)]
-    assert [event.phase for event in events] == ["started", "cancelled" if cancel else "succeeded"]
-    assert events[0].compaction_id == events[1].compaction_id
+    targets = [event for event in events if isinstance(event, StopTargetEvent)]
+    compaction = [event for event in events if isinstance(event, ContextCompactionEvent)]
+    assert len(targets) == (2 if cancel else 1)
+    assert all(event.stop_target is None for event in targets)
+    assert len(events) == len(targets) + len(compaction)
+    assert [event.phase for event in compaction] == ["started", "cancelled" if cancel else "succeeded"]
+    assert compaction[0].compaction_id == compaction[1].compaction_id
     assert not loop._compact_dispatches and not loop._active_tasks

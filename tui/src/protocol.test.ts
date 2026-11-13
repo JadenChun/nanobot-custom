@@ -627,7 +627,11 @@ describe("gateway protocol", () => {
       socket.emit("message", {
         data: JSON.stringify({ event: "ready", chat_id: "", client_id: "client" }),
       })
-      client.send("hello")
+      client.setWorkspaceScope({
+        project_path: "/tmp/launch-project",
+        access_mode: "restricted",
+      })
+      client.send("hello", { requestIntent: "steer", targetTurnId: "root-turn" })
 
       expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
         {
@@ -638,16 +642,27 @@ describe("gateway protocol", () => {
           },
         },
         { type: "attach", chat_id: "draft-chat" },
-        expect.objectContaining({
-          type: "message",
+        {
+          type: "set_workspace_scope",
           chat_id: "draft-chat",
-          content: "hello",
           workspace_scope: {
             project_path: "/tmp/launch-project",
             access_mode: "restricted",
           },
+        },
+        expect.objectContaining({
+          type: "message",
+          chat_id: "draft-chat",
+          content: "hello",
+          request_settings_version: 1,
+          request_intent: "steer",
+          target_turn_id: "root-turn",
         }),
       ])
+      const message = JSON.parse(socket.sent.at(-1)!) as Record<string, unknown>
+      expect(message).not.toHaveProperty("workspace_scope")
+      expect(message).not.toHaveProperty("source_token")
+      expect(message).not.toHaveProperty("full_confirmation_id")
     } finally {
       Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: original })
     }

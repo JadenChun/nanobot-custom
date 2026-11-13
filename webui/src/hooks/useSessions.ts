@@ -12,14 +12,21 @@ import {
   normalizeWorkspacePermissionProjection,
 } from "@/lib/api";
 import { hasPendingAgentActivity } from "@/lib/activity-timeline";
+import {
+  delegatedChildRows,
+  delegatedChildSummaryRows,
+  mergeDelegatedChildRows,
+  parseStopExpectation,
+} from "@/lib/delegated-child-projection";
 import { deriveTitle } from "@/lib/format";
 import type {
   ChatSummary,
-  DelegatedChildPayload,
+  DelegatedChildReference,
   FolderAccessRequest,
   SessionAutomationJob,
   SessionDeleteResult,
   UIMessage,
+  StopExpectation,
   WorkspacePermissionProjection,
   WorkspaceScopePayload,
 } from "@/lib/types";
@@ -27,6 +34,7 @@ import type {
 const EMPTY_MESSAGES: UIMessage[] = [];
 const INITIAL_HISTORY_PAGE_LIMIT = 80;
 const OLDER_HISTORY_PAGE_LIMIT = 120;
+const DELEGATED_CHILD_PAGE_LIMIT = 120;
 const CHAT_CREATE_TIMEOUT_MS = 60_000;
 
 function isAbortError(error: unknown): boolean {
@@ -63,31 +71,30 @@ function persistedMessagesToUi(messages: UIMessage[]): UIMessage[] {
 
 function hydrateDelegatedChildren(
   messages: UIMessage[],
-  children: DelegatedChildPayload[] | undefined,
-): UIMessage[] {
-  if (!children?.length) return messages;
-  const known = new Set(
-    messages
-      .map((message) => message.delegatedChild?.child_id)
-      .filter((childId): childId is string => Boolean(childId)),
-  );
-  const missing = children.filter((child) => !known.has(child.child_id));
-  if (!missing.length) return messages;
-  const now = Date.now();
-  return [
-    ...messages,
-    ...missing
-      .slice()
-      .reverse()
-      .map((child, index) => ({
-        id: `delegated-child-${child.child_id}`,
-        role: "assistant" as const,
-        kind: "delegated_child" as const,
-        content: "",
-        createdAt: now + index,
-        delegatedChild: child,
-      })),
+  children: DelegatedChildReference[] | undefined,
+  parentKey: string,
+  rootSource: StopExpectation["source"] | null,
+): { messages: UIMessage[]; refreshRequired: boolean } {
+  const embedded = [
+    ...delegatedChildRows(messages),
+    ...delegatedChildSummaryRows(messages),
   ];
+  const transcript = messages.filter((message) => message.kind !== "delegated_child");
+  const options = {
+    expectedRootKey: parentKey,
+    expectedRoot: rootSource,
+    mode: "hydration" as const,
+  };
+  const persisted = mergeDelegatedChildRows(transcript, embedded, options);
+  const hydrated = mergeDelegatedChildRows(
+    persisted.messages,
+    children ?? [],
+    options,
+  );
+  return {
+    messages: hydrated.messages,
+    refreshRequired: persisted.refreshRequired || hydrated.refreshRequired,
+  };
 }
 
 function sameSemanticMessage(a: UIMessage, b: UIMessage): boolean {
@@ -166,6 +173,54 @@ function completedTurnIdsFromThread(
       (turnId): turnId is string => typeof turnId === "string" && turnId.length > 0,
     ),
   ));
+}
+
+async function fetchAllDelegatedChildren(
+  getToken: () => string,
+  key: string,
+  signal: AbortSignal,
+): Promise<{
+  children: DelegatedChildReference[];
+  stopTarget: StopExpectation | null;
+  stopTargetSnapshotAvailable: boolean;
+  incomplete: boolean;
+}> {
+  const children: DelegatedChildReference[] = [];
+  const seenCursors = new Set<string>();
+  let before: string | null = null;
+  let stopTarget: StopExpectation | null = null;
+  let stopTargetSnapshotAvailable = false;
+  let incomplete = false;
+  do {
+    const page = await fetchDelegatedChildren(getToken(), key, {
+      limit: DELEGATED_CHILD_PAGE_LIMIT,
+      before,
+      signal,
+    });
+    if (!page) return { children, stopTarget, stopTargetSnapshotAvailable, incomplete };
+    if (page.parentSessionKey && page.parentSessionKey !== key) {
+      return {
+        children: [],
+        stopTarget: null,
+        stopTargetSnapshotAvailable: "stop_target" in page,
+        incomplete: true,
+      };
+    }
+    if (before === null) {
+      stopTargetSnapshotAvailable = "stop_target" in page;
+      stopTarget = parseStopExpectation(page.stop_target);
+    }
+    children.push(...(Array.isArray(page.children) ? page.children : []));
+    if (page.page?.has_more_before !== true) break;
+    const next = page.page.before_cursor;
+    if (!next || seenCursors.has(next)) {
+      incomplete = true;
+      break;
+    }
+    seenCursors.add(next);
+    before = next;
+  } while (!signal.aborted);
+  return { children, stopTarget, stopTargetSnapshotAvailable, incomplete };
 }
 
 /** Sidebar state: fetches the full session list and exposes create / delete actions. */
@@ -362,6 +417,12 @@ export function useSessionHistory(key: string | null): {
   lineage: number;
   /** Exact active turn when supplied by a current gateway. */
   activeTurnId: string | null;
+  /** Live root-scoped snapshot used only for an explicitly requested Stop. */
+  stopTarget: StopExpectation | null;
+  /** True when authenticated history explicitly included the live Stop field, even when null. */
+  stopTargetSnapshotAvailable: boolean;
+  /** True when a bounded child-history page failed or conflicted. */
+  delegatedChildrenError: boolean;
   workspaceAccessRequest: FolderAccessRequest | null;
   workspaceAccessRequestLoading: boolean;
   workspaceAccessRequestError: boolean;
@@ -401,6 +462,9 @@ export function useSessionHistory(key: string | null): {
     continuity: SessionHistoryContinuity;
     lineage: number;
     activeTurnId: string | null;
+    stopTarget: StopExpectation | null;
+    stopTargetSnapshotAvailable: boolean;
+    delegatedChildrenError: boolean;
     workspaceAccessRequest: FolderAccessRequest | null;
     workspaceAccessRequestLoading: boolean;
     workspaceAccessRequestError: boolean;
@@ -423,6 +487,9 @@ export function useSessionHistory(key: string | null): {
     continuity: "initial",
     lineage: 0,
     activeTurnId: null,
+    stopTarget: null,
+    stopTargetSnapshotAvailable: false,
+    delegatedChildrenError: false,
     workspaceAccessRequest: null,
     workspaceAccessRequestLoading: false,
     workspaceAccessRequestError: false,
@@ -458,6 +525,9 @@ export function useSessionHistory(key: string | null): {
         continuity: "initial",
         lineage: 0,
         activeTurnId: null,
+        stopTarget: null,
+        stopTargetSnapshotAvailable: false,
+        delegatedChildrenError: false,
         workspaceAccessRequest: null,
         workspaceAccessRequestLoading: false,
         workspaceAccessRequestError: false,
@@ -503,6 +573,9 @@ export function useSessionHistory(key: string | null): {
           continuity: "initial",
           lineage: 0,
           activeTurnId: null,
+          stopTarget: null,
+          stopTargetSnapshotAvailable: false,
+          delegatedChildrenError: false,
           workspaceAccessRequest: null,
           workspaceAccessRequestLoading: true,
           workspaceAccessRequestError: false,
@@ -518,23 +591,36 @@ export function useSessionHistory(key: string | null): {
           signal: controller.signal,
         });
         if (cancelled) return;
-        let childBody: Awaited<ReturnType<typeof fetchDelegatedChildren>> = null;
+        let childPages = {
+          children: [] as DelegatedChildReference[],
+          stopTarget: null as StopExpectation | null,
+          stopTargetSnapshotAvailable: false,
+          incomplete: false,
+        };
         try {
-          childBody = await fetchDelegatedChildren(getToken(), key, {
-            signal: controller.signal,
-          });
+          childPages = await fetchAllDelegatedChildren(getToken, key, controller.signal);
         } catch {
-          childBody = null;
+          childPages = { ...childPages, incomplete: true };
         }
         if (cancelled) return;
         historyVersionRef.current += 1;
         const responseVersion = historyVersionRef.current;
         const completedTurnIds = completedTurnIdsFromThread(body);
         const permissionProjection = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
-        const ui = hydrateDelegatedChildren(
+        const threadStopTargetSnapshotAvailable = body !== null && "stop_target" in body;
+        const stopTargetSnapshotAvailable = threadStopTargetSnapshotAvailable
+          || childPages.stopTargetSnapshotAvailable;
+        const stopTarget = threadStopTargetSnapshotAvailable
+          ? parseStopExpectation(body?.stop_target)
+          : childPages.stopTarget;
+        const hydrated = hydrateDelegatedChildren(
           persistedMessagesToUi(body?.messages ?? []),
-          childBody?.children,
+          childPages.children,
+          key,
+          stopTarget?.source ?? null,
         );
+        const ui = hydrated.messages;
+        const delegatedChildrenError = childPages.incomplete || hydrated.refreshRequired;
         const hasPending = hasPendingToolCallsFromThread(body, ui);
         const forkBoundary = typeof body?.fork_boundary_message_count === "number"
           ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))
@@ -579,6 +665,9 @@ export function useSessionHistory(key: string | null): {
             activeTurnId: typeof body?.active_turn_id === "string"
               ? body.active_turn_id
               : null,
+            stopTarget,
+            stopTargetSnapshotAvailable,
+            delegatedChildrenError,
             workspaceAccessRequest: accessRequestReadVersion === accessRequestReadVersionRef.current
               ? body?.workspace_access_request ?? null
               : prev.workspaceAccessRequest,
@@ -624,6 +713,9 @@ export function useSessionHistory(key: string | null): {
               continuity,
               lineage: responseVersion,
               activeTurnId: null,
+              stopTarget: null,
+              stopTargetSnapshotAvailable: false,
+              delegatedChildrenError: false,
               workspaceAccessRequest: null,
               workspaceAccessRequestLoading: false,
               workspaceAccessRequestError: false,
@@ -649,6 +741,13 @@ export function useSessionHistory(key: string | null): {
             continuity: prev.key === key ? prev.continuity : "initial",
             lineage: prev.key === key ? prev.lineage : 0,
             activeTurnId: prev.key === key ? prev.activeTurnId : null,
+            stopTarget: prev.key === key ? prev.stopTarget : null,
+            stopTargetSnapshotAvailable: prev.key === key
+              ? prev.stopTargetSnapshotAvailable
+              : false,
+            delegatedChildrenError: prev.key === key
+              ? prev.delegatedChildrenError
+              : false,
             workspaceAccessRequest: prev.key === key ? prev.workspaceAccessRequest : null,
             workspaceAccessRequestLoading: false,
             workspaceAccessRequestError: prev.key === key ? true : false,
@@ -868,6 +967,9 @@ export function useSessionHistory(key: string | null): {
       continuity: "initial",
       lineage: 0,
       activeTurnId: null,
+      stopTarget: null,
+      stopTargetSnapshotAvailable: false,
+      delegatedChildrenError: false,
       workspaceAccessRequest: null,
       workspaceAccessRequestLoading: false,
       workspaceAccessRequestError: false,
@@ -902,6 +1004,9 @@ export function useSessionHistory(key: string | null): {
       continuity: "initial",
       lineage: 0,
       activeTurnId: null,
+      stopTarget: null,
+      stopTargetSnapshotAvailable: false,
+      delegatedChildrenError: false,
       workspaceAccessRequest: null,
       workspaceAccessRequestLoading: true,
       workspaceAccessRequestError: false,
@@ -933,6 +1038,9 @@ export function useSessionHistory(key: string | null): {
     continuity: state.continuity,
     lineage: state.lineage,
     activeTurnId: state.activeTurnId,
+    stopTarget: state.stopTarget,
+    stopTargetSnapshotAvailable: state.stopTargetSnapshotAvailable,
+    delegatedChildrenError: state.delegatedChildrenError,
     workspaceAccessRequest: state.workspaceAccessRequest,
     workspaceAccessRequestLoading: state.workspaceAccessRequestLoading,
     workspaceAccessRequestError: state.workspaceAccessRequestError,

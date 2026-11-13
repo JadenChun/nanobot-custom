@@ -1,5 +1,6 @@
 """Production owner -> edge -> shared command/HTTP authorization regressions."""
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from websockets.datastructures import Headers
@@ -104,3 +105,41 @@ async def test_owner_still_requires_action_scope_and_registry(boundary):
     assert not _mobile_mutation_allowed(connection, "sidebar.update")
     assert not _mobile_mutation_allowed(connection, "unknown")
     assert _mobile_mutation_allowed(connection, "settings.agent.update")
+
+
+@pytest.mark.parametrize("write", [False, True])
+async def test_typed_stop_keeps_message_write_scope_and_live_revocation(boundary, write):
+    from tests.agent.test_stop_expectation import target_value
+
+    store, _, handler, endpoint = boundary
+    connection, result = await admit(boundary, ("chat.read", "chat.write") if write else ("chat.read",))
+    assert result is None
+    frames = []
+
+    async def send(_connection, event, **payload):
+        frames.append((event, payload))
+
+    transport = SimpleNamespace(
+        revalidate_mobile_connection=endpoint.revalidate_mobile_connection, webui_send_event=send,
+    )
+    gateway = SimpleNamespace(
+        http=handler, media=None, ingress=None, transcripts=None, workspaces=None,
+        temporary_chats=None, session_projection=None, endpoint=endpoint, session_manager=None,
+    )
+    router = WebUICommandRouter(transport, gateway)
+    dispatch = AsyncMock()
+    router._dispatch_message = dispatch
+    request = {
+        "type": "message", "chat_id": "exact-stop", "content": "/stop",
+        "stop_expectation": target_value(),
+    }
+    await router.dispatch(connection, "client", request)
+    if not write:
+        dispatch.assert_not_awaited()
+        assert frames[-1][1]["detail"] == "scope_denied"
+        return
+    dispatch.assert_awaited_once_with(connection, "client", request)
+    store.update_scopes("install-boundary", ("chat.read",))
+    await router.dispatch(connection, "client", request)
+    assert dispatch.await_count == 1
+    assert frames[-1][1]["detail"] in {"scope_denied", "access_expired"}

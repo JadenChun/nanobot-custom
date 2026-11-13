@@ -19,6 +19,7 @@ func TestMobileUIReadRoutesAreAllowlisted(t *testing.T) {
 		{"mobile_model_settings", "/mobile/v1/model-settings"},
 		{"mobile_workspaces", "/mobile/v1/workspaces"},
 		{"mobile_thread", "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2&direction=latest"},
+		{"mobile_delegated_children", "/mobile/v1/sessions/websocket%3Achat-1/delegated-children?limit=20&before=eyJ2IjoxfQ"},
 		{"mobile_api", "/mobile/v1/api?path=%2Fapi%2Fcommands"},
 		{"mobile_dispatch", "/mobile/v1/dispatch?path=%2Fapi%2Fsettings"},
 	}
@@ -45,6 +46,21 @@ func TestMobileThreadRejectsUnknownQuery(t *testing.T) {
 		"mobile_thread",
 		http.MethodGet,
 		"/mobile/v1/sessions/websocket%3Achat-1/thread?path=/etc/passwd",
+		false,
+	); err == nil {
+		t.Fatal("expected an unallowlisted query key to be denied")
+	}
+}
+
+func TestMobileDelegatedChildrenRejectsUnknownQuery(t *testing.T) {
+	origin, _ := url.Parse("https://fedora.example.test")
+	cfg := &Config{}
+	if _, _, err := resolveRoute(
+		cfg,
+		origin,
+		"mobile_delegated_children",
+		http.MethodGet,
+		"/mobile/v1/sessions/websocket%3Achat-1/delegated-children?limit=2&path=/etc/passwd",
 		false,
 	); err == nil {
 		t.Fatal("expected an unallowlisted query key to be denied")

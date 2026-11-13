@@ -105,6 +105,12 @@ async def test_child_control_rejects_recreated_parent(tmp_path: Path) -> None:
     key = "websocket:parent"
     parent = sessions.get_or_create(key)
     sessions.save(parent)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key, expected_revision=parent.revision,
+        expected_generation=parent.generation, expected_incarnation=parent.incarnation,
+    )
+    sessions.invalidate(key)
+    parent = sessions.get_or_create(key)
 
     child = await manager._delegation_tree.reserve(
         parent=parent,

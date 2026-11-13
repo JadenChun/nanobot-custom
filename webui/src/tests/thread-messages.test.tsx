@@ -101,6 +101,43 @@ describe("ThreadMessages", () => {
     expect(screen.getByRole("status", { name: "Working for 30s" })).toBeInTheDocument();
   });
 
+  it("opens child history from its canonical row and marks disconnected state unavailable", () => {
+    const child = {
+      child_session_key: "child-session",
+      child_id: "child-id",
+      profile: "research",
+      state: "running",
+      task_label: "Compare release notes",
+      result_summary: null,
+      runtime_generation: 2,
+    };
+    const onOpenChildHistory = vi.fn();
+    render(
+      <ThreadMessages
+        messages={[{
+          id: "child-row",
+          role: "system",
+          kind: "delegated_child",
+          content: "",
+          createdAt: 1,
+          delegatedChild: child,
+        }]}
+        onOpenChildHistory={onOpenChildHistory}
+        delegatedStatusAvailable={false}
+      />,
+    );
+
+    expect(screen.getByText("Compare release notes")).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known running)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+
+    const button = screen.getByRole("button", { name: "Inspect Compare release notes activity" });
+    fireEvent.click(button);
+    expect(onOpenChildHistory).toHaveBeenCalledWith(child, button);
+  });
+
   it("keeps a mounted tail answer eagerly rendered on the next turn", () => {
     const completed: UIMessage[] = [
       { id: "u1", role: "user", content: "question", createdAt: 1 },

@@ -1,5 +1,5 @@
 import { acceptsCompactionPhase } from "../../../packages/client-events/notifications";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useClient } from "@/providers/ClientProvider";
 import { toMediaAttachment } from "@/lib/media";
@@ -10,6 +10,12 @@ import {
   toolTraceLinesFromEvents,
 } from "@/lib/tool-traces";
 import { hasPendingAgentActivity } from "@/lib/activity-timeline";
+import {
+  delegatedChildMatchesRoot,
+  mergeDelegatedChildRows,
+  parseDelegatedChildPayload,
+  parseStopExpectation,
+} from "@/lib/delegated-child-projection";
 import type { StreamError } from "@/lib/nanobot-client";
 import {
   closeReasoningStream,
@@ -28,7 +34,7 @@ import {
 import type { UIMessageTurnFields } from "@/lib/thread-event-projection";
 import { formatQuotedUserMessage } from "@/lib/user-message-quote";
 import type {
-  DelegatedChildPayload,
+  StopExpectation,
   InboundEvent,
   OutboundCliAppMention,
   OutboundMcpPresetMention,
@@ -275,11 +281,22 @@ export function useNanobotStream(
   initialMessages: UIMessage[] = [],
   hasPendingToolCalls = false,
   onTurnEnd?: () => void,
+  expectedRootSessionKey: string | null = null,
+  initialStopTarget: StopExpectation | null = null,
+  onProjectionRefreshNeeded?: () => void,
+  initialStopTargetSnapshotAvailable = initialStopTarget !== null,
 ): {
   messages: UIMessage[];
   /** Whether ``messages`` belongs to the current ``chatId`` after a session switch. */
   messagesReady: boolean;
   isStreaming: boolean;
+  hasOwnedWork: boolean;
+  stopCanBeSent: boolean;
+  stopPending: boolean;
+  stopNotice: "stale_target" | "unavailable" | null;
+  dismissStopNotice: () => void;
+  stopTarget: StopExpectation | null;
+  connectionOpen: boolean;
   /** Unix epoch seconds when the current user turn started (WebSocket ``goal_status``). */
   runStartedAt: number | null;
   /** Transient model retry state for the active turn. */
@@ -321,6 +338,14 @@ export function useNanobotStream(
   const [goalState, setGoalState] = useState<GoalStateWsPayload | undefined>(undefined);
   const [recoveryState, setRecoveryState] = useState<RecoveryState | null>(null);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
+  const [stopTarget, setStopTarget] = useState<StopExpectation | null>(initialStopTarget);
+  const [stopTargetSnapshotAvailable, setStopTargetSnapshotAvailable] = useState(
+    initialStopTargetSnapshotAvailable,
+  );
+  const [stopPending, setStopPending] = useState(false);
+  const [stopNotice, setStopNotice] = useState<"stale_target" | "unavailable" | null>(null);
+  const [stopTargetRequiresRefresh, setStopTargetRequiresRefresh] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState(client.status);
   const buffer = useRef<StreamBuffer | null>(null);
   const activeAssistantRef = useRef<ActiveAssistantCursor | null>(null);
   const closedAssistantStreamIdsRef = useRef<Set<string>>(new Set());
@@ -333,8 +358,100 @@ export function useNanobotStream(
   const lastStreamFlushAtRef = useRef(Number.NEGATIVE_INFINITY);
   const suppressStreamUntilTurnEndRef = useRef(false);
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
+  const liveStopTargetSeenRef = useRef(false);
+  const stopTargetRef = useRef(stopTarget);
+  const trustedStopSourceRef = useRef(initialStopTarget?.source ?? null);
+  const stopTargetRequiresRefreshRef = useRef(false);
+  const stopTargetRefreshBaselineRef = useRef<StopExpectation | null>(null);
+  const childRowsRef = useRef<UIMessage[]>(
+    initialMessages.filter((message) => message.kind === "delegated_child"),
+  );
+  const projectionRefreshRef = useRef(onProjectionRefreshNeeded);
+  const childOwnedWorkRef = useRef(false);
+  stopTargetRef.current = stopTarget;
+  projectionRefreshRef.current = onProjectionRefreshNeeded;
+
+  const childOwnedWork = useMemo(() => {
+    const rootSource = stopTarget?.source ?? null;
+    return messages.some((message) => {
+      const child = message.delegatedChild;
+      if (
+        !child
+        || child.history_kind === "summary"
+        || (child.owned_work !== true && child.holds_capacity !== true)
+      ) return false;
+      return !rootSource || delegatedChildMatchesRoot(child, rootSource);
+    });
+  }, [messages, stopTarget]);
+  childOwnedWorkRef.current = childOwnedWork;
+  const hasOwnedWork = stopTarget !== null || childOwnedWork;
+  const connectionOpen = connectionStatus === "open";
+  const hasModernStopTargetSnapshot = stopTargetSnapshotAvailable || liveStopTargetSeenRef.current;
+  const legacyTargetTurnId = chatId ? client.getRunTurnId(chatId) : null;
+  const hasLegacyTargetTurnId = typeof legacyTargetTurnId === "string"
+    && legacyTargetTurnId.trim().length > 0;
+  const stopCanBeSent = connectionOpen
+    && !stopPending
+    && (stopTarget !== null || (
+      !hasModernStopTargetSnapshot
+      && isStreaming
+      && !childOwnedWork
+      && !stopTargetRequiresRefresh
+      && hasLegacyTargetTurnId
+    ));
 
   const dismissStreamError = useCallback(() => setStreamError(null), []);
+  const dismissStopNotice = useCallback(() => setStopNotice(null), []);
+
+  useEffect(() => client.onStatus(setConnectionStatus), [client]);
+
+  useEffect(() => {
+    if (!chatId || liveStopTargetSeenRef.current) return;
+    setStopTargetSnapshotAvailable((current) => current || initialStopTargetSnapshotAvailable);
+    if (
+      initialStopTarget
+      && expectedRootSessionKey
+      && initialStopTarget.source.session_key !== expectedRootSessionKey
+    ) return;
+    trustedStopSourceRef.current = initialStopTarget?.source ?? null;
+    setStopTarget(initialStopTarget);
+    if (initialStopTarget) setStopNotice(null);
+  }, [
+    chatId,
+    expectedRootSessionKey,
+    initialStopTarget,
+    initialStopTargetSnapshotAvailable,
+  ]);
+
+  useEffect(() => {
+    if (!chatId || !stopTargetRequiresRefreshRef.current) return;
+    if (initialStopTarget === stopTargetRefreshBaselineRef.current) return;
+    const target = initialStopTarget
+      && (!expectedRootSessionKey
+        || initialStopTarget.source.session_key === expectedRootSessionKey)
+      ? initialStopTarget
+      : null;
+    trustedStopSourceRef.current = target?.source ?? null;
+    stopTargetRef.current = target;
+    setStopTarget(target);
+    setStopTargetSnapshotAvailable((current) => (
+      current || initialStopTargetSnapshotAvailable || target !== null
+    ));
+    stopTargetRequiresRefreshRef.current = false;
+    stopTargetRefreshBaselineRef.current = null;
+    setStopTargetRequiresRefresh(false);
+    if (target) setStopNotice(null);
+    else if (childOwnedWorkRef.current) setStopNotice("unavailable");
+  }, [
+    chatId,
+    expectedRootSessionKey,
+    initialStopTarget,
+    initialStopTargetSnapshotAvailable,
+  ]);
+
+  useEffect(() => {
+    childRowsRef.current = messages.filter((message) => message.kind === "delegated_child");
+  }, [messages]);
 
   const clearPendingStreamWork = useCallback(() => {
     if (streamFrameRef.current !== null) {
@@ -726,6 +843,17 @@ export function useNanobotStream(
     setRetryStatus(null);
     setGoalState(chatId ? client.getGoalState(chatId) : undefined);
     setRecoveryState(null);
+    setStopTarget(initialStopTarget);
+    setStopTargetSnapshotAvailable(initialStopTargetSnapshotAvailable);
+    stopTargetRef.current = initialStopTarget;
+    trustedStopSourceRef.current = initialStopTarget?.source ?? null;
+    stopTargetRequiresRefreshRef.current = false;
+    stopTargetRefreshBaselineRef.current = null;
+    setStopTargetRequiresRefresh(false);
+    liveStopTargetSeenRef.current = false;
+    setStopPending(false);
+    setStopNotice(null);
+    childRowsRef.current = initialMessages.filter((message) => message.kind === "delegated_child");
     buffer.current = null;
     activeAssistantRef.current = null;
     closedAssistantStreamIdsRef.current.clear();
@@ -743,8 +871,85 @@ export function useNanobotStream(
   useEffect(() => {
     if (!chatId) return;
 
+    const acceptStopTarget = (value: unknown) => {
+      liveStopTargetSeenRef.current = true;
+      setStopTargetSnapshotAvailable(true);
+      const candidate = value === null ? null : parseStopExpectation(value);
+      const target = candidate
+        && (!expectedRootSessionKey || candidate.source.session_key === expectedRootSessionKey)
+        ? candidate
+        : null;
+      if (value !== null && target === null) {
+        stopTargetRef.current = null;
+        setStopTarget(null);
+        stopTargetRequiresRefreshRef.current = true;
+        stopTargetRefreshBaselineRef.current = initialStopTarget;
+        setStopTargetRequiresRefresh(true);
+        setStopNotice("unavailable");
+        setStopPending(false);
+        projectionRefreshRef.current?.();
+        return;
+      }
+      if (target && stopTargetRequiresRefreshRef.current) {
+        // Once a source change or stale response is observed, only a fresh
+        // parent history snapshot can reauthorize the next Stop target.
+        stopTargetRef.current = null;
+        setStopTarget(null);
+        return;
+      }
+      const trustedSource = trustedStopSourceRef.current;
+      const sourceChanged = trustedSource !== null
+        && target !== null
+        && (
+          trustedSource.store_identity !== target.source.store_identity
+          || trustedSource.session_key !== target.source.session_key
+          || trustedSource.incarnation !== target.source.incarnation
+          || trustedSource.generation !== target.source.generation
+        );
+      if (sourceChanged && target) {
+        stopTargetRef.current = null;
+        setStopTarget(null);
+        stopTargetRequiresRefreshRef.current = true;
+        stopTargetRefreshBaselineRef.current = initialStopTarget;
+        setStopTargetRequiresRefresh(true);
+        setStopNotice("unavailable");
+        setStopPending(false);
+        projectionRefreshRef.current?.();
+        return;
+      }
+      if (target) trustedStopSourceRef.current = target.source;
+      stopTargetRef.current = target;
+      setStopTarget(target);
+      if (target) {
+        setStopNotice(null);
+        return;
+      }
+      if (target === null) {
+        if (stopPending) setStopPending(false);
+        if (childOwnedWorkRef.current) {
+          projectionRefreshRef.current?.();
+        }
+      }
+    };
+
     const handle = (ev: InboundEvent) => {
       if (ev.event === "error") {
+        if (
+          ev.detail === "stale_stop_target"
+          || ev.reason === "stale_stop_target"
+          || ev.detail === "invalid_stop_expectation"
+          || ev.reason === "invalid_stop_expectation"
+        ) {
+          stopTargetRef.current = null;
+          setStopTarget(null);
+          stopTargetRequiresRefreshRef.current = true;
+          stopTargetRefreshBaselineRef.current = initialStopTarget;
+          setStopTargetRequiresRefresh(true);
+          setStopPending(false);
+          setStopNotice("stale_target");
+          projectionRefreshRef.current?.();
+          return;
+        }
         if (ev.detail === "message_too_big") {
           applyStreamError({
             kind: "message_too_big",
@@ -919,79 +1124,32 @@ export function useNanobotStream(
         return;
       }
 
+      if (ev.event === "stop_target") {
+        acceptStopTarget(ev.stop_target);
+        return;
+      }
+
       if (ev.event === "delegated_child") {
-        const child: DelegatedChildPayload = {
-          child_session_key: ev.child_session_key,
-          child_id: ev.child_id,
-          profile: ev.profile,
-          state: ev.state,
-          ...(ev.outcome ? { outcome: ev.outcome } : {}),
-          runtime_generation: ev.runtime_generation,
-          ...(ev.turn_id ? { turn_id: ev.turn_id } : {}),
-          ...(ev.parent_run_id ? { parent_run_id: ev.parent_run_id } : {}),
-          ...(ev.child_run_id ? { child_run_id: ev.child_run_id } : {}),
-          ...(ev.parent_store_identity
-            ? { parent_store_identity: ev.parent_store_identity }
+        const child = parseDelegatedChildPayload(ev);
+        if (!child || !expectedRootSessionKey) {
+          setStopNotice(child ? "unavailable" : null);
+          projectionRefreshRef.current?.();
+          return;
+        }
+        const context = {
+          expectedRootKey: expectedRootSessionKey,
+          ...(trustedStopSourceRef.current
+            ? { expectedRoot: trustedStopSourceRef.current }
             : {}),
-          ...(ev.parent_incarnation
-            ? { parent_incarnation: ev.parent_incarnation }
-            : {}),
-          ...(ev.parent_generation !== undefined
-            ? { parent_generation: ev.parent_generation }
-            : {}),
-          ...(ev.root_key ? { root_key: ev.root_key } : {}),
-          ...(ev.root_store_identity
-            ? { root_store_identity: ev.root_store_identity }
-            : {}),
-          ...(ev.root_incarnation ? { root_incarnation: ev.root_incarnation } : {}),
-          ...(ev.root_generation !== undefined
-            ? { root_generation: ev.root_generation }
-            : {}),
-          ...(ev.child_store_identity
-            ? { child_store_identity: ev.child_store_identity }
-            : {}),
-          ...(ev.child_incarnation ? { child_incarnation: ev.child_incarnation } : {}),
-          ...(ev.child_generation !== undefined
-            ? { child_generation: ev.child_generation }
-            : {}),
-          ...(ev.run_sequence !== undefined ? { run_sequence: ev.run_sequence } : {}),
-          ...(ev.state_sequence !== undefined
-            ? { state_sequence: ev.state_sequence }
-            : {}),
-          ...(ev.control_epoch !== undefined
-            ? { control_epoch: ev.control_epoch }
-            : {}),
-          ...(ev.holds_capacity !== undefined
-            ? { holds_capacity: ev.holds_capacity }
-            : {}),
-          ...(ev.can_stop !== undefined ? { can_stop: ev.can_stop } : {}),
-          ...(ev.owned_work !== undefined ? { owned_work: ev.owned_work } : {}),
-          ...(ev.pending_approval_id
-            ? { pending_approval_id: ev.pending_approval_id }
-            : {}),
-          ...(ev.blocked_run_id ? { blocked_run_id: ev.blocked_run_id } : {}),
-          ...(ev.result_disposition
-            ? { result_disposition: ev.result_disposition }
-            : {}),
+          mode: "live" as const,
         };
-        setMessages((prev) => {
-          const index = prev.findIndex(
-            (message) => message.delegatedChild?.child_id === child.child_id,
-          );
-          const row: UIMessage = {
-            id: `delegated-child-${child.child_id}`,
-            role: "assistant",
-            kind: "delegated_child",
-            content: "",
-            createdAt: Date.now(),
-            delegatedChild: child,
-            ...(ev.turn_id ? { turnId: ev.turn_id } : {}),
-          };
-          if (index < 0) return [...prev, row];
-          const next = prev.slice();
-          next[index] = { ...next[index], delegatedChild: child };
-          return next;
-        });
+        const preview = mergeDelegatedChildRows(childRowsRef.current, [child], context);
+        if (preview.refreshRequired) {
+          projectionRefreshRef.current?.();
+          return;
+        }
+        childRowsRef.current = preview.messages;
+        setMessages((prev) => mergeDelegatedChildRows(prev, [child], context).messages);
         return;
       }
 
@@ -1007,11 +1165,15 @@ export function useNanobotStream(
           setIsStreaming(true);
         } else if (ev.status === "stopping") {
           // Stop was accepted; keep the turn visible until settlement.
+          setStopPending(true);
           setIsStreaming(true);
         } else {
           setRunStartedAt(null);
           setIsStreaming(false);
           setRetryStatus(null);
+          if (!childOwnedWorkRef.current && stopTargetRef.current === null) {
+            setStopPending(false);
+          }
         }
         return;
       }
@@ -1056,6 +1218,9 @@ export function useNanobotStream(
         // Definitive signal that the turn is fully complete, so stop the
         // loading indicator immediately.
         setIsStreaming(false);
+        if (!childOwnedWorkRef.current && stopTargetRef.current === null) {
+          setStopPending(false);
+        }
         const modelRequestFailed = ev.outcome === "failed" && ev.failure_kind === "model";
         const failureAttempts =
           typeof ev.failure_attempts === "number"
@@ -1142,6 +1307,7 @@ export function useNanobotStream(
       }
 
       if (ev.event === "attached") {
+        if ("stop_target" in ev) acceptStopTarget(ev.stop_target);
         setRecoveryState(ev.recovery_state ?? null);
         if (ev.recovery_state?.status === "resuming") {
           setRunStartedAt((current) => current ?? Date.now() / 1000);
@@ -1375,6 +1541,9 @@ export function useNanobotStream(
     isSideChannelEvent,
     onTurnEnd,
     schedulePendingStreamFlush,
+    expectedRootSessionKey,
+    initialStopTarget,
+    stopPending,
   ]);
 
   const send = useCallback(
@@ -1483,27 +1652,61 @@ export function useNanobotStream(
 
   const stop = useCallback(() => {
     if (!chatId) return;
-    const targetTurnId = client.getRunTurnId(chatId);
-    flushPendingStreamEvents();
-    setIsStreaming(false);
-    setRetryStatus(null);
-    setMessages((prev) => {
-      buffer.current = null;
-      activeAssistantRef.current = null;
-      closedAssistantStreamIdsRef.current.clear();
-      clearActivitySegment();
-      return prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m));
-    });
-    suppressStreamUntilTurnEndRef.current = false;
-    setRunStartedAt(null);
-    client.finishRunLocally(chatId);
+    if (!connectionOpen) {
+      setStopNotice("unavailable");
+      return;
+    }
+    const target = stopTargetRef.current;
+    const childWork = childOwnedWorkRef.current;
+    const legacyTargetTurnId = !target ? client.getRunTurnId(chatId) : null;
+    const hasValidLegacyTargetTurnId = typeof legacyTargetTurnId === "string"
+      && legacyTargetTurnId.trim().length > 0;
+    const hasModernSnapshot = stopTargetSnapshotAvailable || liveStopTargetSeenRef.current;
+    if (!target && (
+      hasModernSnapshot
+      || !isStreaming
+      || childWork
+      || stopTargetRequiresRefreshRef.current
+      || !hasValidLegacyTargetTurnId
+    )) {
+      setStopNotice("unavailable");
+      projectionRefreshRef.current?.();
+      return;
+    }
+    if (target && expectedRootSessionKey && target.source.session_key !== expectedRootSessionKey) {
+      stopTargetRef.current = null;
+      setStopTarget(null);
+      setStopNotice("unavailable");
+      projectionRefreshRef.current?.();
+      return;
+    }
+    setStopPending(true);
+    setStopNotice(null);
     client.sendMessage(
       chatId,
       "/stop",
       undefined,
-      targetTurnId ? { targetTurnId } : undefined,
+      target
+        ? { stopExpectation: target }
+        : { targetTurnId: legacyTargetTurnId! },
     );
-  }, [chatId, clearActivitySegment, client, flushPendingStreamEvents]);
+    if (!target) {
+      // Older gateways only support the root-turn guard. Preserve their
+      // immediate local stop behavior while guarded owned-work Stop waits for
+      // canonical settlement before changing activity state.
+      client.finishRunLocally(chatId);
+      setRunStartedAt(null);
+      setIsStreaming(false);
+    }
+  }, [
+    chatId,
+    client,
+    connectionOpen,
+    expectedRootSessionKey,
+    isStreaming,
+    stopTargetSnapshotAvailable,
+    stopTargetRequiresRefresh,
+  ]);
 
   const reconcileTurnComplete = useCallback(() => {
     clearPendingStreamWork();
@@ -1544,6 +1747,13 @@ export function useNanobotStream(
     messages,
     messagesReady: messageOwnerChatId === chatId,
     isStreaming,
+    hasOwnedWork,
+    stopCanBeSent,
+    stopPending,
+    stopNotice,
+    dismissStopNotice,
+    stopTarget,
+    connectionOpen,
     runStartedAt,
     retryStatus,
     goalState,

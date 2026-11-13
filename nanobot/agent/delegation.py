@@ -1031,7 +1031,8 @@ class ForegroundAgentManager:
         *,
         active_root_identity: tuple[asyncio.Task[Any], ...],
         target_turn_id: str | None,
-        pending_queue_identity: int | None = None,
+        pending_queue: asyncio.Queue[Any] | None = None,
+        pending_sources: tuple[tuple[SourceState, tuple[PendingFollowupRecord, ...]], ...] = (),
     ) -> OriginalChatStopAdmission | None:
         """Capture and fence the current original-chat Stop target."""
         tree = self._delegation_tree
@@ -1048,7 +1049,8 @@ class ForegroundAgentManager:
             parent_source_state=parent_source_state,
             active_root_identity=active_root_identity,
             target_turn_id=target_turn_id,
-            pending_queue_identity=pending_queue_identity,
+            pending_queue=pending_queue,
+            pending_sources=pending_sources,
         )
 
     def validate_original_chat_stop(

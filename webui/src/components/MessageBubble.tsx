@@ -53,6 +53,7 @@ import type {
   UIImage,
   UIMediaAttachment,
   UIMessage,
+  DelegatedChildReference,
   MessageDeliveryErrorKind,
   MessageDeliveryStatus,
 } from "@/lib/types";
@@ -70,118 +71,68 @@ interface MessageBubbleProps {
   slashCommands?: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromHere?: () => void;
-  onOpenChildSession?: (sessionKey: string) => void;
-  onChildControl?: (
-    childId: string,
-    runtimeGeneration: number,
-    action: "wait" | "steer" | "stop",
-    content?: string,
-  ) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable?: boolean;
 }
 
 function DelegatedChildRow({
   child,
   onOpen,
-  onControl,
+  statusAvailable,
 }: {
-  child: NonNullable<UIMessage["delegatedChild"]>;
-  onOpen?: (sessionKey: string) => void;
-  onControl?: (
-    childId: string,
-    runtimeGeneration: number,
-    action: "wait" | "steer" | "stop",
-    content?: string,
-  ) => void;
+  child: DelegatedChildReference;
+  onOpen?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  statusAvailable: boolean;
 }) {
   const { t } = useTranslation();
-  const [steering, setSteering] = useState(false);
-  const [steerText, setSteerText] = useState("");
-  const terminal = ["completed", "failed", "stopped", "uncertain", "refused"]
-    .includes(child.state);
-  const canStop = child.can_stop ?? !terminal;
-  const stateLabel = child.outcome
-    ? `${child.state} (${child.outcome})`
-    : child.state;
+  const taskLabel = child.task_label?.trim() || child.profile || "Delegated task";
+  const knownState = child.state.replaceAll("_", " ");
+  const stateLabel = child.history_kind === "summary"
+    ? t("thread.delegatedChild.summaryState", {
+        defaultValue: `Summary only · ${knownState}`,
+        state: knownState,
+      })
+    : statusAvailable
+      ? knownState
+      : t("thread.delegatedChild.unavailable", {
+          defaultValue: `Status unavailable (last known ${knownState})`,
+          state: knownState,
+        });
+  const outcomeLabel = child.outcome && child.outcome !== child.state
+    ? child.outcome.replaceAll("_", " ")
+    : null;
   return (
     <section
       className="my-2 flex max-w-[49.5rem] items-center gap-3 rounded-control border border-border/60 bg-muted/35 px-3 py-2 text-[13px]"
       data-delegated-child={child.child_id}
-      aria-label={t("thread.delegatedChild.label", { defaultValue: "Delegated child" })}
+      aria-label={taskLabel}
     >
       <span className="min-w-0 flex-1">
-        <span className="block font-medium text-foreground">
-          {t("thread.delegatedChild.title", { defaultValue: "Delegated child" })}
-        </span>
+        <span className="block font-medium text-foreground">{taskLabel}</span>
         <span className="block truncate text-muted-foreground">
-          {child.profile} · {stateLabel}
+          {stateLabel}
+          {outcomeLabel ? ` · ${outcomeLabel}` : ""}
         </span>
+        {child.result_summary ? (
+          <span className="mt-1 block whitespace-pre-wrap break-words text-muted-foreground">
+            {child.result_summary}
+          </span>
+        ) : null}
       </span>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-        {onControl ? (
-          <>
-            <button
-              type="button"
-              className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
-              onClick={() => onControl(child.child_id, child.runtime_generation, "wait")}
-              disabled={terminal}
-            >
-              {t("thread.delegatedChild.wait", { defaultValue: "Wait" })}
-            </button>
-            <button
-              type="button"
-              className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
-              onClick={() => setSteering((value) => !value)}
-              disabled={terminal}
-            >
-              {t("thread.delegatedChild.steer", { defaultValue: "Steer" })}
-            </button>
-            <button
-              type="button"
-              className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium text-destructive transition-colors hover:bg-background disabled:opacity-50"
-              onClick={() => onControl(child.child_id, child.runtime_generation, "stop")}
-              disabled={!canStop}
-            >
-              {t("thread.delegatedChild.stop", { defaultValue: "Stop" })}
-            </button>
-          </>
-        ) : null}
         <button
           type="button"
           className="rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
-          onClick={() => onOpen?.(child.child_session_key)}
+          onClick={(event) => onOpen?.(child, event.currentTarget)}
           disabled={!onOpen}
+          aria-label={t("thread.delegatedChild.inspectTask", {
+            task: taskLabel,
+            defaultValue: `Inspect ${taskLabel} activity`,
+          })}
         >
-          {t("thread.delegatedChild.open", { defaultValue: "Open" })}
+          {t("thread.delegatedChild.inspect", { defaultValue: "Inspect activity" })}
         </button>
       </div>
-      {steering ? (
-        <div className="flex basis-full items-center gap-2">
-          <input
-            className="min-w-0 flex-1 rounded-control border border-border/60 bg-background px-2 py-1 text-[12px]"
-            value={steerText}
-            onChange={(event) => setSteerText(event.target.value)}
-            placeholder={t("thread.delegatedChild.steerPlaceholder", {
-              defaultValue: "Guidance for the child",
-            })}
-            aria-label={t("thread.delegatedChild.steerLabel", {
-              defaultValue: "Child guidance",
-            })}
-          />
-          <button
-            type="button"
-            className="rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[12px] font-medium"
-            onClick={() => {
-              const text = steerText.trim();
-              if (!text) return;
-              onControl?.(child.child_id, child.runtime_generation, "steer", text);
-              setSteerText("");
-              setSteering(false);
-            }}
-          >
-            {t("thread.delegatedChild.sendSteer", { defaultValue: "Send" })}
-          </button>
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -396,7 +347,9 @@ function IncomingSessionMessage({
 }) {
   const handle = message.sessionMessage!.session;
   const color = sessionHandleColor(handle.id);
-  const createdAtLabel = formatMessageEndTime(message.createdAt);
+  const createdAtLabel = message.timestampAvailable === false
+    ? ""
+    : formatMessageEndTime(message.createdAt);
   const handleName = `@${handle.name}`;
 
   return (
@@ -453,8 +406,8 @@ export function MessageBubble({
   slashCommands = [],
   onOpenFilePreview,
   onForkFromHere,
-  onOpenChildSession,
-  onChildControl,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const mentionCliApps = useMemo(
@@ -470,8 +423,8 @@ export function MessageBubble({
     return (
       <DelegatedChildRow
         child={message.delegatedChild}
-        onOpen={onOpenChildSession}
-        onControl={onChildControl}
+        onOpen={onOpenChildHistory}
+        statusAvailable={delegatedStatusAvailable}
       />
     );
   }
@@ -504,7 +457,9 @@ export function MessageBubble({
     const hasText = userContent.trim().length > 0;
     const showDeliveryStatus =
       message.deliveryStatus === "sending" || message.deliveryStatus === "failed";
-    const createdAtLabel = formatMessageEndTime(message.createdAt);
+    const createdAtLabel = message.timestampAvailable === false
+      ? ""
+      : formatMessageEndTime(message.createdAt);
     const showCreatedAt = createdAtLabel.length > 0;
     const createdAtTitle = showCreatedAt ? fmtDateTime(message.createdAt) : "";
     const quotedContext = parsedMessage.quotedContext;
@@ -605,15 +560,16 @@ export function MessageBubble({
   const forkLabel = t("message.forkFromHere");
   const completedAt = message.completedAt;
   const completedAtLabel =
-    message.role === "assistant" && !message.isStreaming
+    message.role === "assistant" && !message.isStreaming && message.timestampAvailable !== false
       ? formatMessageEndTime(completedAt)
       : "";
   const assistantTimestamp =
-    typeof completedAt === "number" && Number.isFinite(completedAt)
+    message.timestampAvailable !== false
+    && typeof completedAt === "number" && Number.isFinite(completedAt)
       ? completedAt
       : message.createdAt;
   const assistantTimestampLabel =
-    message.role === "assistant" && !message.isStreaming
+    message.role === "assistant" && !message.isStreaming && message.timestampAvailable !== false
       ? formatMessageEndTime(assistantTimestamp)
       : "";
   const showCompletedAt =

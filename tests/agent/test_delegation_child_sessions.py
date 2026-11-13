@@ -166,6 +166,63 @@ async def test_repeated_attempt_returns_same_child(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_admission_persists_full_assignment_and_display_label(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+    assignment = "  inspect   the source\nfor edge cases  "
+
+    admission = await _reserve(
+        tree,
+        parent,
+        assignment=assignment,
+        attempt_id="attempt-display",
+    )
+
+    assert isinstance(admission, ChildAdmission)
+    assert admission.assignment == assignment
+    assert admission.task_label == "inspect the source for edge cases"
+    assert admission.task_label_truncated is False
+    persisted = sessions.read_session_metadata(admission.session_key)
+    metadata = persisted.get("metadata") if isinstance(persisted, dict) else None
+    child = metadata.get(DELEGATION_CHILD_METADATA_KEY) if isinstance(metadata, dict) else None
+    assert isinstance(child, dict)
+    assert child["assignment"] == assignment
+    assert child["task_label"] == admission.task_label
+
+
+@pytest.mark.asyncio
+async def test_transcript_projection_advances_sequence_and_clears_result_on_next_run(tmp_path):
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+    admission = await _reserve(
+        tree,
+        parent,
+        assignment="review the source",
+        attempt_id="attempt-display-sequence",
+    )
+    assert isinstance(admission, ChildAdmission)
+    before_sequence = admission.state_sequence
+
+    assert tree.record_transcript(
+        admission.child_id,
+        assignment="review the source",
+        result_text="  Found\n  two   edge cases.  ",
+    )
+    completed_projection = tree.child(admission.child_id)
+    assert completed_projection is not None
+    assert completed_projection.state_sequence == before_sequence + 1
+    assert completed_projection.result_summary == "Found two edge cases."
+    assert completed_projection.result_summary_truncated is False
+
+    active = await tree.activate(admission.child_id)
+    assert active is not None
+    started = await tree.register_run(admission.child_id, "display-run-2")
+    assert started is not None
+    assert started.result_summary is None
+    assert started.result_summary_truncated is False
+
+
+@pytest.mark.asyncio
 async def test_depth_and_capacity_refusals_leave_no_live_child(tmp_path):
     sessions, tree = _new_tree(
         tmp_path,

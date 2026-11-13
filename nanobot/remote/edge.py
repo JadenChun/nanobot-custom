@@ -46,6 +46,9 @@ MOBILE_API_TIMEOUT_S = 30.0
 # exhausting the phone, not to decide which sessions are viewable.
 MOBILE_API_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 _THREAD_RE = re.compile(r"^/mobile/v1/sessions/([^/]+)/thread$")
+_DELEGATED_CHILDREN_RE = re.compile(
+    r"^/mobile/v1/sessions/([^/]+)/delegated-children$"
+)
 _MOBILE_API_ROUTES: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
     (re.compile(r"^/api/commands$"), frozenset()),
     (re.compile(r"^/api/sessions/[^/]+/file-preview$"), frozenset({"path", "probe"})),
@@ -235,6 +238,9 @@ class MobileGatewayEdge:
         thread_handler: Callable[
             [AccessIdentity, str, dict[str, list[str]]], Awaitable[tuple[int, dict[str, Any]]]
         ] | None = None,
+        delegated_children_handler: Callable[
+            [AccessIdentity, str, dict[str, list[str]]], Awaitable[tuple[int, dict[str, Any]]]
+        ] | None = None,
         api_handler: Callable[[AccessIdentity, str], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
         feature_handler: Callable[[AccessIdentity, str], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
         standard_handler: Callable[
@@ -254,6 +260,7 @@ class MobileGatewayEdge:
         self.model_settings_handler = model_settings_handler
         self.workspaces_handler = workspaces_handler
         self.thread_handler = thread_handler
+        self.delegated_children_handler = delegated_children_handler
         self.api_handler = api_handler
         self.feature_handler = feature_handler
         self.standard_handler = standard_handler
@@ -476,12 +483,41 @@ class MobileGatewayEdge:
                 scope="chat.read",
             )
 
+        children_match = _DELEGATED_CHILDREN_RE.match(path)
+        if children_match is not None:
+            if not identity.allows("chat.read"):
+                return http_json_response({"error": "scope_denied"}, status=403)
+            if self.delegated_children_handler is None:
+                return http_json_response({"error": "delegated_children_unavailable"}, status=503)
+            if set(query) - {"limit", "before"} or any(
+                len(values) != 1 for values in query.values()
+            ):
+                return http_json_response({"error": "invalid_query"}, status=400)
+            key = unquote(children_match.group(1))
+            try:
+                status, payload = await asyncio.wait_for(
+                    self.delegated_children_handler(identity, key, query),
+                    timeout=self._timeout("sessions.delegated_children"),
+                )
+            except TimeoutError:
+                return http_json_response({"error": "delegated_children_timeout"}, status=504)
+            if not self._fits(payload, "sessions.delegated_children"):
+                return http_json_response({"error": "response_too_large"}, status=413)
+            return await self._authorized_delivery(
+                token, identity, http_json_response(payload, status=status),
+                scope="chat.read",
+            )
+
         thread_match = _THREAD_RE.match(path)
         if thread_match is not None:
             if not identity.allows("chat.read"):
                 return http_json_response({"error": "scope_denied"}, status=403)
             if self.thread_handler is None:
                 return http_json_response({"error": "thread_unavailable"}, status=503)
+            if set(query) - {"limit", "direction", "before"} or any(
+                len(values) != 1 for values in query.values()
+            ):
+                return http_json_response({"error": "invalid_query"}, status=400)
             key = unquote(thread_match.group(1))
             try:
                 status, payload = await asyncio.wait_for(

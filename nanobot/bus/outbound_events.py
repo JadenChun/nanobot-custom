@@ -109,17 +109,21 @@ class DelegatedChildEvent(AgentEvent):
     outcome: str | None = None
     runtime_generation: int = 0
     turn_id: str | None = None
+    task_label: str = ""
+    task_label_truncated: bool = False
+    result_summary: str | None = None
+    result_summary_truncated: bool = False
     parent_run_id: str | None = None
     child_run_id: str | None = None
-    parent_store_identity: str = ""
-    parent_incarnation: str = ""
+    parent_store_identity: str | None = None
+    parent_incarnation: str | None = None
     parent_generation: int = 0
-    root_key: str = ""
-    root_store_identity: str = ""
-    root_incarnation: str = ""
+    root_key: str | None = None
+    root_store_identity: str | None = None
+    root_incarnation: str | None = None
     root_generation: int = 0
-    child_store_identity: str = ""
-    child_incarnation: str = ""
+    child_store_identity: str | None = None
+    child_incarnation: str | None = None
     child_generation: int = 0
     run_sequence: int = 0
     state_sequence: int = 0
@@ -156,6 +160,13 @@ class WebUIAdmissionRejectedEvent(AgentEvent):
     detail: str
     reason: str
     turn_id: str | None = None
+
+
+@dataclass(frozen=True)
+class StopTargetEvent(AgentEvent):
+    """Transient server-derived original-chat Stop target for current views."""
+
+    stop_target: dict[str, object] | None
 
 
 @dataclass(frozen=True)

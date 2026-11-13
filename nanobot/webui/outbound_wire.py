@@ -9,8 +9,10 @@ from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
+    DelegatedChildEvent,
     RecoveryStateEvent,
     RetryStatusEvent,
+    StopTargetEvent,
     TurnEndEvent,
 )
 from nanobot.events import AgentEvent
@@ -60,36 +62,48 @@ class ContextCompactionWirePayload(_ChatWirePayload):
     phase: Literal["started", "succeeded", "failed", "cancelled"]
 
 
-class DelegatedChildWirePayload(_ChatWirePayload):
+class DelegatedChildWirePayload(TypedDict):
     event: Literal["delegated_child"]
+    chat_id: str
     parent_session_key: str
     child_session_key: str
     child_id: str
     profile: str
     state: str
     runtime_generation: int
-    outcome: NotRequired[str]
-    parent_run_id: NotRequired[str]
-    child_run_id: NotRequired[str]
-    parent_store_identity: NotRequired[str]
-    parent_incarnation: NotRequired[str]
-    parent_generation: NotRequired[int]
-    root_key: NotRequired[str]
-    root_store_identity: NotRequired[str]
-    root_incarnation: NotRequired[str]
-    root_generation: NotRequired[int]
-    child_store_identity: NotRequired[str]
-    child_incarnation: NotRequired[str]
-    child_generation: NotRequired[int]
-    run_sequence: NotRequired[int]
-    state_sequence: NotRequired[int]
-    control_epoch: NotRequired[int]
-    holds_capacity: NotRequired[bool]
-    can_stop: NotRequired[bool]
-    owned_work: NotRequired[bool]
-    pending_approval_id: NotRequired[str]
-    blocked_run_id: NotRequired[str]
-    result_disposition: NotRequired[str]
+    turn_id: str | None
+    task_label: str
+    task_label_truncated: bool
+    result_summary: str | None
+    result_summary_truncated: bool
+    outcome: str | None
+    parent_run_id: str | None
+    child_run_id: str | None
+    parent_store_identity: str | None
+    parent_incarnation: str | None
+    parent_generation: int
+    root_key: str | None
+    root_store_identity: str | None
+    root_incarnation: str | None
+    root_generation: int
+    child_store_identity: str | None
+    child_incarnation: str | None
+    child_generation: int
+    run_sequence: int
+    state_sequence: int
+    control_epoch: int
+    holds_capacity: bool
+    can_stop: bool
+    owned_work: bool
+    pending_approval_id: str | None
+    blocked_run_id: str | None
+    result_disposition: str | None
+
+
+class StopTargetWirePayload(TypedDict):
+    event: Literal["stop_target"]
+    chat_id: str
+    stop_target: dict[str, object] | None
 
 
 WebUIWirePayload: TypeAlias = (
@@ -98,6 +112,7 @@ WebUIWirePayload: TypeAlias = (
     | RecoveryStateWirePayload
     | TurnEndWirePayload
     | DelegatedChildWirePayload
+    | StopTargetWirePayload
 )
 WebUIWirePersistence: TypeAlias = Literal[
     "transient",
@@ -137,6 +152,59 @@ def encode_context_compaction(
         "phase": event.phase,
     }
     return payload
+
+
+def encode_delegated_child(
+    chat_id: str,
+    event: DelegatedChildEvent,
+) -> DelegatedChildWirePayload:
+    """Project one child activity snapshot with explicit nullable facts and counters."""
+    return {
+        "event": "delegated_child",
+        "chat_id": chat_id,
+        "parent_session_key": event.parent_session_key,
+        "child_session_key": event.child_session_key,
+        "child_id": event.child_id,
+        "profile": event.profile,
+        "state": event.state,
+        "runtime_generation": event.runtime_generation,
+        "turn_id": event.turn_id,
+        "task_label": event.task_label,
+        "task_label_truncated": event.task_label_truncated,
+        "result_summary": event.result_summary,
+        "result_summary_truncated": event.result_summary_truncated,
+        "outcome": event.outcome,
+        "parent_run_id": event.parent_run_id,
+        "child_run_id": event.child_run_id,
+        "parent_store_identity": event.parent_store_identity,
+        "parent_incarnation": event.parent_incarnation,
+        "parent_generation": event.parent_generation,
+        "root_key": event.root_key,
+        "root_store_identity": event.root_store_identity,
+        "root_incarnation": event.root_incarnation,
+        "root_generation": event.root_generation,
+        "child_store_identity": event.child_store_identity,
+        "child_incarnation": event.child_incarnation,
+        "child_generation": event.child_generation,
+        "run_sequence": event.run_sequence,
+        "state_sequence": event.state_sequence,
+        "control_epoch": event.control_epoch,
+        "holds_capacity": event.holds_capacity,
+        "can_stop": event.can_stop,
+        "owned_work": event.owned_work,
+        "pending_approval_id": event.pending_approval_id,
+        "blocked_run_id": event.blocked_run_id,
+        "result_disposition": event.result_disposition,
+    }
+
+
+def encode_stop_target(chat_id: str, event: StopTargetEvent) -> StopTargetWirePayload:
+    """Encode a live Stop target as a transient, allowlisted event."""
+    return {
+        "event": "stop_target",
+        "chat_id": chat_id,
+        "stop_target": event.stop_target,
+    }
 
 
 @dataclass(frozen=True)

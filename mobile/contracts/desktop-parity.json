@@ -75,7 +75,7 @@
       "id": "chat",
       "label": "Chat, history, sessions, temporary chats, media",
       "required": true,
-      "row_count": 23,
+      "row_count": 24,
       "rows": [
         {
           "id": "chat.sessions.list",
@@ -203,6 +203,76 @@
             "mobile_implementation": "present",
             "evidence": [
               "mobile edge thread handler"
+            ]
+          },
+          "exception": null,
+          "notes": ""
+        },
+        {
+          "id": "chat.delegated_children.read",
+          "category": "chat",
+          "feature": "Delegated child history",
+          "action": "Read authorized delegated children",
+          "desktop": {
+            "source": [
+              "nanobot/webui/ws_http.py:_handle_delegated_children_get",
+              "nanobot/webui/ws_http.py:_load_child_ancestry"
+            ],
+            "tests": [
+              "tests/webui/test_child_thread_route.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/sessions/{key}/delegated-children",
+            "query": [
+              "limit",
+              "before"
+            ]
+          },
+          "ui": {
+            "entry": "Delegated child cards and thread hydration"
+          },
+          "auth": {
+            "owner": "read",
+            "legacy": "chat.read",
+            "local_only": false,
+            "current_local_only": false
+          },
+          "native": {
+            "operation": "sessions.delegated_children",
+            "scope": "chat.read",
+            "bounds": {
+              "max_response_bytes": 1572864,
+              "timeout_s": 30,
+              "range_requests": false
+            },
+            "replay": "none"
+          },
+          "dependency": [
+            "M11",
+            "M31"
+          ],
+          "checks": {
+            "positive": [
+              "chat.read pages current root descendants including nested children",
+              "child history pages complete canonical messages and tool activity"
+            ],
+            "negative": [
+              "unknown pagination query is denied",
+              "replaced child, parent, or root ancestry is denied",
+              "chat.read cannot Stop a child"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "present",
+            "evidence": [
+              "nanobot/webui/ws_http.py:_handle_delegated_children_get",
+              "nanobot/remote/edge.py",
+              "mobile/native-network/internal/broker/policy.go"
             ]
           },
           "exception": null,
@@ -416,7 +486,7 @@
             "path": "/api/generated-assets"
           },
           "ui": {
-            "entry": "Session header generated-assets button \u2192 All sessions"
+            "entry": "Session header generated-assets button → All sessions"
           },
           "auth": {
             "owner": "read",

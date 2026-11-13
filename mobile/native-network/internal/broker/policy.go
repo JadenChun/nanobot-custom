@@ -93,6 +93,14 @@ var routes = map[string]route{
 			"before":    true,
 		},
 	},
+	"mobile_delegated_children": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/sessions/[^/]+/delegated-children$`),
+		queries: map[string]bool{
+			"limit":  true,
+			"before": true,
+		},
+	},
 	"mobile_media": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/media/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$`),

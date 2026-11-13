@@ -813,10 +813,15 @@ export async function fetchWebuiThread(
 export async function fetchDelegatedChildren(
   token: string,
   key: string,
-  options: { signal?: AbortSignal; base?: string } = {},
+  options: { signal?: AbortSignal; base?: string; limit?: number; before?: string | null } = {},
 ): Promise<WebuiDelegatedChildrenPayload | null> {
   const base = options.base ?? "";
-  const url = `${base}/api/sessions/${encodeURIComponent(key)}/delegated-children`;
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.before) params.set("before", options.before);
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
+  const url = `${base}/api/sessions/${encodeURIComponent(key)}/delegated-children${suffix}`;
   const res = await fetchWithTimeout(url, {
     headers: { Authorization: `Bearer ${token}` },
     credentials: "same-origin",

@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
+from nanobot.bus.events import OutboundMessage
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
+    DelegatedChildEvent,
     RecoveryStateEvent,
     RetryStatusEvent,
     TurnEndEvent,
 )
 from nanobot.providers.base import LLMUsage
 from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
+from nanobot.webui.outbound_projection import WebUIOutboundProjector
 from nanobot.webui.outbound_wire import (
     encode_context_compaction,
     encode_recovery_state,
@@ -157,3 +163,41 @@ def test_encode_turn_end_projects_complete_wire_contract() -> None:
         "failure_attempts": 4,
         "failure_message": "Connection refused",
     }
+
+
+@pytest.mark.asyncio
+async def test_delegated_child_activity_persists_without_subscribers() -> None:
+    transport = SimpleNamespace(
+        webui_subscribers=lambda _chat_id: (),
+        send_payload=AsyncMock(),
+    )
+    projector = WebUIOutboundProjector(transport, SimpleNamespace())
+    event = DelegatedChildEvent(
+        parent_session_key="websocket:root",
+        child_session_key="delegated:child-a",
+        child_id="child-a",
+        profile="delegated",
+        state="reserved",
+        task_label="Check the source",
+        task_label_truncated=False,
+        result_summary=None,
+        result_summary_truncated=False,
+    )
+
+    await projector.send(OutboundMessage(
+        channel="websocket",
+        chat_id="root",
+        content="",
+        event=event,
+    ))
+
+    transport.send_payload.assert_awaited_once()
+    chat_id, payload = transport.send_payload.await_args.args
+    assert chat_id == "root"
+    assert payload["task_label"] == "Check the source"
+    assert payload["task_label_truncated"] is False
+    assert payload["result_summary"] is None
+    assert payload["result_summary_truncated"] is False
+    assert payload["run_sequence"] == 0
+    assert payload["state_sequence"] == 0
+    assert transport.send_payload.await_args.kwargs["persistence"] == "turn_activity"

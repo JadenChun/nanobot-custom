@@ -321,6 +321,19 @@ def _is_valid_chat_id(value: Any) -> TypeGuard[str]:  # pyright: ignore[reportUn
     return is_valid_webui_chat_id(value)
 
 
+class _ParsedJSONObject(dict[str, Any]):
+    """Retain duplicate JSON member names until the typed edge validates them."""
+
+    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+        super().__init__()
+        duplicates: set[str] = set()
+        for key, value in pairs:
+            if key in self:
+                duplicates.add(key)
+            self[key] = value
+        self.duplicate_keys = frozenset(duplicates)
+
+
 def _parse_envelope(raw: str) -> dict[str, Any] | None:
     """Return a typed envelope dict if the frame is a new-style JSON envelope, else None.
 
@@ -332,7 +345,7 @@ def _parse_envelope(raw: str) -> dict[str, Any] | None:
     if not text.startswith("{"):
         return None
     try:
-        data = cast(object, json.loads(text))
+        data = cast(object, json.loads(text, object_pairs_hook=_ParsedJSONObject))
     except json.JSONDecodeError:
         return None
     if not isinstance(data, dict):

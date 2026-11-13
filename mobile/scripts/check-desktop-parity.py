@@ -53,6 +53,7 @@ ROW_KEYS = {
 # Read routes that are matched by regex rather than exact string equality.
 READ_TEMPLATES = {
     "/api/sessions/{key}/webui-thread": r"^/api/sessions/([^/]+)/webui-thread$",
+    "/api/sessions/{key}/delegated-children": r"^/api/sessions/([^/]+)/delegated-children$",
     "/api/sessions/{key}/context": r"^/api/sessions/([^/]+)/context$",
     "/api/sessions/{key}/file-preview": r"^/api/sessions/([^/]+)/file-preview$",
     "/api/sessions/{key}/automations": r"^/api/sessions/([^/]+)/automations$",

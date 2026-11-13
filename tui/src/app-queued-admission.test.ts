@@ -89,6 +89,10 @@ async function mount(
     undefined,
     clipboard,
   )
+  const connectionState = app as unknown as {
+    handleStatus(status: "connected"): void
+  }
+  connectionState.handleStatus("connected")
   app.accept({ event: "attached", chat_id: "chat" })
   await waitUntil(() => (app as unknown as InspectableApp).ready)
   return { app, ui: app as unknown as InspectableApp }

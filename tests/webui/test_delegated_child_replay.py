@@ -36,6 +36,19 @@ def test_replay_collapses_child_lifecycle_to_one_row() -> None:
             "child_session_key": "delegated:child-a",
             "profile": "delegated",
             "state": "active",
+            "parent_session_key": "websocket:root",
+            "parent_store_identity": "store-a",
+            "parent_incarnation": "root-inc",
+            "parent_generation": 1,
+            "root_key": "websocket:root",
+            "root_store_identity": "store-a",
+            "root_incarnation": "root-inc",
+            "root_generation": 1,
+            "child_store_identity": "store-a",
+            "child_incarnation": "child-inc",
+            "child_generation": 1,
+            "run_sequence": 1,
+            "state_sequence": 1,
             "turn_id": "turn-1",
             "runtime_generation": 0,
             "created_at_ms": 110,
@@ -46,6 +59,19 @@ def test_replay_collapses_child_lifecycle_to_one_row() -> None:
             "child_session_key": "delegated:child-a",
             "profile": "delegated",
             "state": "completed",
+            "parent_session_key": "websocket:root",
+            "parent_store_identity": "store-a",
+            "parent_incarnation": "root-inc",
+            "parent_generation": 1,
+            "root_key": "websocket:root",
+            "root_store_identity": "store-a",
+            "root_incarnation": "root-inc",
+            "root_generation": 1,
+            "child_store_identity": "store-a",
+            "child_incarnation": "child-inc",
+            "child_generation": 1,
+            "run_sequence": 1,
+            "state_sequence": 2,
             "outcome": "completed",
             "turn_id": "turn-1",
             "runtime_generation": 0,
@@ -70,11 +96,37 @@ def test_replay_collapses_child_lifecycle_to_one_row() -> None:
     assert _field(row, "delegatedChild") == {
         "child_session_key": "delegated:child-a",
         "child_id": "child-a",
+        "parent_session_key": "websocket:root",
         "profile": "delegated",
         "state": "completed",
-        "outcome": "completed",
         "runtime_generation": 0,
+        "task_label": "",
+        "task_label_truncated": False,
+        "result_summary": None,
+        "result_summary_truncated": False,
+        "outcome": "completed",
         "turn_id": "turn-1",
+        "parent_run_id": None,
+        "child_run_id": None,
+        "parent_store_identity": "store-a",
+        "parent_incarnation": "root-inc",
+        "parent_generation": 1,
+        "root_key": "websocket:root",
+        "root_store_identity": "store-a",
+        "root_incarnation": "root-inc",
+        "root_generation": 1,
+        "child_store_identity": "store-a",
+        "child_incarnation": "child-inc",
+        "child_generation": 1,
+        "run_sequence": 1,
+        "state_sequence": 2,
+        "control_epoch": 0,
+        "holds_capacity": False,
+        "can_stop": False,
+        "owned_work": False,
+        "pending_approval_id": None,
+        "blocked_run_id": None,
+        "result_disposition": None,
     }
     assert _field(row, "turnId") == "turn-1"
     assert _field(row, "id") == "delegated-child-child-a"
@@ -94,12 +146,15 @@ def test_replay_preserves_durable_child_state() -> None:
             "runtime_generation": 1,
             "parent_run_id": "parent-run",
             "child_run_id": "child-run",
+            "parent_session_key": "websocket:root",
             "parent_store_identity": "store",
             "parent_incarnation": "parent-inc",
             "parent_generation": 2,
             "root_key": "websocket:parent",
+            "root_store_identity": "store",
             "root_incarnation": "root-inc",
             "root_generation": 2,
+            "child_store_identity": "store",
             "child_incarnation": "child-inc",
             "child_generation": 3,
             "run_sequence": 2,
@@ -219,3 +274,57 @@ def test_replay_keeps_distinct_rows_for_two_children() -> None:
 
     assert len({_field(row, "id") for row in rows}) == 2
     assert _field(messages[-1], "content") == "done"
+
+
+def test_replay_ignores_old_conflicting_and_replaced_child_rows() -> None:
+    def activity(
+        *, state: str, run_sequence: int, state_sequence: int,
+        incarnation: str = "child-inc-1", label: str = "Review source",
+    ) -> dict[str, Any]:
+        return {
+            "event": "delegated_child",
+            "parent_session_key": "websocket:root",
+            "child_session_key": "delegated:child-a",
+            "child_id": "child-a",
+            "profile": "delegated",
+            "state": state,
+            "runtime_generation": 0,
+            "parent_store_identity": "store-a",
+            "parent_incarnation": "root-inc-1",
+            "parent_generation": 1,
+            "root_key": "websocket:root",
+            "root_store_identity": "store-a",
+            "root_incarnation": "root-inc-1",
+            "root_generation": 1,
+            "child_store_identity": "store-a",
+            "child_incarnation": incarnation,
+            "child_generation": 1,
+            "run_sequence": run_sequence,
+            "state_sequence": state_sequence,
+            "task_label": label,
+            "task_label_truncated": False,
+            "result_summary": None,
+            "result_summary_truncated": False,
+            "holds_capacity": state in {"reserved", "active", "joining", "uncertain"},
+            "can_stop": state in {"reserved", "active", "joining"},
+            "owned_work": state in {"reserved", "active", "joining", "uncertain"},
+        }
+
+    messages = replay_transcript_to_ui_messages([
+        activity(state="active", run_sequence=2, state_sequence=5),
+        activity(state="failed", run_sequence=2, state_sequence=5),
+        activity(state="completed", run_sequence=1, state_sequence=99),
+        activity(state="joining", run_sequence=3, state_sequence=1),
+        activity(
+            state="completed", run_sequence=9, state_sequence=99,
+            incarnation="replacement-incarnation",
+        ),
+    ])
+
+    rows = _delegated_rows(messages)
+    assert len(rows) == 1
+    child = _field(rows[0], "delegatedChild")
+    assert child["state"] == "joining"
+    assert child["run_sequence"] == 3
+    assert child["state_sequence"] == 1
+    assert child["child_incarnation"] == "child-inc-1"

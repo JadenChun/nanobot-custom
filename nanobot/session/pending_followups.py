@@ -37,6 +37,8 @@ _PRIVATE_METADATA_KEYS = frozenset({
     "_child_followup",
     "background_result",
     "_background_result",
+    "_stop_client",
+    "_stop_expectation",
 })
 
 

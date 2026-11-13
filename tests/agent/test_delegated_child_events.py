@@ -50,6 +50,11 @@ def _make_admission() -> ChildAdmission:
         assignment_digest="digest",
         policy_facts={},
         runtime_generation=0,
+        assignment="Plan the   fixture\nwork",
+        task_label="Plan the fixture work",
+        task_label_truncated=False,
+        result_summary="The fixture is complete.",
+        result_summary_truncated=False,
         source_state=_state("delegated:child-a", "inc-child", 2),
         parent_source_state=_state("websocket:parent", "inc-1", 1),
         root_source_state=_state("websocket:parent", "inc-1", 1),
@@ -137,6 +142,10 @@ async def test_parent_publisher_projects_child_reference():
     assert event.outcome == admission.outcome
     assert event.runtime_generation == admission.runtime_generation
     assert event.turn_id == "turn-a"
+    assert event.task_label == "Plan the fixture work"
+    assert event.task_label_truncated is False
+    assert event.result_summary == "The fixture is complete."
+    assert event.result_summary_truncated is False
     assert event.parent_run_id == "parent-run-a"
     assert event.child_run_id == "child-run-a"
     assert event.parent_store_identity == "store-a"

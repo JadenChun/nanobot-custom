@@ -30,6 +30,7 @@ from loguru import logger
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.pending_followups import (
     PendingBackgroundResult,
+    PendingFollowupRecord,
     parse_pending_followup_records,
 )
 from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
@@ -124,7 +125,8 @@ class OriginalChatStopAdmission:
     control_epoch: int
     active_root_identity: tuple[asyncio.Task[Any], ...]
     target_turn_id: str | None = None
-    pending_queue_identity: int | None = None
+    pending_queue: asyncio.Queue[Any] | None = None
+    pending_sources: tuple[tuple[SourceState, tuple[PendingFollowupRecord, ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +172,11 @@ class ChildAdmission:
     assignment_digest: str
     policy_facts: dict[str, Any]
     runtime_generation: int
+    assignment: str = ""
+    task_label: str = ""
+    task_label_truncated: bool = False
+    result_summary: str | None = None
+    result_summary_truncated: bool = False
     control_epoch: int = 0
     source_state: SourceState | None = None
     parent_source_state: SourceState | None = None
@@ -210,6 +217,11 @@ class ChildAdmission:
             "depth": self.depth,
             "attempt_id": self.attempt_id,
             "assignment_digest": self.assignment_digest,
+            "assignment": self.assignment,
+            "task_label": self.task_label,
+            "task_label_truncated": self.task_label_truncated,
+            "result_summary": self.result_summary,
+            "result_summary_truncated": self.result_summary_truncated,
             "policy_facts": dict(self.policy_facts),
             "runtime_generation": self.runtime_generation,
             "control_epoch": self.control_epoch,
@@ -252,6 +264,12 @@ def assignment_digest(
         repr(sorted((policy_facts or {}).items())),
     ])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _display_preview(value: str, limit: int) -> tuple[str, bool]:
+    """Normalize whitespace for a bounded display field only."""
+    normalized = " ".join(value.split())
+    return normalized[:limit], len(normalized) > limit
 
 
 def _source_state_payload(state: SourceState | None) -> dict[str, object] | None:
@@ -396,6 +414,21 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
     digest = text("assignment_digest")
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("child assignment digest is invalid")
+    assignment = data.get("assignment", "")
+    task_label = data.get("task_label", "")
+    task_label_truncated = data.get("task_label_truncated", False)
+    result_summary = data.get("result_summary")
+    result_summary_truncated = data.get("result_summary_truncated", False)
+    if (
+        not isinstance(assignment, str)
+        or not isinstance(task_label, str)
+        or len(task_label) > 160
+        or type(task_label_truncated) is not bool
+        or (result_summary is not None and not isinstance(result_summary, str))
+        or (isinstance(result_summary, str) and len(result_summary) > 1000)
+        or type(result_summary_truncated) is not bool
+    ):
+        raise ValueError("child display facts are invalid")
     facts = data.get("policy_facts")
     if not isinstance(facts, Mapping):
         raise ValueError("child policy facts are invalid")
@@ -484,6 +517,11 @@ def _parse_child_admission(key: str, data: Mapping[str, object]) -> ChildAdmissi
         assignment_digest=digest,
         policy_facts=dict(cast(Mapping[str, Any], facts)),
         runtime_generation=counter("runtime_generation"),
+        assignment=assignment,
+        task_label=task_label,
+        task_label_truncated=task_label_truncated,
+        result_summary=result_summary,
+        result_summary_truncated=result_summary_truncated,
         control_epoch=counter("control_epoch"),
         source_state=source_state,
         parent_source_state=parent_source_state,
@@ -689,6 +727,106 @@ class DelegationTree:
             )
         )
 
+    def original_chat_stop_descendants(
+        self,
+        parent_key: str,
+        root_source_state: SourceState,
+        *,
+        max_entries: int,
+    ) -> tuple[ChildAdmission, ...]:
+        """Return the exact current root ancestry, including idle history owners."""
+        if (
+            self._recovery_error is not None
+            or root_source_state.session_key != parent_key
+            or max_entries < 0
+        ):
+            raise ValueError("delegated child inventory is unavailable")
+        found: list[ChildAdmission] = []
+        candidates: list[ChildAdmission] = []
+        for child in self._children.values():
+            if child.root_key != parent_key:
+                continue
+            if child.root_source_state is None:
+                raise ValueError("delegated child root identity is unavailable")
+            if not child.root_source_state.same_origin(root_source_state):
+                continue
+            candidates.append(child)
+            if len(candidates) > max_entries:
+                raise ValueError("delegated child inventory exceeds its safe budget")
+        parents: list[tuple[str, SourceState]] = [(parent_key, root_source_state)]
+        visited: set[str] = set()
+        while parents:
+            current_key, current_source = parents.pop(0)
+            for child in candidates:
+                if (
+                    child.root_key != parent_key
+                    or child.parent_key != current_key
+                    or child.parent_incarnation != current_source.incarnation
+                ):
+                    continue
+                if child.child_id in visited:
+                    raise ValueError("delegated child ancestry contains a duplicate")
+                if (
+                    child.root_source_state is None
+                    or not child.root_source_state.same_origin(root_source_state)
+                    or child.parent_source_state is None
+                    or not child.parent_source_state.same_origin(current_source)
+                    or child.source_state is None
+                    or child.source_state.session_key != child.session_key
+                ):
+                    raise ValueError("delegated child source identity is unavailable")
+                visited.add(child.child_id)
+                found.append(child)
+                if len(found) > max_entries:
+                    raise ValueError("delegated child inventory exceeds its safe budget")
+                parents.append((child.session_key, child.source_state))
+        if len(found) != len(candidates):
+            raise ValueError("delegated child ancestry is incomplete")
+        return tuple(sorted(found, key=lambda child: child.child_id))
+
+    def original_chat_control_epoch(self, parent_key: str) -> int:
+        """Return the existing root Stop epoch without changing it."""
+        return self._control_epochs.get(parent_key, 0)
+
+    def current_pending_followups_for_stop(
+        self,
+        child: ChildAdmission,
+        state: SourceState,
+        records: tuple[PendingFollowupRecord, ...],
+    ) -> tuple[PendingFollowupRecord, ...]:
+        """Exclude exact older Stop-epoch evidence, preserving invalid-row refusal."""
+        parent_state = child.parent_source_state
+        if (
+            self._children.get(child.child_id) is not child
+            or child.source_state is None
+            or not child.source_state.same_origin(state)
+            or parent_state is None
+        ):
+            raise ValueError("Pending child follow-up owner changed")
+        current: list[PendingFollowupRecord] = []
+        for record in records:
+            intent = record.child_followup
+            if intent is None:
+                current.append(record)
+                continue
+            if (
+                intent.child_id != child.child_id
+                or intent.child_key != child.session_key
+                or intent.parent_key != child.parent_key
+                or intent.parent_incarnation != child.parent_incarnation
+                or intent.parent_store_identity != parent_state.store_identity
+                or intent.parent_incarnation != parent_state.incarnation
+                or intent.parent_generation != parent_state.generation
+                or intent.child_store_identity != state.store_identity
+                or intent.child_incarnation != state.incarnation
+                or intent.child_generation != state.generation
+                or intent.child_control_epoch > child.control_epoch
+            ):
+                raise ValueError("Pending child follow-up authority changed")
+            if intent.child_control_epoch == child.control_epoch:
+                current.append(record)
+        return tuple(current)
+
     def is_stopping(self, child_id: str) -> bool:
         """Return whether Stop fenced this child or any owning ancestor."""
         child = self._children.get(child_id)
@@ -801,9 +939,11 @@ class DelegationTree:
                         state="stale",
                         stale_reason=stale_reason,
                     ),
+                    state_sequence=current.state_sequence + 1,
                     updated_at=time.time(),
                 )
             else:
+                summary, summary_truncated = _display_preview(intent.result, 1000)
                 updated = replace(
                     current,
                     background_result=replace(
@@ -811,6 +951,9 @@ class DelegationTree:
                         state="stale" if stale_reason is not None else "pending",
                         stale_reason=stale_reason,
                     ),
+                    result_summary=summary or None,
+                    result_summary_truncated=summary_truncated,
+                    state_sequence=current.state_sequence + 1,
                     updated_at=time.time(),
                 )
             if not self._persist(updated):
@@ -851,8 +994,11 @@ class DelegationTree:
                         published if published is not None else existing.published
                     ),
                 ),
+                state_sequence=current.state_sequence + 1,
                 updated_at=time.time(),
             )
+            if updated.background_result == current.background_result:
+                return current
             if not self._persist(updated):
                 return current
             self._children[child_id] = updated
@@ -964,7 +1110,8 @@ class DelegationTree:
         parent_source_state: SourceState | None,
         active_root_identity: tuple[asyncio.Task[Any], ...],
         target_turn_id: str | None,
-        pending_queue_identity: int | None = None,
+        pending_queue: asyncio.Queue[Any] | None = None,
+        pending_sources: tuple[tuple[SourceState, tuple[PendingFollowupRecord, ...]], ...] = (),
     ) -> OriginalChatStopAdmission | None:
         """Fence new child admission synchronously at the existing Stop entrypoint."""
         candidate = OriginalChatStopAdmission(
@@ -974,7 +1121,8 @@ class DelegationTree:
             control_epoch=self._control_epochs.get(parent_key, 0) + 1,
             active_root_identity=active_root_identity,
             target_turn_id=target_turn_id,
-            pending_queue_identity=pending_queue_identity,
+            pending_queue=pending_queue,
+            pending_sources=pending_sources,
         )
         if not self._original_chat_stop_matches(candidate, active_root_identity):
             return None
@@ -1225,6 +1373,7 @@ class DelegationTree:
             assignment=assignment,
             policy_facts=facts,
         )
+        task_label, task_label_truncated = _display_preview(assignment, 160)
         parent_runtime = read_runtime_session(self.sessions, parent_key)
         if parent_runtime.present and not parent_runtime.executable:
             return ChildRefusal(
@@ -1347,6 +1496,9 @@ class DelegationTree:
                 assignment_digest=digest,
                 policy_facts=facts,
                 runtime_generation=runtime_generation,
+                assignment=assignment,
+                task_label=task_label,
+                task_label_truncated=task_label_truncated,
                 control_epoch=self._control_epochs.get(root_key, 0),
                 parent_source_state=parent_source_state,
                 root_source_state=root_source_state,
@@ -1420,6 +1572,9 @@ class DelegationTree:
                 state_sequence=current.state_sequence + 1,
                 current_run_id=run_id,
                 last_run_id=run_id,
+                result_summary=None,
+                result_summary_truncated=False,
+                outcome=None,
                 updated_at=time.time(),
             )
             if not self._persist(updated):
@@ -1478,6 +1633,8 @@ class DelegationTree:
                 last_run_id=run_id,
                 holds_capacity=True,
                 outcome=None,
+                result_summary=None,
+                result_summary_truncated=False,
                 updated_at=time.time(),
             )
             if not self._persist(updated):
@@ -1552,6 +1709,8 @@ class DelegationTree:
                 run_sequence=current.run_sequence + 1,
                 current_run_id=run_id,
                 last_run_id=run_id,
+                result_summary=None,
+                result_summary_truncated=False,
                 updated_at=time.time(),
             )
             if not self._persist(updated):
@@ -1670,7 +1829,19 @@ class DelegationTree:
         ]
         if result_text:
             messages.append({"role": "assistant", "content": result_text[:8000]})
-        updated = replace(child, transcript=tuple(messages), updated_at=time.time())
+        summary, summary_truncated = (
+            _display_preview(result_text, 1000)
+            if result_text is not None
+            else ("", False)
+        )
+        updated = replace(
+            child,
+            transcript=tuple(messages),
+            result_summary=summary or None,
+            result_summary_truncated=summary_truncated,
+            state_sequence=child.state_sequence + 1,
+            updated_at=time.time(),
+        )
         if not self._persist(updated):
             return False
         self._children[child_id] = updated

@@ -98,6 +98,10 @@ describe("targeted stop", () => {
       makeClient(sent, sentOptions, undefined, ["turn-1", "turn-2"]),
       new MockTreeSitterClient({ autoResolveTimeout: 0 }),
     )
+    const connectionState = app as unknown as {
+      handleStatus(status: "connected"): void
+    }
+    connectionState.handleStatus("connected")
     app.accept({ event: "attached", chat_id: "chat" })
     await waitUntil(() => (app as unknown as InspectableApp).ready)
     const ui = app as unknown as InspectableApp

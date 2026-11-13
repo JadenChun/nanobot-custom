@@ -454,40 +454,178 @@ describe("useSessions", () => {
     expect(third.images).toBeUndefined();
   });
 
-  it("hydrates a missing delegated child row after reconnect", async () => {
+  it("merges every delegated-child page and updates an existing activity row", async () => {
     vi.mocked(api.fetchWebuiThread).mockResolvedValue({
       schemaVersion: 3,
-      messages: [],
-    });
-    vi.mocked(api.fetchDelegatedChildren).mockResolvedValue({
-      schemaVersion: 3,
-      children: [
+      messages: [
         {
-          child_id: "child-a",
-          child_session_key: "delegated:child-a",
-          profile: "delegated",
-          state: "active",
-          runtime_generation: 0,
-          can_stop: true,
-          control_epoch: 2,
+          id: "delegated-child-child-a",
+          role: "assistant",
+          kind: "delegated_child",
+          content: "",
+          createdAt: 1,
+          delegatedChild: {
+            parent_session_key: "websocket:chat-child",
+            child_session_key: "delegated:child-a",
+            child_id: "child-a",
+            profile: "delegated",
+            task_label: "Inspect task",
+            task_label_truncated: false,
+            state: "active",
+            outcome: null,
+            runtime_generation: 0,
+            parent_run_id: "root-run",
+            child_run_id: "child-run",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: "websocket:chat-child",
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-a",
+            child_incarnation: "child-incarnation-a",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 1,
+            control_epoch: 2,
+            holds_capacity: true,
+            can_stop: true,
+            owned_work: true,
+            pending_approval_id: null,
+            blocked_run_id: null,
+            result_disposition: null,
+            result_summary: null,
+            result_summary_truncated: false,
+          },
         },
       ],
     });
+    vi.mocked(api.fetchDelegatedChildren)
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        parentSessionKey: "websocket:chat-child",
+        children: [
+          {
+            parent_session_key: "websocket:chat-child",
+            child_session_key: "delegated:child-a",
+            child_id: "child-a",
+            profile: "delegated",
+            task_label: "Inspect task",
+            task_label_truncated: false,
+            state: "waiting_approval",
+            outcome: null,
+            runtime_generation: 0,
+            parent_run_id: "root-run",
+            child_run_id: "child-run",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: "websocket:chat-child",
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-a",
+            child_incarnation: "child-incarnation-a",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 2,
+            control_epoch: 2,
+            holds_capacity: true,
+            can_stop: true,
+            owned_work: true,
+            pending_approval_id: "approval-1",
+            blocked_run_id: "child-run",
+            result_disposition: null,
+            result_summary: null,
+            result_summary_truncated: false,
+          },
+        ],
+        page: {
+          before_cursor: "older-page",
+          has_more_before: true,
+          loaded_message_count: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 3,
+        parentSessionKey: "websocket:chat-child",
+        children: [
+          {
+            parent_session_key: "websocket:chat-child",
+            child_session_key: "delegated:child-b",
+            child_id: "child-b",
+            profile: "delegated",
+            task_label: "Read the release notes",
+            task_label_truncated: false,
+            state: "completed",
+            outcome: "completed",
+            runtime_generation: 0,
+            turn_id: null,
+            parent_run_id: "root-run",
+            child_run_id: "child-run-b",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: "websocket:chat-child",
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-b",
+            child_incarnation: "child-incarnation-b",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 1,
+            control_epoch: 0,
+            holds_capacity: false,
+            can_stop: false,
+            owned_work: false,
+            pending_approval_id: null,
+            blocked_run_id: null,
+            result_disposition: "delivered",
+            result_summary: "Notes were reviewed",
+            result_summary_truncated: false,
+          },
+        ],
+        page: {
+          before_cursor: null,
+          has_more_before: false,
+          loaded_message_count: 1,
+        },
+      });
 
     const { result } = renderHook(() => useSessionHistory("websocket:chat-child"), {
       wrapper: wrap(fakeClient()),
     });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.messages).toHaveLength(1);
-    expect(result.current.messages[0]).toMatchObject({
-      kind: "delegated_child",
-      delegatedChild: {
-        child_id: "child-a",
-        can_stop: true,
-        control_epoch: 2,
-      },
-    });
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages.map((message) => message.id)).toContain(
+      "delegated-child-child-a",
+    );
+    expect(result.current.messages.find((message) => message.id === "delegated-child-child-a"))
+      .toMatchObject({
+        kind: "delegated_child",
+        delegatedChild: {
+          child_id: "child-a",
+          state: "waiting_approval",
+          state_sequence: 2,
+          turn_id: null,
+          pending_approval_id: "approval-1",
+          can_stop: true,
+        },
+      });
+    expect(result.current.messages.find((message) => message.id === "delegated-child-child-b"))
+      .toMatchObject({
+        delegatedChild: { child_id: "child-b", result_summary: "Notes were reviewed" },
+      });
+    expect(result.current.delegatedChildrenError).toBe(false);
+    expect(api.fetchDelegatedChildren).toHaveBeenNthCalledWith(
+      2,
+      "tok",
+      "websocket:chat-child",
+      expect.objectContaining({ limit: 120, before: "older-page" }),
+    );
   });
 
   it("passes through assistant video media from transcript replay", async () => {
@@ -688,6 +826,23 @@ describe("useSessions", () => {
 
     expect(result.current.messages).toEqual([]);
     expect(result.current.hasPendingToolCalls).toBe(false);
+  });
+
+  it("preserves an explicit null Stop target from authenticated history", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValue({
+      schemaVersion: 3,
+      stop_target: null,
+      messages: [],
+    });
+
+    const { result } = renderHook(() => useSessionHistory("websocket:modern-null-stop"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.stopTarget).toBeNull();
+    expect(result.current.stopTargetSnapshotAvailable).toBe(true);
   });
 
   it("does not reload history when only the auth token rotates", async () => {

@@ -26,6 +26,7 @@ def test_attach_fields_restore_session_runtime_metadata() -> None:
     projection = WebUISessionProjection(sessions)
 
     assert projection.attach_fields("websocket:chat-1") == {
+        "stop_target": None,
         "model_preset": "Deep Research",
         "recovery_state": {
             "status": "recovered",
@@ -45,9 +46,9 @@ def test_attach_fields_tolerate_missing_or_invalid_session_metadata() -> None:
     log = MagicMock()
     projection = WebUISessionProjection(sessions, log=log)
 
-    assert projection.attach_fields("websocket:invalid") == {"model_preset": None}
+    assert projection.attach_fields("websocket:invalid") == {"model_preset": None, "stop_target": None}
     log.warning.assert_called_once()
-    assert WebUISessionProjection(None).attach_fields("websocket:missing") == {}
+    assert WebUISessionProjection(None).attach_fields("websocket:missing") == {"model_preset": None, "stop_target": None}
 
 
 def test_hydration_events_restore_goal_and_running_turn(

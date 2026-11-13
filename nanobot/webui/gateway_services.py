@@ -61,6 +61,7 @@ def build_gateway_services(
     config: WebSocketConfig,
     bus: MessageBus,
     session_manager: SessionManager | None,
+    stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
     static_dist_path: Path | None = None,
     workspace_path: Path,
@@ -145,7 +146,11 @@ def build_gateway_services(
         binding=lambda chat_id: temporary_chats.binding(None, chat_id),
         set_mode=lambda chat_id, mode: temporary_chats.set_access_mode(chat_id, mode),
     )
-    session_projection = WebUISessionProjection(session_manager, log=logger)
+    session_projection = WebUISessionProjection(
+        session_manager,
+        stop_target_for_key=stop_target_for_key,
+        log=logger,
+    )
     http = GatewayHTTPHandler(
         config=config,
         session_manager=session_manager,
@@ -174,6 +179,7 @@ def build_gateway_services(
         mcp_reload=mcp_reload,
         skill_state_action=skill_state_action,
         recovery_action=recovery_action,
+        stop_target_for_key=stop_target_for_key,
         log=logger,
     )
     if mobile_edge is None and remote_access is not None and remote_access.enabled:

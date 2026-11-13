@@ -19,7 +19,8 @@
     "devices.remote.tailscale_status",
     "lifecycle.server_start",
     "lifecycle.service_install",
-    "lifecycle.diagnostics"
+    "lifecycle.diagnostics",
+    "lifecycle.desktop_notify"
   ],
   "operations": [
     {
@@ -958,6 +959,26 @@
       "bounds": {
         "max_request_bytes": null,
         "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "sessions.delegated_children",
+      "inventory_row": "chat.delegated_children.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions/{key}/delegated-children",
+      "action": null,
+      "ws_type": null,
+      "scope": "chat.read",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 1572864,
         "timeout_s": 30,
         "range_requests": false
       }

@@ -352,6 +352,84 @@ def _record_json_line(record: dict[str, Any]) -> str:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
 
 
+_DELEGATED_CHILD_LIFETIME_FIELDS = (
+    "parent_session_key",
+    "parent_store_identity",
+    "parent_incarnation",
+    "parent_generation",
+    "root_key",
+    "root_store_identity",
+    "root_incarnation",
+    "root_generation",
+    "child_session_key",
+    "child_store_identity",
+    "child_incarnation",
+    "child_generation",
+)
+_DELEGATED_CHILD_CANONICAL_FIELDS = (
+    "parent_session_key",
+    "child_session_key",
+    "child_id",
+    "profile",
+    "state",
+    "outcome",
+    "runtime_generation",
+    "task_label",
+    "task_label_truncated",
+    "result_summary",
+    "result_summary_truncated",
+    "parent_run_id",
+    "child_run_id",
+    "parent_store_identity",
+    "parent_incarnation",
+    "parent_generation",
+    "root_key",
+    "root_store_identity",
+    "root_incarnation",
+    "root_generation",
+    "child_store_identity",
+    "child_incarnation",
+    "child_generation",
+    "run_sequence",
+    "state_sequence",
+    "control_epoch",
+    "holds_capacity",
+    "can_stop",
+    "owned_work",
+    "pending_approval_id",
+    "blocked_run_id",
+    "result_disposition",
+)
+
+
+def _delegated_child_lifetime(
+    child: Mapping[str, Any],
+) -> tuple[object, ...] | None:
+    values: list[object] = []
+    for name in _DELEGATED_CHILD_LIFETIME_FIELDS:
+        value = child.get(name)
+        if name.endswith("_generation"):
+            if type(value) is not int or value < 0:
+                return None
+        elif not isinstance(value, str) or not value:
+            return None
+        values.append(value)
+    return tuple(values)
+
+
+def _delegated_child_version(child: Mapping[str, Any]) -> tuple[int, int]:
+    run_sequence = child.get("run_sequence")
+    state_sequence = child.get("state_sequence")
+    return (
+        run_sequence if type(run_sequence) is int and run_sequence >= 0 else 0,
+        state_sequence if type(state_sequence) is int and state_sequence >= 0 else 0,
+    )
+
+
+def _delegated_child_facts(child: Mapping[str, Any]) -> tuple[object, ...]:
+    return tuple(child.get(name) for name in _DELEGATED_CHILD_CANONICAL_FIELDS)
+
+
 def validate_retained_transcript_record(row: dict[str, object]) -> None:
     """Qualify known durable display rows without replay normalization/repair."""
     supported = {
@@ -374,7 +452,7 @@ def validate_retained_transcript_record(row: dict[str, object]) -> None:
                 or cast(int, row.get("runtime_generation", 0)) < 0):
             raise ValueError("invalid retained delegated-child activity")
         optional_strings = (
-            "outcome", "parent_run_id", "child_run_id", "parent_store_identity",
+            "parent_session_key", "outcome", "parent_run_id", "child_run_id", "parent_store_identity",
             "parent_incarnation", "root_key", "root_store_identity",
             "root_incarnation", "child_store_identity", "child_incarnation",
             "pending_approval_id", "blocked_run_id", "result_disposition",
@@ -399,6 +477,19 @@ def validate_retained_transcript_record(row: dict[str, object]) -> None:
             for name in boolean_fields
         ):
             raise ValueError("invalid retained delegated-child activity")
+        task_label = row.get("task_label")
+        if task_label is not None and (
+            not isinstance(task_label, str) or len(task_label) > 160
+        ):
+            raise ValueError("invalid retained delegated-child task label")
+        result_summary = row.get("result_summary")
+        if result_summary is not None and (
+            not isinstance(result_summary, str) or len(result_summary) > 1000
+        ):
+            raise ValueError("invalid retained delegated-child result summary")
+        for name in ("task_label_truncated", "result_summary_truncated"):
+            if name in row and type(row[name]) is not bool:
+                raise ValueError("invalid retained delegated-child truncation flag")
     if event == "context_compaction" and (
         not isinstance(row.get("compaction_id"), str) or not row.get("compaction_id")
         or row.get("phase") not in {"started", "succeeded", "failed", "cancelled"}
@@ -2811,19 +2902,34 @@ def replay_transcript_to_ui_messages(
             ):
                 continue
             generation = rec.get("runtime_generation")
+            if type(generation) is not int or generation < 0:
+                generation = 0
+            task_label = rec.get("task_label")
+            if not isinstance(task_label, str) or len(task_label) > 160:
+                task_label = ""
+            result_summary = rec.get("result_summary")
+            if not isinstance(result_summary, str) or len(result_summary) > 1000:
+                result_summary = None
             child: dict[str, Any] = {
                 "child_session_key": child_session_key,
                 "child_id": child_id,
+                "parent_session_key": (
+                    rec.get("parent_session_key")
+                    if isinstance(rec.get("parent_session_key"), str)
+                    else None
+                ),
                 "profile": profile,
                 "state": state,
-                "runtime_generation": generation if isinstance(generation, int) else 0,
+                "runtime_generation": generation,
+                "task_label": task_label,
+                "task_label_truncated": rec.get("task_label_truncated") is True,
+                "result_summary": result_summary,
+                "result_summary_truncated": rec.get("result_summary_truncated") is True,
             }
             outcome = rec.get("outcome")
-            if isinstance(outcome, str) and outcome:
-                child["outcome"] = outcome
+            child["outcome"] = outcome if isinstance(outcome, str) else None
             turn_id = rec.get("turn_id")
-            if isinstance(turn_id, str) and turn_id:
-                child["turn_id"] = turn_id
+            child["turn_id"] = turn_id if isinstance(turn_id, str) and turn_id else None
             for name in (
                 "parent_run_id", "child_run_id", "parent_store_identity",
                 "parent_incarnation", "root_key", "root_store_identity",
@@ -2831,19 +2937,16 @@ def replay_transcript_to_ui_messages(
                 "pending_approval_id", "blocked_run_id", "result_disposition",
             ):
                 value = rec.get(name)
-                if isinstance(value, str) and value:
-                    child[name] = value
+                child[name] = value if isinstance(value, str) and value else None
             for name in (
                 "parent_generation", "root_generation", "child_generation",
                 "run_sequence", "state_sequence", "control_epoch",
             ):
                 value = rec.get(name)
-                if type(value) is int:
-                    child[name] = value
+                child[name] = value if type(value) is int and value >= 0 else 0
             for name in ("holds_capacity", "can_stop", "owned_work"):
                 value = rec.get(name)
-                if type(value) is bool:
-                    child[name] = value
+                child[name] = value if type(value) is bool else False
             existing_index: int | None = None
             for index, message in enumerate(messages):
                 candidate_child = message.get("delegatedChild")
@@ -2866,9 +2969,28 @@ def replay_transcript_to_ui_messages(
                     }
                 )
             else:
+                previous_child = messages[existing_index].get("delegatedChild")
+                if not isinstance(previous_child, dict):
+                    continue
+                previous = cast(dict[str, Any], previous_child)
+                prior_lifetime = _delegated_child_lifetime(previous)
+                next_lifetime = _delegated_child_lifetime(child)
+                if prior_lifetime is None or next_lifetime is None or prior_lifetime != next_lifetime:
+                    continue
+                prior_version = _delegated_child_version(previous)
+                next_version = _delegated_child_version(child)
+                if next_version < prior_version:
+                    continue
+                if next_version == prior_version:
+                    if _delegated_child_facts(previous) != _delegated_child_facts(child):
+                        continue
+                    continue
+                if child["turn_id"] is None:
+                    child["turn_id"] = previous.get("turn_id")
                 messages[existing_index] = {
                     **messages[existing_index],
                     "delegatedChild": child,
+                    **({"turnId": turn_id} if isinstance(turn_id, str) and turn_id else {}),
                 }
             continue
 
