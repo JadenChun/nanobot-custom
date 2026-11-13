@@ -61,11 +61,17 @@ The earlier handoffs below retain their original scope and results.
 
 ### Work before release acceptance
 
-1. The Android Cancel race still needs a native run that overlaps Cancel
-   with owner approval and proof delivery, then restarts both ends. Exercise
-   loss of the initial proof response after approval and verify the app recovers.
-   The native fence, server restart tests, and live renewal and revoke cover parts
-   of these cases.
+1. AR5 remains an open code blocker. A Linux owner-boundary probe completed an
+   approved, proof-bound pairing, then cancelled the challenge. The access token
+   still validated. The device stayed unrevoked and blocked a new attempt for the
+   same installation. Local mobile cancellation does not revoke server authority.
+   The A3-7 plan keeps AR5 and AR6 on hold for implementation review. A server-side
+   cancel and revoke path is required before a native run can pass. That run must
+   overlap Cancel with approval and proof delivery, restart both ends, verify that
+   no usable authority survives, and pair a deliberately new attempt. It must also
+   exercise loss of the initial proof response after approval.
+   The probe and log are in
+   `a3-evidence/linux-android-2026-11-13/ar5-cancel-authority/`.
 2. Continue the [136-finding ledger](evidence.json) from the 11 entries with
    current acceptance evidence. The
    [current review dispositions](review.md#current-candidate-dispositions)

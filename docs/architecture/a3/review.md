@@ -32,11 +32,23 @@ identifies the tested artifacts and the release work that remains.
 | AR2 | The installed WebUI held two worker actions under the same parent. Approval changed one file. Denial left the other file intact. |
 | AR3 | The browser and emulator read canonical child tool and result rows. The child-source and recovery suites cover terminal and uncertain outcomes. |
 | AR4 | The MCP request-binding suite checks captured definitions, replacement, revocation, and release after the old request settles. |
-| AR5 | Native instrumentation checks the durable Cancel fence across a custody reopen. Owner tests check pending restart and Cancel, expiry, and revoke. The combined native Cancel and proof-delivery race remains open. |
+| AR5 | Native instrumentation checks the durable Cancel fence across a custody reopen. A Linux owner-boundary probe completed an approved, proof-bound device pairing, then cancelled the challenge. The access token still validated, the device stayed unrevoked, and the same installation could not start a new attempt. The combined native Cancel and proof-delivery race remains open. |
 | AR6 | The production scope tests reject attachment and other mutations after scope reduction. The installed remote path passed pairing, renewal, and canonical reads. |
 | RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |
 | RR2 | The process completion test rejects an old result after reuse of its session key. |
 | RR3 | The retired attachment migration route and CLI preview tests leave the whole tree intact. |
+
+### AR5 server-authority probe (2026-11-14)
+
+A Linux owner-boundary probe completed an approved, proof-bound device pairing,
+then cancelled the pairing challenge. The issued access token still validated.
+The device stayed unrevoked. A new attempt for the same installation returned
+`PairingBusyError`. The probe calls `PairingService` directly. It does not
+exercise the Android UI. It shows that local mobile cancellation and the current
+owner-side `PairingService.cancel` remove only the challenge, not issued server
+authority. The A3-7 plan keeps AR5 and AR6 on hold for implementation review.
+The probe and log are in
+`a3-evidence/linux-android-2026-11-13/ar5-cancel-authority/`.
 
 The six staging repairs are present through `685bee92`. The source comparison
 and passing checks give these dispositions.
