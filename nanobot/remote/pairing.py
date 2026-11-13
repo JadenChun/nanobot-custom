@@ -9,10 +9,12 @@ and only the new owner pairing API is exposed by IPC/settings.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
 import uuid
@@ -501,7 +503,9 @@ class PairingService:
         collector_secret: str,
     ) -> PairingResult | PairingPending:
         with self._lock:
-            challenge = self._require_live(pairing_id)
+            challenge = self._challenges.get(pairing_id)
+            if challenge is None:
+                raise PairingNotFoundError("pairing challenge is not known")
             if not constant_time_equal(nonce, challenge.offer.nonce):
                 raise PairingRejectedError("challenge nonce is not current")
             if not constant_time_equal(collector_secret, challenge.offer.collector_secret):
@@ -510,6 +514,10 @@ class PairingService:
                 raise PairingRejectedError("no pending request is bound to this challenge")
             if challenge.denied:
                 raise PairingDeniedError("pairing request was denied")
+            if self.clock() >= challenge.offer.expires_at:
+                if challenge.proof_consumed:
+                    raise PairingConsumedError("device proof challenge was already consumed")
+                raise PairingExpiredError("pairing challenge has expired")
             if not challenge.approved or challenge.result is None:
                 return self._pending_payload(challenge)
             if challenge.delivered:
@@ -578,9 +586,9 @@ class PairingService:
             challenge = self._challenges.get(pairing_id)
             if challenge is None:
                 return False
-            self._revoke_pending_device_locked(challenge)
-            self._challenges.pop(pairing_id, None)
-            self._save_locked()
+            if challenge.pending_installation is not None:
+                self.store.revoke_pairing_device(challenge.pending_installation, pairing_id)
+            self._remove_challenge_locked(pairing_id, challenge)
             return True
 
     def cancel_attempt(
@@ -589,35 +597,61 @@ class PairingService:
         pairing_id: str,
         nonce: str,
         collector_secret: str,
+        origin: str | None = None,
+        installation_id: str | None = None,
     ) -> bool:
         """Cancel one collector attempt and remove any authority it created.
 
-        The caller must present the same nonce and collector secret that bound
-        the attempt. A device issued by an overlapping proof is revoked before
-        the challenge is removed, so a late token delivery cannot leave usable
-        server authority behind.
+        The owner retains the cancel digest with the issued device proof.
         """
         with self._lock:
             challenge = self._challenges.get(pairing_id)
-            if challenge is None:
-                raise PairingNotFoundError("pairing challenge is not known")
-            if not constant_time_equal(nonce, challenge.offer.nonce):
-                raise PairingRejectedError("challenge nonce is not current")
-            if not constant_time_equal(collector_secret, challenge.offer.collector_secret):
-                raise PairingRejectedError("collector secret is not current")
-            self._revoke_pending_device_locked(challenge)
-            self._challenges.pop(pairing_id, None)
-            self._save_locked()
+            digest = _cancel_digest(nonce, collector_secret)
+            if challenge is not None:
+                expected_digest = _cancel_digest(
+                    challenge.offer.nonce, challenge.offer.collector_secret
+                )
+                expected_origin = challenge.offer.origin
+                bound_installation = challenge.pending_installation
+            else:
+                state = self.store.load()
+                issued = next(
+                    (
+                        (key, proof) for key, proof in state.device_proofs.items()
+                        if proof.pairing_id == pairing_id and proof.cancel_digest
+                    ),
+                    None,
+                ) if state is not None else None
+                if issued is None:
+                    if installation_id is None or state is None:
+                        raise PairingNotFoundError("pairing challenge is not known")
+                    device = state.devices.get(installation_id)
+                    proof = state.device_proofs.get(installation_id)
+                    if device is not None and not device.revoked and (proof is None or not proof.pairing_id):
+                        raise PairingRejectedError("current device requires owner revocation")
+                    return True
+                bound_installation, proof = issued
+                expected_digest = proof.cancel_digest
+                expected_origin = proof.origin
+            if installation_id is not None and bound_installation not in (None, installation_id):
+                raise PairingRejectedError("pairing installation is not current")
+            if origin is not None and origin.lower() != expected_origin.lower():
+                raise PairingRejectedError("pairing origin is not current")
+            if not constant_time_equal(digest, expected_digest):
+                raise PairingRejectedError("pairing collector proof is not current")
+            if bound_installation is not None:
+                self.store.revoke_pairing_device(bound_installation, pairing_id)
+            if challenge is not None:
+                self._remove_challenge_locked(pairing_id, challenge)
             return True
 
-    def _revoke_pending_device_locked(self, challenge: _Challenge) -> None:
-        installation_id = challenge.pending_installation
-        if installation_id is None:
-            return
-        device = self.store.get_device(installation_id)
-        if device is None or device.revoked_at is not None:
-            return
-        self.tokens.revoke(installation_id)
+    def _remove_challenge_locked(self, pairing_id: str, challenge: _Challenge) -> None:
+        del self._challenges[pairing_id]
+        try:
+            self._save_locked()
+        except OSError:
+            self._challenges[pairing_id] = challenge
+            raise
 
     def _bind_collector(
         self,
@@ -640,8 +674,10 @@ class PairingService:
             validate_installation_id(installation_id)
         except ContractError as exc:
             raise PairingRejectedError(str(exc)) from exc
-        existing = self.store.get_device(installation_id)
-        if existing is not None and existing.revoked_at is None:
+        state = self.store.load()
+        existing = state.devices.get(installation_id) if state is not None else None
+        previous = state.device_proofs.get(installation_id) if state is not None else None
+        if existing is not None and not existing.revoked:
             raise PairingBusyError("installation already has a device; revoke it before re-pairing")
         challenge.pending_installation = installation_id
         challenge.pending_label = _clean_label(label) or challenge.offer.label
@@ -657,7 +693,7 @@ class PairingService:
         now = int(self.clock())
         challenge.device_public_key_der = bytes(device_public_key_der)
         challenge.device_fingerprint = fingerprint
-        challenge.device_generation = 1
+        challenge.device_generation = previous.generation + 1 if previous is not None else 1
         challenge.proof_challenge_id = uuid.uuid4().hex
         challenge.proof_nonce = secrets.token_urlsafe(32)
         challenge.proof_expires_at = min(
@@ -685,6 +721,7 @@ class PairingService:
         *,
         installation_id: str,
         device_public_key_der: bytes,
+        pairing_id: str | None = None,
     ) -> dict[str, object]:
         """Mint a fresh proof challenge for an already approved v2 device."""
         try:
@@ -699,6 +736,8 @@ class PairingService:
             binding = state.device_proofs.get(installation_id)
             if binding is None or binding.fingerprint != fingerprint:
                 raise PairingRejectedError("device proof is not current")
+            if pairing_id is not None and binding.pairing_id != pairing_id:
+                raise PairingNotFoundError("issued pairing is not current")
             if device.revoked:
                 raise PairingDeviceRevokedError("installation is not recoverable")
             now = int(self.clock())
@@ -768,7 +807,7 @@ class PairingService:
             if device.revoked:
                 raise PairingDeviceRevokedError("installation is not recoverable")
             try:
-                pair = self.tokens.reissue_device(installation_id)
+                pair = self.tokens.reissue_device(installation_id, expected_proof=binding)
             except AuthRejectedError as exc:
                 current = self.store.get_device(installation_id)
                 if current is not None and current.revoked:
@@ -831,6 +870,10 @@ class PairingService:
                     device_generation=challenge.device_generation,
                     origin=challenge.offer.origin,
                     label=challenge.pending_label or challenge.offer.label,
+                    pairing_id=pairing_id,
+                    cancel_digest=_cancel_digest(
+                        challenge.offer.nonce, challenge.offer.collector_secret
+                    ),
                 )
             except (AuthConflictError, AuthRejectedError, AuthError) as exc:
                 raise PairingRejectedError(str(exc)) from exc
@@ -1029,9 +1072,14 @@ class PairingService:
                     continue
                 challenge.denied = challenge.state == "denied"
                 if challenge.state == "approved":
-                    device = self.store.get_device(challenge.pending_installation or "")
-                    if device is not None and device.revoked:
-                        continue
+                    installation_id = challenge.pending_installation or ""
+                    state = self.store.load()
+                    device = state.devices.get(installation_id) if state is not None else None
+                    previous = state.device_proofs.get(installation_id) if state is not None else None
+                    if device is not None:
+                        previous_generation = previous.generation if previous is not None else 0
+                        if not device.revoked or challenge.device_generation <= previous_generation:
+                            continue
                     if (
                         challenge.device_public_key_der is None
                         or challenge.pending_installation is None
@@ -1094,16 +1142,21 @@ class PairingService:
                 "proof_verified_at": challenge.proof_verified_at,
             })
         self._state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temporary = self._state_path.with_name(f".{self._state_path.name}.tmp")
-        temporary.write_text(
-            json.dumps({"version": 1, "challenges": entries}, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        fd, temporary = tempfile.mkstemp(prefix=".pairing-", dir=self._state_path.parent)
         try:
-            os.chmod(temporary, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump({"version": 1, "challenges": entries}, handle, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary, self._state_path)
-        except OSError:
-            temporary.unlink(missing_ok=True)
+            if os.name == "posix":
+                directory = os.open(self._state_path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
 
     def _require_live(self, pairing_id: str) -> _Challenge:
         challenge = self._challenges.get(pairing_id)
@@ -1123,6 +1176,11 @@ class PairingService:
         if len(challenge.attempts) >= 5:
             raise PairingRateLimitedError("too many pairing attempts")
         challenge.attempts.append(now)
+
+
+def _cancel_digest(nonce: str, collector_secret: str) -> str:
+    payload = json.dumps([nonce, collector_secret], separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _clean_label(value: str) -> str:

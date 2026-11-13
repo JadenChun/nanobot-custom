@@ -8,6 +8,10 @@ internal class PendingAttemptFence(read: () -> State, private val persist: (Stat
 
     @Synchronized fun begin(): Long = advance(true)
     @Synchronized fun cancel(): Long = advance(false)
+    @Synchronized fun <T> cancel(readPending: () -> T): Pair<Long, T> {
+        val pending = readPending()
+        return advance(false) to pending
+    }
     @Synchronized fun generation(): Long = state.generation
     @Synchronized fun isCurrent(generation: Long): Boolean =
         !persistenceFailed && state.active && state.generation == generation

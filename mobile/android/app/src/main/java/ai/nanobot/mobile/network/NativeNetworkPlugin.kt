@@ -64,6 +64,13 @@ class NativeNetworkPlugin : Plugin() {
     private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
     private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
     @Volatile private var activePairing: PairingChallenge? = null
+    private data class PairingApproval(
+        val pairingId: String,
+        val generation: Long,
+        val handle: Long,
+        val response: JSONObject,
+    )
+    private var pairingApproval: PairingApproval? = null
     private data class RefreshAttempt(
         val origin: String,
         val installationId: String,
@@ -187,6 +194,7 @@ class NativeNetworkPlugin : Plugin() {
                     ) return@withAuthority null
                     custody.cancelPairing()
                     activePairing = null
+                    pairingApproval = null
                     RunKeepAliveRegistry.clear()
                     RunKeepAliveService.stop(context.applicationContext)
                     NativeNetwork.mediaPurge(attempt.handle)
@@ -220,7 +228,7 @@ class NativeNetworkPlugin : Plugin() {
         custody.requireAuthority(attempt.generation)
         val useDeviceProof = record.refreshToken.isBlank()
         val refreshed = if (useDeviceProof) {
-            recoverAccess(record, attempt)
+            recoverAccess(record, attempt.generation, attempt.handle)
         } else {
             refreshBearer(record, attempt)
         }
@@ -492,41 +500,49 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    @Synchronized
     fun pairCancel(call: PluginCall) {
-        val challenge = activePairing ?: try {
-            custody.load()?.let { record ->
-                if (record.pendingPairingChallenge.isBlank()) null
-                else PairingChallengeCodec.decode(record.pendingPairingChallenge)
-            }
-        } catch (_: Exception) {
-            null
-        }
-        try {
-            custody.cancelPairing()
+        val (generation, pending) = try {
+            val cancelled = custody.fencePendingPairing()
             activePairing = null
+            pairingApproval = null
+            cancelled
         } catch (exception: Exception) {
             call.reject(exception.message ?: "pairing cancellation could not be persisted")
             return
         }
-        if (challenge == null) {
+        if (pending == null) {
             call.resolve(JSObject().put("status", "cancelled"))
             return
         }
         operationExecutor.execute {
             try {
-                val result = jsonRequest(
-                    "mobile_pair_cancel",
-                    "/mobile/v1/pair/cancel",
-                    body = null,
-                    headers = mapOf(
-                        "X-Nanobot-Pairing-Id" to challenge.pairingId,
-                        "X-Nanobot-Pairing-Nonce" to challenge.nonce,
-                        "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
-                    ),
-                )
-                if (!result.optBoolean("cancelled", false)) {
-                    throw IllegalStateException("owner did not cancel the pairing")
+                // Collection cannot issue access. An attempt with no saved ID
+                // cannot have started polling or proving on this installation.
+                if (pending.pairingId.isNotBlank()) {
+                    val challenge = PairingChallengeCodec.decode(pending.challenge)
+                    val record = custody.load() ?: throw IllegalStateException("custody target is missing")
+                    val handle = synchronized(this) {
+                        custody.withAuthority(generation) {
+                            check(record.origin == pending.origin) { "Custody target changed." }
+                            val current = transportHandle
+                            val state = if (current == 0L) "" else NativeNetwork.status(current)
+                                ?.let { JSONObject(String(it, Charsets.UTF_8)).optString("state") }
+                            if (state !in setOf("starting", "needs_login", "ready")) startTransport(record)
+                            transportHandle
+                        }
+                    }
+                    waitUntilReady(expectedHandle = handle)
+                    val result = jsonRequest(
+                        "mobile_pair_cancel",
+                        "/mobile/v1/pair/cancel",
+                        body = null,
+                        headers = pairingHeaders(challenge) + ("X-Nanobot-Installation" to record.installationId),
+                        expectedHandle = handle,
+                    )
+                    check(result.optBoolean("cancelled", false)) { "owner did not cancel the pairing" }
                 }
+                custody.finishPairingCancellation(generation, pending)
                 mainHandler.post { call.resolve(JSObject().put("status", "cancelled")) }
             } catch (exception: Exception) {
                 mainHandler.post {
@@ -538,8 +554,16 @@ class NativeNetworkPlugin : Plugin() {
 
     @PluginMethod
     fun pendingPairing(call: PluginCall) {
-        val pending = try { custody.loadPendingPairing() } catch (exception: Exception) {
-            call.reject(exception.message ?: "pending pairing is unavailable"); return
+        val pending = try {
+            val cancelling = custody.loadPairingCancellation()
+            if (cancelling != null) {
+                call.resolve(JSObject().put("cancellationPending", true).put("origin", cancelling.origin))
+                return
+            }
+            custody.loadPendingPairing()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable")
+            return
         }
         if (pending == null) { call.resolve(JSObject().put("pending", false)); return }
         operationExecutor.execute {
@@ -561,6 +585,7 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    @Synchronized
     fun pairPoll(call: PluginCall) {
         val pairingId = call.getString("pairingId")
         if (pairingId.isNullOrBlank()) {
@@ -572,34 +597,23 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("pairing challenge is not active")
             return
         }
-        val pending = try { custody.loadPendingPairing() } catch (exception: Exception) {
-            call.reject(exception.message ?: "pending pairing is unavailable"); return
+        val pending = try {
+            custody.loadPendingPairing()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable")
+            return
         }
-        if (pending == null || pending.pairingId != pairingId) { call.reject("pairing attempt is not current"); return }
+        if (pending == null || pending.pairingId != pairingId) {
+            call.reject("pairing attempt is not current")
+            return
+        }
         val generation = pending.generation
+        val handle = transportHandle
         operationExecutor.execute {
             try {
+                val record = custody.load() ?: throw IllegalStateException("custody target is missing")
                 custody.requirePairing(generation)
-                val polled = jsonRequest(
-                    "mobile_pair_poll",
-                    "/mobile/v1/pair/poll",
-                    body = null,
-                    headers = mapOf(
-                        "X-Nanobot-Pairing-Id" to challenge.pairingId,
-                        "X-Nanobot-Pairing-Nonce" to challenge.nonce,
-                        "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
-                    ),
-                )
-                val proofChallenge = polled.optJSONObject("proof_challenge")
-                val approved = if (
-                    polled.optString("status") == "approved" &&
-                    proofChallenge != null &&
-                    !polled.has("access_token")
-                ) {
-                    provePairing(challenge.pairingId, proofChallenge, generation)
-                } else {
-                    polled
-                }
+                val approved = pollPairingResult(challenge, record, generation, handle)
                 if (approved.optString("status") != "approved") {
                     val publicState = JSObject()
                     (approved.opt("status") as? String)?.let { publicState.put("status", it) }
@@ -610,11 +624,11 @@ class NativeNetworkPlugin : Plugin() {
                     mainHandler.post { call.resolve(publicState) }
                     return@execute
                 }
-                val record = custody.load()
-                    ?: throw IllegalStateException("custody target is missing")
-                custody.withPairing(generation) {
-                    custody.savePairingTokens(generation, record, approved)
-                    activePairing = null
+                synchronized(this) {
+                    custody.withPairing(generation) {
+                        check(transportHandle == handle) { "Native transport changed." }
+                        pairingApproval = PairingApproval(pairingId, generation, handle, approved)
+                    }
                 }
                 mainHandler.post {
                     call.resolve(
@@ -629,30 +643,88 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
-    private fun recoverAccess(record: CustodyRecord, attempt: RefreshAttempt): JSONObject {
+    @PluginMethod
+    @Synchronized
+    fun pairAccept(call: PluginCall) {
+        try {
+            val approval = pairingApproval ?: throw IllegalStateException("pairing approval is unavailable")
+            check(approval.pairingId == call.getString("pairingId") && approval.handle == transportHandle) {
+                "pairing approval is not current"
+            }
+            val saved = custody.savePairingTokens(approval.generation, approval.pairingId, approval.response)
+            pairingApproval = null
+            activePairing = null
+            NativeNetwork.mediaSetToken(approval.handle, saved.accessToken)
+            call.resolve()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing could not be completed")
+        }
+    }
+
+    private fun pairingHeaders(challenge: PairingChallenge): Map<String, String> = mapOf(
+        "X-Nanobot-Pairing-Id" to challenge.pairingId,
+        "X-Nanobot-Pairing-Nonce" to challenge.nonce,
+        "X-Nanobot-Pairing-Secret" to challenge.collectorSecret,
+    )
+
+    private fun pollPairingResult(
+        challenge: PairingChallenge,
+        record: CustodyRecord,
+        generation: Long,
+        handle: Long,
+    ): JSONObject {
+        try {
+            val polled = jsonRequest(
+                "mobile_pair_poll",
+                "/mobile/v1/pair/poll",
+                body = null,
+                headers = pairingHeaders(challenge),
+                expectedHandle = handle,
+            )
+            val proofChallenge = polled.optJSONObject("proof_challenge")
+            if (polled.optString("status") == "approved" && proofChallenge != null && !polled.has("access_token")) {
+                return provePairing(challenge.pairingId, proofChallenge, generation, handle)
+            }
+            return polled
+        } catch (failure: IllegalStateException) {
+            val code = failure.message.orEmpty().substringAfterLast(' ')
+            if (code != "pairing_not_found" && code != "pairing_consumed") throw failure
+            custody.requirePairing(generation)
+            return recoverAccess(record, generation, handle, pairingId = challenge.pairingId)
+        }
+    }
+
+    private fun recoverAccess(
+        record: CustodyRecord,
+        generation: Long,
+        handle: Long,
+        pairingId: String? = null,
+    ): JSONObject {
         val installationId = record.installationId
+        val headers = mutableMapOf(
+            "X-Nanobot-Installation" to installationId,
+            "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
+        )
+        if (pairingId != null) headers["X-Nanobot-Pairing-Id"] = pairingId
         val begun = jsonRequest(
             "mobile_pair_recover",
             "/mobile/v1/pair/recover",
             body = null,
-            expectedHandle = attempt.handle,
-            headers = mapOf(
-                "X-Nanobot-Installation" to installationId,
-                "X-Nanobot-Device-Key" to DeviceProofCanonicalizer.encode(custody.deviceProofPublicKey()),
-            ),
+            expectedHandle = handle,
+            headers = headers,
         )
         val claims = begun.getJSONObject("proof_challenge")
         val canonical = DeviceProofCanonicalizer.canonicalBytes(
             DeviceProofCanonicalizer.fromJson(claims)
         )
-        validateProofBinding(claims, record, attempt.generation)
+        validateProofBinding(claims, record, generation)
         val signature = custody.signDeviceProof(canonical)
-        custody.requireAuthority(attempt.generation)
+        custody.requireAuthority(generation)
         return jsonRequest(
             "mobile_pair_recover_complete",
             "/mobile/v1/pair/recover/complete",
             body = null,
-            expectedHandle = attempt.handle,
+            expectedHandle = handle,
             headers = mapOf(
                 "X-Nanobot-Installation" to installationId,
                 "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
@@ -1266,7 +1338,11 @@ class NativeNetworkPlugin : Plugin() {
     fun logout(call: PluginCall) {
         RunKeepAliveRegistry.clear()
         RunKeepAliveService.stop(context.applicationContext)
-        try { custody.cancelPairing(); activePairing = null } catch (exception: Exception) {
+        try {
+            custody.cancelPairing()
+            activePairing = null
+            pairingApproval = null
+        } catch (exception: Exception) {
             call.reject(exception.message ?: "custody cancellation fence failed"); return
         }
         val serverReachable = call.getBoolean("serverReachable") ?: false
@@ -1420,11 +1496,12 @@ class NativeNetworkPlugin : Plugin() {
         startPoller()
     }
 
-    private fun waitUntilReady(timeoutMs: Long = 90_000) {
+    private fun waitUntilReady(timeoutMs: Long = 90_000, expectedHandle: Long? = null) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             val current = transportHandle
             if (current == 0L) throw IllegalStateException("native transport stopped")
+            check(expectedHandle == null || current == expectedHandle) { "Native transport changed." }
             val status = JSONObject(String(NativeNetwork.status(current) ?: ByteArray(0), Charsets.UTF_8))
             when (status.optString("state")) {
                 "ready" -> return
@@ -1436,7 +1513,7 @@ class NativeNetworkPlugin : Plugin() {
         throw IllegalStateException("native transport readiness timeout")
     }
 
-    private fun provePairing(pairingId: String, claims: JSONObject, generation: Long): JSONObject {
+    private fun provePairing(pairingId: String, claims: JSONObject, generation: Long, handle: Long): JSONObject {
         custody.requirePairing(generation)
         val record = custody.load() ?: throw IllegalStateException("custody target is missing")
         validateProofBinding(claims, record, generation)
@@ -1449,6 +1526,7 @@ class NativeNetworkPlugin : Plugin() {
             "mobile_pair_prove",
             "/mobile/v1/pair/prove",
             body = null,
+            expectedHandle = handle,
             headers = mapOf(
                 "X-Nanobot-Pairing-Id" to pairingId,
                 "X-Nanobot-Device-Signature" to DeviceProofCanonicalizer.encode(signature),
@@ -1509,7 +1587,9 @@ class NativeNetworkPlugin : Plugin() {
                 } catch (_: Exception) {
                     ""
                 }
-                val safeCode = if (code in setOf("pairing_expired", "device_revoked")) " $code" else ""
+                val safeCode = if (code in setOf(
+                    "pairing_expired", "pairing_not_found", "pairing_consumed", "device_revoked",
+                )) " $code" else ""
                 throw IllegalStateException("HTTP $status$safeCode")
             }
             val payload = Base64.decode(event.getString("body_base64"), Base64.DEFAULT)
@@ -1522,6 +1602,7 @@ class NativeNetworkPlugin : Plugin() {
 
     @Synchronized
     private fun stopInternal() {
+        pairingApproval = null
         requests.close()
         pollTask?.cancel(false)
         pollTask = null

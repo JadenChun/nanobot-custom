@@ -140,12 +140,14 @@ class RemoteAccessClient:
         *,
         installation_id: str,
         device_public_key: str,
+        pairing_id: str | None = None,
     ) -> dict[str, Any]:
         return self._call(
             "pair_recover_begin",
             {
                 "installation_id": installation_id,
                 "device_public_key": device_public_key,
+                "pairing_id": pairing_id,
             },
             role="pairing",
         )
@@ -207,6 +209,8 @@ class RemoteAccessClient:
         pairing_id: str,
         nonce: str,
         collector_secret: str,
+        origin: str,
+        installation_id: str | None = None,
     ) -> bool:
         result = self._call(
             "pair_cancel_attempt",
@@ -214,6 +218,8 @@ class RemoteAccessClient:
                 "pairing_id": pairing_id,
                 "nonce": nonce,
                 "collector_secret": collector_secret,
+                "origin": origin,
+                "installation_id": installation_id,
             },
             role="pairing",
         )

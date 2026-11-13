@@ -160,14 +160,15 @@ class CustodyStore(context: Context) {
     fun <T> withPairing(generation: Long, action: () -> T): T = attemptFence.withCurrent(generation, write = action)
 
     fun beginPairing(origin: String, installationId: String, challenge: String = "", code: String = "", label: String = ""): Long {
-        val generation = attemptFence.begin()
-        attemptFence.withCurrent(generation) {
+        return withAuthority(attemptGeneration()) {
+            check(loadPairingCancellation() == null) { "Complete pairing cancellation first." }
             val current = loadOrCreate(origin, installationId)
+            val generation = attemptFence.begin()
             save(current.copy(pendingPairingId = "", pendingPairingOrigin = origin,
                 pendingPairingChallenge = challenge, pendingPairingGeneration = generation,
                 pendingPairingCode = code, pendingPairingLabel = label))
+            generation
         }
-        return generation
     }
 
     @Synchronized
@@ -221,7 +222,13 @@ class CustodyStore(context: Context) {
             throw CustodyCorruptException("custody record cannot be decrypted", exception)
         }
         return try {
-            CustodyRecord.fromJson(JSONObject(String(plaintext, Charsets.UTF_8)))
+            val record = CustodyRecord.fromJson(JSONObject(String(plaintext, Charsets.UTF_8)))
+            // An older app could write credentials before settling the pending setup.
+            if (record.pendingPairingOrigin.isNotBlank()) {
+                record.copy(accessToken = "", refreshToken = "", accessExpiresAt = 0, refreshExpiresAt = 0)
+            } else {
+                record
+            }
         } catch (exception: CustodyUnknownVersionException) {
             throw exception
         } catch (exception: Exception) {
@@ -321,43 +328,51 @@ class CustodyStore(context: Context) {
         }
     }
 
-    fun loadPendingPairing(): PendingPairingSetup? {
-        val record = load() ?: return null
-        if (
-            !attemptFence.isCurrent(record.pendingPairingGeneration) ||
-            record.pendingPairingOrigin.isBlank() ||
-            (record.pendingPairingChallenge.isBlank() && record.pendingPairingCode.isBlank())
-        ) {
-            return null
+    fun loadPendingPairing(): PendingPairingSetup? =
+        load()?.pendingSetup()?.takeIf { attemptFence.isCurrent(it.generation) }
+
+    fun loadPairingCancellation(): PendingPairingSetup? =
+        load()?.pendingSetup()?.takeIf {
+            it.pairingId.isNotBlank() && !attemptFence.isCurrent(it.generation)
         }
+
+    fun fencePendingPairing(): Pair<Long, PendingPairingSetup?> =
+        attemptFence.cancel { load()?.pendingSetup() }
+
+    fun finishPairingCancellation(generation: Long, pending: PendingPairingSetup) {
+        withAuthority(generation) {
+            synchronized(this) {
+                val record = load() ?: return@synchronized
+                if (record.pendingPairingGeneration == pending.generation) {
+                    save(record.withoutPendingSetup())
+                }
+            }
+        }
+    }
+
+    private fun CustodyRecord.pendingSetup(): PendingPairingSetup? {
+        if (pendingPairingOrigin.isBlank() ||
+            (pendingPairingChallenge.isBlank() && pendingPairingCode.isBlank())
+        ) return null
         return PendingPairingSetup(
-            origin = record.pendingPairingOrigin,
-            pairingId = record.pendingPairingId,
-            challenge = record.pendingPairingChallenge,
-            generation = record.pendingPairingGeneration,
-            code = record.pendingPairingCode,
-            label = record.pendingPairingLabel,
+            origin = pendingPairingOrigin,
+            pairingId = pendingPairingId,
+            challenge = pendingPairingChallenge,
+            generation = pendingPairingGeneration,
+            code = pendingPairingCode,
+            label = pendingPairingLabel,
         )
     }
 
-    @Synchronized
-    fun clearPendingPairing() {
-        val record = load() ?: return
-        if (
-            record.pendingPairingId.isBlank() &&
-            record.pendingPairingChallenge.isBlank()
-        ) {
-            return
-        }
-        save(
-            record.copy(
-                pendingPairingId = "",
-                pendingPairingOrigin = "",
-                pendingPairingChallenge = "",
-                updatedAt = System.currentTimeMillis(),
-            )
+    private fun CustodyRecord.withoutPendingSetup(): CustodyRecord =
+        copy(
+            pendingPairingId = "",
+            pendingPairingOrigin = "",
+            pendingPairingChallenge = "",
+            pendingPairingGeneration = 0,
+            pendingPairingCode = "",
+            pendingPairingLabel = "",
         )
-    }
 
     /**
      * Persist a rotation only while the same live custody binding still exists.
@@ -374,6 +389,24 @@ class CustodyStore(context: Context) {
         expectedGeneration: Long = attemptGeneration(),
     ): CustodyRecord = attemptFence.withCurrent(expectedGeneration, requireActive = false) {
         synchronized(this) {
+            val current = load() ?: throw CustodyMismatchException("custody was cleared during refresh")
+            if (current.installationId != installationId || current.origin != origin ||
+                current.revocationPending || current.pendingPairingOrigin.isNotBlank()
+            ) {
+                throw CustodyMismatchException("custody binding changed during refresh")
+            }
+            val updated = current.withCredentials(accessToken, refreshToken, accessExpiresIn, refreshExpiresIn)
+            save(updated)
+            updated
+        }
+    }
+
+    private fun CustodyRecord.withCredentials(
+        accessToken: String,
+        refreshToken: String,
+        accessExpiresIn: Int,
+        refreshExpiresIn: Int,
+    ): CustodyRecord {
         if (accessToken.isBlank()) {
             throw CustodyException("refreshed credentials are empty")
         }
@@ -383,37 +416,30 @@ class CustodyStore(context: Context) {
         if (accessToken.length > 512 || refreshToken.length > 512) {
             throw CustodyException("refreshed credentials exceed the bound")
         }
-        val current = load() ?: throw CustodyMismatchException("custody was cleared during refresh")
-        if (
-            current.installationId != installationId ||
-            current.origin != origin ||
-            current.revocationPending
-        ) {
-            throw CustodyMismatchException("custody binding changed during refresh")
-        }
         val now = System.currentTimeMillis()
-        val updated = current.copy(
+        return copy(
             accessToken = accessToken,
             refreshToken = refreshToken,
             accessExpiresAt = now + accessExpiresIn * 1000L,
             refreshExpiresAt = if (refreshExpiresIn <= 0) 0L else now + refreshExpiresIn * 1000L,
             updatedAt = now,
         )
-        save(updated)
-        updated
-        }
     }
 
-    fun savePairingTokens(generation: Long, record: CustodyRecord, approved: JSONObject): CustodyRecord =
+    fun savePairingTokens(generation: Long, pairingId: String, approved: JSONObject): CustodyRecord =
         attemptFence.withCurrent(generation) {
-            val saved = saveRefreshedTokens(record.origin, record.installationId,
-                approved.getString("access_token"), approved.optString("refresh_token"),
-                approved.optInt("expires_in", 600), approved.optInt("refresh_expires_in", 0),
-                expectedGeneration = generation)
-            val settled = saved.copy(pendingPairingId = "", pendingPairingOrigin = "",
-                pendingPairingChallenge = "", pendingPairingCode = "", pendingPairingLabel = "")
-            save(settled)
-            settled
+            synchronized(this) {
+                val record = load() ?: throw CustodyMismatchException("custody target is missing")
+                check(record.pendingPairingGeneration == generation && record.pendingPairingId == pairingId &&
+                    record.installationId == approved.getString("installation_id") && !record.revocationPending
+                ) { "pairing approval is not current" }
+                val settled = record.withoutPendingSetup().withCredentials(
+                    approved.getString("access_token"), approved.optString("refresh_token"),
+                    approved.optInt("expires_in", 600), approved.optInt("refresh_expires_in", 0),
+                )
+                save(settled)
+                settled
+            }
         }
 
     /**

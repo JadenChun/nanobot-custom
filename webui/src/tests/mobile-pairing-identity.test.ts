@@ -51,6 +51,7 @@ function installPlugin(
     pairStart,
     pairStartCode,
     pairPoll,
+    pairAccept: vi.fn(async () => undefined),
     pairCancel: vi.fn(async () => ({ status: "cancelled" })),
     pendingPairingLink: vi.fn(async () => null),
   };
@@ -198,12 +199,14 @@ function installHeldPairingPlugin(hold: "collect" | "poll") {
   const pairCancel = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => {
     resolveCancel = resolve;
   }));
+  const pairAccept = vi.fn(async () => undefined);
   const plugin = {
     target: vi.fn(async () => ({ hasAccess: false })),
     pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
     pairStart,
     pairStartCode,
     pairPoll,
+    pairAccept,
     pairCancel,
     pendingPairingLink: vi.fn(async () => null),
   };
@@ -214,6 +217,7 @@ function installHeldPairingPlugin(hold: "collect" | "poll") {
     pairStart,
     pairStartCode,
     pairPoll,
+    pairAccept,
     pairCancel,
     resolveCancel: () => resolveCancel({ status: "cancelled" }),
     releaseHeld: () => {
@@ -604,6 +608,7 @@ describe("mobile pairing identity", () => {
       .toBe("Connects when pairing");
     expect(document.body.textContent).not.toContain("Paired. Loading Nanobot...");
     expect(document.body.textContent).not.toContain("999999");
+    expect(fixture.pairAccept).not.toHaveBeenCalled();
   });
 
   it("shows a native pairing cancellation persistence failure", async () => {

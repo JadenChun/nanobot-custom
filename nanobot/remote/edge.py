@@ -613,6 +613,7 @@ class MobileGatewayEdge:
                     self.validator.client.begin_pairing_recovery,
                     installation_id=installation_id,
                     device_public_key=device_public_key,
+                    pairing_id=header("X-Nanobot-Pairing-Id") or None,
                 )
             except OwnerUnavailableError:
                 return http_json_response({"error": "owner_unavailable"}, status=503)
@@ -658,18 +659,20 @@ class MobileGatewayEdge:
             collector_secret = header("X-Nanobot-Pairing-Secret")
             if not pairing_id or not nonce or not collector_secret:
                 return http_json_response({"error": "bad_request"}, status=400)
+            origin = "https://" + header("Host")
+            self.authorize_target(request, origin)
             try:
                 cancelled = await asyncio.to_thread(
                     self.validator.client.cancel_pairing_attempt,
                     pairing_id=pairing_id,
                     nonce=nonce,
                     collector_secret=collector_secret,
+                    origin=origin,
+                    installation_id=installation_id or None,
                 )
             except OwnerUnavailableError:
                 return http_json_response({"error": "owner_unavailable"}, status=503)
             except OwnerRequestError as exc:
-                if exc.code == "pairing_not_found":
-                    return http_json_response({"cancelled": True})
                 status = _PAIRING_STATUS.get(exc.code, 400)
                 return http_json_response({"error": exc.code}, status=status)
             return http_json_response({"cancelled": bool(cancelled)})

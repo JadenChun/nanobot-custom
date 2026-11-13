@@ -320,6 +320,7 @@
     var identityPromise = null;
     var generation = 0;
     var state = "idle";
+    var cancellationPending = false;
 
     function hostLabel(origin) {
       try {
@@ -388,7 +389,7 @@
       ui.panel.dataset.state = next;
       ui.login.hidden = next !== "login";
       ui.retry.hidden = next !== "error" && next !== "login";
-      ui.cancel.hidden = next === "idle";
+      ui.cancel.hidden = next === "idle" || next === "accepting" || next === "cancelling";
       ui.cancel.textContent = next === "waiting" ? "Cancel" : "Use a different link";
       ui.form.hidden = next !== "idle";
       ui.linkDetails.hidden = next !== "idle";
@@ -453,6 +454,9 @@
         var result = await plugin.pairPoll({ pairingId: pairingId });
         if (stopped || run !== generation || state !== "waiting") return;
         if (result && result.status === "approved") {
+          setState("accepting");
+          await plugin.pairAccept({ pairingId: pairingId });
+          if (stopped || run !== generation || state !== "accepting") return;
           setPill(ui.node, "Connected", "is-ok");
           ui.status.textContent = "Paired. Loading Nanobot...";
           finish();
@@ -463,7 +467,7 @@
         ui.status.classList.remove("is-error");
         pollTimer = setTimeout(function () { void poll(pairingId, run); }, 2000);
       } catch (error) {
-        if (stopped || run !== generation || state !== "waiting") return;
+        if (stopped || run !== generation || (state !== "waiting" && state !== "accepting")) return;
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
           needLogin(run);
@@ -675,6 +679,10 @@
         return false;
       }
       if (stopped || run !== generation || state !== "idle") return false;
+      if (pending && pending.cancellationPending === true) {
+        void cancelPairing();
+        return true;
+      }
       if (!pending || pending.pending !== true || !pending.pairingId) return false;
       pendingSetup = {
         kind: "link",
@@ -691,7 +699,9 @@
     }
 
     function retryPending() {
-      if (pendingSetup) {
+      if (cancellationPending) {
+        void cancelPairing();
+      } else if (pendingSetup) {
         var run = ++generation;
         stopTimers();
         setState("waiting");
@@ -703,41 +713,45 @@
         void beginCode(lastManual.origin, lastManual.code);
       } else {
         setState("idle");
-        watchForLink();
+        void restorePendingPairing(generation).then(function (restored) {
+          if (!restored && state === "idle") watchForLink();
+        });
       }
     }
 
     ui.retry.addEventListener("click", retryPending);
 
-    ui.cancel.addEventListener("click", function () {
+    async function cancelPairing() {
+      if (stopped || state === "accepting" || state === "cancelling") return;
       var run = ++generation;
+      cancellationPending = true;
       stopTimers();
-      ui.cancel.disabled = true;
+      setState("cancelling");
       ui.status.textContent = "Cancelling pairing...";
-      var cancellation;
       try {
         if (typeof plugin.pairCancel !== "function") {
           throw new Error("native pairing cancellation is unavailable");
         }
-        cancellation = plugin.pairCancel();
-      } catch (error) {
-        cancellation = Promise.reject(error);
-      }
-      Promise.resolve(cancellation).then(function () {
+        await plugin.pairCancel();
         if (stopped || run !== generation) return;
-        ui.cancel.disabled = false;
+        cancellationPending = false;
         lastLink = null;
         lastManual = null;
         pendingSetup = null;
         setState("idle");
         watchForLink();
-      }).catch(function (error) {
+      } catch (error) {
         if (stopped || run !== generation) return;
-        ui.cancel.disabled = false;
         var message = String(error && error.message ? error.message : error);
+        if (message.indexOf("tailnet login required") >= 0) {
+          needLogin(run);
+          return;
+        }
         fail("Pairing cancellation failed: " + message);
-      });
-    });
+      }
+    }
+
+    ui.cancel.addEventListener("click", cancelPairing);
 
     setState("idle");
     void (async function () {

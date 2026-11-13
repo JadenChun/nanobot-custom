@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -82,6 +82,8 @@ class DeviceProofRecord:
     fingerprint: str
     generation: int
     origin: str = ""
+    pairing_id: str = ""
+    cancel_digest: str = ""
 
 
 @dataclass
@@ -207,12 +209,18 @@ class RemoteAccessStore:
         scopes: tuple[str, ...],
         refresh_token: str,
         refresh_expires_at: float | None = None,
+        proof: DeviceProofRecord | None = None,
     ) -> RemoteDevice:
         with self._locked():
             state = self._require_state()
             existing = state.devices.get(installation_id)
-            if existing is not None and existing.revoked_at is None:
+            if existing is not None and (not existing.revoked or proof is None):
                 raise StoreError("installation already exists")
+            if proof is not None:
+                previous = state.device_proofs.get(installation_id)
+                if previous is not None and proof.generation <= previous.generation:
+                    raise StoreError("device proof generation is not current")
+                state.device_proofs[installation_id] = proof
             if existing is None and len(state.devices) >= MAX_DEVICES:
                 raise StoreError("device limit reached")
             try:
@@ -243,28 +251,6 @@ class RemoteAccessStore:
     def get_device(self, installation_id: str) -> RemoteDevice | None:
         state = self.load()
         return state.devices.get(installation_id) if state else None
-
-    def set_device_proof(
-        self,
-        installation_id: str,
-        *,
-        fingerprint: str,
-        generation: int,
-        origin: str = "",
-    ) -> None:
-        if not fingerprint or generation < 1:
-            raise StoreError("device proof is invalid")
-        with self._locked():
-            state = self._require_state()
-            if installation_id not in state.devices:
-                raise StoreError("device is unknown")
-            state.device_proofs[installation_id] = DeviceProofRecord(
-                fingerprint=fingerprint,
-                generation=generation,
-                origin=origin,
-            )
-            state.revision += 1
-            self._save_locked(state)
 
     def get_device_proof(self, installation_id: str) -> tuple[str, int, str] | None:
         state = self.load()
@@ -357,20 +343,28 @@ class RemoteAccessStore:
             device = state.devices.get(installation_id)
             if device is None:
                 raise StoreError("device is unknown")
-            updated = RemoteDevice(
-                installation_id=device.installation_id,
-                label=device.label,
-                scopes=device.scopes,
-                created_at=device.created_at,
-                last_seen_at=device.last_seen_at,
-                refresh_hash=device.refresh_hash,
-                revoked_at=device.revoked_at or self.clock(),
-                refresh_expires_at=device.refresh_expires_at,
-            )
-            state.devices[installation_id] = updated
-            state.revision += 1
-            self._save_locked(state)
-            return updated
+            return self._revoke_device_locked(state, device)
+
+    def revoke_pairing_device(self, installation_id: str, pairing_id: str) -> bool:
+        with self._locked():
+            state = self._require_state()
+            device = state.devices.get(installation_id)
+            proof = state.device_proofs.get(installation_id)
+            if device is None or proof is None or proof.pairing_id != pairing_id:
+                return False
+            self._revoke_device_locked(state, device)
+            return True
+
+    def _revoke_device_locked(
+        self, state: RemoteAccessState, device: RemoteDevice
+    ) -> RemoteDevice:
+        if device.revoked:
+            return device
+        updated = replace(device, revoked_at=self.clock())
+        state.devices[device.installation_id] = updated
+        state.revision += 1
+        self._save_locked(state)
+        return updated
 
     def revoke_legacy_bearer_devices(self) -> list[str]:
         """Revoke every active device that has no device-proof binding.
@@ -547,11 +541,7 @@ class RemoteAccessStore:
                 for installation_id, device in state.devices.items()
             },
             "device_proofs": {
-                installation_id: {
-                    "fingerprint": record.fingerprint,
-                    "generation": record.generation,
-                    "origin": record.origin,
-                }
+                installation_id: asdict(record)
                 for installation_id, record in state.device_proofs.items()
             },
             "owned_entries": list(state.owned_entries),
@@ -622,18 +612,27 @@ class RemoteAccessStore:
             proof = cast(dict[str, Any], raw_proof)
             fingerprint = proof.get("fingerprint")
             generation = proof.get("generation")
+            pairing_id = proof.get("pairing_id", "")
+            cancel_digest = proof.get("cancel_digest", "")
             if (
                 not isinstance(fingerprint, str)
                 or not fingerprint
                 or len(fingerprint) > 128
                 or not isinstance(generation, int)
                 or generation < 1
+                or not isinstance(pairing_id, str)
+                or len(pairing_id) > 128
+                or not isinstance(cancel_digest, str)
+                or bool(pairing_id) != bool(cancel_digest)
+                or (cancel_digest and len(cancel_digest) != 64)
             ):
                 raise StoreCorruptError("device proof record is invalid")
             proofs[key] = DeviceProofRecord(
                 fingerprint=fingerprint,
                 generation=generation,
                 origin=str(proof.get("origin") or ""),
+                pairing_id=pairing_id,
+                cancel_digest=cancel_digest,
             )
         raw_entries = raw.get("owned_entries", [])
         if not isinstance(raw_entries, list):

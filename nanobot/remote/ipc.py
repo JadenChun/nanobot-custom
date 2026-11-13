@@ -326,6 +326,7 @@ class OwnerIPCServer:
                 claims = self.pairing.begin_device_recovery(
                     installation_id=installation_id,
                     device_public_key_der=device_key,
+                    pairing_id=_string_param(params, "pairing_id"),
                 )
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
@@ -369,13 +370,16 @@ class OwnerIPCServer:
             pairing_id = _string_param(params, "pairing_id")
             nonce = _string_param(params, "nonce")
             collector_secret = _string_param(params, "collector_secret")
-            if None in (pairing_id, nonce, collector_secret):
+            origin = _string_param(params, "origin")
+            if not pairing_id or not nonce or not collector_secret or not origin:
                 return {"ok": False, "error": {"code": "bad_request", "message": "pairing fields are required"}}
             try:
                 cancelled = self.pairing.cancel_attempt(
-                    pairing_id=cast(str, pairing_id),
-                    nonce=cast(str, nonce),
-                    collector_secret=cast(str, collector_secret),
+                    pairing_id=pairing_id,
+                    nonce=nonce,
+                    collector_secret=collector_secret,
+                    origin=origin,
+                    installation_id=_string_param(params, "installation_id"),
                 )
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
