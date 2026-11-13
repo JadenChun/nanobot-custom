@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import json
 import queue
 import sqlite3
@@ -74,18 +75,21 @@ class _PersistenceLane:
         self.path = path
         self._queue: queue.Queue[tuple[Callable[[sqlite3.Connection], Any], concurrent.futures.Future[Any]] | None] = queue.Queue(maxsize=max_pending)
         self._closed = False
-        self._startup_error: BaseException | None = None
+        ready: concurrent.futures.Future[None] = concurrent.futures.Future()
         self._thread = threading.Thread(
             target=self._run,
+            args=(ready,),
             name="process-completion-journal",
             daemon=True,
         )
         self._thread.start()
-        self.run(lambda db: db.execute("CREATE TABLE IF NOT EXISTS processes (id TEXT PRIMARY KEY, data TEXT NOT NULL)"))
+        try:
+            ready.result(timeout=10)
+        except concurrent.futures.TimeoutError as exc:
+            self._queue.put_nowait(None)
+            raise RuntimeError("process completion journal did not open") from exc
 
     def run(self, operation: Callable[[sqlite3.Connection], Any]) -> Any:
-        if self._startup_error is not None:
-            raise RuntimeError("process completion journal could not open") from self._startup_error
         if self._closed:
             raise RuntimeError("process completion journal is closed")
         future: concurrent.futures.Future[Any] = concurrent.futures.Future()
@@ -95,36 +99,31 @@ class _PersistenceLane:
         except concurrent.futures.TimeoutError as exc:
             raise RuntimeError("process completion journal did not settle") from exc
 
-    def _run(self) -> None:
+    def _run(self, ready: concurrent.futures.Future[None]) -> None:
         try:
-            db = sqlite3.connect(self.path)
+            with contextlib.closing(sqlite3.connect(self.path)) as db:
+                db.execute("PRAGMA synchronous=FULL")
+                with db:
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS processes (id TEXT PRIMARY KEY, data TEXT NOT NULL)"
+                    )
+                ready.set_result(None)
+                while True:
+                    item = self._queue.get()
+                    if item is None:
+                        return
+                    operation, future = item
+                    try:
+                        with db:
+                            result = operation(db)
+                    except BaseException as exc:
+                        future.set_exception(exc)
+                    else:
+                        future.set_result(result)
         except BaseException as exc:
-            self._startup_error = exc
-            self._closed = True
-            while True:
-                try:
-                    item = self._queue.get_nowait()
-                except queue.Empty:
-                    return
-                if item is not None:
-                    item[1].set_exception(exc)
-            return
-        try:
-            db.execute("PRAGMA synchronous=FULL")
-            while True:
-                item = self._queue.get()
-                if item is None:
-                    return
-                operation, future = item
-                try:
-                    with db:
-                        result = operation(db)
-                except BaseException as exc:
-                    future.set_exception(exc)
-                else:
-                    future.set_result(result)
-        finally:
-            db.close()
+            if ready.done():
+                raise
+            ready.set_exception(exc)
 
     def close(self) -> None:
         if self._closed:
