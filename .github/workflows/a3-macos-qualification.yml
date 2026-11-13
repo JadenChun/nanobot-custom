@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$A3_RECEIPTS"
-          "$A3_SOURCE/.venv/bin/python" - <<'PY' | tee "$A3_RECEIPTS/macos-checks.log"
+          "$A3_SOURCE/.venv/bin/python" - <<'PY'
           import os, subprocess, sys, zipfile
           from pathlib import Path
           import nanobot
@@ -75,21 +75,16 @@ jobs:
           print("Installed source, bundle and operations contract match")
           assert sys.platform == "darwin" and not native_supervisor_available()
           print("Native Full supervisor unavailable on Darwin")
-          tests = [
-              "tests/remote/test_peer_credentials.py",
-              "tests/session/test_execution_owner.py",
-              "tests/migration/test_local_runtime_activation.py",
-              "tests/migration/test_p5_stage1_composition.py",
-              "tests/test_nanobot_facade.py::test_aclose_concurrent_callers_join_the_same_cleanup_attempt",
-          ]
-          import tempfile
-          temp = tempfile.mkdtemp(prefix="a3.", dir="/tmp")
-          raise SystemExit(pytest.main([
-              "-q", "-p", "no:cacheprovider", "--import-mode=importlib",
-              "-c", str(src / "pyproject.toml"), "--basetemp", temp,
-              *[str(src / name) for name in tests],
-          ]))
           PY
+          short_temp=$(mktemp -d /tmp/a3.XXXXXX)
+          "$A3_SOURCE/.venv/bin/python" -m pytest -q -p no:cacheprovider --import-mode=importlib \
+            -c "$A3_SOURCE/pyproject.toml" --basetemp "$short_temp" \
+            "$A3_SOURCE/tests/remote/test_peer_credentials.py" \
+            "$A3_SOURCE/tests/session/test_execution_owner.py" \
+            "$A3_SOURCE/tests/migration/test_local_runtime_activation.py" \
+            "$A3_SOURCE/tests/migration/test_p5_stage1_composition.py" \
+            "$A3_SOURCE/tests/test_nanobot_facade.py::test_aclose_concurrent_callers_join_the_same_cleanup_attempt" \
+            | tee "$A3_RECEIPTS/macos-checks.log"
       - name: Exercise installed gateway startup and restart
         shell: bash
         env:
