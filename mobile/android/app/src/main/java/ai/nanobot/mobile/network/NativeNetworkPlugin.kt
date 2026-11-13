@@ -129,8 +129,8 @@ class NativeNetworkPlugin : Plugin() {
             call.reject(exception.message ?: "custody is unavailable")
             return
         }
-        if (record == null || record.refreshToken.isBlank()) {
-            call.reject("no refresh credential")
+        if (record == null || (record.accessToken.isBlank() && record.refreshToken.isBlank())) {
+            call.reject("No paired device.")
             return
         }
         val shared: CompletableFuture<CustodyRecord>
@@ -194,9 +194,24 @@ class NativeNetworkPlugin : Plugin() {
     private fun performRefresh(): CustodyRecord {
         val generation = custody.attemptGeneration()
         var active = custody.load() ?: throw CustodyException("no refresh credential")
-        if (active.refreshToken.isBlank() || active.revocationPending) {
+        if (active.revocationPending || (active.accessToken.isBlank() && active.refreshToken.isBlank())) {
             throw CustodyException("no refresh credential")
         }
+        val handle = transportHandle
+        val saved = if (active.refreshToken.isBlank()) {
+            recoverAccess(active, generation)
+        } else {
+            refreshBearer(active, generation)
+        }
+        custody.requireAuthority(generation)
+        if (handle != 0L && handle == transportHandle) {
+            NativeNetwork.mediaSetToken(handle, saved.accessToken)
+        }
+        return saved
+    }
+
+    private fun refreshBearer(record: CustodyRecord, generation: Long): CustodyRecord {
+        var active = record
         val refreshed = try {
             requestRefresh(active)
         } catch (first: Exception) {
@@ -208,7 +223,7 @@ class NativeNetworkPlugin : Plugin() {
             active = latest
             requestRefresh(active)
         }
-        val saved = custody.saveRefreshedTokens(
+        return custody.saveRefreshedTokens(
             active.origin,
             active.installationId,
             refreshed.getString("access_token"),
@@ -217,11 +232,6 @@ class NativeNetworkPlugin : Plugin() {
             refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
             expectedGeneration = generation,
         )
-        val current = transportHandle
-        if (current != 0L) {
-            NativeNetwork.mediaSetToken(current, saved.accessToken)
-        }
-        return saved
     }
 
     @PluginMethod
@@ -564,28 +574,7 @@ class NativeNetworkPlugin : Plugin() {
         }
     }
 
-    @PluginMethod
-    fun pairRecover(call: PluginCall) {
-        operationExecutor.execute {
-            try {
-                val record = custody.load()
-                    ?: throw IllegalStateException("custody target is missing")
-                val recovered = recoverAccess(record)
-                mainHandler.post {
-                    call.resolve(
-                        JSObject()
-                            .put("status", if (recovered) "approved" else "pending")
-                            .put("installationId", record.installationId)
-                    )
-                }
-            } catch (exception: Exception) {
-                mainHandler.post { call.reject(exception.message ?: "pairing recovery failed") }
-            }
-        }
-    }
-
-    private fun recoverAccess(record: CustodyRecord): Boolean {
-        val generation = custody.attemptGeneration()
+    private fun recoverAccess(record: CustodyRecord, generation: Long): CustodyRecord {
         val installationId = record.installationId
         val begun = jsonRequest(
             "mobile_pair_recover",
@@ -613,7 +602,7 @@ class NativeNetworkPlugin : Plugin() {
                 "X-Nanobot-Proof-Claims" to DeviceProofCanonicalizer.encode(canonical),
             ),
         )
-        custody.saveRefreshedTokens(
+        return custody.saveRefreshedTokens(
             record.origin,
             installationId,
             completed.getString("access_token"),
@@ -622,7 +611,6 @@ class NativeNetworkPlugin : Plugin() {
             completed.optInt("refresh_expires_in", 0),
             expectedGeneration = generation,
         )
-        return true
     }
 
     @PluginMethod
@@ -1459,12 +1447,13 @@ class NativeNetworkPlugin : Plugin() {
             }
             val status = event.optInt("status")
             if (status < 200 || status >= 300) {
-                val detail = try {
-                    String(Base64.decode(event.optString("body_base64"), Base64.DEFAULT), Charsets.UTF_8)
+                val code = try {
+                    val body = String(Base64.decode(event.optString("body_base64"), Base64.DEFAULT), Charsets.UTF_8)
+                    JSONObject(body).optString("error")
                 } catch (_: Exception) {
                     ""
                 }
-                val safeCode = if (detail.contains("pairing_expired")) " pairing_expired" else ""
+                val safeCode = if (code in setOf("pairing_expired", "device_revoked")) " $code" else ""
                 throw IllegalStateException("HTTP $status$safeCode")
             }
             val payload = Base64.decode(event.getString("body_base64"), Base64.DEFAULT)

@@ -75,6 +75,10 @@ class PairingRejectedError(PairingError):
     pass
 
 
+class PairingDeviceRevokedError(PairingRejectedError):
+    """The owner revoked the device that matches this recovery request."""
+
+
 class PairingBusyError(PairingError):
     pass
 
@@ -650,11 +654,13 @@ class PairingService:
         with self._lock:
             state = self.store.load()
             device = self.store.get_device(installation_id)
-            if state is None or not state.enabled or device is None or device.revoked:
+            if state is None or not state.enabled or device is None:
                 raise PairingRejectedError("installation is not recoverable")
             binding = self.store.get_device_proof(installation_id)
             if binding is None or binding[0] != fingerprint:
                 raise PairingRejectedError("device proof is not current")
+            if device.revoked:
+                raise PairingDeviceRevokedError("installation is not recoverable")
             now = int(self.clock())
             recovery = _RecoveryChallenge(
                 installation_id=installation_id,
@@ -714,7 +720,10 @@ class PairingService:
             except DeviceProofError as exc:
                 raise PairingRejectedError(exc.reason) from exc
             recovery.consumed = True
-            pair = self.tokens.reissue_device(installation_id)
+            try:
+                pair = self.tokens.reissue_device(installation_id)
+            except AuthRejectedError as exc:
+                raise PairingRejectedError(str(exc)) from exc
             recovery.issued = pair
             return pair
 

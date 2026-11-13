@@ -986,6 +986,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
               data-testid="thread-composer-dock"
               aria-hidden={inspectionActive || undefined}
               {...(inspectionActive ? { inert: "" } : {})}
+              style={inspectionActive ? { visibility: "hidden" } : undefined}
               onInputCapture={(event) => {
                 if (event.target instanceof HTMLTextAreaElement) {
                   composerInputScrollTopRef.current = scrollRef.current?.scrollTop ?? null;

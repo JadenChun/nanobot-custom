@@ -26,6 +26,7 @@ from nanobot.remote.pairing import (
     PairingCodeInvalidError,
     PairingConsumedError,
     PairingDeniedError,
+    PairingDeviceRevokedError,
     PairingDisabledError,
     PairingError,
     PairingExpiredError,
@@ -959,6 +960,8 @@ def _pairing_code(exc: PairingError) -> str:
         return "pairing_code_invalid"
     if isinstance(exc, PairingDeniedError):
         return "pairing_denied"
+    if isinstance(exc, PairingDeviceRevokedError):
+        return "device_revoked"
     if isinstance(exc, PairingRejectedError):
         return "pairing_rejected"
     return "pairing_error"
