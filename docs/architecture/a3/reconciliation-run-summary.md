@@ -14,9 +14,9 @@ qualification remain with the project owner.
 | Measure | Value |
 | --- | --- |
 | Original findings | 136 |
-| Accepted | 107 |
+| Accepted | 113 |
 | Ready for review | 3 |
-| Unverified | 26 |
+| Unverified | 19 |
 | Review findings | 9 (all accepted; RR1 and RR3 accepted in the third wave) |
 | Evidence rows | 93 |
 
@@ -93,16 +93,16 @@ The remaining commits record reviews, evidence, and the stage decisions.
    qualified through the real gateway/edge for typed read, mutation and
    disconnect; its phone-to-Serve transport is blocked. Q01-F01 and R01-F20
    scope exclusions are under review.
-7. **A3-10:** decide C00-F04/C00-F05; the four retained dispositions are
-   recorded and pending review.
+7. **A3-10:** all six dispositions are accepted. C00-F04/C00-F05 stay
+   offline by the unconditional guard; retire-or-repair is a future decision.
 8. **A3-1/A3-2 residuals:** H01-F6, H01-F7, X01-F01 and S02-F03 are under
    review.
 
 ## Blockers
 
 - **Product decisions:** H01-F5 autoPush subset; E02-F16 credential-profile
-  policy; C00-F04/C00-F05 onboarding retire-or-repair; K01-F06 nested-bypass
-  policy (K01-Q5/D2-D4).
+  policy; C00-F04/C00-F05 onboarding retire-or-repair before any future
+  activation (v1 keeps the guard); K01-F06 nested-bypass policy (K01-Q5/D2-D4).
 - **Environment:** macOS, Windows, physical Android, and Tailscale
   qualification remain absent. The Linux host has the Android SDK, adb, an
   API 36 x86_64 emulator image, JDK 21 and Go 1.27.3 under the ignored

@@ -121,12 +121,18 @@ The three repairs are READY_FOR_REVIEW; a combined review is in progress.
 
 ### A3-10 dispositions and A3-6 C00-F06
 
-`resume2/a310/A3-10-DISPOSITIONS.md` traces all eight candidates.
-A01-F02 and A01-F07 are active/gated. C00-F04 and C00-F05 stay isolated by the
-migration guard pending one retire-or-repair decision. S01-F02,
-H02-ART-SOURCE, H02-LEGACY-ISOLATE and H02-IDLE-DORMANT are retained with
-named owners. AC10.1 needs the C00 decision, AC10.2 needs A3-5 evidence, and
-AC10.3 needs A3-9 acceptance plus an artifact digest.
+`resume2/a310/A3-10-DISPOSITIONS.md` traces all eight candidates, and
+`resume2/a310-review/REVIEW.md` accepted all six reviewable dispositions.
+A01-F02 and A01-F07 are active/gated. C00-F04 and C00-F05 are isolated by an
+unconditional migration guard that runs first in the onboarding command;
+`--wizard` and `--refresh` exit 1 and the truncating writer and secret UI are
+unreachable. The v1 contract selects a first release without legacy migration,
+so isolation is the accepted disposition; retire-or-repair is a future
+activation decision, not a release blocker. S01-F02, H02-ART-SOURCE,
+H02-LEGACY-ISOLATE and H02-IDLE-DORMANT are retained with named owners.
+AC10.1 remains partial until the six R18 durability findings are accepted;
+AC10.2 needs A3-5 evidence; AC10.3 needs A3-9 acceptance plus an artifact
+digest.
 
 C00-F06 first repair `c90f85b9` binds `read_file` to the request instance media
 root through `RequestContext.media_root`, `current_media_read_root()` and the
