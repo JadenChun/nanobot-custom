@@ -1,5 +1,59 @@
 # A3 implementation correction handoff
 
+## A3-2 reconciliation batch (2026-11-14, Linux)
+
+Branch `codex/a3-audit-reconciliation`, base
+`722bd8ec6cbc5c223ee2b4b22c03950071ccd1ef`. `origin/staging` is still
+`f1a6bb85`, unchanged. Linux x86_64, Python 3.14.10, bwrap 0.12.0.
+
+### Demonstrated defect and repair — S01-F03
+
+Two request-derived Full references for one chat and epoch produce the same
+durable `chat_full` owner tag, and `native_process.py` registered the same
+aggregate count provider once per reference. `_counts_for_reference_unlocked`
+summed every related provider, so one live launch was counted once per
+reference.
+
+Observed through the public `owner.projection(...)` retirement projection:
+
+| Case | Before | After |
+| --- | --- | --- |
+| Two related references, one shared launch | `active_processes: 2` | `1` |
+| Two related references, two shared launches | `active_processes: 4` | `2` |
+| Two distinct bindings, one launch each | `1` | `1` |
+
+Repair `6ebc184b` reads each shared owner aggregate once, keyed by the durable
+owner identity. Per-handle stdin closers stay per reference and the
+unknown-on-error barrier is unchanged. It is an accounting and retirement
+gating defect, not an authority widening.
+
+Checks: a requirements-only test authored in an isolated session fails 2 of 7
+before the repair and passes 7 of 7 after; 252 affected tests pass; Ruff passes;
+the P6 comparator reports `PASS_NO_NEW_DIAGNOSTICS`, 0 introduced and 0
+resolved against 9,173 pre-existing strict diagnostics.
+
+### Verified on Linux
+
+| Finding | Result |
+| --- | --- |
+| S02-F02, T01-F09 | 128 passed with 6 Windows-only skips; 27 real detached-descendant and bwrap quiescence tests passed |
+| C00-F01, C00-F02 | Live managed bwrap probe passed: workspace read/write worked, an outside file was masked, no secret leaked |
+| E02-F14 | 66 composition and shutdown tests passed |
+| X01-F03 | Bounded per-stream readers retain 50,000 characters each and report over 390,000 truncated |
+| S01-F03 | Repaired and verified as above |
+
+### Open items from this batch
+
+1. Windows Job Object ownership, macOS native qualification, and the six
+   Windows/PowerShell platform tests were not run. They stay unverified.
+2. `S01-F01`, `S02-F03`, `T01-F07`, and `X01-F01` remain unverified.
+3. The P6 strict checker is not clean. 9,173 pre-existing diagnostics remain.
+   This repair introduces none. Full strict-clean and the required full local
+   suite remain open P6 gates.
+4. Named reviewer acceptance is required for every `READY_FOR_REVIEW` entry.
+
+Receipts are in `a3-evidence/a3-reconciliation-2026-11-14/a32/`.
+
 ## A3-1 reconciliation pass (2026-11-14, Linux)
 
 Worktree `../nanobot-a3-reconciliation`, branch `codex/a3-audit-reconciliation`
