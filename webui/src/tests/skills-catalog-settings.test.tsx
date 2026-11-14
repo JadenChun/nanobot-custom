@@ -178,4 +178,90 @@ describe("SkillsCatalogSettings async skill fences", () => {
       within(currentSheet).getByRole("heading", { name: "skill-b" }),
     ).toBeInTheDocument();
   });
+
+  // Requirements-only case C6(b), variant skill toggle: a completion for the
+  // first A selection must not change the later A view after A->B->A. Source:
+  // a3-evidence/a3-reconciliation-2026-11-14/req-a34p34/CASES.md (C6).
+  it("does not apply the first skill A toggle completion after switching A->B->A", async () => {
+    const pendingToggle = deferred<SkillActionPayload>();
+    vi.mocked(updateSkillEnabled).mockReturnValue(pendingToggle.promise);
+
+    render(settings([skillA, skillB]));
+
+    const firstSheet = await openSkill("skill-a");
+    const toggleA = await within(firstSheet).findByRole("switch", { name: "Disable skill-a" });
+    fireEvent.click(toggleA);
+    await waitFor(() =>
+      expect(updateSkillEnabled).toHaveBeenCalledWith(expect.anything(), "skill-a", false),
+    );
+
+    await closeSkillSheet();
+    const sheetB = await openSkill("skill-b");
+    expect(within(sheetB).getByRole("switch", { name: "Disable skill-b" })).toBeInTheDocument();
+    await closeSkillSheet();
+    const laterSheetA = await openSkill("skill-a");
+    expect(
+      within(laterSheetA).getByRole("switch", { name: "Disable skill-a" }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    await act(async () => {
+      pendingToggle.resolve({
+        skills: [
+          skill("skill-a", { enabled: false }),
+          skill("skill-b", { enabled: false }),
+        ],
+        last_action: { name: "skill-a", enabled: false, deleted: false },
+      });
+      await Promise.resolve();
+    });
+
+    expect(notifySkillsChanged).not.toHaveBeenCalled();
+    const currentSheet = screen.getByRole("dialog");
+    expect(
+      within(currentSheet).getByRole("heading", { name: "skill-a" }),
+    ).toBeInTheDocument();
+    expect(
+      within(currentSheet).getByRole("switch", { name: "Disable skill-a" }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      within(currentSheet).getByRole("switch", { name: "Disable skill-a" }),
+    ).toBeEnabled();
+  });
+
+  // Requirements-only case C6(b), variant skill delete: a completion for the
+  // first A selection must not close the later A view after A->B->A. Source:
+  // a3-evidence/a3-reconciliation-2026-11-14/req-a34p34/CASES.md (C6).
+  it("does not close the later skill A view when the first A delete completes after A->B->A", async () => {
+    const pendingDelete = deferred<SkillActionPayload>();
+    vi.mocked(deleteSkill).mockReturnValue(pendingDelete.promise);
+
+    render(settings([skillA, skillB]));
+
+    const firstSheet = await openSkill("skill-a");
+    await within(firstSheet).findByRole("switch", { name: "Disable skill-a" });
+    fireEvent.click(within(firstSheet).getByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete skill" }));
+    await waitFor(() =>
+      expect(deleteSkill).toHaveBeenCalledWith(expect.anything(), "skill-a"),
+    );
+
+    await closeSkillSheet();
+    await openSkill("skill-b");
+    await closeSkillSheet();
+    await openSkill("skill-a");
+
+    await act(async () => {
+      pendingDelete.resolve({
+        skills: [skill("skill-b")],
+        last_action: { name: "skill-a", enabled: false, deleted: true },
+      });
+      await Promise.resolve();
+    });
+
+    expect(notifySkillsChanged).not.toHaveBeenCalled();
+    const currentSheet = screen.getByRole("dialog");
+    expect(
+      within(currentSheet).getByRole("heading", { name: "skill-a" }),
+    ).toBeInTheDocument();
+  });
 });

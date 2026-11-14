@@ -129,6 +129,10 @@ export function stampLastAssistantCompletion(
 ): UIMessage[] {
   for (let i = prev.length - 1; i >= 0; i -= 1) {
     const m = prev[i];
+    // The current user boundary ends the eligible turn. An empty turn with no
+    // assistant row, or a legacy event with no turn id, must not restamp a row
+    // that belongs to an earlier turn across that boundary.
+    if (m.role === "user") break;
     if (
       m.role === "assistant"
       && m.kind !== "trace"

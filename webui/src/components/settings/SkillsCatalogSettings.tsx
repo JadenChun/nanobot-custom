@@ -362,6 +362,17 @@ function SkillDetailSheet({
   const { t } = useTranslation();
   const skillNameRef = useRef(skill?.name ?? null);
   skillNameRef.current = skill?.name ?? null;
+  // The sheet is reused across selections, so the skill name alone cannot
+  // separate the first A selection from a later A view. Each open/selection
+  // change advances a request generation; a completion may write only when
+  // both the name and the generation it started under are still current.
+  const selectionKey = open && skill ? skill.name : null;
+  const selectionGenerationRef = useRef(0);
+  const selectionKeyRef = useRef(selectionKey);
+  if (selectionKeyRef.current !== selectionKey) {
+    selectionKeyRef.current = selectionKey;
+    selectionGenerationRef.current += 1;
+  }
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -377,6 +388,7 @@ function SkillDetailSheet({
     setDetail(null);
     setLoading(true);
     setLoadFailed(false);
+    setActionBusy(false);
     setActionError("");
     setDeleteOpen(false);
     setDescriptionExpanded(false);
@@ -413,19 +425,23 @@ function SkillDetailSheet({
 
   const toggleEnabled = async () => {
     const targetName = activeSkill.name;
+    const generation = selectionGenerationRef.current;
+    const isCurrent = () =>
+      skillNameRef.current === targetName
+      && selectionGenerationRef.current === generation;
     setActionBusy(true);
     setActionError("");
     const scope = getToken();
     try {
       const payload = await updateSkillEnabled(client, targetName, !enabled);
-      if (skillNameRef.current !== targetName) return;
+      if (!isCurrent()) return;
       notifySkillsChanged(payload, scope);
       const updated = payload.skills.find((item) => item.name === targetName);
       if (updated) {
         setDetail((current) => current ? { ...current, ...updated } : current);
       }
     } catch (reason) {
-      if (skillNameRef.current === targetName) {
+      if (isCurrent()) {
         setActionError(
           reason instanceof Error
             ? reason.message
@@ -435,7 +451,7 @@ function SkillDetailSheet({
         );
       }
     } finally {
-      if (skillNameRef.current === targetName) {
+      if (isCurrent()) {
         setActionBusy(false);
       }
     }
@@ -443,17 +459,21 @@ function SkillDetailSheet({
 
   const removeSkill = async () => {
     const targetName = activeSkill.name;
+    const generation = selectionGenerationRef.current;
+    const isCurrent = () =>
+      skillNameRef.current === targetName
+      && selectionGenerationRef.current === generation;
     setDeleteOpen(false);
     setActionBusy(true);
     setActionError("");
     const scope = getToken();
     try {
       const payload = await deleteSkill(client, targetName);
-      if (skillNameRef.current !== targetName) return;
+      if (!isCurrent()) return;
       notifySkillsChanged(payload, scope);
       onOpenChange(false);
     } catch (reason) {
-      if (skillNameRef.current === targetName) {
+      if (isCurrent()) {
         setActionError(
           reason instanceof Error
             ? reason.message
@@ -463,7 +483,7 @@ function SkillDetailSheet({
         );
       }
     } finally {
-      if (skillNameRef.current === targetName) {
+      if (isCurrent()) {
         setActionBusy(false);
       }
     }

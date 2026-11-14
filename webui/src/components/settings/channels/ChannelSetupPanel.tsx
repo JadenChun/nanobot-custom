@@ -351,16 +351,30 @@ function ChannelSetupSurface({
 
   const featureNameRef = useRef(feature.name);
   featureNameRef.current = feature.name;
+  // A surface is reused across selections, so the channel name alone cannot
+  // separate the first A selection from a later A view. Each name change
+  // advances a request generation; a completion may write only when both the
+  // name and the generation it started under are still current.
+  const surfaceGenerationRef = useRef(0);
+  const surfaceNameRef = useRef(feature.name);
+  if (surfaceNameRef.current !== feature.name) {
+    surfaceNameRef.current = feature.name;
+    surfaceGenerationRef.current += 1;
+  }
 
   const saveCredentialSettings = async () => {
     const targetFeature = feature.name;
+    const generation = surfaceGenerationRef.current;
+    const isCurrent = () =>
+      featureNameRef.current === targetFeature
+      && surfaceGenerationRef.current === generation;
     setSaving(true);
     setValidating(true);
     setNotice(null);
     const values = channelValuesForSubmit(fields, fieldValues, touchedFields);
     try {
       const validationPayload = await validateChannel(client, targetFeature, values);
-      if (featureNameRef.current !== targetFeature) return;
+      if (!isCurrent()) return;
       setValidation(validationPayload);
       if (!validationPayload.can_enable) {
         setNotice(
@@ -375,17 +389,18 @@ function ChannelSetupSurface({
         values,
         { enable: true },
       );
-      if (featureNameRef.current !== targetFeature) return;
+      if (!isCurrent()) return;
       if (payload.nanobot_features) {
         onFeaturesUpdate(payload.nanobot_features);
       }
+      if (!isCurrent()) return;
       setNotice(tx("settings.channels.checkedAndEnabled", "Checked and enabled."));
     } catch (err) {
-      if (featureNameRef.current === targetFeature) {
+      if (isCurrent()) {
         setNotice((err as Error).message);
       }
     } finally {
-      if (featureNameRef.current === targetFeature) {
+      if (isCurrent()) {
         setSaving(false);
         setValidating(false);
       }
@@ -394,6 +409,10 @@ function ChannelSetupSurface({
 
   const checkCurrentSettings = async () => {
     const targetFeature = feature.name;
+    const generation = surfaceGenerationRef.current;
+    const isCurrent = () =>
+      featureNameRef.current === targetFeature
+      && surfaceGenerationRef.current === generation;
     setValidating(true);
     setNotice(null);
     try {
@@ -402,15 +421,15 @@ function ChannelSetupSurface({
         targetFeature,
         channelValuesForSubmit(fields, fieldValues, touchedFields),
       );
-      if (featureNameRef.current !== targetFeature) return;
+      if (!isCurrent()) return;
       setValidation(payload);
       if (payload.message) setNotice(payload.message);
     } catch (err) {
-      if (featureNameRef.current === targetFeature) {
+      if (isCurrent()) {
         setNotice((err as Error).message);
       }
     } finally {
-      if (featureNameRef.current === targetFeature) {
+      if (isCurrent()) {
         setValidating(false);
       }
     }

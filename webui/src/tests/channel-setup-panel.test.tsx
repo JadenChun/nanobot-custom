@@ -170,6 +170,99 @@ describe("ChannelSetupPanel async feature fences", () => {
     expect(screen.getByRole("button", { name: "Check and enable" })).toBeEnabled();
   });
 
+  // Requirements-only case C6(a), variant channel: a stale completion must not
+  // repopulate the later A view after A->B->A. Source:
+  // a3-evidence/a3-reconciliation-2026-11-14/req-a34p34/CASES.md (C6).
+  it("does not apply the first A validation completion after switching A->B->A", async () => {
+    const featureA = channelFeature("alpha-channel", "Alpha Channel");
+    const featureB = channelFeature("beta-channel", "Beta Channel");
+    const onFeaturesUpdate = vi.fn();
+    const { rerender } = render(panel(featureA, onFeaturesUpdate));
+
+    fireEvent.change(screen.getByLabelText("Token"), {
+      target: { value: "alpha-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check and enable" }));
+
+    await waitFor(() => expect(validateDeferreds.has("alpha-channel")).toBe(true));
+
+    rerender(panel(featureB, onFeaturesUpdate));
+    expect(screen.getByRole("heading", { name: "Beta Channel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check and enable" })).toBeEnabled();
+    expect(screen.queryByText("Checking...")).not.toBeInTheDocument();
+
+    rerender(panel(featureA, onFeaturesUpdate));
+    expect(screen.getByRole("heading", { name: "Alpha Channel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check and enable" })).toBeEnabled();
+    expect(screen.queryByText("Checking...")).not.toBeInTheDocument();
+
+    await act(async () => {
+      validateDeferreds.get("alpha-channel")!.resolve(validationPayload("alpha-channel"));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onFeaturesUpdate).not.toHaveBeenCalled();
+    expect(configureChannel).not.toHaveBeenCalled();
+    expect(screen.queryByText("Checked and enabled.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking...")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check and enable" })).toBeEnabled();
+
+    rerender(panel(featureB, onFeaturesUpdate));
+    expect(screen.getByRole("heading", { name: "Beta Channel" })).toBeInTheDocument();
+    expect(screen.queryByText("Checked and enabled.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking...")).not.toBeInTheDocument();
+  });
+
+  // Requirements-only case C6(a), configure completion: C1's continuation must
+  // not write into the later A view. Source: req-a34p34/CASES.md (C6).
+  it("does not apply the first A configure completion after switching A->B->A", async () => {
+    const featureA = channelFeature("alpha-channel", "Alpha Channel");
+    const featureB = channelFeature("beta-channel", "Beta Channel");
+    const onFeaturesUpdate = vi.fn();
+    const { rerender } = render(panel(featureA, onFeaturesUpdate));
+
+    fireEvent.change(screen.getByLabelText("Token"), {
+      target: { value: "alpha-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check and enable" }));
+
+    await waitFor(() => expect(validateDeferreds.has("alpha-channel")).toBe(true));
+    await act(async () => {
+      validateDeferreds.get("alpha-channel")!.resolve(validationPayload("alpha-channel"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(configureDeferreds.has("alpha-channel")).toBe(true));
+
+    rerender(panel(featureB, onFeaturesUpdate));
+    expect(screen.getByRole("heading", { name: "Beta Channel" })).toBeInTheDocument();
+    rerender(panel(featureA, onFeaturesUpdate));
+    expect(screen.getByRole("heading", { name: "Alpha Channel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check and enable" })).toBeEnabled();
+    expect(screen.queryByText("Checking...")).not.toBeInTheDocument();
+
+    const featuresPayload: NanobotFeaturesPayload = {
+      features: [{ ...featureA, enabled: true }],
+      enabled_count: 1,
+    };
+    await act(async () => {
+      configureDeferreds.get("alpha-channel")!.resolve({
+        name: "alpha-channel",
+        saved: true,
+        nanobot_features: featuresPayload,
+      });
+      await Promise.resolve();
+    });
+
+    expect(onFeaturesUpdate).not.toHaveBeenCalled();
+    expect(screen.queryByText("Checked and enabled.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Checking...")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check and enable" })).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "Alpha Channel" })).toBeInTheDocument();
+  });
+
   it("drops a pending configure when the feature changes", async () => {
     const featureA = channelFeature("alpha-channel", "Alpha Channel");
     const featureB = channelFeature("beta-channel", "Beta Channel");

@@ -89,4 +89,42 @@ describe("stampLastAssistantCompletion", () => {
     expect(stamped[0]?.completedAt).toBe(1);
     expect(stamped[2]?.completedAt).toBe(2);
   });
+
+  // Requirements-only case C7 (use case U7): completion metadata stays inside
+  // the originating turn. The current user boundary follows turn T1; T2 ends
+  // with no assistant row; an event without a turn id must stamp nothing.
+  // Source: a3-evidence/a3-reconciliation-2026-11-14/req-a34p34/CASES.md (C7).
+  it("does not stamp an older assistant across the current user boundary when the event has no turn id", () => {
+    const messages = [
+      message("assistant", {
+        id: "turn-one-answer",
+        content: "answer one",
+        turnId: "turn-1",
+        completedAt: 1,
+        latencyMs: 100,
+      }),
+      message("user", {
+        id: "turn-two-question",
+        content: "question two",
+        turnId: "turn-2",
+      }),
+    ];
+    const original = messages[0];
+
+    const afterFirst = stampLastAssistantCompletion(messages, { completedAt: 2 });
+    expect(afterFirst).toBe(messages);
+    expect(afterFirst).toHaveLength(2);
+    expect(afterFirst[0]).toBe(original);
+    expect(afterFirst[0]?.completedAt).toBe(1);
+    expect(afterFirst[0]?.latencyMs).toBe(100);
+    expect(afterFirst.filter((item) => item.role === "assistant")).toHaveLength(1);
+
+    const afterSecond = stampLastAssistantCompletion(afterFirst, {
+      completedAt: 3,
+      latencyMs: 999,
+    });
+    expect(afterSecond).toBe(afterFirst);
+    expect(afterSecond[0]?.completedAt).toBe(1);
+    expect(afterSecond[0]?.latencyMs).toBe(100);
+  });
 });
