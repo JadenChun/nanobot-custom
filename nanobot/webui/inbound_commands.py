@@ -1915,7 +1915,11 @@ class WebUICommandRouter:
         origin: ServerConnection,
         request_id: str,
     ) -> None:
-        """Invalidate projections for known effects even if the reply was lost."""
+        """Invalidate projections for known effects even if the reply was lost.
+
+        A failure here is a projection failure, not a mutation failure: the
+        effect already applied, so the recorded outcome must not change.
+        """
         if not self._result_has_effect(result):
             return
         try:
@@ -1925,14 +1929,65 @@ class WebUICommandRouter:
                 "WebUI mutation '{}' applied but projection refresh failed",
                 action,
             )
-            with suppress(Exception):
-                await self._transport.webui_send_event(
-                    origin,
-                    "projection_error",
-                    request_id=request_id,
-                    action=action,
-                    reason="projection_refresh_failed",
-                )
+            await self._emit_projection_error(
+                origin,
+                request_id,
+                action,
+                reason="projection_refresh_failed",
+            )
+
+    async def _broadcast_applied_sidebar_state(
+        self,
+        result: WebUIRequestResult,
+        action: str,
+        *,
+        origin: ServerConnection,
+        request_id: str,
+    ) -> None:
+        """Announce a committed sidebar state before the actor's response.
+
+        A fan-out failure is a projection failure: the mutation already
+        applied, so it is reported separately instead of changing the outcome.
+        """
+        if not self._result_has_effect(result):
+            return
+        sidebar_state = result.result
+        if action != "sidebar.update" or not isinstance(sidebar_state, dict):
+            return
+        try:
+            await self.broadcast_webui_event(
+                "sidebar_state_updated",
+                state=cast(dict[str, Any], sidebar_state),
+            )
+        except Exception:
+            logger.exception(
+                "WebUI mutation '{}' applied but sidebar broadcast failed",
+                action,
+            )
+            await self._emit_projection_error(
+                origin,
+                request_id,
+                action,
+                reason="sidebar_broadcast_failed",
+            )
+
+    async def _emit_projection_error(
+        self,
+        origin: ServerConnection,
+        request_id: str,
+        action: str,
+        *,
+        reason: str,
+    ) -> None:
+        """Report a post-effect projection failure separately from the outcome."""
+        with suppress(Exception):
+            await self._transport.webui_send_event(
+                origin,
+                "projection_error",
+                request_id=request_id,
+                action=action,
+                reason=reason,
+            )
 
     async def deliver_webui_request(
         self,
@@ -1964,6 +2019,11 @@ class WebUICommandRouter:
                         raise delivery_error
                 return
             result = await asyncio.shield(operation_task)
+            # A committed sidebar state is announced before the actor's
+            # response; a fan-out failure must not hide the applied outcome.
+            await self._broadcast_applied_sidebar_state(
+                result, action, origin=connection, request_id=request_id,
+            )
             try:
                 await self._deliver_authorized_webui_result(
                     connection, request_id, action, payload, result, source_binding,
@@ -2145,11 +2205,6 @@ class WebUICommandRouter:
                         declared = cast(dict[str, Any], result).get("outcome")
                         if declared in {"applied", "not_applied", "uncertain", "partial"}:
                             outcome = cast(str, declared)
-                    if action == "sidebar.update" and isinstance(result, dict):
-                        await self.broadcast_webui_event(
-                            "sidebar_state_updated",
-                            state=result,
-                        )
                     return WebUIRequestResult(result=result, outcome=outcome)
                 if action == "workspace.access.mode.set":
                     try:
