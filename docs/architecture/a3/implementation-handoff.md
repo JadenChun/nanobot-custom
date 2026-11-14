@@ -1,5 +1,37 @@
 # A3 implementation correction handoff
 
+## A3-3 stage review 2026-11-14
+
+Reviewer W16 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`
+and reran the A3-3 evidence at the integrated candidate `2ca0deb8`. It reused
+no receipt because the earlier inputs do not match the current candidate.
+
+AC3.1 passes. One session key and incarnation survive restart. The SDK
+continues the legacy transcript without a duplicate. The child keeps its
+parent key and incarnation, its delegated profile, depth 1 and native kind. A
+stale parent cannot take over a recreated child.
+
+AC3.2 passes. A completed turn stays readable. An interrupted recovery waits
+for confirmation. An uncertain tool is never replayed. A stale lease or
+generation cannot mutate the session. A platform without the lease primitive
+refuses a managed writer and creates no state.
+
+AC3.3 passes. A valid prefix followed by an invalid message leaves no partial
+message or metadata after flush and reopen. Valid unmanaged ingest works and
+managed import still refuses.
+
+The focused run passed 145 tests in five named suites and 126 in each of two
+related groups. Six probes exited 0.
+
+The A3-3 stage is not accepted yet. Its packet depends on A3-1, and A3-1 is
+open on the H01-F1 lost-commit-response test and the structural H01-F6/H01-F7
+claims. The Linux review also names these gaps: no single fixture holds a
+completed turn, an interrupted run and an uncertain effect together; a
+persisted RUNNING run record has no terminal projection; the unqualified
+platform is simulated; the `bc850a91` source-reader rollback leg is no longer
+reproducible; and the lost save-acknowledgement path is outside the AC3.3
+sentence.
+
 ## W15 named review 2026-11-14
 
 Reviewer W15 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`.
