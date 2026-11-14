@@ -30,12 +30,12 @@ identifies the tested artifacts and the release work that remains.
 | --- | --- |
 | AR1 | The exact-effect approval suite checks racing decisions, repeated dispatch, and one file replacement per consent. |
 | AR2 | The installed WebUI held two worker actions under the same parent. Approval changed one file. Denial left the other file intact. |
-| AR3 | The browser and emulator read canonical child tool and result rows. The child-source and recovery suites cover terminal and uncertain outcomes. |
+| AR3 | Accepted. The Linux review confirmed that a child retained its tool history and interrupted disposition after Stop and restart. Earlier browser and emulator runs read the canonical child tool rows. |
 | AR4 | The MCP request-binding suite checks captured definitions, replacement, revocation, and release after the old request settles. |
 | AR5 | The owner revokes only the device issued for the cancelled attempt. The Android bridge waits for UI acceptance before it saves access. The emulator verified the race across owner restart. A fresh attempt recovered from a dropped proof response. |
 | AR6 | The installed mobile WebSocket accepted an authorized attachment. It rejected another attachment after a scope reduction. The stored bytes stayed the same. |
 | RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |
-| RR2 | The process completion test rejects an old result after reuse of its session key. |
+| RR2 | The current runtime rejects stale completions. Older readers reject current process records that contain the source identity. Process-journal compatibility remains open. |
 | RR3 | The retired attachment migration route and CLI preview tests leave the whole tree intact. |
 
 ### Pairing lifetime and live WebSocket checks

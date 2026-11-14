@@ -1,5 +1,46 @@
 # A3 implementation correction handoff
 
+## A3-3 child history and rollback review
+
+The Linux review at `cfb72439` passed 290 focused tests across three runs.
+The original-chat Stop probe stopped a background child after its fixture
+read. After restart, child detail showed the same call and result. The child
+list showed `stopped`. The session metadata retained its interrupted
+disposition, parent key and incarnation, profile, depth, and execution kind.
+The parent history had no child tool rows. The restarted runtime made no
+model calls. This review accepts AR3.
+
+The process tests verified that a reset or replacement blocks stale
+completion. A current completion delivers once. A record without source
+identity remains inspectable and cannot resume. RR2 remains open. Both older
+readers reject a current process record that contains `source_state`.
+Keep process continuations disabled when you roll back to either reader.
+Keep the new journal for inspection with the current reader.
+
+The current CLI prepared a stopped copy with both session histories. The
+installed previous reader and the source reader at `bc850a91` read the
+session keys, ordered messages, and metadata. The current reader also read
+the metadata after restart. The pre-metadata reader refused an unprepared
+copy at a different workspace path. It read the pre-upgrade snapshot after
+restore at the original path. The source and snapshot hashes matched before
+and after the copied-state checks. [Rollback procedure](../../migration/a3-release-rollback.md)
+
+The SDK ingest and legacy continuation receipts cover AC3.3 and the legacy
+part of AC3.1. The current tests cover child recovery, stale writers, and
+uncertain effects on Linux. The session rollback check passed. This review
+accepts E02-F01. The ledger now has 21 accepted findings, 14 ready for review,
+and 101 unverified.
+
+The A3-2 Linux prerequisite run passed 115 tests. It covered native admission,
+deadlines, confinement, composition cleanup, and the CLI Apps and skill
+installer adapters. The foreground runtime still withholds `run_cli_app`.
+The Settings Test action has its own owner scope and runs a fixed `--help`
+command. Review the remaining A3-2 findings and the process-journal gap
+before accepting A3-4.
+
+Receipts are in `a3-evidence/a3-reconciliation-2026-11-14/a33-review/` beside
+the worktree.
+
 ## A3-2 browser and device workspace access
 
 Commit `6e2c7761` connects the browser and device tools to the shared resource
@@ -36,8 +77,8 @@ key. The session list held one entry throughout the probe.
 This covers legacy SDK continuation under AC3.1. The probe uses a scripted
 provider. Its receipt is in
 `a3-evidence/a3-reconciliation-2026-11-14/a33-restart/` beside the worktree.
-Review the child-source and process-completion evidence for AR3 and RR2
-before accepting A3-3. Keep the rollback-reader check open.
+The later [A3-3 review](#a3-3-child-history-and-rollback-review) records the
+child-source and rollback results.
 
 ## Audit continuation after OpenCode
 

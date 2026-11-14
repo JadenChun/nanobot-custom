@@ -28,6 +28,17 @@ Keep completed receipts, uncertain work, and device revocation records.
 Use the current reader to reconcile the newer evidence before you enable cron again.
 If any evidence fails validation, stop and keep the copy for inspection.
 
+## Session and process state
+
+If you restore the pre-upgrade session snapshot, use its original workspace
+path. If you use a different workspace path, prepare the stopped copy with
+the candidate command before the previous reader opens it.
+
+Before you start a rollback reader that lacks `source_state` support, set
+`gateway.processContinuations` to `false` in its configuration. The previous
+reader rejects current process records with that field. Keep the stopped
+`process-completions` directory for inspection with the current reader.
+
 Rehearse the rollback on isolated state before you switch a live instance.
 Verify that the previous release can read post-cutover histories and that revoked devices remain revoked.
 Verify that the scheduler does not dispatch a completed occurrence and dispatches the next due occurrence once.
