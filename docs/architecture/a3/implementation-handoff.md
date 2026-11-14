@@ -1,5 +1,49 @@
 # A3 implementation correction handoff
 
+## A3-1 reconciliation pass (2026-11-14, Linux)
+
+Worktree `../nanobot-a3-reconciliation`, branch `codex/a3-audit-reconciliation`
+from `origin/codex/staging-audit-implementation`. Base
+`722bd8ec6cbc5c223ee2b4b22c03950071ccd1ef` (tree
+`868c41e575c5ded943215d1dcb5e5fe3cfa981a5`). `origin/staging` is still
+`f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`, unchanged since the snapshot, so no
+new staging change affects these batches. Checks ran on Linux with Python
+3.14.10 and the unchanged dependency inventory. No product code changed; this
+pass added evidence only.
+
+| Batch | Findings | Disposition | Checks |
+| --- | --- | --- | --- |
+| A3-1 R05 archive provenance | K01-F12 | ready for review | 155 focused tests; 3-entry probe |
+| A3-1 R06 source writes | H01-F1, H01-F2 | ready for review | 93 focused tests; 4-entry probe |
+| A3-1 R06 structural | H01-F6, H01-F7 | still unverified | structural claims outside AC3a/AC3b |
+| A3-1 R08 prepared route | H03-F3 | ready for review | 203 focused tests |
+| A3-1 R15 core guidance | T01-F10, K01-F11 | ready for review | 62 focused tests; default-prompt assertion |
+| A3-1 R22 input validation | H01-F3, K01-F10 | ready for review | 34 focused tests |
+
+A3-1 now has no unowned finding. Eight of its ten entries are ready for named
+reviewer acceptance. K01-F12 reached that state in this pass; H01-F1, H01-F2,
+H03-F3, T01-F10, K01-F11, H01-F3, and K01-F10 also did. H01-F6 and H01-F7 remain
+unverified because the packet criteria cover the concrete F1/F2 defects, not
+their structural deduplication claims. A named reviewer must accept the eight
+ready entries; this pass does not self-accept.
+
+Open items from this pass:
+1. `nanobot/templates/agent/consolidator_archive.md:3` still says
+   `[Archived Context Summary]` appears "in the system prompt". The summary is
+   now assistant historical context. This is prompt wording drift only.
+2. `nanobot/templates/AGENTS.md:28` names `apply_patch`. It is a copied
+   workspace starter asset, not active built-in `agent/` guidance. A reviewer
+   must confirm that AC5's built-in-claim scope excludes it.
+3. The lost-commit-response at-most-once recovery for H01-F1 was confirmed by
+   source inspection only. It belongs with the A3-8 retained-evidence batch.
+
+Receipts are in
+`/home/jaden/Documents/Utilities/nanobot-custom-worktrees/a3-evidence/a3-reconciliation-2026-11-14/`
+as `k01-f12/`, `r06/`, `r08/`, `r15/`, and `r22/`. Each has a `DISPOSITION.md`,
+the raw command logs, and source hashes.
+
+The next stage in dependency order is A3-2, runtime and process ownership.
+
 ## Desktop and mobile subagent activity
 
 At `7d96468c`, the original chat shows compact subagent status rows. A row
