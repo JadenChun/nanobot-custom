@@ -1429,6 +1429,7 @@ async def connect_mcp_servers(
     oauth_handlers: Mapping[str, MCPOAuthHandlers] | None = None,
     media_output_roots: Sequence[Path] = (),
     readiness_timeout: float = 10.0,
+    data_dir: Path | None = None,
 ) -> dict[str, MCPConnection]:
     """Connect to configured MCP servers and register their tools, resources, prompts.
 
@@ -1486,6 +1487,7 @@ async def connect_mcp_servers(
                         name,
                         cfg.url,
                         (oauth_handlers or {}).get(name),
+                        data_dir=data_dir,
                     )
                 except MCPAuthorizationRequiredError:
                     logger.info("MCP server '{}': waiting for browser authorization", name)
@@ -1843,8 +1845,10 @@ class MCPProvider:
         *,
         server_loader: MCPServerLoader | None = None,
         media_output_roots: Sequence[Path] = (),
+        data_dir: Path | None = None,
     ) -> None:
         self._servers = dict(servers)
+        self._data_dir = Path(data_dir) if data_dir is not None else None
         self._registry = registry
         self._server_loader = server_loader or _load_current_servers
         self._media_output_roots = tuple(media_output_roots)
@@ -1870,6 +1874,7 @@ class MCPProvider:
             registry,
             server_loader=server_loader,
             media_output_roots=[Path(root) for root in config.tools.media_output_roots],
+            data_dir=config.runtime_data_dir,
         )
 
     @property
@@ -1978,7 +1983,7 @@ class MCPProvider:
                 authorization_pending = {
                     name
                     for name, cfg in oauth_servers.items()
-                    if not mcp_oauth_has_credentials(name, cfg.url)
+                    if not mcp_oauth_has_credentials(name, cfg.url, data_dir=self._data_dir)
                 }
             for name in authorization_pending:
                 self._runtime_statuses.pop(name, None)
@@ -1996,6 +2001,7 @@ class MCPProvider:
                     missing_servers,
                     candidate_registry,
                     media_output_roots=self._media_output_roots,
+                    data_dir=self._data_dir,
                 )
                 if self._closing:
                     await close_mcp_connections(connected)
@@ -2050,7 +2056,7 @@ class MCPProvider:
             authorization_pending = {
                 name
                 for name, cfg in next_servers.items()
-                if cfg.auth == "oauth" and not mcp_oauth_has_credentials(name, cfg.url)
+                if cfg.auth == "oauth" and not mcp_oauth_has_credentials(name, cfg.url, data_dir=self._data_dir)
             }
             removed = sorted(current_names - next_names)
             added = sorted(next_names - current_names)
@@ -2083,6 +2089,7 @@ class MCPProvider:
                         {name: next_servers[name] for name in changed_ready},
                         candidate_registry,
                         media_output_roots=self._media_output_roots,
+                        data_dir=self._data_dir,
                     )
                 except BaseException:
                     self._set_runtime_status(changed_ready, "failed")
@@ -2132,6 +2139,7 @@ class MCPProvider:
                         to_connect,
                         candidate_registry,
                         media_output_roots=self._media_output_roots,
+                        data_dir=self._data_dir,
                     )
                 except BaseException:
                     self._set_runtime_status(to_connect, "failed")
@@ -2252,6 +2260,7 @@ class MCPProvider:
                 {server_name: cfg},
                 candidate_registry,
                 media_output_roots=self._media_output_roots,
+                data_dir=self._data_dir,
             )
             if self._closing:
                 await close_mcp_connections(connected)
@@ -2304,7 +2313,7 @@ class MCPProvider:
                 def authorized(name: str = server_name, url: str = cfg.url) -> bool:
                     from nanobot.agent.tools.mcp_oauth import mcp_oauth_has_credentials
 
-                    return mcp_oauth_has_credentials(name, url)
+                    return mcp_oauth_has_credentials(name, url, data_dir=self._data_dir)
 
                 lease.set_authorization(authorized)
 

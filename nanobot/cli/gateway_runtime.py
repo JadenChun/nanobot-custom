@@ -418,7 +418,9 @@ def _run_gateway(
         fallback_model_observer = build_webui_fallback_model_observer(bus)
 
         def observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
-            snapshot.provider.set_llm_call_observer(record_llm_call)
+            snapshot.provider.set_llm_call_observer(
+                lambda call: record_llm_call(call, data_dir=config.runtime_data_dir)
+            )
             if isinstance(snapshot.provider, FallbackProvider):
                 snapshot.provider.set_fallback_model_observer(fallback_model_observer)
             return snapshot

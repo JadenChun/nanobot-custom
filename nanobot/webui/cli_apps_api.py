@@ -93,8 +93,12 @@ def _query_first(query: QueryParams, key: str) -> str | None:
 def _manager(config_path: Path | None = None) -> CliAppManager:
     config = load_config(config_path) if config_path is not None else load_config()
     cli_cfg = config.tools.cli_apps
+    runtime_data_dir = config.runtime_data_dir
     return CliAppManager(
         workspace=config.workspace_path,
+        data_dir=(
+            runtime_data_dir / "cli-apps" if runtime_data_dir is not None else None
+        ),
         runtime=CliAppsRuntimeConfig(
             install_timeout=cli_cfg.install_timeout,
             run_timeout=cli_cfg.run_timeout,
