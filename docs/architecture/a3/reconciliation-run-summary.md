@@ -3,9 +3,9 @@
 **Date:** 2026-11-14 (Linux x86_64)
 **Coordinator and workers:** `commandcode/deepseek/deepseek-v4.1-flash`
 **Worktree:** `/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`
-**Branch:** `codex/a3-audit-reconciliation`, 42 commits ahead of
+**Branch:** `codex/a3-audit-reconciliation`, 83 commits ahead of
 `origin/codex/staging-audit-implementation` (`722bd8ec`).
-**Candidate:** `19cd03e2` (code at `dfa60225`/`9c647427`/`473652e0`, plus evidence and documentation).
+**Candidate:** `7c1aa1a8` (code at `1474d136`, plus evidence and documentation).
 **Release state:** HOLD. Push, merge, deployment, and formal release
 qualification remain with the project owner.
 
@@ -15,7 +15,7 @@ qualification remain with the project owner.
 | --- | --- |
 | Original findings | 136 |
 | Accepted | 76 |
-| Ready for review | 3 |
+| Ready for review | 0 |
 | Unverified | 60 |
 | Review findings | 9 (AR1-AR6 and RR2 accepted; RR1 and RR3 open) |
 | Evidence rows | 73 |
@@ -101,10 +101,10 @@ The remaining commits record reviews, evidence, and the stage decisions.
 ## Blockers
 
 - **Product decisions:** H01-F5 autoPush subset; E02-F16 credential-profile
-  policy; E02-F13 MCP credential migration.
-- **Environment:** no Android SDK, adb, emulator, Go toolchain, JDK 21, macOS,
-  or Windows. Physical Android, native broker, and cross-platform confinement
-  stay unqualified.
+  policy; C00-F04/C00-F05 onboarding retire-or-repair.
+- **Environment:** macOS, Windows, physical Android, and Tailscale qualification
+  remain absent. The Linux host now has the Android SDK, adb, an API 36 x86_64
+  emulator image, JDK 21, and Go 1.27.3 under the ignored mobile/toolchain.
 - **Open review findings:** RR1 reference completeness and RR3 retired migration
   proof.
 - **A3-1 residual:** C5 built-in `read_file` does not yet resolve the instance
