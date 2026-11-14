@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 
@@ -73,6 +74,71 @@ func TestCopyLastErrorTruncatesAndTerminates(t *testing.T) {
 	}
 	if copyLastError(nil) != -1 {
 		t.Fatal("empty buffer must be refused")
+	}
+}
+
+// Requirement case C2 (independent requirements U2/R2): two concurrent callers
+// that fail must each copy their own error text. Two goroutines are locked to
+// distinct OS threads and yield between the failing call and the copy, which is
+// the interleaving a single process-wide slot cannot survive.
+func TestConcurrentGoroutinesKeepTheirOwnError(t *testing.T) {
+	errA, errB := broker.ErrNotFound, broker.ErrInvalid
+	if errA.Error() == errB.Error() {
+		t.Fatal("fixture errors must have distinct text")
+	}
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	failures := make(chan string, 2)
+	run := func(err error) {
+		defer wg.Done()
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		<-start
+		buffer := make([]byte, 256)
+		for round := 0; round < 2000; round++ {
+			setError(err)
+			runtime.Gosched()
+			n := copyLastError(buffer)
+			if n < 0 || string(buffer[:n]) != err.Error() {
+				failures <- "own=" + err.Error() + " got=" + string(buffer[:n])
+				return
+			}
+		}
+	}
+	wg.Add(2)
+	go run(errA)
+	go run(errB)
+	close(start)
+	wg.Wait()
+	close(failures)
+	for failure := range failures {
+		t.Error(failure)
+	}
+}
+
+// The store keeps one message per thread and stays bounded. This is the
+// deterministic form of C2: the interleaving is explicit, not scheduled.
+func TestThreadErrorStoreKeepsIdentity(t *testing.T) {
+	errA, errB := broker.ErrNotFound, broker.ErrInvalid
+	buffer := make([]byte, 256)
+	for round := 0; round < 2000; round++ {
+		recordError(101, errA)
+		recordError(102, errB)
+		if n := copyErrorForThread(101, buffer); string(buffer[:n]) != errA.Error() {
+			t.Fatalf("round %d: thread 101 read %q", round, buffer[:n])
+		}
+		if n := copyErrorForThread(102, buffer); string(buffer[:n]) != errB.Error() {
+			t.Fatalf("round %d: thread 102 read %q", round, buffer[:n])
+		}
+	}
+	for i := 0; i < maxThreadErrors+10; i++ {
+		recordError(int32(1000+i), broker.ErrQueueFull)
+	}
+	lastErrorMu.Lock()
+	size := len(lastErrors)
+	lastErrorMu.Unlock()
+	if size > maxThreadErrors {
+		t.Fatalf("thread error store holds %d entries, limit %d", size, maxThreadErrors)
 	}
 }
 

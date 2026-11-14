@@ -3,6 +3,15 @@ package main
 /*
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+// nanobot_thread_id returns the OS thread that is executing the call. cgo pins
+// the calling goroutine to the caller's thread for the duration of an exported
+// call, so a failing call and its diagnostic copy report the same id.
+static int32_t nanobot_thread_id(void) {
+	return (int32_t)syscall(SYS_gettid);
+}
 */
 import "C"
 
@@ -15,42 +24,94 @@ import (
 	"nanobot/mobile/native-network/internal/broker"
 )
 
+// maxThreadErrors bounds the per-thread diagnostics kept at once. A thread that
+// stops failing is evicted least-recently-used before a new thread is recorded.
+const maxThreadErrors = 64
+
 var (
 	managerMu  sync.Mutex
 	cores      = map[uint64]*broker.Core{}
 	nextHandle uint64
 
-	// lastErrorMu owns the single diagnostic slot. Every write and every read
-	// of the slot happens under this mutex, so a concurrent failure cannot
-	// free or replace the message that another call is copying.
-	lastErrorMu sync.Mutex
-	lastErrC    *C.char
-	lastErr     string
+	// lastErrorMu owns every diagnostic. Each failing call stores its message
+	// under the calling thread, so two concurrent operations cannot read each
+	// other's text. lastErrC/lastErr keep the legacy process-wide pointer that
+	// nanobot_network_last_error returns.
+	lastErrorMu    sync.Mutex
+	lastErrorClock uint64
+	lastErrors     = map[int32]*threadError{}
+	lastErrC       *C.char
+	lastErr        string
 )
+
+// threadError is the diagnostic of the last failing call on one thread.
+type threadError struct {
+	text string
+	used uint64
+}
 
 func main() {}
 
-func setError(err error) C.int32_t {
+func currentThreadID() int32 {
+	return int32(C.nanobot_thread_id())
+}
+
+// recordError stores one diagnostic for the calling thread and refreshes the
+// legacy process-wide pointer.
+func recordError(tid int32, err error) {
+	text := err.Error()
 	lastErrorMu.Lock()
 	defer lastErrorMu.Unlock()
-	lastErr = err.Error()
+	lastErrorClock++
+	lastErr = text
 	if lastErrC != nil {
 		C.free(unsafe.Pointer(lastErrC))
 	}
-	lastErrC = C.CString(lastErr)
+	lastErrC = C.CString(text)
+	entry := lastErrors[tid]
+	if entry == nil {
+		if len(lastErrors) >= maxThreadErrors {
+			evictOldestThreadErrorLocked()
+		}
+		entry = &threadError{}
+		lastErrors[tid] = entry
+	}
+	entry.text = text
+	entry.used = lastErrorClock
+}
+
+func evictOldestThreadErrorLocked() {
+	oldest := int32(0)
+	var oldestUsed uint64
+	found := false
+	for tid, entry := range lastErrors {
+		if !found || entry.used < oldestUsed {
+			oldest, oldestUsed, found = tid, entry.used, true
+		}
+	}
+	if found {
+		delete(lastErrors, oldest)
+	}
+}
+
+func setError(err error) C.int32_t {
+	recordError(currentThreadID(), err)
 	return codeFor(err)
 }
 
-// copyLastError writes the current message into out and NUL-terminates it. It
-// returns the number of message bytes written, excluding the terminator, or -1
-// when out cannot hold a message.
-func copyLastError(out []byte) int {
+// copyErrorForThread writes one thread's diagnostic into out and NUL-terminates
+// it. A thread with no recorded failure reads the legacy process-wide message.
+func copyErrorForThread(tid int32, out []byte) int {
 	lastErrorMu.Lock()
 	defer lastErrorMu.Unlock()
 	if len(out) == 0 {
 		return -1
 	}
-	n := copy(out, lastErr)
+	text := lastErr
+	if entry, ok := lastErrors[tid]; ok {
+		text = entry.text
+	}
+	n := copy(out, text)
 	if n < len(out) {
 		out[n] = 0
 		return n
@@ -58,6 +119,11 @@ func copyLastError(out []byte) int {
 	n = len(out) - 1
 	out[n] = 0
 	return n
+}
+
+// copyLastError writes the calling thread's own message into out.
+func copyLastError(out []byte) int {
+	return copyErrorForThread(currentThreadID(), out)
 }
 
 func codeFor(err error) C.int32_t {

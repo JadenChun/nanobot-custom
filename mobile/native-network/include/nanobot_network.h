@@ -105,8 +105,11 @@ int32_t nanobot_network_media_purge(int64_t handle);
 const char *nanobot_network_last_error(void);
 
 /*
- * Copies the last diagnostic into out and NUL-terminates it. Returns the number
- * of message bytes written, excluding the terminator, or -1 when capacity <= 0.
+ * Copies the calling thread's last diagnostic into out and NUL-terminates it.
+ * Every failing call is stored per thread, so two concurrent operations cannot
+ * read each other's message even when a copy happens between them. A thread
+ * that has not failed reads the process-wide message. Returns the number of
+ * message bytes written, excluding the terminator, or -1 when capacity <= 0.
  * This call holds the same lock as the failing operations, so the copy is
  * always one complete message.
  */
