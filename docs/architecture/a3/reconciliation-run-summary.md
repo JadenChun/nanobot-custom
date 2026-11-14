@@ -62,6 +62,8 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | Python full suite at `dd8a02ca` | 18,569 passed, 22 skipped, 6 subtests |
 | Strict BasedPyright | 0 diagnostics / 546 files |
 | WebUI activity and inspector | 68 passed |
+| TUI | 241 passed and TypeScript check passed |
+| Android host checks | Go race suite, C ABI, and 32 JVM tests passed |
 | Installed Linux wheel | Version, package contents, dependencies, startup and isolated rollback passed |
 | Stopped-copy rollback | Session and cron state rehearsal passed |
 | Final signed APK | Installed and cold-launched twice on Android 16 x86_64 |
