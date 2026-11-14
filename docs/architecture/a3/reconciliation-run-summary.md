@@ -26,8 +26,8 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 
 | Stage | Status | Basis |
 | --- | --- | --- |
-| A3-0 | Accepted, Linux scope | Local qualification report; 18,441 tests, strict 0/546, comparator clean. |
-| A3-1 | Accepted, Linux scope | AC1a-AC6b met; H01-F6/F7 structural retained; C5 read_file residual. |
+| A3-0 | Accepted, Linux scope | Local qualification report; the final candidate passes 18,506 tests, strict 0/546, comparator clean. |
+| A3-1 | Accepted, Linux scope | AC1a-AC6b met; H01-F6/F7 structural debt deferred; the read_file instance media root is accepted. |
 | A3-2 | Accepted, Linux scope | AC2.1-AC2.5 met; X01-F01 gated; S02-F03 deferred; Windows/macOS unverified. |
 | A3-3 | Accepted, Linux scope | AC3.1-AC3.3 pass; five named gaps recorded. |
 | A3-4 | Findings complete except one decision | 13 accepted; H01-F5 autoPush-exemption decision open. |
