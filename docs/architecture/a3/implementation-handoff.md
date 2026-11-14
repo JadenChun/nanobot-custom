@@ -138,9 +138,31 @@ C00-F06 first repair `c90f85b9` binds `read_file` to the request instance media
 root through `RequestContext.media_root`, `current_media_read_root()` and the
 loop's four request contexts. Instance artifacts read byte-for-byte, ambient
 media is refused under an instance context, the no-instance legacy read still
-works, and outside/credential paths stay refused. A policy follow-up is
-verifying the loop-registered restricted-instance path and the media
-exemption key.
+works, and outside/credential paths stay refused. `6145a6cf` binds the policy
+media exemption to the same request root for read/list only, so the
+loop-registered restricted-instance read now returns the exact artifact bytes.
+Review at `6145a6cf` (`resume2/a36-review/REVIEW.md`) ACCEPTED: C7 fails on
+`c90f85b9` and passes now; the differential probe is 20/20 against 18/20 on the
+base, with ambient, outside, sibling, symlink and credential refusals
+unchanged; 1528 tools, 295 context/security and 45 owner tests pass. Two
+admin-only loop/delegation contexts still omit `media_root`, and memory
+custody and WebUI asset readers remain ambient.
+
+### A3-9 real Serve transport
+
+The earlier R01-F05 report wrongly stated that this host has no tailnet
+identity or Serve mapping. `resume2/a39-serve/RESULT.md` corrects it:
+`https://fedora.taila1e707.ts.net` terminates TLS at tailscaled with a valid
+Let's Encrypt chain and proxies `/mobile/v1` to `127.0.0.1:8767`, and
+`/remote/v1` to `18791`. With no live listener on either port, a disposable
+production composition passed 11 of 16 cases: typed attach/read, typed
+mutation to the real bus, clean disconnect, revoke-then-1008, missing-bearer
+401, wrong-origin 403, and `/remote/v1/refresh` 200 with rotated tokens. The
+five failures are legacy `/mobile/v1` POST refresh/logout routes: the
+WebSocket listener rejects non-GET before routing and the data server that
+implements them is synthetic staging. R01-F05 therefore remains partial for
+the device-only APK, keystore, custody and phone transport, and for those
+legacy POST semantics.
 
 ## Second repair wave 2026-11-14
 
