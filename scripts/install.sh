@@ -7,6 +7,7 @@ install_source="PyPI"
 dry_run="0"
 nanobot_runner=""
 nanobot_python=""
+nanobot_pipx_bin=""
 
 info() {
   printf '%s\n' "$*"
@@ -73,13 +74,40 @@ ensure_pip() {
   "$target_python" -m ensurepip --upgrade >/dev/null 2>&1
 }
 
+pipx_bin_dir() {
+  if command -v pipx >/dev/null 2>&1; then
+    pipx environment --value PIPX_BIN_DIR 2>/dev/null || true
+  fi
+}
+
+resolve_pipx_nanobot() {
+  _pipx_bin_dir="$(pipx_bin_dir)"
+  if [ -n "$_pipx_bin_dir" ]; then
+    if [ -x "$_pipx_bin_dir/nanobot" ]; then
+      printf '%s\n' "$_pipx_bin_dir/nanobot"
+      return 0
+    fi
+    return 1
+  fi
+
+  _candidate="$(command -v nanobot 2>/dev/null || true)"
+  if [ -n "$_candidate" ] && [ -x "$_candidate" ]; then
+    printf '%s\n' "$_candidate"
+    return 0
+  fi
+  return 1
+}
+
 run_nanobot() {
   case "$nanobot_runner" in
     uv)
       uv tool run --from "$install_target" nanobot "$@"
       ;;
     pipx)
-      pipx run --spec "$install_target" nanobot "$@"
+      if [ -z "$nanobot_pipx_bin" ]; then
+        fail "the installed pipx executable for $install_target was not found. Reinstall it with 'pipx install --force $install_target' and check 'pipx environment --value PIPX_BIN_DIR'."
+      fi
+      "$nanobot_pipx_bin" "$@"
       ;;
     python)
       "$nanobot_python" -m nanobot "$@"
@@ -96,7 +124,16 @@ nanobot_try_command() {
       printf '%s\n' "uv tool run --from $install_target nanobot"
       ;;
     pipx)
-      printf '%s\n' "pipx run --spec $install_target nanobot"
+      if [ -n "$nanobot_pipx_bin" ]; then
+        printf '%s\n' "$nanobot_pipx_bin"
+      else
+        _pipx_bin_dir="$(pipx_bin_dir)"
+        if [ -n "$_pipx_bin_dir" ]; then
+          printf '%s\n' "$_pipx_bin_dir/nanobot"
+        else
+          printf '%s\n' "the installed pipx nanobot executable"
+        fi
+      fi
       ;;
     python)
       printf '%s\n' "$nanobot_python -m nanobot"
@@ -146,6 +183,7 @@ install_with_pipx() {
   info "Installing or upgrading nanobot from $install_source with pipx..."
   pipx install --python "$python_bin" --force "$install_target" || return 1
   nanobot_runner="pipx"
+  nanobot_pipx_bin="$(resolve_pipx_nanobot || true)"
 }
 
 write_managed_wrapper() {
@@ -240,7 +278,12 @@ if [ "$dry_run" = "1" ]; then
     info "Dry run: would run nanobot as: uv tool run --from $install_target nanobot"
   elif command -v pipx >/dev/null 2>&1; then
     info "Dry run: would run: pipx install --python $python_bin --force $install_target"
-    info "Dry run: would run nanobot as: pipx run --spec $install_target nanobot"
+    pipx_dir="$(pipx_bin_dir)"
+    if [ -n "$pipx_dir" ]; then
+      info "Dry run: would run nanobot as: $pipx_dir/nanobot"
+    else
+      info "Dry run: would run nanobot as: the installed pipx nanobot executable"
+    fi
   else
     venv_dir="${NANOBOT_VENV:-$HOME/.nanobot/venv}"
     info "Dry run: would create or reuse a dedicated virtual environment: $venv_dir"
@@ -287,6 +330,9 @@ else
 fi
 
 info "Installed nanobot:"
+if [ "$nanobot_runner" = "pipx" ] && [ -n "$nanobot_pipx_bin" ]; then
+  info "Using installed executable: $nanobot_pipx_bin"
+fi
 run_nanobot --version
 
 if [ "${NANOBOT_SKIP_WIZARD:-}" = "1" ]; then

@@ -100,6 +100,28 @@ jobs:
       - name: Verify bundle output
         run: test -f nanobot/web/dist/index.html
 
+      - name: Verify fresh WebUI bundle for release
+        env:
+          NANOBOT_REQUIRE_FRESH_WEBUI: "1"
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          root = Path.cwd()
+          spec = importlib.util.spec_from_file_location(
+              "nanobot_webui_build", root / "nanobot" / "webui" / "build.py"
+          )
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          status = module.inspect_webui_bundle(
+              source_dir=root / "webui",
+              dist_dir=root / "nanobot" / "web" / "dist",
+          )
+          module.require_fresh_webui_bundle(status)
+          print(module.describe_webui_bundle_status(status))
+          PY
+
       - name: Upload WebUI bundle
         uses: actions/upload-artifact@v4
         with:

@@ -81,6 +81,59 @@ def test_release_mode_cannot_skip_stale_bundle(tmp_path: Path) -> None:
         )
 
 
+def test_zero_exit_stale_build_fails_the_release_switch(tmp_path: Path) -> None:
+    source = tmp_path / "webui"
+    dist = tmp_path / "nanobot/web/dist"
+    _touch(source / "package.json", 10)
+    _touch(source / "src/App.tsx", 30)
+    _touch(dist / "index.html", 20)
+
+    def fake_run(command, *, cwd: Path, check: bool) -> None:
+        # A build command that exits zero without refreshing the bundle.
+        assert check is True
+
+    with pytest.raises(WebUIBuildError, match="fresh WebUI bundle"):
+        ensure_webui_bundle(
+            mode="auto",
+            source_dir=source,
+            dist_dir=dist,
+            runner="bun",
+            environ={"NANOBOT_REQUIRE_FRESH_WEBUI": "1"},
+            subprocess_run=fake_run,
+        )
+
+
+def test_fresh_build_passes_the_release_switch(tmp_path: Path) -> None:
+    source = tmp_path / "webui"
+    dist = tmp_path / "nanobot/web/dist"
+    _touch(source / "package.json", 10)
+    _touch(source / "src/App.tsx", 20)
+
+    def fake_run(command, *, cwd: Path, check: bool) -> None:
+        assert check is True
+        if command == ["bun", "run", "build"]:
+            _touch(dist / "index.html", 30)
+
+    status = ensure_webui_bundle(
+        mode="auto",
+        source_dir=source,
+        dist_dir=dist,
+        runner="bun",
+        environ={"NANOBOT_REQUIRE_FRESH_WEBUI": "1"},
+        subprocess_run=fake_run,
+    )
+
+    assert status.reason == "fresh"
+
+
+def test_ci_bundle_path_enables_the_release_postcondition() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    workflow = (repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert 'NANOBOT_REQUIRE_FRESH_WEBUI: "1"' in workflow
+    assert "require_fresh_webui_bundle" in workflow
+
+
 def test_parity_checker_self_test_passes() -> None:
     repo = Path(__file__).resolve().parents[2]
     result = subprocess.run(
