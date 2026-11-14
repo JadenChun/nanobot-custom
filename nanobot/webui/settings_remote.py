@@ -84,7 +84,9 @@ def handle_remote_access(
     body = cast(dict[str, Any], raw_body)
     try:
         if path == f"{_PREFIX}/enable":
-            enabled = bool(body.get("enabled"))
+            enabled = body.get("enabled")
+            if not isinstance(enabled, bool):
+                return http_error(400, "enabled must be a boolean")
             manager.set_enabled(enabled)
             config.update(lambda current: setattr(current.remote_access, "enabled", enabled))
             return http_json_response({"enabled": enabled})
