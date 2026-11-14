@@ -1,5 +1,50 @@
 # A3 implementation correction handoff
 
+## W21 named review 2026-11-14
+
+Reviewer W21 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`
+and reviewed the integrated P1 code at `19e95d33`. It accepted AR1, AR2 and
+T01-F08.
+
+AR1: one consent yields one effect in duplicate batches and later iterations.
+Racing, stale, expired, revoked and changed-target decisions start none. The new
+deny case uses an instrumented risky tool and observes zero calls. Chat text
+cannot grant.
+
+AR2: the real child path waits, the file stays unchanged, and one approval
+applies one bulk edit. A later identical effect needs fresh approval. Parent
+revocation and a stale child generation refuse.
+
+T01-F08: `desktop_use` is risky. The read-only allowlist is exactly `info`,
+`screenshot`, `cursor_position` and `wait`. Every other, unknown or non-string
+action requires one exact-effect approval. Changed coordinates, action or text
+return approval required with a different effect id and zero backend calls.
+
+The author cases C1-C9 are preserved. The C4 `wait` and C6 `edit_file`
+adaptations do not change the required outcome.
+
+## Candidate verification 2026-11-14
+
+The integrated candidate at `8355e614` passed the full Linux suite: 18,357
+passed, 22 skipped, 6 subtests passed. Strict BasedPyright reported 0
+diagnostics in 546 files. The A3-1 AC1a direct probe passed: the explicit
+instance writes its image and sidecar under its own media root, the ambient
+root receives no artifact, the instance asset reader resolves the artifact, and
+a reload keeps the same media root. The default caller still writes ambient
+media and a denied output path is refused.
+
+A3-6b and A3-6c inventories found several partial or missing items: MCP plugin
+schema validation and disposer, waiter cancellation, route capabilities,
+Codex/xAI login generations, transport attempt totals, CLI-apps/MCP/usage
+instance roots, credential profiles, and repo entrypoint confinement. A3-7
+found the listener, owner-instance and notification issues plus native media
+logging and broker bounds; native and physical checks are blocked on this host.
+
+A3-1 stage acceptance remains held on the AC1a `read_file` media-root residual
+(C5), and on the retained structural findings H01-F6 and H01-F7. A3-2 remains
+held on E02-F14 review. A3-3 criteria pass but depend on A3-1. A3-4 stays in
+progress.
+
 ## E02-F14 installer cleanup 2026-11-14
 
 A direct probe closes the AC2.5 kill-and-join clause. The probe calls the real
