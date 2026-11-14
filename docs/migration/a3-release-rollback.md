@@ -39,6 +39,11 @@ Before you start a rollback reader that lacks `source_state` support, set
 reader rejects current process records with that field. Keep the stopped
 `process-completions` directory for inspection with the current reader.
 
+With continuations disabled, the previous reader starts and does not open the
+journal. If you enable them, it refuses the whole journal with an extra-field
+error. Do not remove `source_state` to make the journal readable. A previous
+reader would then resume work by session key and revive old authority.
+
 Rehearse the rollback on isolated state before you switch a live instance.
 Verify that the previous release can read post-cutover histories and that revoked devices remain revoked.
 Verify that the scheduler does not dispatch a completed occurrence and dispatches the next due occurrence once.
