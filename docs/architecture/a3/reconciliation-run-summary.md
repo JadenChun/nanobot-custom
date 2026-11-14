@@ -5,7 +5,7 @@
 **Worktree:** `/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`
 **Branch:** `codex/a3-audit-reconciliation`, 42 commits ahead of
 `origin/codex/staging-audit-implementation` (`722bd8ec`).
-**Candidate:** `c6113486` (code at `8355e614` plus guidance and evidence).
+**Candidate:** `3e367b95` (Python and WebUI code at `7b517880`, parity inventory at `c99e8d80`, plus evidence and documentation).
 **Release state:** HOLD. Push, merge, deployment, and formal release
 qualification remain with the project owner.
 
@@ -26,7 +26,7 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 
 | Stage | Status | Basis |
 | --- | --- | --- |
-| A3-0 | Accepted, Linux scope | Local qualification report; 18,357 tests, strict 0/546, comparator clean. |
+| A3-0 | Accepted, Linux scope | Local qualification report; 18,367 tests, strict 0/546, comparator clean. |
 | A3-1 | Accepted, Linux scope | AC1a-AC6b met; H01-F6/F7 structural retained; C5 read_file residual. |
 | A3-2 | Accepted, Linux scope | AC2.1-AC2.5 met; X01-F01 gated; S02-F03 deferred; Windows/macOS unverified. |
 | A3-3 | Accepted, Linux scope | AC3.1-AC3.3 pass; five named gaps recorded. |

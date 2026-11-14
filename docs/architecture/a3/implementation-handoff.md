@@ -43,7 +43,7 @@ notifier. The client sends the mutation instead of an unauthenticated GET.
 
 The probes show the before defects and the after behavior. The focused run
 passed 226 tests, and the integration target files pass 32. Strict BasedPyright
-is 0/546 before and after. Named reviewer acceptance is pending. The native
+is 0/546 before and after. W1 accepted E02-F02, E02-F17 and E02-F22. The native
 media-logging and broker-bound findings remain blocked without the native
 toolchain.
 
@@ -187,8 +187,8 @@ uses the owned process path.
 
 The captured installer output is still unbounded because `communicate()`
 buffers it. That observation is outside the packet's timeout and cancellation
-clause. It remains open for the shared process owner. Named reviewer acceptance
-is pending.
+clause. It remains open for the shared process owner. W1 accepted E02-F14 for
+the AC2.5 cleanup clause.
 
 ## H01-F1 lost-response acceptance 2026-11-14
 
@@ -221,7 +221,7 @@ C1-C9 pass, including the four-action read-only matrix.
 
 The repair commit is `bf80569a`, cherry-picked as `19e95d33`. The six required
 suites passed 164 tests at the repair and 146 at integration HEAD. Strict
-BasedPyright is 0/546 before and after. Named reviewer acceptance is pending.
+BasedPyright is 0/546 before and after. W21 accepted AR1, AR2 and T01-F08.
 Documented limits: C4 `wait` is a local timer; C6 repeats an `edit_file` bulk
 replace; desktop screenshot is read-only under the author contract; delegated
 roles cannot use `desktop_use`.
@@ -340,7 +340,7 @@ the existing domain handler once and no longer returns 404. The author cases
 C1-C5 run at the real WebSocket mutation boundary; C4 and C5 send a pending
 pairing id because the domain requires one. The focused set passes 53 tests at
 the repair and 37 at integration HEAD. Strict BasedPyright is 0/546 before and
-after. Named reviewer acceptance remains open.
+after. W15 accepted E02-F19 and E02-F21.
 
 ## S01-F01 Once projection repair 2026-11-14
 
@@ -356,7 +356,7 @@ probe moved from 11 disagreements to full agreement. The requirements-only
 cases C1-C6 preserve the Once, Full, normal, proposal and managed-repository
 scopes. The repair passes 19 focused tests at its commit and 63 at integration
 HEAD. Strict BasedPyright reports 0 diagnostics in 546 files before and after,
-with no new signatures. Named reviewer acceptance remains open.
+with no new signatures. W15 accepted S01-F01.
 
 ## W1 named review 2026-11-14
 
