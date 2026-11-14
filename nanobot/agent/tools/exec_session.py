@@ -64,6 +64,8 @@ class ExecCompletionSink(Protocol):
     def cancelled(self, session_id: str, reason: str) -> None: ...
     def result(self, session_id: str, owner_session_key: str | None, *,
                source_state: SourceState | None = None) -> ExecCompletion | None: ...
+    async def aresult(self, session_id: str, owner_session_key: str | None, *,
+                      source_state: SourceState | None = None) -> ExecCompletion | None: ...
 
 
 @dataclass(slots=True)
@@ -610,7 +612,7 @@ class ExecSessionManager:
         if session is None:
             if self._completion_sink is not None and not (chars or close_stdin or terminate):
                 request = current_request_context()
-                completed = self._completion_sink.result(session_id, owner_session_key,
+                completed = await self._completion_sink.aresult(session_id, owner_session_key,
                     source_state=request.source_state if request is not None else None)
                 if completed is not None:
                     return _SessionPoll(completed.output, True, completed.exit_code, timed_out=completed.timed_out,

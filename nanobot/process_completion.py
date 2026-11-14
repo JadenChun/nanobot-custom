@@ -25,6 +25,10 @@ from nanobot.session.manager import SessionManager
 from nanobot.session.source_store import SourceOriginMismatchError, SourceState
 from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
 
+_INSPECTION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="process-completion-inspection"
+)
+
 
 class ProcessAssistant(Protocol):
     sessions: SessionManager
@@ -160,12 +164,19 @@ class ProcessCompletionRuntime:
         try:
             return self._lane.run(operation)
         except RuntimeError:
-            # Closed runtimes keep their durable read surface inspectable.
-            db = sqlite3.connect(self.path)
-            try:
-                return operation(db)
-            finally:
-                db.close()
+            # Closed runtimes keep their durable read surface inspectable. The
+            # connection is opened and read on the inspection thread so that no
+            # SQLite work runs on the event-loop thread.
+            if threading.get_ident() == self._loop_thread_id:
+                return _INSPECTION_EXECUTOR.submit(self._durable_read, operation).result(timeout=10)
+            return self._durable_read(operation)
+
+    def _durable_read(self, operation: Callable[[sqlite3.Connection], Any]) -> Any:
+        db = sqlite3.connect(self.path)
+        try:
+            return operation(db)
+        finally:
+            db.close()
 
     def records(self) -> list[ProcessRecord]:
         rows = self._read(lambda db: db.execute("SELECT data FROM processes").fetchall())
@@ -268,6 +279,13 @@ class ProcessCompletionRuntime:
         state = "unknown" if record.state == "unknown" else "cancelled" if record.state == "cancelled" else "completed"
         return ExecCompletion(record.output, record.exit_code, record.timed_out, record.state == "cancelled", state)
 
+    async def aresult(self, session_id: str, owner_session_key: str | None, *,
+                      source_state: SourceState | None = None) -> ExecCompletion | None:
+        """Await a retained-result read without blocking the event loop."""
+        return await asyncio.to_thread(
+            self.result, session_id, owner_session_key, source_state=source_state
+        )
+
     def start(self) -> None:
         if self._closed or self._started:
             raise RuntimeError("process continuation runtime cannot start twice")
@@ -281,6 +299,15 @@ class ProcessCompletionRuntime:
         for record in self.records():
             if record.state == "ready":
                 self._schedule(record.id)
+
+    async def astart(self) -> None:
+        """Run startup recovery off the event loop and return when it is durable."""
+        if self._closed or self._started:
+            raise RuntimeError("process continuation runtime cannot start twice")
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+            self._loop_thread_id = threading.get_ident()
+        await asyncio.to_thread(self.start)
 
     def _schedule(self, identity: str) -> None:
         loop = self._loop

@@ -670,7 +670,7 @@ def _run_gateway(
                     asyncio.create_task(monitor_clients()),
                 ])
                 if processes is not None:
-                    processes.start()
+                    await processes.astart()
                 if cron_gateway is not None:
                     tasks.append(asyncio.create_task(cron_gateway.run()))
                 if config.gateway.local_triggers:
