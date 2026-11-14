@@ -2,8 +2,7 @@
 
 **Date:** 2026-11-14
 **Host:** Linux x86_64, Python 3.14.10, bubblewrap 0.12.0, 12 CPUs.
-**Candidate:** `3e367b95` (Python and WebUI code at `7b517880`, parity inventory
-at `c99e8d80`, plus evidence and documentation).
+**Candidate:** `19cd03e2` (code at `dfa60225`/`9c647427`/`473652e0`, plus evidence and documentation).
 **Baseline comparison:** `6e2c7761` for the frozen strict report and its
 pre-repair full suite.
 
@@ -26,8 +25,8 @@ pre-repair full suite.
 
 | Check | Result | Receipt |
 | --- | --- | --- |
-| Full Linux suite at the candidate | 18,367 passed, 22 skipped, 6 subtests passed | `final/full-suite-final.log` |
-| Strict BasedPyright at the candidate | 546 files, 0 errors, 0 warnings, 0 information | `w24-a37fix/strict-after.json` |
+| Full Linux suite at the candidate | 18,441 passed, 22 skipped, 6 subtests passed | `final/full-suite-final3.log` |
+| Strict BasedPyright at the candidate | 546 files, 0 errors, 0 warnings, 0 information | `final/strict-final3.json` |
 | Frozen comparator, `6e2c7761` before vs candidate after | `PASS_NO_NEW_DIAGNOSTICS`, 0 introduced, 0 resolved, strict_clean true | `w24-a37fix/strict-comparison.log` |
 | Ruff | All checks passed | existing A3-2 receipt |
 | WebUI suite at current source | 101 files, 1,550 tests passed | `w4-client/vitest.log` |

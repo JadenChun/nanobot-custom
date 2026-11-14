@@ -20,13 +20,14 @@ in the ledger with its exact evidence.
 | A3-6c instance stores and repo confinement | `6b798c27`, `55502ccb` | E02-F11, E02-F13, E02-F18, K01-F01 accepted. |
 
 The ledger now has 76 accepted findings, 0 ready for review, and 60 unverified.
-The full suite at the corrected candidate is recorded in
-`a3-evidence/a3-reconciliation-2026-11-14/final/`.
+The full suite at the corrected candidate passed 18,441 tests with 22 skips and
+6 subtests. Strict BasedPyright reports 0 diagnostics in 546 files. The
+receipts are in `a3-evidence/a3-reconciliation-2026-11-14/final/`.
 
 The 30 cross-cutting test-double failures found by the first final suite were
 mechanical signature breaks from the new instance-root and private-helper
 parameters. The owners fixed them in `55502ccb`, `9c647427` and `9f1d74cf`.
-The full suite was rerun after those fixes.
+The full suite was rerun after those fixes and is green.
 
 ## W1 A3-7 review 2026-11-14
 
