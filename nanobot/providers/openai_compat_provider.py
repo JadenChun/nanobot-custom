@@ -39,6 +39,7 @@ from nanobot.providers.base import (
     ProviderConversationTransportReceipt,
     ToolCallRequest,
     parse_tool_arguments,
+    record_transport_attempt,
     resolve_stream_idle_timeout_s,
     tool_arguments_json_for_replay,
     track_stream_delivery,
@@ -1848,13 +1849,7 @@ class OpenAICompatProvider(LLMProvider):
     def _record_transport_attempt(
         provider_context: ProviderCallContext | None,
     ) -> None:
-        if provider_context is None or provider_context.on_transport_attempt is None:
-            return
-        kind = "auxiliary" if provider_context.source_summary_mode is not None else "main"
-        try:
-            provider_context.on_transport_attempt(kind)
-        except Exception:
-            logger.warning("Provider transport attempt observer failed")
+        record_transport_attempt(provider_context)
 
     @staticmethod
     def _stream_timeout_budget(
@@ -2451,6 +2446,7 @@ class OpenAICompatProvider(LLMProvider):
                 provider_context=provider_context,
                 completion_reserve_tokens=completion_reserve_tokens,
             )
+            self._record_transport_attempt(provider_context)
             return await client.responses.create(**body)
 
     # ------------------------------------------------------------------

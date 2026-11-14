@@ -22,6 +22,7 @@ from nanobot.providers.base import (
     LLMUsage,
     ProviderCallContext,
     ToolCallRequest,
+    record_transport_attempt,
     resolve_stream_idle_timeout_s,
 )
 from nanobot.providers.oauth_model_catalog import OAuthModelCatalog, OAuthModelCatalogSnapshot
@@ -178,6 +179,7 @@ class XAIGrokProvider(LLMProvider):
                         body, transport="xai_grok_responses", model=wire_model,
                         provider_context=provider_context, completion_reserve_tokens=max_tokens,
                     )
+                    record_transport_attempt(provider_context)
                     result = await _request_xai(
                         DEFAULT_XAI_GROK_URL,
                         headers,

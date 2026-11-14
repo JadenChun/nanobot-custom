@@ -780,6 +780,17 @@ class GenerationSettings:
 _SYNTHETIC_USER_CONTENT = "(conversation continued)"
 
 
+def record_transport_attempt(provider_context: ProviderCallContext | None) -> None:
+    """Report one physical transport dispatch to the existing attempt observer."""
+    if provider_context is None or provider_context.on_transport_attempt is None:
+        return
+    kind = "auxiliary" if provider_context.source_summary_mode is not None else "main"
+    try:
+        provider_context.on_transport_attempt(kind)
+    except Exception:
+        logger.warning("Provider transport attempt observer failed")
+
+
 class LLMProvider(ABC):
     """Base class for LLM providers."""
 
