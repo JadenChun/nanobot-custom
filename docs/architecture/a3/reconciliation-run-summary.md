@@ -14,11 +14,11 @@ qualification remain with the project owner.
 | Measure | Value |
 | --- | --- |
 | Original findings | 136 |
-| Accepted | 69 |
+| Accepted | 76 |
 | Ready for review | 3 |
-| Unverified | 64 |
+| Unverified | 60 |
 | Review findings | 9 (AR1-AR6 and RR2 accepted; RR1 and RR3 open) |
-| Evidence rows | 70 |
+| Evidence rows | 73 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
@@ -30,9 +30,9 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | A3-1 | Accepted, Linux scope | AC1a-AC6b met; H01-F6/F7 structural retained; C5 read_file residual. |
 | A3-2 | Accepted, Linux scope | AC2.1-AC2.5 met; X01-F01 gated; S02-F03 deferred; Windows/macOS unverified. |
 | A3-3 | Accepted, Linux scope | AC3.1-AC3.3 pass; five named gaps recorded. |
-| A3-4 | In progress | 8 accepted; 3 ready; 3 open. |
+| A3-4 | In progress | 11 accepted; 3 open. |
 | A3-5 | Not started | 3 open. |
-| A3-6 | In progress | 13 accepted; 17 open. |
+| A3-6 | In progress | 17 accepted; 13 open. |
 | A3-7 | In progress | 12 accepted; 4 open (native only). |
 | A3-8 | In progress | 4 accepted; 20 open; durability repairs packaged. |
 | A3-9 | In progress | 9 accepted; 7 open. |
@@ -55,8 +55,8 @@ The remaining commits record reviews, evidence, and the stage decisions.
 - **A3-1:** H01-F4, K01-F12, H01-F1, H01-F2, H03-F3, T01-F10, K01-F11, H01-F3, K01-F10.
 - **A3-2:** S01-F01, S01-F03, T01-F07, S02-F01, S02-F02, C00-F01, C00-F02, C00-F03, E02-F14, T01-F09, X01-F03.
 - **A3-3:** E02-F01.
-- **A3-4:** E02-F15, T01-F08, U01-F03, U01-F04, U01-F06, E02-F08, E02-F19, E02-F21.
-- **A3-6:** H03-F2, H03-F7, E02-F23, K01-F03, K01-F04, K01-F05, K01-F07, K01-F09, T01-F01, T01-F02, T01-F03, H01-F8, H03-F6.
+- **A3-4:** E02-F15, T01-F08, U01-F01, U01-F03, U01-F04, U01-F06, D01-F01, D01-F02, E02-F08, E02-F19, E02-F21.
+- **A3-6:** K01-F01, E02-F11, E02-F13, E02-F18, H03-F2, H03-F7, E02-F23, K01-F03, K01-F04, K01-F05, K01-F07, K01-F09, T01-F01, T01-F02, T01-F03, H01-F8, H03-F6.
 - **A3-7:** E02-F17, E02-F02, E02-F22, R01-F02, R01-F01, R01-F03, R01-F08, R01-F09, R01-F10, R01-F15, R01-F04, R01-F07.
 - **A3-8:** E02-F06, E02-F10, M01-F05, M01-F06.
 - **A3-9:** Q01-F02, R01-F06, C00-F07, Q01-F04, R01-F16, R01-F18, Q01-F06, Q01-F07, R01-F19.
@@ -68,7 +68,7 @@ The remaining commits record reviews, evidence, and the stage decisions.
 - **A3-2:** X01-F01, S02-F03.
 - **A3-4:** H01-F5, E02-F20, U01-F05.
 - **A3-5:** T01-F04, K01-F06, X01-F02.
-- **A3-6:** K01-F01, K01-F02, C00-F06, E02-F11, E02-F13, E02-F16, E02-F18, H03-F4, K01-F08, X01-F04, H03-F1, H03-F5, T01-F12, T01-F11, U01-F02, T01-F05, T01-F06.
+- **A3-6:** K01-F02, C00-F06, E02-F16, H03-F4, K01-F08, X01-F04, H03-F1, H03-F5, T01-F12, T01-F11, U01-F02, T01-F05, T01-F06.
 - **A3-7:** R01-F11, R01-F12, R01-F13, R01-F14.
 - **A3-8:** A01-F09, K01-F13, H02-CAP-SOURCE64, H02-CAP-JOURNAL4096, H02-IO, A01-F04, E02-F07, A01-F01, A01-F03, A01-F05, A01-F08, M01-F01, M01-F02, M01-F04, E02-F03, E02-F05, E02-F09, M01-F03, E02-F04, A01-F06.
 - **A3-9:** Q01-F01, R01-F05, Q01-F03, E02-F12, R01-F17, Q01-F05, R01-F20.

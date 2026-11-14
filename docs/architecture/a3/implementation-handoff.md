@@ -1,5 +1,33 @@
 # A3 implementation correction handoff
 
+## Second repair wave 2026-11-14
+
+The second wave added these repairs. Each one has a named review or is recorded
+in the ledger with its exact evidence.
+
+| Area | Commit | Result |
+| --- | --- | --- |
+| A3-6a skill identity, any-of bins and no-query ceiling | `95a3e2d5` | K01-F03, K01-F07, E02-F23 accepted. |
+| A3-4 P6 folder-grant instance scope | `42025e03`, `456b77b5` | E02-F15 accepted after the test stub fix. |
+| A3-4 P7 search/read contract | `6969f45b` | E02-F08 accepted; display-only rows are excluded. |
+| A3-8 image and PDF bounds | `af4437de`, `69bc255e` | M01-F05, M01-F06 accepted. |
+| A3-8 delete completeness and tombstones | `cdd5ce27` | E02-F06, E02-F10 accepted. |
+| A3-9 readiness and systemd outcomes | `f26a61c3` | C00-F07, R01-F06 accepted. |
+| A3-4 P4 client completion fences | `c9b94a4f` | U01-F03, U01-F04, U01-F06 accepted. |
+| A3-6b MCP loader and readiness | `735f3aa7` | T01-F01, T01-F02, T01-F03 accepted. |
+| A3-6b provider route and login | `38e35dd0`, `9f1d74cf` | H03-F2, H03-F6, H03-F7 accepted. |
+| A3-4 P3 queue admission, Stop and TUI context | `069cdaf6`, `e57bfe53` | U01-F01, D01-F01, D01-F02 accepted. |
+| A3-6c instance stores and repo confinement | `6b798c27`, `55502ccb` | E02-F11, E02-F13, E02-F18, K01-F01 accepted. |
+
+The ledger now has 76 accepted findings, 0 ready for review, and 60 unverified.
+The full suite at the corrected candidate is recorded in
+`a3-evidence/a3-reconciliation-2026-11-14/final/`.
+
+The 30 cross-cutting test-double failures found by the first final suite were
+mechanical signature breaks from the new instance-root and private-helper
+parameters. The owners fixed them in `55502ccb`, `9c647427` and `9f1d74cf`.
+The full suite was rerun after those fixes.
+
 ## W1 A3-7 review 2026-11-14
 
 Reviewer W1 used the exact model `commandcode/deepseek/deepseek-v4.1-flash` and
