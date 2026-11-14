@@ -6,11 +6,13 @@ checker, the CI workflow contract, and the two-APK update helper.
 
 import json  # noqa: F401 - contract import surface
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 import nanobot.webui.build as build_module  # noqa: F401 - contract import surface
 from nanobot.webui.build import (
@@ -126,12 +128,71 @@ def test_fresh_build_passes_the_release_switch(tmp_path: Path) -> None:
     assert status.reason == "fresh"
 
 
-def test_ci_bundle_path_enables_the_release_postcondition() -> None:
+def _ci_fresh_webui_step() -> tuple[str, dict[str, str]]:
     repo = Path(__file__).resolve().parents[2]
-    workflow = (repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = yaml.safe_load(
+        (repo / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    for step in workflow["jobs"]["webui_bundle"]["steps"]:
+        if step.get("name") == "Verify fresh WebUI bundle for release":
+            env = {str(key): str(value) for key, value in (step.get("env") or {}).items()}
+            return step["run"], env
+    raise AssertionError("CI fresh WebUI verification step is missing")
 
-    assert 'NANOBOT_REQUIRE_FRESH_WEBUI: "1"' in workflow
-    assert "require_fresh_webui_bundle" in workflow
+
+def _run_ci_fresh_webui_step(
+    tmp_path: Path, body: str, step_env: dict[str, str], variant: str
+) -> subprocess.CompletedProcess[str]:
+    repo = Path(__file__).resolve().parents[2]
+    root = tmp_path / variant
+    (root / "nanobot" / "webui").mkdir(parents=True)
+    shutil.copy2(repo / "nanobot" / "webui" / "build.py", root / "nanobot" / "webui" / "build.py")
+    _touch(root / "webui" / "package.json", 10)
+    _touch(root / "webui" / "src" / "App.tsx", 30 if variant == "stale" else 20)
+    if variant != "missing":
+        _touch(root / "nanobot" / "web" / "dist" / "index.html", 20 if variant == "stale" else 40)
+
+    bin_dir = tmp_path / f"{variant}-bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").symlink_to(sys.executable)
+    env = {
+        **os.environ,
+        **step_env,
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+    }
+    return subprocess.run(
+        ["bash", "-c", body],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the workflow step is a POSIX shell heredoc")
+def test_ci_fresh_webui_step_executes_for_fresh_stale_and_missing(tmp_path: Path) -> None:
+    body, step_env = _ci_fresh_webui_step()
+    assert step_env.get("NANOBOT_REQUIRE_FRESH_WEBUI") == "1"
+
+    fresh = _run_ci_fresh_webui_step(tmp_path, body, step_env, "fresh")
+    assert fresh.returncode == 0, fresh.stdout + fresh.stderr
+    assert "up to date" in fresh.stdout
+    assert "AttributeError" not in fresh.stdout + fresh.stderr
+
+    stale = _run_ci_fresh_webui_step(tmp_path, body, step_env, "stale")
+    stale_output = stale.stdout + stale.stderr
+    assert stale.returncode != 0, stale_output
+    assert "fresh WebUI bundle" in stale_output
+    assert "source is newer" in stale_output
+    assert "AttributeError" not in stale_output
+
+    missing = _run_ci_fresh_webui_step(tmp_path, body, step_env, "missing")
+    missing_output = missing.stdout + missing.stderr
+    assert missing.returncode != 0, missing_output
+    assert "built WebUI bundle" in missing_output
+    assert "missing" in missing_output
+    assert "AttributeError" not in missing_output
 
 
 def test_parity_checker_self_test_passes() -> None:
