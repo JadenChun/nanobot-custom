@@ -169,6 +169,20 @@ id and owner resolution, and is not replayed; only a proven-absent claim
 requeues once. Both are READY_FOR_REVIEW after 116 focused tests and a 0/546
 strict run.
 
+### A3-8 approval and recovery review
+
+`resume2/a38-approval-review/REVIEW.md` ACCEPTED both repairs. A01-F09:
+ApprovalProvenance permits a decision only for TRUSTED_FOREGROUND;
+`snapshot_decision` denies every other provenance before alias matching and
+`consume` refuses denied snapshots before any grant. All six untrusted sources
+are denied with the pending intact and zero executor calls; trusted foreground
+grants once and executes once; the legacy text baseline is unchanged. A01-F08:
+the settlement id is fsynced before submit, a started attempt is quarantined as
+unknown with the same id and one attempt, and only settlement-less claims
+requeue once. The crash probe gives requeued=0, unknown=1, effects=1 versus
+base redelivered=2/effects=2. The unknown state has a store API but no shipped
+CLI/WebUI resolution action yet; the consumer is default-off.
+
 ### A3-9 R01-F05 partial and app-receipt dispute
 
 `resume2/a39-r01f05-review/REVIEW.md` confirms the real Serve TLS host path:
@@ -180,12 +194,17 @@ on loopback; WS logout is `scope_denied` and leaves the token valid; app logout
 is local-only; refresh rotation never replays an old token; and the app receipt
 runs at `1b3b7fc7` rather than the `ef315ec1` artifact.
 
-The app receipt itself is DISPUTED for provenance: the proxy log format does
-not match the retained `tee_proxy.py`, the logcat is a two-line tail, the
-fixture log chats differ from the scenario chats, and the Serve hop is inferred.
-The screenshots and UI dumps agree on the parent draft, attachment and
-read-only child view, but a clean single-run receipt is required before the
-scenario counts. A re-run at `ef315ec1` is in progress.
+The first app receipt was disputed for provenance. The cleaned re-run at
+`ef315ec1` resolves it: run id `1f1f3e39` is consistent across state, the
+redacted deep link, logs, draft and dumps; the retained tee log records a host
+`401 missing_access` and a paired app `200` with `Tailscale-User-Login` and
+`X-Forwarded-For: 100.100.117.64`; logcat is complete; the APK hashes to
+`f6505ecf`; and the same `@kevu` parent, read-only child, draft and 7.6 KB
+attachment survive System Back. The UI clause is accepted. R01-F05 stays
+partial because at launch 6 of 10 requests are rejected as
+`native request was not admitted`, the broker reason is masked at
+`NativeRequestCorrelator.kt:23`, and a read succeeds only after a devtools
+refresh. A bounded native admission-recovery repair is in progress.
 
 ### A3-1 and A3-9 residual review
 
