@@ -12,8 +12,10 @@ extern "C" {
  *
  * Inputs are NUL-terminated UTF-8 JSON except for WebSocket frame bytes.
  * The caller owns every input buffer. The library copies input data before
- * returning. Returned C strings (last_error) are owned by the library and must
- * not be freed by the caller; they remain valid until the next error or stop.
+ * returning. Use nanobot_network_last_error_copy to read a diagnostic: it
+ * copies under the library lock, so concurrent failures cannot cross request
+ * identities. nanobot_network_last_error is legacy and returns a
+ * library-owned pointer that is valid only until the next call.
  *
  * Error codes:
  *    0 ok
@@ -101,6 +103,14 @@ int32_t nanobot_network_media_close(int64_t handle, uint64_t stream_id);
 int32_t nanobot_network_media_purge(int64_t handle);
 
 const char *nanobot_network_last_error(void);
+
+/*
+ * Copies the last diagnostic into out and NUL-terminates it. Returns the number
+ * of message bytes written, excluding the terminator, or -1 when capacity <= 0.
+ * This call holds the same lock as the failing operations, so the copy is
+ * always one complete message.
+ */
+int32_t nanobot_network_last_error_copy(char *out, int32_t capacity);
 
 #ifdef __cplusplus
 }

@@ -174,8 +174,14 @@ Java_ai_nanobot_mobile_network_NativeNetwork_stop(JNIEnv *env, jobject thiz, jlo
 JNIEXPORT jstring JNICALL
 Java_ai_nanobot_mobile_network_NativeNetwork_lastError(JNIEnv *env, jobject thiz) {
     (void)thiz;
-    const char *message = nanobot_network_last_error();
-    return (*env)->NewStringUTF(env, message == NULL ? "" : message);
+    /* Copy under the library lock; never keep a library-owned pointer. */
+    char buffer[2048];
+    int32_t length = nanobot_network_last_error_copy(buffer, (int32_t)sizeof(buffer));
+    if (length < 0) {
+        length = 0;
+    }
+    buffer[length] = '\0';
+    return (*env)->NewStringUTF(env, buffer);
 }
 
 JNIEXPORT jint JNICALL

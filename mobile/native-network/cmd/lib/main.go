@@ -19,19 +19,45 @@ var (
 	managerMu  sync.Mutex
 	cores      = map[uint64]*broker.Core{}
 	nextHandle uint64
-	lastErrC   *C.char
-	lastErr    string
+
+	// lastErrorMu owns the single diagnostic slot. Every write and every read
+	// of the slot happens under this mutex, so a concurrent failure cannot
+	// free or replace the message that another call is copying.
+	lastErrorMu sync.Mutex
+	lastErrC    *C.char
+	lastErr     string
 )
 
 func main() {}
 
 func setError(err error) C.int32_t {
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
 	lastErr = err.Error()
 	if lastErrC != nil {
 		C.free(unsafe.Pointer(lastErrC))
 	}
 	lastErrC = C.CString(lastErr)
 	return codeFor(err)
+}
+
+// copyLastError writes the current message into out and NUL-terminates it. It
+// returns the number of message bytes written, excluding the terminator, or -1
+// when out cannot hold a message.
+func copyLastError(out []byte) int {
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
+	if len(out) == 0 {
+		return -1
+	}
+	n := copy(out, lastErr)
+	if n < len(out) {
+		out[n] = 0
+		return n
+	}
+	n = len(out) - 1
+	out[n] = 0
+	return n
 }
 
 func codeFor(err error) C.int32_t {
@@ -266,12 +292,21 @@ func nanobot_network_stop(handle C.int64_t) C.int32_t {
 
 //export nanobot_network_last_error
 func nanobot_network_last_error() *C.char {
-	managerMu.Lock()
-	defer managerMu.Unlock()
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
 	if lastErrC == nil {
 		lastErrC = C.CString("")
 	}
 	return lastErrC
+}
+
+//export nanobot_network_last_error_copy
+func nanobot_network_last_error_copy(out *C.char, capacity C.int32_t) C.int32_t {
+	if out == nil || capacity <= 0 {
+		return -1
+	}
+	buffer := unsafe.Slice((*byte)(unsafe.Pointer(out)), int(capacity))
+	return C.int32_t(copyLastError(buffer))
 }
 
 //export nanobot_network_media_set_token

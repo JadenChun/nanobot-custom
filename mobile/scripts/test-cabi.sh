@@ -14,7 +14,7 @@ mkdir -p "${work_dir}"
 cd "${MOBILE_ROOT}/native-network"
 
 CGO_ENABLED=1 "${MOBILE_TOOLCHAIN}/go/bin/go" build -buildmode=c-shared -o "${work_dir}/libnanobot_network.so" ./cmd/lib
-cc -std=c11 -Wall -Wextra -Werror cabi/smoke.c \
+cc -std=c11 -Wall -Wextra -Werror -pthread cabi/smoke.c \
   -I include \
   -L "${work_dir}" -lnanobot_network \
   -Wl,-rpath,"${work_dir}" \
