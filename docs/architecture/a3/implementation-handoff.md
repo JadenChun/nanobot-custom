@@ -1,6 +1,44 @@
 # A3 implementation correction handoff
 
-## RESUME HERE — state at 2026-11-14 14:40 (+08:00)
+## Audit continuation after OpenCode
+
+Continue on `codex/a3-audit-reconciliation` in
+`/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`. The worktree contains
+OpenCode's 17 commits through `5e1bc17c` and the rollback repair at `3492ac30`.
+The branch includes the current audit implementation base `722bd8ec`.
+
+The [ledger](evidence.json) has 20 accepted findings, 14 ready for review, and
+102 unverified. Codex reviewed and accepted four OpenCode findings in A3-1.
+They cover archive provenance, prepared provider fallback, and input validation.
+
+| Finding | Current result |
+| --- | --- |
+| C00-F03 | The composition retains dependencies when a grouped cleanup error reports owned work. Retry closes only the remaining resources. The new cases passed after the repair. Two grouped cases failed on the baseline. |
+| E02-F01 | A malformed import leaves the existing transcript and metadata intact after flush and reopen. A missing session stays absent. Valid unmanaged import and managed refusal pass. |
+| S02-F03 | The manager lock still covers process waits. The packet defers this change until a measured need justifies it. |
+| X01-F01 | The current foreground runtime leaves `run_cli_app` out of the tool registry even when CLI Apps is enabled. Keep restricted activation gated on qualified confinement. Review the settings test action separately. |
+| T01-F07 | Route browser and device cwd and output paths through the shared resource policy or restrict the supported forms. |
+
+On Linux, the OpenCode baseline passed 18,310 tests. The rollback repair passed
+18,313 tests, with 22 skips and six passing subtests. Strict BasedPyright found
+zero diagnostics in 546 files before and after the repair. Both runs used the
+same 211 dependency pins and the project Python interpreter. The comparator and
+Ruff passed. These results satisfy the local strict and full-suite checks at
+this checkpoint. Formal P6 and A3 release acceptance remain open.
+
+The earlier diagnostic totals apply to the earlier checker invocations. Use
+the current receipt with the explicit project interpreter for comparison.
+Receipts are in `a3-evidence/a3-reconciliation-2026-11-14/resume-5e1bc17c/`
+beside the worktree.
+
+Start the next batch with T01-F07. Check working directories and output paths
+against the existing workspace owner. Review the remaining A3-1 and A3-3
+evidence before closing the prerequisites for A3-4. Keep H01-F6 and H01-F7 in
+the structural work queue. The SDK import evidence covers AC3.3. Ninety
+focused tests passed for session identity and restart. Review the broader
+AC3.1 and AC3.2 criteria before stage acceptance.
+
+## OpenCode checkpoint before continuation
 
 **Branch:** `codex/a3-audit-reconciliation`, worktree
 `/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`, 15 commits ahead of
