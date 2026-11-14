@@ -64,18 +64,20 @@ the shared file tab, and returning. The panel docks beside the composer and
 never covers it. Child detail is read-only. Stop stays available while
 background work is active. Focus returns to the child row.
 
-W13 then used a genuine 390x760 Playwright viewport. The activity dialog fills
-the viewport. The icon-only Back control sits beside the title, has zero text
-nodes and one svg, and exposes the accessible name "Back to parent chat". The
-parent composer is covered, inert and hidden from the accessibility tree. The
-detail has no composer. Back restores the draft and attachment. The thread
-scroll position measured 1057 before and 1057 after. Focus returns to the exact
-child row that opened the detail.
+W13 then used a genuine 390x760 Playwright viewport on a fresh `client`
+fixture. The activity dialog fills the viewport. The icon-only Back control sits
+beside the title, has zero text nodes and one svg, and exposes the accessible
+name "Back to parent chat". The parent composer is covered, inert and hidden
+from the accessibility tree. The detail has no composer. Back restores the
+draft and attachment.
 
-The scroll test cannot separate preservation from re-application because the
-hidden parent viewport stays laid out and keeps its scroll position. The app's
-restore path also ran. Android system Back and touch/IME behavior remain
-unproven because this host has no SDK or emulator.
+The corrected run scrolled the thread to 1790, opened the detail from the child
+row, and returned with scrollTop still 1790, against a bottom position of 4190.
+`document.hasFocus()` was true and `document.activeElement` was the exact
+originating child row button. The earlier iframe run could not separate
+preservation from re-application; the fresh top-level viewport run settles the
+measurement. Android system Back and touch/IME behavior remain unproven because
+this host has no SDK or emulator.
 
 ## A3-3 stage review 2026-11-14
 
