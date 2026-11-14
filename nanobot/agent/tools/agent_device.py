@@ -7,11 +7,14 @@ import json
 import os
 import shutil
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.process import run_owned_process
 from nanobot.agent.turn import ToolOutcome
+
+if TYPE_CHECKING:
+    from nanobot.context_repo.policy import ResourceAccessPolicy
 
 READ_ONLY_DEVICE_ACTIONS = frozenset({
     "devices",
@@ -102,11 +105,14 @@ class AgentDeviceTool(Tool):
         max_output_chars: int = 12000,
         working_dir: str | None = None,
         read_only: bool = False,
+        *,
+        resource_policy: ResourceAccessPolicy | None = None,
     ):
         self.package = package
         self.timeout = timeout
         self.max_output_chars = max_output_chars
         self.working_dir = working_dir
+        self._resource_policy = resource_policy
         self._read_only_mode = read_only
 
     @property
@@ -166,6 +172,12 @@ class AgentDeviceTool(Tool):
         working_dir: str | None = None,
         **kwargs: Any,
     ) -> str | ToolOutcome:
+        if self._resource_policy is not None and not self._resource_policy.allows_unconfined_automation():
+            return ToolOutcome(
+                content="Error: Device automation requires unrestricted native workspace access",
+                stop_reason="policy_blocked",
+                policy_metadata={"policy": "workspace_access", "requires_approval": False},
+            )
         if not args:
             return "Error: args must include at least one CLI argument"
         if len(args) > 120:

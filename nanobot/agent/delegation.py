@@ -1299,6 +1299,7 @@ class ForegroundAgentManager:
                 launch_command=self.agent_browser_config.launch_command,
                 launch_wait_seconds=self.agent_browser_config.launch_wait_seconds,
                 executable_path=self.agent_browser_config.executable_path,
+                resource_policy=self.resource_policy,
             ))
         if "agent_device" in profile.tools and self.agent_device_config.enabled:
             tools.register(AgentDeviceTool(
@@ -1307,6 +1308,7 @@ class ForegroundAgentManager:
                 max_output_chars=self.agent_device_config.max_output_chars,
                 working_dir=str(self.workspace),
                 read_only=True,
+                resource_policy=self.resource_policy,
             ))
         tools.set_dispatch_guard(
             ManagedToolDispatchGuard(

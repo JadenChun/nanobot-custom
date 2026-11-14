@@ -73,6 +73,7 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
             launch_command=browser.launch_command,
             launch_wait_seconds=browser.launch_wait_seconds,
             executable_path=browser.executable_path,
+            resource_policy=deps.resource_policy,
         ),
     ))
     device = ctx.config.agent_device
@@ -84,6 +85,7 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
             timeout=device.timeout,
             max_output_chars=device.max_output_chars,
             working_dir=ctx.workspace,
+            resource_policy=deps.resource_policy,
         ),
     ))
     desktop = ctx.config.desktop_use

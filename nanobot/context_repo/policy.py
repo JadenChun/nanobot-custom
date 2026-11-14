@@ -54,7 +54,7 @@ class FolderAccessNeededError(PermissionError):
 
 
 class ResourceAccessPolicy:
-    """Validate file and shell access against workspace/context repo boundaries."""
+    """Validate file and process access against workspace and context repo boundaries."""
 
     def __init__(
         self,
@@ -105,6 +105,13 @@ class ResourceAccessPolicy:
         ):
             return focus.task_reference
         return None
+
+    def allows_unconfined_automation(self) -> bool:
+        """Allow raw host automation only in native unrestricted scope."""
+        access = current_tool_workspace(
+            self.workspace, restrict_to_workspace=self.restrict_to_workspace,
+        )
+        return not (access.restrict_to_workspace or self.managed_mode)
 
     @staticmethod
     def _current_full_reference(
