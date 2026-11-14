@@ -220,6 +220,36 @@ normalized late in the audit. H03-F5 is NOT_ACCEPTED: Azure compaction fallback
 records 0 attempts for 2 dispatches, OpenAI-compat 1 for 2, and xAI never calls
 the observer.
 
+### A3-7 launch admission and A3-9 rotation
+
+`resume2/a37-admission/` and `resume2/a37-admission-review/REVIEW.md` close the
+launch clause. The broker reserved four terminal slots at the app's 8 MiB
+ceiling, so a ten-read launch admitted four and refused six with "bounded queue
+is full"; the correlator threw a generic "not admitted" before reading
+`lastError` and never retried. `7ec42d55` (integrated `30f8cd4c`) records the
+per-thread reason, retries only transient failures within 8 attempts and a 10 s
+deadline, refuses origin/revoke/scope/invalid/closed immediately, reuses
+identical bytes so a mutation keeps its replay identity, and cancels backoffs on
+close. The reviewer drove the production `ScheduledRetryTimer`: queue-full
+recovers in 416 ms over four attempts, a ten-thread burst admits all, close
+cancels with no pending timer, the deadline stops at one attempt, and all six
+permanent diagnostics refuse. The launch log has 23 request ids for 14 terminal
+results, nine refusals, zero not-admitted and no CDP refresh. Receipt
+corrections: the 21 http_response events double-count seven WebView echoes
+(native 14); the 401/200 proxy evidence is from an earlier run; screenshots
+predate the hashed APK.
+
+`resume2/a39-rotation/RESULT.md` qualifies the rotation clause for
+`/remote/v1` over real Serve TLS, 18/18: refresh rotates both tokens, the old
+access token is 401, an old refresh replay is 401 with zero durable rotations
+and an unchanged hash, the new token reads 200, and a five-way concurrent
+refresh yields exactly one 200 and four 401 with one rotation. Traversal and
+cleanup are proved. The worker also found a latent defect: `TokenService.refresh`
+issues `AccessGrant(device_generation=0)` while `validate_access` compares the
+proof generation, so a proof-bound device would be refused after a successful
+rotation. It is unreachable today because v2 pairing issues an empty refresh
+token; it is recorded as a residual.
+
 ### A3-10 dispositions and A3-6 C00-F06
 
 `resume2/a310/A3-10-DISPOSITIONS.md` traces all eight candidates, and
