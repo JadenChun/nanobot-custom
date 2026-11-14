@@ -16,12 +16,15 @@ import base64
 import inspect
 import pathlib
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.filesystem import ReadFileTool
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.loader import set_config_path
 from nanobot.config.paths import get_media_dir
 from nanobot.security.workspace_policy import WorkspaceBoundaryError
@@ -193,3 +196,91 @@ def test_c6_outside_both_roots_is_refused(
     without_instance = _read(harness, str(outside), ambient_context)
     assert harness.is_refusal(without_instance), "C6.2 outside path accepted with no instance"
     assert not harness.is_success(without_instance), "C6.2 outside bytes returned"
+
+
+class _StubProvider:
+    def get_default_model(self) -> str:
+        return "synthetic-model"
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_c7_loop_registered_read_file_reads_instance_artifact(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C7: C3 through the loop-registered read_file, plus the C4/C6 controls.
+
+    The loop is built from an explicit instance config while the ambient config
+    path points at another instance. The turn context carries the instance media
+    root, so the loop's own read_file must resolve that artifact and still
+    refuse the ambient-only file, a path outside both roots, and a protected
+    credential file.
+    """
+    import nanobot.migration_guard as guard
+    import nanobot.providers.factory as factory
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.config.schema import Config
+
+    monkeypatch.setattr(guard, "require_runtime_ready", lambda: None)
+    monkeypatch.setattr(factory, "make_provider", lambda _config: _StubProvider())
+    monkeypatch.setattr("subprocess.Popen", Mock(side_effect=AssertionError("process execution")))
+
+    ambient = tmp_path / "ambient"
+    set_config_path(ambient / "config.json")
+    instance = tmp_path / "instance"
+    workspace = instance / "workspace"
+    workspace.mkdir(parents=True)
+
+    config = Config()
+    config.bind_source_path(instance / "config.json")
+    config.agents.defaults.workspace = str(workspace)
+    config.agents.defaults.model = "synthetic-model"
+    config.agents.defaults.model_preset = None
+    config.tools.restrict_to_workspace = True
+    config.tools.agent_browser.enabled = False
+    config.tools.agent_device.enabled = False
+    config.tools.desktop_use.enabled = False
+
+    loop = AgentLoop.from_config(config, tool_registry=ToolRegistry())
+    try:
+        assert loop.media_root == instance / "media"
+        artifact = loop.media_root / "generated" / "2026-11-14" / "artifact.png"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_bytes(INSTANCE_ARTIFACT_BYTES)
+        ambient_file = get_media_dir() / "ambient-only.bin"
+        ambient_file.parent.mkdir(parents=True, exist_ok=True)
+        ambient_file.write_bytes(AMBIENT_ARTIFACT_BYTES)
+        outside = tmp_path / "outside-roots.bin"
+        outside.write_bytes(OUTSIDE_ARTIFACT_BYTES)
+        blocked = loop.media_root / ".env"
+        blocked.write_bytes(b"SECRET=c7")
+
+        context = RequestContext(
+            channel="probe", chat_id="probe", media_root=loop.media_root,
+        )
+        read_tool = loop.tools.get("read_file")
+        assert read_tool is not None
+
+        async def loop_read(path: pathlib.Path) -> Any:
+            with request_context(context):
+                return await ToolRegistry.execute_prepared(
+                    read_tool, {"path": str(path), "force": True},
+                    SimpleNamespace(lock_owner=None),
+                )
+
+        def refused(outcome: Any) -> bool:
+            return bool(getattr(outcome, "is_error", False)
+                        or getattr(outcome, "stop_reason", None))
+
+        result = await loop_read(artifact)
+        assert not refused(result), "C7.1 loop read was refused"
+        assert ProductHarness.bytes_of(result) == INSTANCE_ARTIFACT_BYTES, "C7.2 content mismatch"
+
+        assert refused(await loop_read(ambient_file)), "C4 control: ambient read"
+        assert refused(await loop_read(outside)), "C6 control: outside read"
+        credential = await loop_read(blocked)
+        assert refused(credential), "credential read was not refused"
+        assert "protected credential" in str(credential), "credential refusal changed"
+    finally:
+        await loop.aclose()

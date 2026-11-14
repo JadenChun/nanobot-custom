@@ -33,6 +33,35 @@ _PATHISH_CHARS = {"/", "\\"}
 _FolderTargetKind = Literal["directory", "file"]
 
 
+def _request_media_root() -> Path | None:
+    """Return the media root bound to the current request, if any.
+
+    A request bound to an explicit instance carries that instance's media root.
+    The policy checks private runtime storage and the read/list media allowance
+    against that root instead of the process-global config instance or ambient
+    media directory. Requests with no bound root keep the legacy fallback.
+    """
+    try:
+        from nanobot.agent.tools.context import current_request_context
+
+        request = current_request_context()
+        root = request.media_root if request is not None else None
+        if root is None:
+            return None
+        return Path(root).expanduser().resolve(strict=False)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _media_read_allowed(path: Path, action: str, media_root: Path | None) -> bool:
+    """Allow read/list only, and only beneath the bound media root."""
+    return (
+        action in {"read", "list"}
+        and media_root is not None
+        and _is_under(path, media_root)
+    )
+
+
 class FolderAccessNeededError(PermissionError):
     """A narrow, typed missing-folder-capability decision safe for recovery."""
 
@@ -215,7 +244,8 @@ class ResourceAccessPolicy:
             and self.folder_grants is not None
             and self.folder_grants.is_private_path(resolved)
         ):
-            raise PermissionError("Path is inside private nanobot runtime storage")
+            if not _media_read_allowed(resolved, action, _request_media_root()):
+                raise PermissionError("Path is inside private nanobot runtime storage")
         if not use_managed_policy and self.folder_grants is None:
             try:
                 from nanobot.config.paths import get_config_path
@@ -226,7 +256,7 @@ class ResourceAccessPolicy:
             if instance_root is not None and _is_under(resolved, instance_root) and not _is_under(
                 resolved, self.workspace
             ):
-                media_root = instance_root / "media"
+                media_root = _request_media_root() or instance_root / "media"
                 media_is_explicitly_readable = (
                     action in {"read", "list"}
                     and _is_under(resolved, media_root)
@@ -276,6 +306,7 @@ class ResourceAccessPolicy:
             not use_managed_policy
             and self.restrict_to_workspace
             and not _is_under(resolved, self.workspace)
+            and not _media_read_allowed(resolved, action, _request_media_root())
         ):
             reason = "write_not_granted" if action in {"write", "edit"} else (
                 "commands_not_granted" if action == "exec" else "folder_not_granted"
@@ -298,19 +329,16 @@ class ResourceAccessPolicy:
         if view is None:
             raise PermissionError("Managed folder access is unavailable")
 
-        media_root: Path | None = None
-        try:
-            from nanobot.config.paths import get_media_dir
+        media_root: Path | None = _request_media_root()
+        if media_root is None:
+            try:
+                from nanobot.config.paths import get_media_dir
 
-            media_root = get_media_dir().expanduser().resolve(strict=False)
-        except (OSError, RuntimeError, ValueError):
-            pass
+                media_root = get_media_dir().expanduser().resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                pass
         if view.is_private_path(path):
-            if not (
-                action in {"read", "list"}
-                and media_root is not None
-                and _is_under(path, media_root)
-            ):
+            if not _media_read_allowed(path, action, media_root):
                 raise PermissionError("Path is inside private nanobot runtime storage")
 
         # Sandbox is a write boundary. Reads and program launches use normal
@@ -422,18 +450,15 @@ class ResourceAccessPolicy:
         if view is None or not view.is_private_path(path):
             return
 
-        media_root: Path | None = None
-        try:
-            from nanobot.config.paths import get_media_dir
+        media_root: Path | None = _request_media_root()
+        if media_root is None:
+            try:
+                from nanobot.config.paths import get_media_dir
 
-            media_root = get_media_dir().expanduser().resolve(strict=False)
-        except (OSError, RuntimeError, ValueError):
-            pass
-        if not (
-            action in {"read", "list"}
-            and media_root is not None
-            and _is_under(path, media_root)
-        ):
+                media_root = get_media_dir().expanduser().resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                pass
+        if not _media_read_allowed(path, action, media_root):
             raise PermissionError("Path is inside private nanobot runtime storage")
 
     @staticmethod
