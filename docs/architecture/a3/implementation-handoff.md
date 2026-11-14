@@ -1,5 +1,31 @@
 # A3 implementation correction handoff
 
+## A3-8 durability and retention inventory 2026-11-14
+
+Two read-only workers mapped the A3-8 findings at `ceaf8fb8`. Stage acceptance
+is not granted because A3-6 and A3-7 remain open.
+
+W8 covered source, journal, transcript, scheduler, continuation and Dream.
+Four findings are satisfied: A01-F01 ordered asynchronous journal writes,
+A01-F04 scheduler rollover, E02-F07 transcript rotation, and K01-F13 skill-only
+Dream custody. Four are partial: both source and journal capacity limits,
+cron polling, and automation approval provenance. Five are not implemented or
+conditional: H02-IO caching cost, delivery-registry retention, cron
+administration scope, local-trigger settlement, and the typed-decision
+provenance gate. The focused read-only run passed 491 tests.
+
+W9 covered retention, media, parsers and the asset index. Seven findings are
+satisfied: retired attachment migration, sidecar generation deletion, audio
+duration measurement, complete-evidence pruning, Windows path retention, stable
+asset pagination, and transcript identity. M01-F06 is partial: the PDF limit
+runs after decoding. Three are not implemented: image reference budget,
+session-delete completeness, and Temporary Chat tombstone retirement. The
+focused read-only run passed 324 tests.
+
+RR1 and RR3 remain open. The repair slices are recorded in
+`w8-a38a/REPAIRS.md` and `w9-a38b/REPAIRS.md`. Each behavioral slice needs a
+requirements-only author before its test changes.
+
 ## P5 settings route repair 2026-11-14
 
 W14 repaired two A3-4 findings. Commit `7f20e78d` makes the remote-access
