@@ -1,5 +1,76 @@
 # A3 implementation correction handoff
 
+## RESUME HERE — state at 2026-11-14 14:40 (+08:00)
+
+**Branch:** `codex/a3-audit-reconciliation`, worktree
+`/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`, 15 commits ahead of
+`origin/codex/staging-audit-implementation`. Base
+`722bd8ec6cbc5c223ee2b4b22c03950071ccd1ef`. `origin/staging` is still
+`f1a6bb85`, unchanged since the snapshot. Working tree clean.
+
+**Ledger state:** 16 accepted, 18 ready-for-review, 102 unverified, of the 136
+original findings. `docs/architecture/a3/evidence.json` holds 26 evidence rows.
+Every ready-for-review entry still needs a named reviewer; this pass did not
+self-accept any finding.
+
+**Completed in this pass:**
+
+| Stage | Findings | State |
+| --- | --- | --- |
+| A3-1 R05 | K01-F12 | ready for review |
+| A3-1 R06 | H01-F1, H01-F2 | ready for review |
+| A3-1 R06 | H01-F6, H01-F7 | unverified: structural claims outside AC3a/AC3b |
+| A3-1 R08 | H03-F3 | ready for review |
+| A3-1 R15 | T01-F10, K01-F11 | ready for review |
+| A3-1 R22 | H01-F3, K01-F10 | ready for review |
+| A3-2 R01 | S01-F01 | **repaired** `c485a88c`, ready for review |
+| A3-2 R01 | S01-F03 | **repaired** `6ebc184b`, ready for review |
+| A3-2 R01 | T01-F07 | blocked, source-confirmed |
+| A3-2 R01 | X01-F01 | blocked, source-confirmed |
+| A3-2 R09 | C00-F01 | **repaired** `4f68e2ec`, ready for review |
+| A3-2 R09 | S02-F02, C00-F02, E02-F14, T01-F09, X01-F03 | Linux verified, ready for review |
+| A3-2 R09 | S02-F03, C00-F03 | unverified |
+
+**Repairs on this branch (all with requirements-only tests that fail before and
+pass after, plus a P6 before/after comparator pass):**
+
+1. `6ebc184b` `fix(security)` — one shared native owner aggregate per chat
+   epoch. S01-F03.
+2. `4f68e2ec` `fix(cli)` — close the acquired graph when interactive setup
+   fails. C00-F01.
+3. `c485a88c` `fix(focus)` — ask the path policy before advertising Full read or
+   write. S01-F01.
+
+**Blocked items and the condition to resume:**
+
+1. **X01-F01** `run_cli_app` in restricted turns executes an unconfined child
+   with host rights; `cli_apps.enable` defaults true. Needs a D2/D4 decision plus
+   a qualified confinement backend, or disable the tool in restricted and
+   managed turns. See `a32/DISPOSITION-x01f01-blocked.md`.
+2. **T01-F07** browser and device tools accept a caller `working_dir` outside the
+   resource policy; both default enabled. Needs the shared resource-policy owner
+   decision. See `a32/DISPOSITION-t01f07-blocked.md`.
+3. **Windows and macOS** exec, Job Object, and confinement claims are unverified.
+   Six Windows platform tests skip on Linux.
+
+**Test environment (important):** run the full suite with a short `--basetemp` on
+`/tmp`, after cleaning stale trees. `/home` is btrfs and breaks `st_nlink == 2`
+memory-recovery assertions; a long base path breaks Unix-socket IPC tests;
+`/tmp` is inode-limited; `/dev/shm` is a device path the read policy blocks; a
+fresh worktree needs `nanobot/web/dist` copied in or built, or 12 desktop adapter
+tests fail. See the note below.
+
+**Full-suite status:** the last complete run reached **18,298 passed, 22
+skipped, 6 subtests passed, 12 failed**, where all 12 were the missing WebUI
+bundle. With the bundle copied in, `tests/desktop/test_adapter.py` passes 17 of
+17. A subsequent complete run was blocked by tmpfs inode exhaustion at 17,673
+passed. A clean full run with the bundle present has **not** been recorded yet,
+so P6 stage completion is not claimed. Run it before closing P6.
+
+**Next batches in dependency order:** finish A3-2 (S02-F03, C00-F03, then the
+two blocked decisions), then A3-3 (E02-F01, durable session identity), then
+A3-4 (14 findings).
+
 ## Test-environment note (read before the full suite)
 
 Run the full local suite with `--basetemp` on a tmpfs path such as `/tmp`.
