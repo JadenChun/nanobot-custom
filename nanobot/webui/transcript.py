@@ -40,6 +40,7 @@ _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
 _TRANSCRIPT_SEGMENT_RE = re.compile(r"^\d{6}\.jsonl$")
 _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
 _MAX_TRANSCRIPT_PAGE_LIMIT = 1000
+_MAX_PENDING_TRANSCRIPT_DELETIONS = 256
 # The no-query replay path uses the same bounded page budget as paginated
 # reads. Older history remains reachable through the returned page cursor.
 _NO_QUERY_TRANSCRIPT_PAGE_LIMIT = _MAX_TRANSCRIPT_PAGE_LIMIT
@@ -1514,9 +1515,59 @@ def write_session_messages_as_transcript(
     _write_transcript_lines(target_key, rows)
 
 
-def delete_webui_transcript(session_key: str) -> bool:
-    _migrate_legacy_transcript(session_key)
+class TranscriptDeletionResult(NamedTuple):
+    """Outcome of one display-transcript delete attempt.
+
+    ``remaining`` names every display path that is still readable after the
+    attempt. A non-empty tuple means the delete is partial and the same session
+    key remains the retry owner.
+    """
+
+    deleted: bool
+    complete: bool
+    remaining: tuple[str, ...]
+
+
+_pending_transcript_deletions: dict[str, tuple[str, ...]] = {}
+
+
+def pending_transcript_deletions(session_key: str) -> tuple[str, ...]:
+    """Return the display paths a partial delete still owns for retry."""
+    return _pending_transcript_deletions.get(session_key, ())
+
+
+def _remember_pending_transcript_deletion(
+    session_key: str,
+    remaining: tuple[str, ...],
+) -> None:
+    if not remaining:
+        _pending_transcript_deletions.pop(session_key, None)
+        return
+    _pending_transcript_deletions[session_key] = remaining
+    while len(_pending_transcript_deletions) > _MAX_PENDING_TRANSCRIPT_DELETIONS:
+        _pending_transcript_deletions.pop(next(iter(_pending_transcript_deletions)))
+
+
+def delete_webui_transcript_result(session_key: str) -> TranscriptDeletionResult:
+    """Delete every display artifact and report any readable remainder."""
     removed = False
+    remaining: list[str] = []
+    try:
+        _migrate_legacy_transcript(session_key)
+    except OSError as e:
+        logger.warning("Failed to migrate legacy webui transcript {}: {}", session_key, e)
+        legacy_source = _legacy_transcript_path(session_key)
+        if (
+            legacy_source.is_file()
+            and _legacy_owner(legacy_source, session_key) == "own"
+        ):
+            remaining.append(str(legacy_source))
+        legacy_segments = _legacy_transcript_segments_dir(session_key)
+        if (
+            legacy_segments.is_dir()
+            and _legacy_dir_owner(legacy_segments, session_key) == "own"
+        ):
+            remaining.append(str(legacy_segments))
     path = webui_transcript_path(session_key)
     if path.is_file():
         try:
@@ -1524,6 +1575,7 @@ def delete_webui_transcript(session_key: str) -> bool:
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript {}: {}", path, e)
+            remaining.append(str(path))
     legacy_thread = _legacy_webui_thread_path(session_key)
     if _legacy_owner(legacy_thread, session_key) == "own" and legacy_thread.is_file():
         try:
@@ -1531,13 +1583,15 @@ def delete_webui_transcript(session_key: str) -> bool:
             removed = True
         except OSError as e:
             logger.warning("Failed to delete legacy webui transcript {}: {}", legacy_thread, e)
+            remaining.append(str(legacy_thread))
     active_glob = f"{_transcript_stem(session_key)}.active.*.jsonl"
-    for active_path in get_webui_dir().glob(active_glob):
+    for active_path in sorted(get_webui_dir().glob(active_glob)):
         try:
             active_path.unlink()
             removed = True
         except OSError as e:
             logger.warning("Failed to delete active webui transcript {}: {}", active_path, e)
+            remaining.append(str(active_path))
     segments_dir = webui_transcript_segments_dir(session_key)
     if segments_dir.is_dir():
         try:
@@ -1545,10 +1599,21 @@ def delete_webui_transcript(session_key: str) -> bool:
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript segments {}: {}", segments_dir, e)
+            remaining.append(str(segments_dir))
     from nanobot.webui.generated_asset_index import delete_generated_asset_index
 
     removed = delete_generated_asset_index(session_key) or removed
-    return removed
+    result = TranscriptDeletionResult(
+        deleted=removed,
+        complete=not remaining,
+        remaining=tuple(remaining),
+    )
+    _remember_pending_transcript_deletion(session_key, result.remaining)
+    return result
+
+
+def delete_webui_transcript(session_key: str) -> bool:
+    return delete_webui_transcript_result(session_key).deleted
 
 
 def normalize_session_mentions_metadata(raw: object) -> list[dict[str, str]]:

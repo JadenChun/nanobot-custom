@@ -159,10 +159,10 @@ from nanobot.webui.skills_marketplace import (
     search_marketplace_skills,
     trending_marketplace_skills,
 )
-from nanobot.webui.thread_disk import delete_webui_thread
 from nanobot.webui.transcript import (
     WEBUI_TRANSCRIPT_SCHEMA_VERSION,
     build_webui_thread_response,
+    delete_webui_transcript_result,
     read_transcript_lines,
     webui_transcript_signature,
 )
@@ -2191,6 +2191,8 @@ class GatewayHTTPHandler:
             return _http_json_response(
                 {
                     "deleted": False,
+                    "complete": False,
+                    "remaining": [],
                     "blocked_by_automations": True,
                     "automations": serialize_automation_jobs(
                         automation_jobs, cron_service=self.cron_service,
@@ -2268,9 +2270,13 @@ class GatewayHTTPHandler:
                     self.local_trigger_store.delete(job.id)
         draft_deleted = self.workspaces.discard_draft_scope(decoded_key)
         session_deleted = self.session_manager.delete_session(decoded_key)
-        transcript_deleted = delete_webui_thread(decoded_key)
+        transcript = delete_webui_transcript_result(decoded_key)
         return _http_json_response(
-            {"deleted": bool(draft_deleted or session_deleted or transcript_deleted)}
+            {
+                "deleted": bool(draft_deleted or session_deleted or transcript.deleted),
+                "complete": transcript.complete,
+                "remaining": list(transcript.remaining),
+            }
         )
 
     # -- Automation routes --------------------------------------------------
