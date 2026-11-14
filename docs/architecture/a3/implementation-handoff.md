@@ -11,6 +11,12 @@ The same suites pass 267 of 267 on `/tmp`. Also keep the base path short:
 long` on a long base path. `/tmp` is inode-limited, so clean
 `/tmp/pytest-of-jaden` before a full run.
 
+A fresh worktree also has no `nanobot/web/dist` bundle. Without it,
+`tests/desktop/test_adapter.py` fails 12 of 17 with
+`DesktopError: webui_assets_unavailable`, identically on the untouched base.
+Copy the bundle from a worktree built at the same source or run
+`cd webui && bun run build`. The directory is gitignored.
+
 ## A3-2 reconciliation batch (2026-11-14, Linux)
 
 Branch `codex/a3-audit-reconciliation`, base
