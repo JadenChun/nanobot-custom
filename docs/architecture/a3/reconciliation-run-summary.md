@@ -66,6 +66,7 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | Android host checks | Go race suite, C ABI, and 32 JVM tests passed |
 | Installed Linux wheel | Version, package contents, dependencies, startup and isolated rollback passed |
 | Stopped-copy rollback | Session and cron state rehearsal passed |
+| Copied device revocation | Both installed wheel versions read the revoked device and its proof. The copied state bytes matched before and after both reads. |
 | Final signed APK | Installed and cold-launched twice on Android 16 x86_64 |
 | Final gateway over Serve TLS | 24/24 host device-key checks passed |
 | Earlier signed APK `08e171e0` | Installed app pairing, recovery and revocation passed |

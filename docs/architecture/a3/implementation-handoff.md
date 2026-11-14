@@ -23,6 +23,10 @@ TLS at `dd8a02ca`. The installed app's full pairing and recovery receipt
 still applies to the earlier signed APK `08e171e0`. The rebuilt APK includes
 different native library bytes. A3-9 and A3-10 therefore remain open.
 
+Both installed wheel versions read the revoked device and its proof from a
+stopped copy of the earlier test gateway. The copy had the same digest after
+both reads. See `resume4/final/copied-revocation.jsonl`.
+
 The evidence is in `a3-evidence/a3-reconciliation-2026-11-14/resume4/`.
 See the [run summary](reconciliation-run-summary.md#final-verification) for
 artifact digests and the remaining scope.
