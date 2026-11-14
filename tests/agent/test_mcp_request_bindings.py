@@ -416,7 +416,7 @@ async def test_live_revocation_refuses_sampled_and_prepared_calls(
         fixture.owner._servers = dict(fixture.config)
         monkeypatch.setattr(
             "nanobot.agent.tools.mcp_oauth.mcp_oauth_has_credentials",
-            lambda *_args: authorized,
+            lambda *_args, **_kwargs: authorized,
         )
     provider = OfflineProvider([tool_response(), LLMResponse(content="done")])
     hook = PreparedBarrier()

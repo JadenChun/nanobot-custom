@@ -214,7 +214,7 @@ async def test_saved_oauth_http_403_projects_failed_runtime_without_details(
     class AuthorizationRequiredError(RuntimeError):
         pass
 
-    async def create_auth(_name: str, _url: str, _handlers=None) -> httpx.Auth:
+    async def create_auth(_name: str, _url: str, _handlers=None, **_kwargs: object) -> httpx.Auth:
         return OAuthAuth()
 
     @asynccontextmanager
@@ -234,7 +234,7 @@ async def test_saved_oauth_http_403_projects_failed_runtime_without_details(
     oauth_mod = ModuleType("nanobot.agent.tools.mcp_oauth")
     oauth_mod.MCPAuthorizationRequiredError = AuthorizationRequiredError  # type: ignore[attr-defined]
     oauth_mod.create_mcp_oauth_auth = create_auth  # type: ignore[attr-defined]
-    oauth_mod.mcp_oauth_has_credentials = lambda _name, _url: True  # type: ignore[attr-defined]
+    oauth_mod.mcp_oauth_has_credentials = lambda _name, _url, **_kwargs: True  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "nanobot.agent.tools.mcp_oauth", oauth_mod)
     monkeypatch.setattr(mcp_mod, "validate_url_target", lambda _url: (True, ""))
     monkeypatch.setattr(mcp_mod, "_probe_http_url", reachable)
@@ -1536,7 +1536,7 @@ async def test_connect_mcp_servers_attaches_oauth_to_remote_http_client(
     def _validate(_url: str) -> tuple[bool, str]:
         return True, ""
 
-    async def _create_auth(name: str, url: str, handlers: object) -> object:
+    async def _create_auth(name: str, url: str, handlers: object, **_kwargs: object) -> object:
         captured.update(name=name, url=url, handlers=handlers)
         return oauth_auth
 
@@ -1609,7 +1609,7 @@ async def test_connect_mcp_servers_skips_background_oauth_without_credentials(
     class AuthorizationRequiredError(RuntimeError):
         pass
 
-    async def _create_auth(*_args: object) -> object:
+    async def _create_auth(*_args: object, **_kwargs: object) -> object:
         raise AuthorizationRequiredError
 
     probe_called = False
