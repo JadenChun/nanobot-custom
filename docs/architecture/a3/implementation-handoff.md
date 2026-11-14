@@ -119,6 +119,43 @@ M01-F04, E02-F03, E02-F04, E02-F05, E02-F09. Two were rejected:
 
 The three repairs are READY_FOR_REVIEW; a combined review is in progress.
 
+### A3-8 durability review and repairs
+
+`resume2/a38-durability/REVIEW.md` reviewed eight findings at `ef315ec1`.
+M01-F03 is ACCEPTED: speech duration is measured by the server with a bounded
+5 s ffprobe before dispatch and fails closed. Seven were NOT_ACCEPTED with
+probes: H02-CAP-SOURCE64 (an existing oversize source denies the namespace and
+has no export/quarantine path), H02-CAP-JOURNAL4096 (no read-path rollover or
+operator export above the enumeration bound), H02-IO (every cache get
+re-resolves), A01-F03 (cron persistence blocks the loop), A01-F06 (no cron
+creator/admin isolation), A01-F08 (unconditional processing requeue) and
+A01-F09 (a local trigger obtains approval and effect authority).
+Requirements-only cases are in `resume2/req-a38-cap`, `req-a38-cron` and
+`req-h03f5`; isolation writers own each path.
+
+`resume2/a38-review/REVIEW.md` then ACCEPTED the three earlier repairs.
+A01-F01: against a real SQLite EXCLUSIVE lock the base blocks three paths for
+~0.33 s while the candidate keeps 0.002-0.003 s gaps with no blocked path.
+E02-F07: three independent routes into the segment-only crash window recover
+each turn exactly once with one manifest and unique segment ids; the base
+returns nine rows for five turns. A01-F05: the live registry stays 0 across 60
+and 120 completions, receipts stay readable, and one unsettled delivery stays
+until it settles.
+
+### A3-1 and A3-9 residual review
+
+`resume2/a3-residual-review/REVIEW.md` accepted X01-F01 as a dormant activation
+gate: a real composition with `cli_apps.enable=True` registers 24 tools and no
+`run_cli_app`, and the fixed manifest omits the tool. S02-F03, Q01-F01 and
+R01-F20 are confirmed deferrals with exact contract lines: the A3-2 packet keeps
+lock-scope cleanup separate, the implementation plan excludes Windows, and the
+v1 contract excludes the two-version APK upgrade rehearsal. H01-F6 and H01-F7
+are source-confirmed P2 structural debt with no acceptance criterion; they are
+recorded as DEFERRED_STRUCTURAL to the turn/loop and runner owners rather than
+normalized late in the audit. H03-F5 is NOT_ACCEPTED: Azure compaction fallback
+records 0 attempts for 2 dispatches, OpenAI-compat 1 for 2, and xAI never calls
+the observer.
+
 ### A3-10 dispositions and A3-6 C00-F06
 
 `resume2/a310/A3-10-DISPOSITIONS.md` traces all eight candidates, and
