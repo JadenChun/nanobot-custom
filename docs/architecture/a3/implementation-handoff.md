@@ -1,5 +1,141 @@
 # A3 implementation correction handoff
 
+## Third wave 2026-11-14 (resume2)
+
+Every record below used the exact model
+`commandcode/deepseek/deepseek-v4.1-flash`. Repairs stayed local.
+
+### A3-4 P4 applied outcome and sidebar identity
+
+The integrated branch reproduced two defects at `7c1aa1a8`:
+E02-F20 returned `500/uncertain` and skipped invalidation when a
+`sidebar.update` fan-out failed after the effect applied; U01-F05 reused a
+failed sidebar request id for a changed payload, so the owner answered `409`
+and later edits never persisted.
+
+`3120f4d5` (integrated `cf0b2edd`) moves the sidebar broadcast out of the
+mutation try, keeps `applied`, runs invalidation, and emits
+`projection_error(request_id, reason="sidebar_broadcast_failed")`. `4f4789df`
+(integrated `2912b792`) retains a failed id only for an identical payload and
+mints a fresh id otherwise. Both are ACCEPTED after independent review at
+`cf0b2edd` (`resume2/a34-review/REVIEW.md`): 29 focused and 213 websocket
+tests pass, 4 hook tests pass, C2 and C4 fail on the base, and the C5/C6
+refusal and timeout outcomes stay distinct.
+
+### A3-6 evidence review
+
+Ten findings marked satisfied but unaccepted were reviewed at `7c1aa1a8`
+(`resume2/a36-evidence/REVIEW.md`): T01-F05, T01-F06, H03-F1, T01-F11,
+U01-F02, K01-F02, K01-F08, X01-F04, H03-F4, T01-F12. All ten ACCEPTED with
+21 source blobs matched to the pin, 6/6 probes passing, and the focused suites
+green. The recorded limits are probe-only content-length refusal, no
+AgentRunner end-to-end partial-tool-EOF case, sequential MCP startup, the
+Bedrock gate env var staying for the process, and broker-TTL VPN cleanup.
+
+### A3-8 review findings RR1 and RR3
+
+Both accepted at `7c1aa1a8` (`resume2/rr-review/REVIEW.md`). Five corruption
+classes plus age and quota pressure preserve every blob, sidecar and generated
+asset, with a non-vacuous positive control through `MediaCustody`. Whole-root
+manifests are unchanged for API/CLI preview, refusal and declined
+confirmation; a committed prune removes exactly the intended pair. No
+committed attachment migration route exists, so migration atomicity is
+recorded absent, not passed.
+
+### A3-5 delegation review and K01-F06 guidance
+
+T01-F04 and X01-F02 ACCEPTED at `7c1aa1a8` (`resume2/a35-review/REVIEW.md`).
+Remote MCP read-only hints are untrusted outside stdio/loopback and remote
+tools default to mutating; crawler `expand` is state-changing and refused
+before any result.
+
+K01-F06 is PARTIAL. `923715c7` (integrated `f126a952`) replaces the
+`codex --yolo` guidance with `codex exec --sandbox workspace-write` and states
+the external-sandbox and approval prerequisite. The policy half still needs
+the K01-Q5/D2-D4 decision: `_risky_exec_reason` does not classify nested
+`--yolo`, `--sandbox danger-full-access`, or the tmux `send-keys` form.
+
+### A3-7 native repairs
+
+Four repairs integrated from `codex/a3-7-native`:
+`750d0ce1` (R01-F11), `a3478c52` (R01-F12), `ad9d63f6` (R01-F13),
+`c7c4be4e`+`fb165891` (R01-F14 and the F12 follow-up). Review receipts are at
+`resume2/a37-review/REVIEW.md` and `F12-RECHECK.md`.
+
+R01-F11, R01-F13 and R01-F14 are ACCEPTED. R01-F12 was rejected as partial
+because a single global error slot gave concurrent callers each other's text;
+`fb165891` stores the error under the calling OS thread
+(`SYS_gettid`, 64-entry LRU, process-wide fallback), and the independent C2
+two-thread 2000-round case plus the A-after-B negative control now pass. ABI
+v1, signatures and JNI are unchanged. F12 is ACCEPTED on recheck. No device
+proof exists for the app chat path.
+
+### A3-9 installer, toolchain, CI and staged update
+
+`94542e87` (Q01-F03, R01-F17) and `6d818db6` (E02-F12) are ACCEPTED after
+review (`resume2/a39-review/REVIEW.md` and `F12-RECHECK.md`).
+
+Q01-F03 uses the persistent installed executable. R01-F17 validates every
+pinned toolchain identity or reports it unavailable. E02-F12 was first
+rejected: the CI step exec'd `nanobot/webui/build.py` without registering it
+in `sys.modules`, so fresh, stale and missing bundles all exited 1 with
+`AttributeError`. The fix imports the module and the test now executes the
+real workflow body: fresh exits 0, stale exits 1 with the stale message,
+missing exits 1 with the missing message, on Python 3.11/3.12/3.14.
+
+`2934b5e8` (Q01-F05) is ACCEPTED (`resume2/a39-deploy-review/REVIEW.md`). The
+update stages the candidate from `git archive`, verifies dependencies, bundle,
+config and candidate startup, switches only after verification, restores and
+rechecks the previous target on a post-switch failure, and writes an outcome
+receipt. The pre-change script reproduced a false success with the source
+advanced. 95/95 shell checks and 83/83 independent fixture checks pass.
+
+R01-F05 is PARTIAL. The real owner, `build_gateway_services` and WSS listener
+qualified a typed attach/read, a typed message reaching the bus, a clean
+disconnect, a revoke-then-frame 1008, and no-bearer/wrong-origin denials
+(9/9). No Tailscale tailnet/Serve mapping and no signed APK/device exist, and
+the isolated data server still differs on refresh, mutation replay and HTTP
+logout.
+
+### A3-8 evidence review and three repairs
+
+Nine of eleven reviewed findings were ACCEPTED at `6d818db6`
+(`resume2/a38-evidence/REVIEW.md`): A01-F04, K01-F13, M01-F01, M01-F02,
+M01-F04, E02-F03, E02-F04, E02-F05, E02-F09. Two were rejected:
+
+- A01-F01: retained-result reads and startup recovery blocked the event loop.
+  `2bd6db9b` adds `aresult()` and `astart()` and moves the closed-lane
+  inspection read off the caller thread. The probe shows 0.180 s lane waits
+  with 0.011 s and 0.006 s maximum loop gaps.
+- E02-F07: a crash after segment publication before the tail duplicated turns
+  (9 rows for 5). `1fb61ff0` writes a rotation intent with source active,
+  target tail and committed ids, and recovery keeps the source authoritative
+  while dropping uncommitted segments. The probe now reads each turn once.
+- A01-F05: settled delivery dispatches accumulated for the store lifetime.
+  `ef315ec1` evicts the terminal registry entry and completed task after the
+  last waiter settles, keeps durable receipts readable, and never evicts
+  unsettled work. The growth probe returns to a live size of 0 after 40
+  completions.
+
+The three repairs are READY_FOR_REVIEW; a combined review is in progress.
+
+### A3-10 dispositions and A3-6 C00-F06
+
+`resume2/a310/A3-10-DISPOSITIONS.md` traces all eight candidates.
+A01-F02 and A01-F07 are active/gated. C00-F04 and C00-F05 stay isolated by the
+migration guard pending one retire-or-repair decision. S01-F02,
+H02-ART-SOURCE, H02-LEGACY-ISOLATE and H02-IDLE-DORMANT are retained with
+named owners. AC10.1 needs the C00 decision, AC10.2 needs A3-5 evidence, and
+AC10.3 needs A3-9 acceptance plus an artifact digest.
+
+C00-F06 first repair `c90f85b9` binds `read_file` to the request instance media
+root through `RequestContext.media_root`, `current_media_read_root()` and the
+loop's four request contexts. Instance artifacts read byte-for-byte, ambient
+media is refused under an instance context, the no-instance legacy read still
+works, and outside/credential paths stay refused. A policy follow-up is
+verifying the loop-registered restricted-instance path and the media
+exemption key.
+
 ## Second repair wave 2026-11-14
 
 The second wave added these repairs. Each one has a named review or is recorded
