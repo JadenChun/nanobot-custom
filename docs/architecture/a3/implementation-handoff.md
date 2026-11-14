@@ -1,5 +1,19 @@
 # A3 implementation correction handoff
 
+## E02-F14 installer cleanup 2026-11-14
+
+A direct probe closes the AC2.5 kill-and-join clause. The probe calls the real
+`install_marketplace_skill` path with a fixture `npx` that records its own PID
+and a spawned child PID. On timeout the call returns `SkillsMarketplaceError`
+with status 504. On cancellation it re-raises `CancelledError`. In both cases
+neither recorded process exists before the call returns. The installer already
+uses the owned process path.
+
+The captured installer output is still unbounded because `communicate()`
+buffers it. That observation is outside the packet's timeout and cancellation
+clause. It remains open for the shared process owner. Named reviewer acceptance
+is pending.
+
 ## H01-F1 lost-response acceptance 2026-11-14
 
 W1 reassessed H01-F1 at the integrated candidate. The existing test
