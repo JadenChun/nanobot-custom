@@ -1,5 +1,20 @@
 # A3 implementation correction handoff
 
+## P5 settings route repair 2026-11-14
+
+W14 repaired two A3-4 findings. Commit `7f20e78d` makes the remote-access
+mutation require an actual JSON boolean. A string, number, null, array or
+object now returns 400 before any setting change. A missing field also returns
+400. Real booleans still succeed.
+
+The same commit registers `settings.remote_access.pairing.renew` in the route
+table, the mutation path map and the local-only allowlist. The action reaches
+the existing domain handler once and no longer returns 404. The author cases
+C1-C5 run at the real WebSocket mutation boundary; C4 and C5 send a pending
+pairing id because the domain requires one. The focused set passes 53 tests at
+the repair and 37 at integration HEAD. Strict BasedPyright is 0/546 before and
+after. Named reviewer acceptance remains open.
+
 ## S01-F01 Once projection repair 2026-11-14
 
 W1 demonstrated that only the Full branch asked the live path policy. A live
