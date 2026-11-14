@@ -1,5 +1,86 @@
 # A3 implementation correction handoff
 
+## W1 named review 2026-11-14
+
+Reviewer W1 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`.
+The reviewer read the pinned receipts and the current source at
+`ceaf8fb88faf5cd8162a34236c52d7789127b181` (tree
+`4234c655970a85da3d0ac5aa603c89ca0a9b827b`). The reviewer reran the closest
+focused checks. Every receipt input matches the current source bytes.
+
+The ledger now has 32 accepted findings, 0 ready for review, and 104
+unverified. W1 accepted 11 entries:
+
+| Finding | Proof |
+| --- | --- |
+| H01-F2 | AC3b continuation and later-error outcomes. |
+| T01-F10, K01-F11 | AC5 default guidance and scoped guidance. |
+| S01-F03 | AC2.1 one shared native owner count. |
+| T01-F07 | Restricted browser and device launch refusal. |
+| S02-F02 | Linux/POSIX exec ownership and reservation release. |
+| C00-F01 | Interactive setup cleanup after a failure. |
+| C00-F02 | Concurrent SDK close joins one attempt. |
+| C00-F03 | Grouped rollback retains owned work. |
+| X01-F03 | Bounded CLI Apps output. |
+| T01-F09 | Linux/POSIX descendant quiescence. |
+
+W1 did not accept three entries. The exact missing proof is below.
+
+| Finding | Missing proof |
+| --- | --- |
+| H01-F1 | AC3a clause 3: a lost commit response must recover with the original source identity and apply the input at most once. The A3-8 retained-evidence batch owns this test. |
+| S01-F01 | W1 demonstrated a residual defect. The Once/task branch of `workspace_focus.py` still returns read from directory existence and write from root access. A live Once projection reported read and write true while the path policy denied a configured protected directory. |
+| E02-F14 | No focused test cancels or times out `install_marketplace_skill` and shows that the installer and its descendants are killed and joined. The captured install output is also unbounded. |
+
+W1 confirmed that H01-F6 and H01-F7 stay unverified. A3-1 proves the concrete
+F1 and F2 defects, not the structural projection or dispatch deduplication.
+S02-F03 stays deferred because no contention measurement exists. X01-F01 stays
+unverified and dormant: the real composition registers 24 tools without
+`run_cli_app`.
+
+The repair owner for S01-F01 started from the W1 probe. A same-model
+requirements-only author prepared C1-C5 for the Once/task, Full, normal and
+proposal scopes. The owner integrates those cases and runs the frozen strict
+comparison.
+
+## RR2 explicit refusal 2026-11-14
+
+W2 determined that an older reader must keep process continuations disabled.
+In that mode the reader starts and never opens the journal. A probe with an
+unreadable journal started cleanly. With continuations enabled, the reader
+refuses the whole journal at `source_state` with `extra_forbidden` and
+dispatches nothing. Both older readers reject the current record.
+
+A compatible inspect-only export is unsafe. It would remove the `source_state`
+fence, and the older reader would resume work by session key. The selected
+first-release contract permits an explicit refusal when the older reader
+cannot read the state safely. The journal, terminal, unknown and originless
+rows, and device revocations stay readable with the current reader. No row was
+downgraded and the journal bytes did not change.
+
+Commit `b6000cef` records this behavior in the rollback procedure. No product
+code changed. Receipts are in
+`a3-evidence/a3-reconciliation-2026-11-14/w2-rr2/`. Named review of RR2
+remains open.
+
+## A3-4 inventory and A3-6 preparation
+
+W3 mapped the 14 A3-4 findings and AR1/AR2 to current owners and tests. Four
+findings are satisfied, five are partial, and five are not implemented. AR1 is
+proved except for an instrumented deny case at the loop boundary. AR2 is proved
+except for a second identical child effect in a later iteration. The package
+order is in `w3-a34/PACKAGES.md`. A requirements-only author produced nine
+cases for the missing authority tests.
+
+W5 mapped the A3-6a findings. T01-F11 and U01-F02 are satisfied. K01-F03,
+K01-F04, and E02-F23 are partial. K01-F05, K01-F07, and K01-F09 are not
+implemented. The repair slices and proof-only gaps are in
+`w5-a36a/REPAIRS.md`.
+
+This host has no Android SDK, emulator, Go toolchain, or Playwright browser.
+Android, native broker, and physical-device checks remain outside this run.
+The in-app browser and the frozen Python environment supply the Linux checks.
+
 ## A3-3 child history and rollback review
 
 The Linux review at `cfb72439` passed 290 focused tests across three runs.
