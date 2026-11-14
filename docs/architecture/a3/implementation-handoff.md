@@ -1,5 +1,41 @@
 # A3 implementation correction handoff
 
+## H01-F1 lost-response acceptance 2026-11-14
+
+W1 reassessed H01-F1 at the integrated candidate. The existing test
+`tests/session/test_canonical_followups.py::test_admission_and_atomic_consumption_are_idempotent_and_bound`
+proves the clause the earlier review could not find. Admission is idempotent
+for a server-minted identifier. Consumption writes the input exactly once and
+drops the journal row in the same write. A repeated consume after a lost
+response returns the same committed event. An altered projection, a different
+writer or a replaced binding is refused.
+
+W1 also ran a direct post-commit response-loss probe with a second writer on the
+same owner. The retry returned the same event id, the event count stayed at one,
+the journal was absent and the content did not change. H01-F1 is accepted. The
+residual is a design note: a binding re-created by a different writer is
+rejected by design, so at-most-once holds and at-least-once is not promised.
+
+## P1 approval effect 2026-11-14
+
+W17 made `desktop_use` a risky tool. Only `info`, `screenshot`,
+`cursor_position` and `wait` are read-only. Every other, unknown or non-string
+action requires one exact-effect approval bound to the full argument
+fingerprint. The existing sealed one-use authority and dispatch consume are
+reused; no second approval mechanism was added.
+
+The same commit covers the two AR residuals. A typed deny with an instrumented
+risky tool starts no call. After a child approval is consumed, a later identical
+risky child effect requires fresh approval and applies nothing. The author cases
+C1-C9 pass, including the four-action read-only matrix.
+
+The repair commit is `bf80569a`, cherry-picked as `19e95d33`. The six required
+suites passed 164 tests at the repair and 146 at integration HEAD. Strict
+BasedPyright is 0/546 before and after. Named reviewer acceptance is pending.
+Documented limits: C4 `wait` is a local timer; C6 repeats an `edit_file` bulk
+replace; desktop screenshot is read-only under the author contract; delegated
+roles cannot use `desktop_use`.
+
 ## Desktop and narrow client evidence 2026-11-14
 
 W4 ran the current WebUI source, not the older 7d96468c overlay. The full
