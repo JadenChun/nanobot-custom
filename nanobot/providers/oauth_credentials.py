@@ -594,12 +594,8 @@ class _LoginGeneration:
         self, observe_owner: Callable[[], object], state: _StoreState | None,
     ) -> str:
         """Validate this generation's owner and intent without publishing credentials."""
-        value = (
-            None
-            if state is None
-            else self.current_value(observe_owner, state.intent_generation)
-        )
-        if value is None:
+        value = self._value_for(observe_owner())
+        if value is None or state is None or value != state.intent_generation:
             raise CredentialError(_STALE_ERROR)
         return value
 
