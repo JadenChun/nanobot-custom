@@ -21,6 +21,12 @@ from nanobot.providers.base import ToolCallRequest
 
 _APPROVAL_REQUIRED = "approval_required"
 
+# Desktop control actions that only observe the local screen. Every other
+# action, and every action value that is not an exact match, emits global
+# input events or is unknown, so it needs the same exact-effect approval as
+# other state-changing tools.
+_READ_ONLY_DESKTOP_ACTIONS = frozenset({"info", "screenshot", "cursor_position", "wait"})
+
 
 @dataclass(slots=True)
 class ToolPolicyDecision:
@@ -262,7 +268,10 @@ class RiskyActionPolicy(ToolPolicy):
     )
 
     def mutating_tool_names(self) -> set[str]:
-        return {"write_file", "edit_file", "exec", "cron", "agent_browser", "agent_device"}
+        return {
+            "write_file", "edit_file", "exec", "cron",
+            "agent_browser", "agent_device", "desktop_use",
+        }
 
     async def evaluate(
         self,
@@ -385,6 +394,13 @@ class RiskyActionPolicy(ToolPolicy):
             args = tool_call.arguments.get("args") or []
             if classify_device_action(args) != "read_navigation":
                 return "perform a state-changing device action"
+        if tool_call.name == "desktop_use":
+            # Desktop control emits global input events. Only the exact
+            # read-only action names stay autonomous; any other value,
+            # including a non-string or unknown action, needs approval.
+            action = tool_call.arguments.get("action")
+            if not isinstance(action, str) or action not in _READ_ONLY_DESKTOP_ACTIONS:
+                return "perform a state-changing desktop input action"
         return None
 
     def _risky_exec_reason(self, command: str, working_dir: str | None = None) -> str | None:

@@ -16,6 +16,7 @@ from nanobot.agent.turn import (
     ApprovalDecision,
     ApprovalGrant,
     DeliveryTarget,
+    RunStatus,
     TurnContext,
     TurnRequest,
 )
@@ -117,6 +118,35 @@ async def test_racing_original_chat_decisions_cannot_share_effect(engine_config)
         assert counter.count == 1
         assert sorted(result.stop_reason for result in results) == ["approval_stale", "completed"]
         assert len(provider.calls) == 3
+    finally:
+        await loop.aclose()
+
+
+async def test_denied_decision_with_instrumented_risky_tool_starts_no_call(engine_config):
+    provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[risky_call("blocked")])])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    upgrade(loop)
+    counter = CountExec()
+    loop.tools.replace(counter)
+    try:
+        blocked = await loop.execute_turn(TurnRequest(
+            content="Perform this risky effect.", session_key="cli:source",
+            route=DeliveryTarget(channel="cli", chat_id="original"),
+        ))
+        assert blocked.stop_reason == "approval_required"
+        assert counter.count == 0
+        pending = (await loop.approval_admission.snapshot_decision("cli:original", None)).pending
+        assert pending is not None
+        denied = await loop.execute_turn(TurnRequest(
+            content="approval_decision",
+            route=DeliveryTarget(channel="cli", chat_id="original"),
+            approval_decision=ApprovalDecision(approval_id=pending.approval_id, decision="deny"),
+        ))
+        assert denied.status is RunStatus.CANCELLED
+        assert denied.stop_reason == "cancelled"
+        assert counter.count == 0
+        assert len(provider.calls) == 1
+        assert (await loop.approval_admission.snapshot_decision("cli:original", None)).pending is None
     finally:
         await loop.aclose()
 
