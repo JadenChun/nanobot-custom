@@ -207,9 +207,11 @@ class WorkspaceFocusOwner:
                         target, "write", permission_owner, task_reference,
                     )
                 )
+                managed_repository = self._is_managed_repository_target(target)
                 command_ready = (
                     exists
                     and task_commands
+                    and not managed_repository
                     and managed_bwrap_available()
                     and native_supervisor_available()
                     and self._reference_path_allowed(
@@ -220,6 +222,7 @@ class WorkspaceFocusOwner:
                     None if command_ready else
                     "supervisor_unavailable" if not native_supervisor_available() else
                     "sandbox_unavailable" if not managed_bwrap_available() else
+                    "managed_repository_policy" if managed_repository else
                     "not_granted"
                 )
                 return {
@@ -891,6 +894,13 @@ class WorkspaceFocusOwner:
         except PermissionError:
             return False
         return True
+
+    def _is_managed_repository_target(self, target: Path) -> bool:
+        """Match the managed shell rule that refuses configured-repository cwd."""
+        return any(
+            _is_under(target, root)
+            for root in self.policy.managed_repository_roots()
+        )
 
     def _reference_path_allowed(
         self,

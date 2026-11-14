@@ -242,3 +242,44 @@ def test_c5_once_projection_denies_write_to_a_proposal_path(tmp_path) -> None:
 
     assert access["write"] is False
 
+
+def test_c6_once_commands_reflect_managed_repository_exclusion(tmp_path) -> None:
+    from nanobot.agent.tools.native_process import native_supervisor_available
+    from nanobot.agent.tools.sandbox import managed_bwrap_available
+
+    owner, _policy, sessions, repo = _build_scoped_owner(tmp_path)
+    reference = _live_once(sessions, repo)
+    backend = managed_bwrap_available() and native_supervisor_available()
+
+    repository_access = owner.effective_access(
+        repo / "ordinary" / "sub", permission_reference=reference,
+    )
+    assert repository_access["source"] == "task"
+    assert repository_access["commands"]["available"] is False
+    if backend:
+        assert repository_access["commands"]["reason"] == "managed_repository_policy"
+    else:
+        assert repository_access["commands"]["reason"] in {
+            "supervisor_unavailable", "sandbox_unavailable",
+        }
+
+    plain_root = tmp_path / "plain-task"
+    (plain_root / "sub").mkdir(parents=True)
+    plain_reference = sessions.desktop_permissions.activate_once(
+        session_key=CHAT,
+        source_binding=dict(BINDING),
+        task_turn_id="turn-c6",
+        task_input_event_id="input-c6",
+        path=plain_root,
+        file_access="read_write",
+        commands=True,
+    )
+    plain_access = owner.effective_access(
+        plain_root / "sub", permission_reference=plain_reference,
+    )
+    assert plain_access["source"] == "task"
+    if backend:
+        assert plain_access["commands"]["available"] is True
+        assert plain_access["commands"]["reason"] is None
+
+
