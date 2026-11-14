@@ -45,8 +45,8 @@ type Core struct {
 	eventMu sync.Mutex
 
 	terminalMu         sync.Mutex
-	terminalEvents     map[uint64][]byte
-	terminalOrder      []uint64
+	terminalEvents     map[terminalKey][]byte
+	terminalOrder      []terminalKey
 	terminalBytes      int
 	terminalByteLimit  int
 	maxTerminalResults int
@@ -55,9 +55,11 @@ type Core struct {
 	peerIPs map[string]string
 	peerAt  time.Time
 
-	mediaToken   string
-	mediaStreams map[uint64]*mediaStream
-	nextMediaID  uint64
+	mediaToken        string
+	mediaStreams      map[uint64]*mediaStream
+	nextMediaID       uint64
+	mediaCacheBudget  int64
+	mediaCacheReserve int64
 }
 
 func NewCore(cfg Config) (*Core, error) {
@@ -92,7 +94,8 @@ func NewCore(cfg Config) (*Core, error) {
 		requests:           make(map[uint64]context.CancelFunc),
 		events:             make(chan []byte, cfg.QueueSize),
 		mediaStreams:       make(map[uint64]*mediaStream),
-		terminalEvents:     make(map[uint64][]byte),
+		mediaCacheBudget:   mediaCacheBudget,
+		terminalEvents:     make(map[terminalKey][]byte),
 		terminalByteLimit:  terminalLimit,
 		maxTerminalResults: maxTerminalResults,
 	}, nil

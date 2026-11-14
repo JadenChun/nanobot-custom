@@ -651,6 +651,103 @@ func TestQueueFullRetainsTerminalResult(t *testing.T) {
 	}
 }
 
+func TestWebSocketCloseSurvivesFullQueue(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
+	wsID, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
+	if err != nil {
+		t.Fatalf("WSOpen: %v", err)
+	}
+	if err := core.WSClose(wsID); err != nil {
+		t.Fatalf("WSClose: %v", err)
+	}
+	buffer := make([]byte, 64*1024)
+	closed := 0
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		n, err := core.PollEvent(buffer)
+		if err != nil {
+			t.Fatalf("PollEvent: %v", err)
+		}
+		if n == 0 {
+			if closed > 0 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		var event struct {
+			Type string  `json:"type"`
+			WSID float64 `json:"ws_id"`
+		}
+		if err := json.Unmarshal(buffer[:n], &event); err != nil {
+			t.Fatalf("event JSON: %v", err)
+		}
+		if event.Type == "ws_closed" {
+			if event.WSID != float64(wsID) {
+				t.Fatalf("ws_closed identity: %v", event.WSID)
+			}
+			closed++
+		}
+	}
+	if closed != 1 {
+		t.Fatalf("admitted WebSocket settled %d times, want exactly 1", closed)
+	}
+	if n, err := core.PollEvent(buffer); n != 0 || err != nil {
+		t.Fatalf("extra terminal result after close: n=%d err=%v", n, err)
+	}
+}
+
+func TestWebSocketTerminalKeepsOneResultWhenQueueIsFull(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
+	if err := core.emit(map[string]any{"type": "filler"}); err != nil {
+		t.Fatalf("filler: %v", err)
+	}
+	if err := core.emit(map[string]any{
+		"type":  "ws_error",
+		"ws_id": 3,
+		"code":  "queue_full",
+	}); err != nil {
+		t.Fatalf("ws_error emit: %v", err)
+	}
+	if err := core.emit(map[string]any{
+		"type":   "ws_closed",
+		"ws_id":  3,
+		"code":   1008,
+		"reason": "event queue full",
+	}); err != nil {
+		t.Fatalf("ws_closed emit: %v", err)
+	}
+	buffer := make([]byte, 64*1024)
+	settled := 0
+	for {
+		n, err := core.PollEvent(buffer)
+		if err != nil {
+			t.Fatalf("PollEvent: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+		var event struct {
+			Type string  `json:"type"`
+			WSID float64 `json:"ws_id"`
+		}
+		if err := json.Unmarshal(buffer[:n], &event); err != nil {
+			t.Fatalf("event JSON: %v", err)
+		}
+		if event.Type == "ws_closed" || event.Type == "ws_error" {
+			if event.WSID != 3 {
+				t.Fatalf("terminal identity: %v", event.WSID)
+			}
+			settled++
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("admitted WebSocket retained %d terminal results, want exactly 1", settled)
+	}
+}
+
 func TestTerminalBudgetHoldsEveryAdmittedResult(t *testing.T) {
 	release := make(chan struct{})
 	releaseResponses := sync.OnceFunc(func() { close(release) })

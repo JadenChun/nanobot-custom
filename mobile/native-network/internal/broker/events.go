@@ -2,12 +2,13 @@ package broker
 
 import (
 	"encoding/json"
-	"sync"
 )
 
 // PollEvent copies one queued event into out. It returns 0 when the queue is
 // empty, the event size when copied, or ErrBufferSmall when out cannot hold the
-// next event. A too-small event is retained for the next poll.
+// next event. A too-small event is retained for the next poll. Retained
+// terminal results are drained before the normal queue so an admitted request
+// always settles even when the queue was full.
 func (c *Core) PollEvent(out []byte) (int, error) {
 	c.eventMu.Lock()
 	defer c.eventMu.Unlock()
@@ -43,6 +44,14 @@ func (c *Core) copyPending(out []byte) (int, error) {
 	return n, nil
 }
 
+// terminalKey identifies one admitted request or WebSocket session. HTTP
+// terminal events and WebSocket close/error events share the terminal budget
+// but never share an identity.
+type terminalKey struct {
+	ws bool
+	id uint64
+}
+
 func (c *Core) emit(event map[string]any) error {
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -52,8 +61,8 @@ func (c *Core) emit(event map[string]any) error {
 	case c.events <- data:
 		return nil
 	default:
-		if id, terminal := terminalRequestID(data); terminal {
-			if c.retainTerminal(id, data) {
+		if key, terminal := terminalEventKey(data); terminal {
+			if c.retainTerminal(key, data) {
 				return nil
 			}
 		}
@@ -61,56 +70,75 @@ func (c *Core) emit(event map[string]any) error {
 	}
 }
 
-func terminalRequestID(data []byte) (uint64, bool) {
+func terminalEventKey(data []byte) (terminalKey, bool) {
 	var event struct {
 		Type      string  `json:"type"`
 		RequestID float64 `json:"request_id"`
+		WSID      float64 `json:"ws_id"`
 	}
 	if err := json.Unmarshal(data, &event); err != nil {
-		return 0, false
+		return terminalKey{}, false
 	}
-	if event.Type != "http_response" && event.Type != "http_error" {
-		return 0, false
+	switch event.Type {
+	case "http_response", "http_error":
+		if event.RequestID <= 0 || event.RequestID != float64(uint64(event.RequestID)) {
+			return terminalKey{}, false
+		}
+		return terminalKey{id: uint64(event.RequestID)}, true
+	case "ws_closed", "ws_error":
+		if event.WSID <= 0 || event.WSID != float64(uint64(event.WSID)) {
+			return terminalKey{}, false
+		}
+		return terminalKey{ws: true, id: uint64(event.WSID)}, true
+	default:
+		return terminalKey{}, false
 	}
-	if event.RequestID <= 0 || event.RequestID != float64(uint64(event.RequestID)) {
-		return 0, false
-	}
-	return uint64(event.RequestID), true
 }
 
-func (c *Core) retainTerminal(id uint64, data []byte) bool {
+// retainTerminal stores one bounded terminal result per identity. A repeat
+// result for the same identity replaces the earlier one; an admitted result for
+// a different identity is never evicted to make room.
+func (c *Core) retainTerminal(key terminalKey, data []byte) bool {
 	c.terminalMu.Lock()
 	defer c.terminalMu.Unlock()
-	if existing, ok := c.terminalEvents[id]; ok {
+	if existing, ok := c.terminalEvents[key]; ok {
 		c.terminalBytes -= len(existing)
 	}
 	if len(data) > c.terminalByteLimit {
-		c.removeTerminalLocked(id)
+		c.removeTerminalLocked(key)
 		return false
 	}
-	if _, exists := c.terminalEvents[id]; !exists {
-		c.terminalOrder = append(c.terminalOrder, id)
+	if _, exists := c.terminalEvents[key]; !exists {
+		c.terminalOrder = append(c.terminalOrder, key)
 	}
-	c.terminalEvents[id] = data
+	c.terminalEvents[key] = data
 	c.terminalBytes += len(data)
 	// Admission reserves one terminal slot per request. Never evict an
 	// earlier admitted result to store a newer one.
 	if c.terminalBytes > c.terminalByteLimit {
-		c.removeTerminalLocked(id)
+		c.removeTerminalLocked(key)
 		return false
 	}
 	return true
 }
 
+// hasTerminalCapacityLocked reports whether one more admitted request fits the
+// terminal budget. The caller holds c.mu, so the reserved WebSocket slot is
+// read safely.
 func (c *Core) hasTerminalCapacityLocked() bool {
 	c.terminalMu.Lock()
 	defer c.terminalMu.Unlock()
-	return len(c.requests)+len(c.terminalEvents) < c.maxTerminalResults
+	reserved := 0
+	if c.ws != nil {
+		// One admitted WebSocket always leaves room for its close/error.
+		reserved = 1
+	}
+	return len(c.requests)+len(c.terminalEvents)+reserved < c.maxTerminalResults
 }
 
-func (c *Core) removeTerminalLocked(id uint64) {
-	if existing, ok := c.terminalEvents[id]; ok {
-		delete(c.terminalEvents, id)
+func (c *Core) removeTerminalLocked(key terminalKey) {
+	if existing, ok := c.terminalEvents[key]; ok {
+		delete(c.terminalEvents, key)
 		c.terminalBytes -= len(existing)
 	}
 }
@@ -119,20 +147,14 @@ func (c *Core) popTerminal() ([]byte, bool) {
 	c.terminalMu.Lock()
 	defer c.terminalMu.Unlock()
 	for len(c.terminalOrder) > 0 {
-		id := c.terminalOrder[0]
+		key := c.terminalOrder[0]
 		c.terminalOrder = c.terminalOrder[1:]
-		event, ok := c.terminalEvents[id]
+		event, ok := c.terminalEvents[key]
 		if !ok {
 			continue
 		}
-		c.removeTerminalLocked(id)
+		c.removeTerminalLocked(key)
 		return event, true
 	}
 	return nil, false
-}
-
-// A tiny mutex wrapper keeps the event queue logic readable without exposing
-// the queue to callers.
-type eventQueue struct {
-	mu sync.Mutex
 }
