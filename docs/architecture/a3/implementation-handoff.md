@@ -142,6 +142,51 @@ returns nine rows for five turns. A01-F05: the live registry stays 0 across 60
 and 120 completions, receipts stay readable, and one unsettled delivery stays
 until it settles.
 
+### A3-8 late repair group
+
+`8fd03e4b` repairs the source, journal and cache-IO findings. An existing
+67 MB source no longer denies `list_modes` or an unrelated reset; export
+returns the exact bytes with a receipt, and a new oversize publication is still
+refused. An over-bound journal namespace acquires by rolling terminal journals,
+with 9/9 retained reads and a documented archive. Cache gets use one
+process-local binding: two gets perform one resolution and one inventory
+instead of three and three. All three are ACCEPTED in
+`resume2/a38-caps-review/REVIEW.md`.
+
+`132609d1` repairs cron liveness and isolation. The durable poll runs on a
+worker thread, so a 0.3 s injected store/inspection delay produces a 0.015 s
+maximum unrelated gap instead of 0.618 s, with identical state and fired order.
+Cron list/remove is creator/admin scoped; a foreign id returns `not_found`
+without mutation. Both ACCEPTED in `resume2/a38-cron-review/REVIEW.md`; the
+admin key is not yet config-wired.
+
+`ab2f0002` repairs approval provenance and trigger recovery. Approval admission
+now requires an explicit provenance; local trigger, automation, subagent, cron
+ingress and admin-text claims are denied without consuming the pending approval
+or issuing effect authority, while trusted foreground still grants once. A
+started trigger attempt is quarantined as unknown on restart, with a settlement
+id and owner resolution, and is not replayed; only a proven-absent claim
+requeues once. Both are READY_FOR_REVIEW after 116 focused tests and a 0/546
+strict run.
+
+### A3-9 R01-F05 partial and app-receipt dispute
+
+`resume2/a39-r01f05-review/REVIEW.md` confirms the real Serve TLS host path:
+typed attach/read, typed mutation on the real bus, clean disconnect, revoke
+1008, bearer/origin denials and `/remote/v1/refresh` 200. It does not accept
+the finding. `websockets 15.0.1` rejects non-GET before routing, so legacy
+`POST /mobile/v1/refresh` and `/logout` return 502 through Serve and zero bytes
+on loopback; WS logout is `scope_denied` and leaves the token valid; app logout
+is local-only; refresh rotation never replays an old token; and the app receipt
+runs at `1b3b7fc7` rather than the `ef315ec1` artifact.
+
+The app receipt itself is DISPUTED for provenance: the proxy log format does
+not match the retained `tee_proxy.py`, the logcat is a two-line tail, the
+fixture log chats differ from the scenario chats, and the Serve hop is inferred.
+The screenshots and UI dumps agree on the parent draft, attachment and
+read-only child view, but a clean single-run receipt is required before the
+scenario counts. A re-run at `ef315ec1` is in progress.
+
 ### A3-1 and A3-9 residual review
 
 `resume2/a3-residual-review/REVIEW.md` accepted X01-F01 as a dormant activation
