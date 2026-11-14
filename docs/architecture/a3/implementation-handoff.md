@@ -1,5 +1,44 @@
 # A3 implementation correction handoff
 
+## A3-2 browser and device workspace access
+
+Commit `6e2c7761` connects the browser and device tools to the shared resource
+policy. Restricted turns refuse host automation before browser setup or
+launcher startup. A working directory inside the workspace cannot constrain
+the external command's file output. Unrestricted native calls can still
+launch the tools with the requested directory. The managed WebUI tool set
+excludes both tools.
+
+On Linux, a fixture launcher recorded four restricted launches before the
+repair. The same calls now report `policy_blocked` and create no receipt.
+The unrestricted calls launch with the requested directory and arguments.
+The check uses a fixture in place of the browser and device packages.
+
+The focused run passed 77 tests. The full run passed 18,319 tests and six
+subtests, with 22 skips. Strict BasedPyright found zero diagnostics in 546
+files before and after the repair. The dependency pins matched. The diagnostic
+comparison and Ruff passed. The receipts are in
+`a3-evidence/a3-reconciliation-2026-11-14/t01-f07/` beside the worktree.
+
+The [ledger](evidence.json) has 20 accepted findings, 15 ready for review, and
+101 unverified. T01-F07 is ready for review. Review the A3-2 and A3-3
+prerequisites before accepting A3-4. Keep restricted CLI Apps activation
+gated on qualified confinement. S02-F03 remains deferred under the A3-2
+packet.
+
+### A3-3 SDK continuation after restart
+
+A Linux probe opened a saved legacy transcript through the SDK. After
+restart, the same key returned the original messages in order. An SDK turn
+appended one exchange. A third runtime read all four messages from the same
+key. The session list held one entry throughout the probe.
+
+This covers legacy SDK continuation under AC3.1. The probe uses a scripted
+provider. Its receipt is in
+`a3-evidence/a3-reconciliation-2026-11-14/a33-restart/` beside the worktree.
+Review the child-source and process-completion evidence for AR3 and RR2
+before accepting A3-3. Keep the rollback-reader check open.
+
 ## Audit continuation after OpenCode
 
 Continue on `codex/a3-audit-reconciliation` in
@@ -7,8 +46,9 @@ Continue on `codex/a3-audit-reconciliation` in
 OpenCode's 17 commits through `5e1bc17c` and the rollback repair at `3492ac30`.
 The branch includes the current audit implementation base `722bd8ec`.
 
-The [ledger](evidence.json) has 20 accepted findings, 14 ready for review, and
-102 unverified. Codex reviewed and accepted four OpenCode findings in A3-1.
+At this checkpoint, the [ledger](evidence.json) had 20 accepted findings,
+14 ready for review, and 102 unverified. Codex reviewed and accepted four
+OpenCode findings in A3-1.
 They cover archive provenance, prepared provider fallback, and input validation.
 
 | Finding | Current result |
