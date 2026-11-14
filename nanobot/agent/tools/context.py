@@ -48,6 +48,7 @@ class RequestContext:
     workspace_scope: WorkspaceScope | None = None
     persistent_session: bool = True
     source_state: SourceState | None = None
+    media_root: Path | None = None
 
 
 @runtime_checkable

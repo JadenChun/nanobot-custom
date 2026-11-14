@@ -360,12 +360,15 @@ class _FsTool(Tool):
         if _is_blocked(resolved):
             raise PermissionError("Access to protected credential filename is blocked")
         if self._resource_policy:
-            from nanobot.config.paths import get_media_dir
+            from nanobot.agent.tools.path_utils import current_media_read_root
 
             self._resource_policy.validate_path(
                 resolved,
                 "read",
-                extra_read_roots=[*self._extra_read_allowed_dirs, *plugin_skill_dirs, get_media_dir()],
+                extra_read_roots=[
+                    *self._extra_read_allowed_dirs, *plugin_skill_dirs,
+                    current_media_read_root(),
+                ],
                 extra_read_files=self._extra_read_allowed_files,
                 target_kind=(
                     "directory" if self.name in {

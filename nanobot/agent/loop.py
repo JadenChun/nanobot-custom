@@ -2206,6 +2206,7 @@ class AgentLoop:
             source_state=(ctx.run_context.execution_owner.read_snapshot().state
                           if ctx.run_context is not None and ctx.run_context.execution_owner is not None
                           else None),
+            media_root=self.media_root,
         )
 
     async def _resolve_runtime_context_for_turn(
@@ -2295,6 +2296,7 @@ class AgentLoop:
                 sender_id=ctx.msg.sender_id,
                 turn_id=metadata.get("webui_turn_id"),
                 workspace=scope.project_path,
+                media_root=self.media_root,
             ))
             workspace_token = bind_workspace_scope(scope)
             turn_scope_stack = ExitStack()
@@ -3530,6 +3532,7 @@ class AgentLoop:
                         sender_id=pending_msg.sender_id,
                         turn_id=request_ctx.turn_id,
                         workspace=scope.project_path,
+                        media_root=self.media_root,
                     )
                     blocks = await self._resolve_runtime_context_for_request(
                         pending_request,
@@ -3692,6 +3695,7 @@ class AgentLoop:
             chat_id="direct",
             session_key=session.key if session is not None else None,
             runtime=runtime,
+            media_root=self.media_root,
         )
         active_session_key = session.key if session else request_ctx.session_key
         request_metadata = request_ctx.metadata
