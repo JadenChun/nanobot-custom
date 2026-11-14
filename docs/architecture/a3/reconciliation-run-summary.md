@@ -3,9 +3,9 @@
 **Date:** 2026-11-14 (Linux x86_64)
 **Coordinator and workers:** `commandcode/deepseek/deepseek-v4.1-flash`
 **Worktree:** `/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`
-**Branch:** `codex/a3-audit-reconciliation`, 146 commits ahead of
+**Branch:** `codex/a3-audit-reconciliation`, 152 commits ahead of
 `origin/codex/staging-audit-implementation` (`722bd8ec`).
-**Candidate:** `58c25692` (code at `74abe219`, plus evidence and documentation).
+**Candidate:** `d207383f` (Python code at `74abe219`, mobile at `30f8cd4c`, plus evidence and documentation).
 **Release state:** HOLD. Push, merge, deployment, and formal release
 qualification remain with the project owner.
 
@@ -18,7 +18,7 @@ qualification remain with the project owner.
 | Ready for review | 0 |
 | Unverified | 4 |
 | Review findings | 9 (all accepted; RR1 and RR3 accepted in the third wave) |
-| Evidence rows | 115 |
+| Evidence rows | 118 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
