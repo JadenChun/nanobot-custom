@@ -1,5 +1,21 @@
 # A3 implementation correction handoff
 
+## Desktop and mobile subagent activity
+
+At `7d96468c`, the original chat shows compact subagent status rows. A row
+opens read-only activity beside the chat on desktop and full screen on a phone.
+The original chat retains the draft, attachments, approvals, and Stop.
+
+All 1,550 WebUI tests, lint, and eight installed browser scenarios passed.
+The browser checked live status, sibling selection, keyboard access, and return
+to the original draft, attachments, scroll position, and focus. On the Android
+emulator, system Back and the in-app Back button returned to the parent draft.
+The emulator used a debug APK and a loopback TLS fixture. The wheel and APK
+matched on 525 uncompressed WebUI assets. Local receipts and screenshots are
+in `a3-evidence/linux-android-2026-11-13/subagent-ui/` beside the worktree.
+
+The [OpenCode handoff](opencode-handoff.md) covers the 120 unverified findings.
+
 ## Pairing cancellation and Linux verification
 
 The branch includes staging `f1a6bb855`. The current verified source is
