@@ -75,7 +75,12 @@ if TYPE_CHECKING:
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.mode_storage import ManagedNamespaceAccess
     from nanobot.session.session_export import CanonicalExportOperations
-    from nanobot.session.session_mode import ResolvedSessionMode, SessionModeResolver
+    from nanobot.session.session_mode import (
+        JournalArchiveReceipt,
+        ResolvedSessionMode,
+        SessionModeResolver,
+        SourceExtractionReceipt,
+    )
     from nanobot.session.source_root import SourceRootAuthority
     from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
 
@@ -2720,6 +2725,26 @@ class SessionManager:
             raise RuntimeError("offline session operator authority is required")
         return self._mode_resolver.prepare_rollback()
 
+    def export_session_source(
+        self, key: str, destination: Path, *, quarantine: bool = False
+    ) -> "SourceExtractionReceipt":
+        """Copy one exact source entry to a new operator destination."""
+        if self._mode_resolver is None:
+            raise RuntimeError("session namespace is unmanaged")
+        return self._mode_resolver.export_source(key, destination, quarantine=quarantine)
+
+    def export_session_journal_archive(self, destination: Path) -> "JournalArchiveReceipt":
+        """Write one complete archive of live and retained mode journals."""
+        if self._mode_resolver is None:
+            raise RuntimeError("session namespace is unmanaged")
+        return self._mode_resolver.export_journal_archive(destination)
+
+    def read_session_journal(self, operation_id: str) -> list[dict[str, object]]:
+        """Read one complete live or retained mode journal by operation id."""
+        if self._mode_resolver is None:
+            raise RuntimeError("session namespace is unmanaged")
+        return self._mode_resolver.read_journal(operation_id)
+
     def peek_cron_interruption_reset_occurrence(self, key: str) -> tuple[str, str] | None:
         """Read the claimed occurrence and run bound to a pending cron reset."""
         if self._mode_resolver is None:
@@ -2887,12 +2912,17 @@ class SessionManager:
                 self._overflow_cache[key] = evicted
 
         if self._mode_resolver is not None:
-            self._mode_bindings[session.key] = self._mode_resolver.resolve(session.key).binding
+            unchanged, resolved = self._mode_resolver.cached_resolution(session.key)
+            if not unchanged or resolved is None:
+                resolved = self._mode_resolver.resolve(session.key)
+            self._mode_bindings[session.key] = resolved.binding
 
     def _cached(self, key: str) -> Session | None:
         if self._mode_resolver is not None:
-            binding = self._mode_resolver.resolve(key).binding
-            if key in self._mode_bindings and self._mode_bindings[key] != binding:
+            unchanged, resolved = self._mode_resolver.cached_resolution(key)
+            if not unchanged or resolved is None:
+                resolved = self._mode_resolver.resolve(key)
+            if key in self._mode_bindings and self._mode_bindings[key] != resolved.binding:
                 self.invalidate(key)
         session = self._cache.get(key)
         if session is not None:
@@ -3121,7 +3151,9 @@ class SessionManager:
 
     def _load(self, key: str) -> Session | None:
         if self._mode_resolver is not None:
-            resolved = self._mode_resolver.resolve(key)
+            unchanged, resolved = self._mode_resolver.cached_resolution(key)
+            if not unchanged or resolved is None:
+                resolved = self._mode_resolver.resolve(key)
             if resolved.state != "active":
                 return None
         return self._store.load(key)

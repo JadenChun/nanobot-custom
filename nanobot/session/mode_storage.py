@@ -35,6 +35,14 @@ class SessionModeError(RuntimeError):
 ModeStorageError = SessionModeError
 
 
+class SessionModeOversizeError(SessionModeError):
+    """One private entry is larger than the caller's read bound, not corrupt."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__("session mode entry exceeds the read bound")
+        self.size = size
+
+
 def _mode_error(message: str = "managed session namespace requires durable authority") -> SessionModeError:
     return SessionModeError(message)
 
@@ -942,10 +950,11 @@ class SessionModeStorage:
                 or opened.st_uid != os.geteuid()
                 or opened.st_nlink != 1
                 or opened.st_mode & 0o777 != 0o600
-                or opened.st_size > limit
                 or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
             ):
                 raise _mode_error()
+            if opened.st_size > limit:
+                raise SessionModeOversizeError(opened.st_size)
             chunks: list[bytes] = []
             remaining = opened.st_size
             while remaining:
@@ -963,6 +972,110 @@ class SessionModeStorage:
                 raise _mode_error()
             self._verify_parent(name, parent, witness=witness)
             return b"".join(chunks)
+        except OSError:
+            raise _mode_error() from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            os.close(parent)
+
+    def read_first_line(self, name: str, *, maximum: int = MODE_JSON_LIMIT) -> bytes:
+        """Read only one leading line without the whole-entry size bound."""
+        parent, leaf = self._parent(name)
+        descriptor = -1
+        try:
+            before = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            descriptor = os.open(
+                leaf,
+                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=parent,
+            )
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or opened.st_nlink != 1
+                or opened.st_mode & 0o777 != 0o600
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            ):
+                raise _mode_error()
+            chunks: list[bytes] = []
+            remaining = maximum + 1
+            while remaining > 0:
+                chunk = os.read(descriptor, min(remaining, 65536))
+                if not chunk:
+                    break
+                index = chunk.find(b"\n")
+                chunks.append(chunk if index < 0 else chunk[:index])
+                if index >= 0:
+                    break
+                remaining -= len(chunk)
+            line = b"".join(chunks)
+            if len(line) > maximum:
+                raise _mode_error()
+            after = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            if (after.st_dev, after.st_ino, after.st_size) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+            ):
+                raise _mode_error()
+            self._verify_parent(name, parent)
+            return line
+        except FileNotFoundError:
+            raise
+        except OSError:
+            raise _mode_error() from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            os.close(parent)
+
+    def read_digest(self, name: str) -> tuple[str, int]:
+        """Stream one private entry and return its sha256 and size.
+
+        The caller keeps the entry bound for reads, but an operator receipt for
+        an existing oversize entry must name its exact digest and length.
+        """
+        parent, leaf = self._parent(name)
+        descriptor = -1
+        try:
+            before = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            descriptor = os.open(
+                leaf,
+                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=parent,
+            )
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or opened.st_nlink != 1
+                or opened.st_mode & 0o777 != 0o600
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            ):
+                raise _mode_error()
+            digest = hashlib.sha256()
+            size = 0
+            while True:
+                chunk = os.read(descriptor, 65536)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                size += len(chunk)
+            if size != opened.st_size:
+                raise _mode_error()
+            after = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            if (after.st_dev, after.st_ino, after.st_size) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+            ):
+                raise _mode_error()
+            self._verify_parent(name, parent)
+            return digest.hexdigest(), size
+        except FileNotFoundError:
+            raise
         except OSError:
             raise _mode_error() from None
         finally:
@@ -1039,6 +1152,97 @@ class SessionModeStorage:
             except OSError:
                 pass
             os.close(parent)
+
+    def copy_out(self, name: str, target: Path) -> tuple[str, int]:
+        """Stream one private entry to a new absolute destination file.
+
+        The destination must not exist. The copy is verified by digest and
+        length before the returned receipt exists for the caller.
+        """
+        if not target.is_absolute() or not target.name or target.name in {".", ".."}:
+            raise _mode_error()
+        destination_parent = PinnedDirectoryPath(target.parent)
+        parent = -1
+        descriptor = -1
+        destination = -1
+        created = False
+        published = False
+        try:
+            parent, leaf = self._parent(name)
+            before = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            descriptor = os.open(
+                leaf,
+                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=parent,
+            )
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or opened.st_nlink != 1
+                or opened.st_mode & 0o777 != 0o600
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            ):
+                raise _mode_error()
+            try:
+                os.stat(target.name, dir_fd=destination_parent.fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise _mode_error()
+            destination = os.open(
+                target.name,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | os.O_NOFOLLOW
+                | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+                dir_fd=destination_parent.fd,
+            )
+            created = True
+            os.fchmod(destination, 0o600)
+            digest = hashlib.sha256()
+            size = 0
+            while True:
+                chunk = os.read(descriptor, 65536)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                size += len(chunk)
+                offset = 0
+                while offset < len(chunk):
+                    offset += os.write(destination, chunk[offset:])
+            if size != opened.st_size:
+                raise _mode_error()
+            os.fsync(destination)
+            after = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            if (after.st_dev, after.st_ino, after.st_size) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+            ):
+                raise _mode_error()
+            self._verify_parent(name, parent)
+            os.fsync(destination_parent.fd)
+            destination_parent.validate()
+            published = True
+            return digest.hexdigest(), size
+        except OSError:
+            raise _mode_error() from None
+        finally:
+            if destination >= 0:
+                os.close(destination)
+            if descriptor >= 0:
+                os.close(descriptor)
+            if created and not published:
+                try:
+                    os.unlink(target.name, dir_fd=destination_parent.fd)
+                except OSError:
+                    pass
+            destination_parent.close()
+            if parent >= 0:
+                os.close(parent)
 
     def rename(self, source: str, target: str) -> None:
         """Move one private directory entry without following either parent."""
@@ -1125,7 +1329,13 @@ class SessionModeStorage:
             if self._identity(descriptor) != self._namespace_identity:
                 raise _mode_error()
             names = os.listdir(descriptor)
-            if len(names) > MODE_ENUM_LIMIT:
+            # The bound governs session keys, not the fixed namespace scaffolding.
+            keys = [
+                name
+                for name in names
+                if name.endswith(".jsonl") or name.endswith(".checkpoint.json")
+            ]
+            if len(keys) > MODE_ENUM_LIMIT:
                 raise _mode_error()
             self._require_current()
             return tuple(sorted(names))
@@ -1160,6 +1370,7 @@ __all__ = [
     "ManagedNamespaceAccess",
     "ModeStorageError",
     "SessionModeError",
+    "SessionModeOversizeError",
     "SessionModeStorage",
     "namespace_claimed",
     "preflight_store_construction",
