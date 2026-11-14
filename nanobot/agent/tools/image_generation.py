@@ -227,6 +227,13 @@ class ImageGenerationTool(Tool):
         if detect_image_mime(header) is None:
             raise ImageGenerationError(f"unsupported reference image: {value}")
 
+    def _resolve_reference_image(self, value: str) -> str:
+        """Resolve one reference image through the bounded reference path."""
+        resolved = self._resolve_reference_images([value])
+        if not resolved:
+            raise ImageGenerationError(f"reference image not found: {value}")
+        return resolved[0]
+
     def _resolve_reference_images(self, values: list[str] | None) -> list[str]:
         """Resolve the reference set inside its count and byte budget.
 
