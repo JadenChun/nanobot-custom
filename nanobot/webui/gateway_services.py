@@ -114,7 +114,17 @@ def build_gateway_services(
     )
     transcripts = WebUITranscriptRecorder(log=logger)
     sessions_root = session_manager.sessions_root if session_manager is not None else None
-    grants = FolderGrantStore.for_workspace(workspace_path, sessions_root=sessions_root)
+    instance_root = (
+        config_path.expanduser().resolve(strict=False).parent
+        if config_path is not None
+        else None
+    )
+    grants = FolderGrantStore.for_workspace(
+        workspace_path,
+        sessions_root=sessions_root,
+        instance_root=instance_root,
+        config_path=config_path,
+    )
     catalog = RepositoryCatalog.for_workspace(workspace_path, sessions_root=sessions_root)
     managed_context = context_manager or ContextRepoManager()
     workspaces = WebUIWorkspaceController(
