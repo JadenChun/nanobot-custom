@@ -28,6 +28,62 @@ _JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
     "object": dict,
 }
 
+# Keywords that :meth:`Schema.validate_json_schema_value` enforces. Any other
+# keyword would be advertised to the model but silently ignored before dispatch.
+_ENFORCED_JSON_SCHEMA_KEYS = frozenset({
+    "type", "properties", "required", "additionalProperties", "items",
+    "enum", "minimum", "maximum", "minLength", "maxLength", "minItems",
+    "maxItems", "nullable",
+})
+_JSON_SCHEMA_ANNOTATION_KEYS = frozenset({"description", "title", "default"})
+_SUPPORTED_JSON_SCHEMA_TYPES = frozenset({*_JSON_TYPE_MAP, "null"})
+
+
+def unsupported_json_schema_constraint(schema: Any, *, path: str = "") -> str | None:
+    """Return the first advertised keyword or type the local validator cannot enforce.
+
+    External or raw schemas may declare constraints such as ``pattern`` or ``$ref``
+    that :meth:`Schema.validate_json_schema_value` would ignore. Publishers call this
+    before the schema becomes model-visible. Annotation-only keywords (``description``,
+    ``title``, ``default``) are accepted because they promise no enforcement.
+    """
+    if not isinstance(schema, dict):
+        return f"{path or 'schema'} must be an object"
+    mapping = cast(dict[str, Any], schema)
+    for key in mapping:
+        if key not in _ENFORCED_JSON_SCHEMA_KEYS and key not in _JSON_SCHEMA_ANNOTATION_KEYS:
+            return f"{path or 'schema'} uses unsupported keyword {key!r}"
+    raw_type = mapping.get("type")
+    if raw_type is not None:
+        types: list[Any] = (
+            list(cast(list[Any], raw_type)) if isinstance(raw_type, list) else [raw_type]
+        )
+        if any(item not in _SUPPORTED_JSON_SCHEMA_TYPES for item in types):
+            return f"{path or 'schema'} uses an unsupported type"
+        if len([item for item in types if item != "null"]) > 1:
+            return f"{path or 'schema'} uses an unsupported type union"
+    properties = mapping.get("properties")
+    if isinstance(properties, dict):
+        for name, child in cast(dict[str, Any], properties).items():
+            error = unsupported_json_schema_constraint(
+                child, path=f"{path}.{name}" if path else name
+            )
+            if error:
+                return error
+    items = mapping.get("items")
+    if isinstance(items, dict):
+        error = unsupported_json_schema_constraint(items, path=f"{path}[]" if path else "[]")
+        if error:
+            return error
+    additional = mapping.get("additionalProperties")
+    if isinstance(additional, dict):
+        error = unsupported_json_schema_constraint(
+            additional, path=f"{path}.*" if path else "*"
+        )
+        if error:
+            return error
+    return None
+
 
 class Schema(ABC):
     """Abstract base for JSON Schema fragments describing tool parameters.
@@ -314,6 +370,16 @@ class Tool(ABC):
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
         return cls()
+
+    def dispose(self) -> None:
+        """Release resources acquired during ``create()``.
+
+        The loader calls this when a constructed plugin is never published, for
+        example after a duplicate-name, name, or schema rejection. Tools that own
+        a resource override it; the default is a no-op. Publication keeps the
+        resource, so the loader does not call this after a successful load.
+        """
+        return None
 
     def runtime_context_provider(self) -> RuntimeContextProvider | None:
         """Return optional per-turn prompt context owned by this tool."""

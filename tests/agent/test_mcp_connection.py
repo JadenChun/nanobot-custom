@@ -17,7 +17,12 @@ from mcp.types import ErrorData
 
 from nanobot.agent.tools import mcp as mcp_runtime
 from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.mcp import MCPProvider, MCPResourceWrapper, MCPToolWrapper
+from nanobot.agent.tools.mcp import (
+    MCPProvider,
+    MCPReadinessAbortedError,
+    MCPResourceWrapper,
+    MCPToolWrapper,
+)
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.loader import load_config, save_config
 from nanobot.config.schema import MCPServerConfig
@@ -734,3 +739,95 @@ async def test_concurrent_mcp_reconnect_reuses_fresh_session(
     fresh = await asyncio.gather(new_alpha.execute(), new_beta.execute())
     assert fresh == ["fresh:alpha", "fresh:beta"]
     assert connect_count == 2
+
+
+class _ReadinessSession:
+    """Session stand-in: readiness publication is what C3 observes."""
+
+
+async def _hanging_server_connect(started: asyncio.Event, tool_names: tuple[str, ...]):
+    """Return a fake connect that declares the server tool set, then hangs."""
+    async def _fake_connect(servers, candidate_registry, **_kwargs: object):
+        for tool_name in tool_names:
+            tool_def = SimpleNamespace(
+                name=tool_name,
+                description=f"{tool_name} tool",
+                inputSchema={"type": "object", "properties": {}},
+            )
+            candidate_registry.register(
+                MCPToolWrapper(_ReadinessSession(), "remote", tool_def, tool_timeout=5)
+            )
+        started.set()
+        await asyncio.Event().wait()
+
+    return _fake_connect
+
+
+@pytest.mark.asyncio
+async def test_owner_cancellation_gives_the_waiter_one_bounded_readiness_outcome(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """U3/C3: the owner's cancellation must not cancel a concurrent waiter."""
+    provider, registry = _make_provider(mcp_servers={"remote": _stdio_server("remote")})
+    started = asyncio.Event()
+    connect_count = 0
+    fake_connect = await _hanging_server_connect(started, ("alpha", "beta", "gamma"))
+
+    async def _counted_connect(servers, candidate_registry, **kwargs: object):
+        nonlocal connect_count
+        connect_count += 1
+        await fake_connect(servers, candidate_registry, **kwargs)
+
+    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _counted_connect)
+
+    owner = asyncio.create_task(provider.connect())
+    await started.wait()
+    waiter = asyncio.create_task(provider.connect())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+
+    with pytest.raises(MCPReadinessAbortedError) as outcome:
+        await waiter
+
+    assert not isinstance(outcome.value, asyncio.CancelledError)
+    assert connect_count == 1
+    assert registry.tool_names == []
+
+
+@pytest.mark.asyncio
+async def test_waiter_cancellation_stays_scoped_to_the_waiter(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """U3/C3: a waiter's own cancellation does not cancel the shared attempt."""
+    provider, registry = _make_provider(mcp_servers={"remote": _stdio_server("remote")})
+    started = asyncio.Event()
+    connect_count = 0
+    fake_connect = await _hanging_server_connect(started, ("alpha", "beta", "gamma"))
+
+    async def _counted_connect(servers, candidate_registry, **kwargs: object):
+        nonlocal connect_count
+        connect_count += 1
+        await fake_connect(servers, candidate_registry, **kwargs)
+
+    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", _counted_connect)
+
+    owner = asyncio.create_task(provider.connect())
+    await started.wait()
+    waiter = asyncio.create_task(provider.connect())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert owner.done() is False
+    assert connect_count == 1
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    assert registry.tool_names == []

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.base import Tool, ToolResult, unsupported_json_schema_constraint
 from nanobot.agent.tools.plugin_context import (
     ExternalContextError,
     ExternalContextSnapshot,
@@ -34,6 +34,19 @@ _SKIP_MODULES = frozenset({
     "base", "schema", "registry", "context", "loader", "config",
     "file_state", "sandbox", "mcp", "plugin_context", "__init__", "runtime_control",
 })
+
+
+def _plugin_schema_constraint(schema: dict[str, Any]) -> str | None:
+    """Return the first parameter constraint the local validator cannot enforce."""
+    function = schema.get("function")
+    parameters: Any
+    if isinstance(function, dict):
+        parameters = cast(dict[str, Any], function).get("parameters")
+    else:
+        parameters = schema.get("parameters")
+    if parameters is None:
+        return None
+    return unsupported_json_schema_constraint(parameters)
 
 
 class ToolLoader:
@@ -130,7 +143,27 @@ class ToolLoader:
         logger.warning("External tool setup failed at {}", stage)
 
     def _construct_plugins(self, snapshot: ExternalContextSnapshot, *, scope: str) -> list[Tool]:
-        """Create enabled core-scope entry-point tools behind the compatibility adapter."""
+        """Create enabled core-scope entry-point tools behind the compatibility adapter.
+
+        Every plugin that ``create()`` produced is disposed if the batch is later
+        rejected, so an acquired resource never outlives a failure to publish.
+        """
+        constructed: list[Tool] = []
+        try:
+            return self._construct_plugin_tools(
+                snapshot, scope=scope, constructed=constructed
+            )
+        except BaseException:
+            self._dispose_unpublished(constructed)
+            raise
+
+    def _construct_plugin_tools(
+        self,
+        snapshot: ExternalContextSnapshot,
+        *,
+        scope: str,
+        constructed: list[Tool],
+    ) -> list[Tool]:
         tools: list[Tool] = []
         try:
             discovered = self._discover_plugins()
@@ -176,6 +209,7 @@ class ToolLoader:
             except Exception:
                 self._log_external_setup_failure("construction")
                 raise self._external_setup_error("construction") from None
+            constructed.append(tool)
             try:
                 tool_name = tool.name
                 if type(tool_name) is not str or not tool_name:
@@ -194,11 +228,28 @@ class ToolLoader:
                     schema
                 ) != tool_name:
                     raise ValueError
+                constraint_error = _plugin_schema_constraint(schema)
+                if constraint_error is not None:
+                    logger.warning(
+                        "External tool '{}' schema refused: {}",
+                        tool_name,
+                        constraint_error,
+                    )
+                    raise ValueError
             except Exception:
                 self._log_external_setup_failure("schema")
                 raise self._external_setup_error("schema") from None
             tools.append(_LegacyErrorPrefixTool(tool, tool_name))
         return tools
+
+    @staticmethod
+    def _dispose_unpublished(tools: list[Tool]) -> None:
+        """Dispose constructed tools that a rejected batch never published."""
+        for tool in tools:
+            try:
+                tool.dispose()
+            except Exception:
+                logger.warning("External tool disposal failed")
 
     def load(self, ctx: ToolContext, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
         from nanobot.agent.tools.fork_factories import construct_core_tools
@@ -210,9 +261,12 @@ class ToolLoader:
         except Exception:
             self._log_external_setup_failure("configuration")
             raise self._external_setup_error("configuration") from None
-        tools = [*construct_core_tools(ctx), *self._construct_plugins(snapshot, scope=scope)]
+        core_tools = construct_core_tools(ctx)
+        plugin_tools = self._construct_plugins(snapshot, scope=scope)
+        tools = [*core_tools, *plugin_tools]
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)) or any(registry.has(name) for name in names):
+            self._dispose_unpublished(plugin_tools)
             raise ValueError("Duplicate tool registration in foreground manifest")
         for tool in tools:
             registry.register(tool)
@@ -263,6 +317,9 @@ class _LegacyErrorPrefixTool(Tool):
         set_context = getattr(self._wrapped, "set_context", None)
         if callable(set_context):
             set_context(ctx)
+
+    def dispose(self) -> None:
+        self._wrapped.dispose()
 
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._wrapped.cast_params(params)

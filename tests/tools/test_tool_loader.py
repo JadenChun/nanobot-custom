@@ -4,16 +4,17 @@ from __future__ import annotations
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, unsupported_json_schema_constraint
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.loader import _SKIP_MODULES, ToolLoader
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
-from nanobot.config.schema import Config
+from nanobot.config.schema import Config, ToolsConfig
 from nanobot.providers.base import GenerationSettings, LLMResponse
 from tests.agent.p6_admitted_fixtures import AgentInputs, SyncAdmittedFactory
 from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync
@@ -496,3 +497,162 @@ def test_non_core_loader_scope_stays_closed_without_registry_mutation():
     with pytest.raises(ValueError, match="scope"):
         ToolLoader().load(ctx, registry, scope="subagent")
     assert registry.tool_names == []
+
+
+# --- A3-6b: external plugin lifetime and schema constraints ---
+
+
+class _AcquiredResource:
+    """OBS-RES: a resource acquired by a plugin ``create()``."""
+
+    def __init__(self) -> None:
+        self.live = True
+        self.dispose_count = 0
+
+
+def _resource_plugin(
+    tool_name: str,
+    resource: _AcquiredResource | None,
+    parameters: dict[str, Any] | None = None,
+) -> type[Tool]:
+    class _Plugin(Tool):
+        @property
+        def name(self) -> str:
+            return tool_name
+
+        @property
+        def description(self) -> str:
+            return f"plugin {tool_name}"
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return parameters if parameters is not None else {
+                "type": "object", "properties": {}
+            }
+
+        async def execute(self, **kwargs: Any) -> Any:
+            return "ok"
+
+        @classmethod
+        def create(cls, ctx: ToolContext) -> Tool:
+            return cls()
+
+        def dispose(self) -> None:
+            if resource is not None:
+                resource.live = False
+                resource.dispose_count += 1
+
+    return _Plugin
+
+
+def _entry_point(name: str, cls: type[Tool]) -> MagicMock:
+    entry_point = MagicMock()
+    entry_point.name = name
+    entry_point.load.return_value = cls
+    return entry_point
+
+
+def _submit_batch(
+    entry_points: list[MagicMock], registry: ToolRegistry, tmp_path: Path
+) -> bool:
+    """Return whether the batch was published; OBS-BATCH as observed by the caller."""
+    with (
+        patch("nanobot.agent.tools.loader.entry_points", return_value=entry_points),
+        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+    ):
+        try:
+            ToolLoader(test_classes=[]).load(
+                ToolContext(config=ToolsConfig(), workspace=str(tmp_path)), registry
+            )
+        except Exception:
+            return False
+    return True
+
+
+def test_rejected_batch_disposes_the_constructed_plugin(tmp_path: Path):
+    """U1/C1: a duplicate-name rejection disposes the resource acquired by create()."""
+    resource = _AcquiredResource()
+    registry = ToolRegistry()
+    published = _submit_batch(
+        [
+            _entry_point("a-first", _resource_plugin("t1", resource)),
+            _entry_point("z-second", _resource_plugin("t1", None)),
+        ],
+        registry,
+        tmp_path,
+    )
+
+    assert published is False
+    assert resource.dispose_count == 1
+    assert resource.live is False
+    assert registry.tool_names == []
+    assert registry.get_definitions() == []
+
+
+def test_published_batch_keeps_the_plugin_resource_live(tmp_path: Path):
+    """U2/C2: successful publication does not dispose the acquired resource."""
+    resource = _AcquiredResource()
+    registry = ToolRegistry()
+    published = _submit_batch(
+        [
+            _entry_point("a-first", _resource_plugin("t1", resource)),
+            _entry_point("b-second", _resource_plugin("t2", resource)),
+        ],
+        registry,
+        tmp_path,
+    )
+
+    assert published is True
+    assert sorted(registry.tool_names) == ["t1", "t2"]
+    assert resource.live is True
+    assert resource.dispose_count == 0
+
+
+def test_unsupported_plugin_schema_keyword_is_rejected_before_publication(tmp_path: Path):
+    """U7/C7: a keyword the local validator ignores never reaches the model listing."""
+    unsupported = {
+        "type": "object",
+        "properties": {"path": {"type": "string", "pattern": "^a"}},
+    }
+    rejection = unsupported_json_schema_constraint(unsupported)
+    assert rejection is not None
+    assert "pattern" in rejection
+
+    resource = _AcquiredResource()
+    registry = ToolRegistry()
+    published = _submit_batch(
+        [_entry_point("a-unsupported", _resource_plugin("bad_schema", resource, unsupported))],
+        registry,
+        tmp_path,
+    )
+
+    assert published is False
+    assert registry.get_definitions() == []
+    assert resource.dispose_count == 1
+    assert resource.live is False
+
+
+def test_supported_plugin_schema_keywords_are_published(tmp_path: Path):
+    """U7/C7 control: a schema using only enforced keywords remains visible."""
+    supported = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "minLength": 1, "maxLength": 64},
+            "count": {"type": "integer", "minimum": 0, "maximum": 9},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    }
+    assert unsupported_json_schema_constraint(supported) is None
+
+    registry = ToolRegistry()
+    published = _submit_batch(
+        [_entry_point("a-supported", _resource_plugin("good_schema", None, supported))],
+        registry,
+        tmp_path,
+    )
+
+    assert published is True
+    assert registry.tool_names == ["good_schema"]
+    names = {definition["function"]["name"] for definition in registry.get_definitions()}
+    assert names == {"good_schema"}

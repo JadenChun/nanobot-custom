@@ -1823,6 +1823,16 @@ def _load_current_servers() -> dict[str, MCPServerConfig]:
     return _configured_servers(resolve_config_env_vars(load_config()))
 
 
+class MCPReadinessAbortedError(RuntimeError):
+    """Bounded readiness outcome observed by waiters when the owner is cancelled."""
+
+
+def _consume_readiness_gate_exception(gate: asyncio.Future[None]) -> None:
+    """Retrieve a gate exception so an unawaited bounded outcome stays quiet."""
+    if not gate.cancelled():
+        gate.exception()
+
+
 class MCPProvider:
     """Own configured MCP connections and their dynamic tool registrations."""
 
@@ -1901,7 +1911,9 @@ class MCPProvider:
 
         The first caller owns the connection task so transports that require a
         stable owning task keep working. Concurrent callers await that caller's
-        completion gate and observe the same bounded result.
+        completion gate and observe the same bounded result. Cancellation is
+        caller-scoped: the owner's cancellation completes the gate with a bounded
+        readiness failure instead of cancelling a waiter's own await.
         """
         inflight = self._connect_inflight
         if inflight is not None and not inflight.done():
@@ -1912,6 +1924,7 @@ class MCPProvider:
                 self._connect_waiters -= 1
             return
         gate: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        gate.add_done_callback(_consume_readiness_gate_exception)
         self._connect_inflight = gate
         # Let concurrently scheduled callers join this attempt before the
         # owner starts work that may not suspend on a fast mock or cache hit.
@@ -1920,7 +1933,12 @@ class MCPProvider:
             await self._connect_once()
         except asyncio.CancelledError:
             if not gate.done():
-                gate.cancel()
+                if self._connect_waiters:
+                    gate.set_exception(MCPReadinessAbortedError(
+                        "MCP readiness was cancelled by its owning caller"
+                    ))
+                else:
+                    gate.cancel()
             raise
         except BaseException as exc:
             if not gate.done():
