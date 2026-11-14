@@ -160,10 +160,10 @@ class WorkspaceFocusOwner:
             # protected path even with a live Full reference.  Ask the same
             # predicate so the projection cannot advertise a read or write the
             # file tools will refuse.
-            read_allowed = exists and self._full_path_allowed(
+            read_allowed = exists and self._reference_path_allowed(
                 target, "read", permission_owner, full_reference,
             )
-            write_allowed = exists and self._full_path_allowed(
+            write_allowed = exists and self._reference_path_allowed(
                 target, "write", permission_owner, full_reference,
             )
             return {
@@ -188,21 +188,39 @@ class WorkspaceFocusOwner:
             else None
         )
         if task_root is not None:
-            root_path, file_access, _commands = task_root
+            root_path, file_access, task_commands = task_root
             baseline_root = self._baseline_access_root(target, declared_grant)
             if baseline_root is None or len(Path(root_path).parts) >= len(baseline_root.parts):
                 from nanobot.agent.tools.native_process import native_supervisor_available
                 from nanobot.agent.tools.sandbox import managed_bwrap_available
 
+                # A live Once reference is not a capability override.  Configured
+                # context-repository protection and exec policy still decide, so
+                # ask the same predicate the file and shell tools use.
+                read_allowed = exists and self._reference_path_allowed(
+                    target, "read", permission_owner, task_reference,
+                )
+                write_allowed = (
+                    exists
+                    and file_access == "read_write"
+                    and self._reference_path_allowed(
+                        target, "write", permission_owner, task_reference,
+                    )
+                )
                 command_ready = (
                     exists
+                    and task_commands
                     and managed_bwrap_available()
                     and native_supervisor_available()
+                    and self._reference_path_allowed(
+                        target, "exec", permission_owner, task_reference,
+                    )
                 )
                 command_reason = (
                     None if command_ready else
                     "supervisor_unavailable" if not native_supervisor_available() else
-                    "sandbox_unavailable"
+                    "sandbox_unavailable" if not managed_bwrap_available() else
+                    "not_granted"
                 )
                 return {
                     "boundary": "folder",
@@ -210,8 +228,8 @@ class WorkspaceFocusOwner:
                     "source": "task",
                     "grant_root": root_path,
                     "exists": exists,
-                    "read": exists,
-                    "write": exists and file_access == "read_write",
+                    "read": read_allowed,
+                    "write": write_allowed,
                     "commands": {
                         "requested": True,
                         "available": command_ready,
@@ -874,14 +892,14 @@ class WorkspaceFocusOwner:
             return False
         return True
 
-    def _full_path_allowed(
+    def _reference_path_allowed(
         self,
         target: Path,
         action: str,
         permission_owner: DesktopPermissionOwner | None,
-        full_reference: WorkspacePermissionReference | None,
+        reference: WorkspacePermissionReference | None,
     ) -> bool:
-        """Return whether a live Full reference may read or write *target*."""
+        """Return whether a live Full or Once reference may perform *action*."""
         try:
             self.policy.validate_path(
                 target,
@@ -890,7 +908,7 @@ class WorkspaceFocusOwner:
                 allow_folder_grants=True,
                 target_kind="directory",
                 permission_owner=permission_owner,
-                permission_reference=full_reference,
+                permission_reference=reference,
             )
         except PermissionError:
             return False
