@@ -1,5 +1,19 @@
 # A3 implementation correction handoff
 
+## W15 named review 2026-11-14
+
+Reviewer W15 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`.
+It reviewed the integrated code at `2ca0deb8` and confirmed the five changed
+files are byte-identical to the repair commits.
+
+W15 accepted S01-F01, E02-F19 and E02-F21. The Once/task projection now agrees
+with the live policy for read, write and command eligibility, including the
+managed-repository exclusion. Every non-boolean remote-access value returns 400
+without a mutation. The pairing-renew action resolves, is classified as a
+mutation, and a same-request-id replay does not renew twice.
+
+The ledger now has 35 accepted findings, 0 ready for review, and 101 unverified.
+
 ## A3-8 durability and retention inventory 2026-11-14
 
 Two read-only workers mapped the A3-8 findings at `ceaf8fb8`. Stage acceptance
