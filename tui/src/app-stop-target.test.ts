@@ -131,3 +131,50 @@ describe("targeted stop", () => {
     expect(stops.at(-1)?.targetTurnId).toBe("turn-2")
   })
 })
+
+  test("a repeated Stop after settlement does not target a later turn", async () => {
+    const sent: string[] = []
+    const sentOptions: MessageOptions[] = []
+    setup = await createTestRenderer({
+      width: 88,
+      height: 24,
+      screenMode: "alternate-screen",
+      exitOnCtrlC: false,
+    })
+    const app = NanobotTui.mount(
+      setup.renderer,
+      options,
+      makeClient(sent, sentOptions, undefined, ["turn-1", "turn-2"]),
+      new MockTreeSitterClient({ autoResolveTimeout: 0 }),
+    )
+    const connectionState = app as unknown as {
+      handleStatus(status: "connected"): void
+    }
+    connectionState.handleStatus("connected")
+    app.accept({ event: "attached", chat_id: "chat" })
+    await waitUntil(() => (app as unknown as InspectableApp).ready)
+    const ui = app as unknown as InspectableApp
+
+    ui.composer.setText("first task")
+    ui.composer.submit()
+    await waitUntil(() => ui.activeTurnId === "turn-1")
+    setup.mockInput.pressCtrlC()
+    await waitUntil(() => sent.includes("/stop"))
+    app.accept({ event: "turn_end", chat_id: "chat", turn_id: "turn-1" })
+    await waitUntil(() => ui.activeTurnId === null)
+
+    const stopsAfterSettlement = stopOptions(sent, sentOptions)
+    expect(stopsAfterSettlement).toHaveLength(1)
+    const stopControl = app as unknown as { requestStop(): void }
+    stopControl.requestStop()
+    await Bun.sleep(25)
+    expect(stopOptions(sent, sentOptions)).toHaveLength(1)
+
+    ui.composer.setText("later task")
+    ui.composer.submit()
+    await waitUntil(() => ui.activeTurnId === "turn-2")
+    await Bun.sleep(25)
+    expect(stopOptions(sent, sentOptions)).toHaveLength(1)
+    expect(stopOptions(sent, sentOptions).at(-1)?.targetTurnId).toBe("turn-1")
+    expect(ui.activeTurnId).toBe("turn-2")
+  })
