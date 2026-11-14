@@ -465,7 +465,7 @@ async def test_cancellation_before_record_construction_releases_receipt(tmp_path
     loop = host(tmp_path)
     reached = asyncio.Event()
 
-    async def snapshot(*args):
+    async def snapshot(*args, **kwargs):
         reached.set()
         await asyncio.Future()
 

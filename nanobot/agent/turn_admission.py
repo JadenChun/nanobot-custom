@@ -12,6 +12,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, NoReturn
 
 from nanobot.agent.turn import ApprovalDecision, TurnContext
@@ -20,6 +21,30 @@ if TYPE_CHECKING:
     from nanobot.session.source_store import SourceState
 
 APPROVAL_TTL_SECONDS = 15 * 60
+
+
+class ApprovalProvenance(str, Enum):
+    """Ingress identity for a typed approval decision.
+
+    Only trusted foreground user input may consume a pending request. Automated
+    channels (local triggers, cron, subagents, recovery and system ingress) carry
+    their own value so a typed decision from them is refused, never granted.
+    A caller that supplies no provenance keeps the in-process programmatic
+    behavior; the gateway always supplies one.
+    """
+
+    TRUSTED_FOREGROUND = "trusted_foreground"
+    LOCAL_TRIGGER = "local_trigger"
+    AUTOMATION = "automation"
+    SUBAGENT = "subagent"
+    RECOVERY = "recovery"
+    SYSTEM = "system"
+    UNTRUSTED = "untrusted"
+
+    @property
+    def may_decide_pending(self) -> bool:
+        """Return True only for a trusted foreground user decision."""
+        return self is ApprovalProvenance.TRUSTED_FOREGROUND
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +71,7 @@ class ApprovalSnapshot:
     decision: ApprovalDecision | None = None
     typed: bool = False
     strict: bool = False
+    provenance: ApprovalProvenance | None = None
 
 
 _AUTHORITY_SEAL = object()
@@ -161,8 +187,14 @@ class ApprovalAdmission:
         self,
         key: str,
         decision: ApprovalDecision | None,
+        *,
+        provenance: ApprovalProvenance | None = None,
     ) -> ApprovalSnapshot:
-        """Resolve an exact ID only through its original-chat/session aliases."""
+        """Resolve an exact ID only through its original-chat/session aliases.
+
+        A typed decision from a known automated ingress is refused before any
+        pending identity is read, so the source cannot probe or consume it.
+        """
         async with self._guard:
             latest = self._latest(key)
             pending = self._pending.get(decision.approval_id) if decision else latest
@@ -171,18 +203,25 @@ class ApprovalAdmission:
                 pending = None
             if decision is None:
                 return ApprovalSnapshot(key, pending, 'other' if pending else 'none', key, strict=True)
+            if provenance is not None and not provenance.may_decide_pending:
+                return ApprovalSnapshot(
+                    key, None, 'denied', key, decision=decision, typed=True, strict=True,
+                    provenance=provenance,
+                )
             if pending is None or not self._owns_alias(key, pending):
                 return ApprovalSnapshot(
                     key, latest, 'stale', key, decision=decision, typed=True, strict=True,
+                    provenance=provenance,
                 )
             if not self._decision_matches(pending, decision):
                 return ApprovalSnapshot(
                     key, pending, 'stale', key, decision=decision, typed=True, strict=True,
+                    provenance=provenance,
                 )
             action = 'affirmative' if decision.decision == 'approve' else 'negative'
             return ApprovalSnapshot(
                 key, pending, action, pending.session_key, decision=decision, typed=True,
-                strict=True,
+                strict=True, provenance=provenance,
             )
 
     @staticmethod
@@ -210,10 +249,14 @@ class ApprovalAdmission:
         child owner can use the same seam with its own narrowed live check.
         Legacy direct callers retain classification but receive no authority.
         """
-        if snapshot.pending is None or snapshot.action in {'command', 'stale'}:
+        if snapshot.pending is None or snapshot.action in {'command', 'stale', 'denied'}:
             return snapshot.action
         if snapshot.strict and not snapshot.typed:
             return 'other'
+        # No grant or effect authority leaves an automated source, even when a
+        # caller hands over a snapshot built without the provenance argument.
+        if snapshot.provenance is not None and not snapshot.provenance.may_decide_pending:
+            return 'denied'
         # The caller already holds the selected execution/session admission.
         # Keep source I/O out of the map lock; identity is checked again below.
         current = context is None or (

@@ -130,14 +130,17 @@ def test_gateway_owns_local_trigger_delivery(tmp_path, monkeypatch, scenario):
         async def close_after_trigger_stops(owner):
             assert not agents[0].local_trigger_store.delivery_active
             assert not list(store.processing_dir.glob("*.json"))
-            assert len(list(store.inbox_dir.glob("*.json"))) == 1
+            # The cancelled attempt may have committed its turn, so it waits
+            # for explicit owner resolution instead of being replayed.
+            assert list(store.inbox_dir.glob("*.json")) == []
+            assert len(store.list_unknown_deliveries()) == 1
             await close_cron(owner)
 
         monkeypatch.setattr(GatewayCron, "aclose", close_after_trigger_stops)
     gateway_runtime._run_gateway(config)
     assert len(calls) == (2 if scenario == "busy" else 1)
     if scenario == "shutdown":
-        assert len(list(store.inbox_dir.glob("*.json"))) == 1
+        assert list(store.inbox_dir.glob("*.json")) == []
         assert not delivered
     else:
         assert store.get(trigger.id).last_status == "ok"

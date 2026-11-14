@@ -106,7 +106,11 @@ from nanobot.agent.turn import (
     TurnSource,
 )
 from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.agent.turn_admission import ApprovalAdmission, ApprovalSnapshot
+from nanobot.agent.turn_admission import (
+    ApprovalAdmission,
+    ApprovalProvenance,
+    ApprovalSnapshot,
+)
 from nanobot.agent.turn_delivery import (
     TurnDelivery,
     TurnDeliveryFactory,
@@ -614,6 +618,7 @@ class _TurnExecutionOptions:
     admission_scope: Callable[[str], AbstractAsyncContextManager[_AdmittedTurnIO]] | None = None
     inbound: InboundMessage | None = None
     trusted_foreground_activity: bool = False
+    approval_provenance: ApprovalProvenance | None = None
     activity_already_recorded: bool = False
     retry_activity_notification: bool = False
     admitted_activity_marker: _AdmittedActivityMessage | None = None
@@ -3013,6 +3018,24 @@ class AgentLoop:
             and not msg.sender_id.startswith("system:")
         )
 
+    @staticmethod
+    def _approval_provenance(msg: InboundMessage) -> ApprovalProvenance:
+        """Classify bus ingress before a typed approval decision can consume it."""
+
+        if local_trigger(msg.metadata) is not None:
+            return ApprovalProvenance.LOCAL_TRIGGER
+        if cron_trigger(msg.metadata):
+            return ApprovalProvenance.AUTOMATION
+        if msg.sender_id == "subagent":
+            return ApprovalProvenance.SUBAGENT
+        if RECOVERY_INBOUND_METADATA_KEY in msg.metadata:
+            return ApprovalProvenance.RECOVERY
+        if msg.channel == "system" or msg.input_role == "system":
+            return ApprovalProvenance.SYSTEM
+        if AgentLoop._trusted_foreground_inbound(msg):
+            return ApprovalProvenance.TRUSTED_FOREGROUND
+        return ApprovalProvenance.UNTRUSTED
+
     async def _record_foreground_activity(
         self,
         context: RunTurnContext,
@@ -4498,6 +4521,16 @@ class AgentLoop:
 
     async def _dispatch_bus_approval_control(self, msg: InboundMessage, key: str) -> bool:
         """Resolve child decisions before parent retirement, queues or lifecycle."""
+        provenance = self._approval_provenance(msg)
+        if not provenance.may_decide_pending:
+            # Automated ingress never resolves a pending approval. Drop the
+            # decision and keep the request available to the foreground.
+            logger.warning(
+                "Refused typed approval decision from {} ingress for {}",
+                provenance.value,
+                key,
+            )
+            return True
         try:
             decision = ApprovalDecision.from_mapping(msg.metadata["approval_decision"])
         except (TypeError, ValueError):
@@ -4655,6 +4688,7 @@ class AgentLoop:
                     admission_scope=admission_scope,
                     raise_errors=True,
                     trusted_foreground_activity=self._trusted_foreground_inbound(msg),
+                    approval_provenance=self._approval_provenance(msg),
                     activity_already_recorded=activity_marker is not None,
                     retry_activity_notification=(
                         activity_marker is not None
@@ -5364,7 +5398,9 @@ class AgentLoop:
             )),
         ) as cancellation_receipt:
             snapshot = await self.approval_admission.snapshot_decision(
-                key, request.approval_decision,
+                key,
+                request.approval_decision,
+                provenance=options.approval_provenance,
             )
             if (
                 snapshot.typed
@@ -5736,11 +5772,20 @@ class AgentLoop:
                                         )
                                         raise activity.callback_error
                                 self._ack_admitted_activity_message(activity_marker.message)
-                            if action in ('negative', 'stale'):
-                                text = ('Cancelled the pending risky action.' if action == 'negative' else
-                                        'That approval request is no longer current. Please reply to the latest approval request.')
+                            if action in ('negative', 'stale', 'denied'):
+                                if action == 'negative':
+                                    text = 'Cancelled the pending risky action.'
+                                    stop_reason = 'cancelled'
+                                elif action == 'denied':
+                                    text = ('That approval decision was not accepted from this source. '
+                                            'Approve the pending request from the foreground chat.')
+                                    stop_reason = 'approval_denied'
+                                else:
+                                    text = ('That approval request is no longer current. '
+                                            'Please reply to the latest approval request.')
+                                    stop_reason = 'approval_stale'
                                 result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED,
-                                    content=text, stop_reason='cancelled' if action == 'negative' else 'approval_stale',
+                                    content=text, stop_reason=stop_reason,
                                     outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
                             else:
                                 if not options.activity_already_recorded:

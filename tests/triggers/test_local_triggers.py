@@ -51,6 +51,12 @@ async def test_gateway_consumer_lease_and_cancelled_delivery_are_recoverable(tmp
             await task
     assert store.delivery_active is False
     assert not list(store.processing_dir.glob("*.json"))
+    # The started attempt is quarantined for explicit owner resolution.
+    assert list(store.inbox_dir.glob("*.json")) == []
+    assert len(store.list_unknown_deliveries()) == 1
+    assert store.resolve_unknown_delivery(
+        store.list_unknown_deliveries()[0]["delivery_id"], action="requeue",
+    )
     assert len(list(store.inbox_dir.glob("*.json"))) == 1
 
 
@@ -305,7 +311,8 @@ def test_recover_processing_deliveries_requeues_claimed_delivery(tmp_path: Path)
     assert len(reclaimed) == 1
     assert reclaimed[0].trigger_id == trigger.id
     assert reclaimed[0].content == "Review PR #4591"
-    assert reclaimed[0].attempts == 1
+    # No attempt started, so proof of absence returns it ready without counting one.
+    assert reclaimed[0].attempts == 0
     assert reclaimed[0].last_error == "delivery was recovered from interrupted processing"
 
 
@@ -483,7 +490,7 @@ async def test_local_trigger_queue_waits_for_submitted_turn_before_ack(
 
 
 @pytest.mark.asyncio
-async def test_local_trigger_queue_requeues_when_submitted_turn_is_interrupted(
+async def test_local_trigger_queue_marks_unknown_when_submitted_turn_is_interrupted(
     tmp_path: Path,
 ) -> None:
     store = LocalTriggerStore(tmp_path)
@@ -514,14 +521,17 @@ async def test_local_trigger_queue_requeues_when_submitted_turn_is_interrupted(
         with suppress(asyncio.CancelledError):
             await task
 
-        reclaimed = store.claim_deliveries()
-        assert len(reclaimed) == 1
-        assert reclaimed[0].trigger_id == trigger.id
-        assert reclaimed[0].attempts == 1
-        assert reclaimed[0].last_error == "CancelledError"
+        # A started attempt may already have committed its turn, so it is not
+        # requeued; it waits for explicit owner resolution.
+        assert store.claim_deliveries() == []
+        unknown = store.list_unknown_deliveries()
+        assert [entry["delivery_id"] for entry in unknown] == [delivery.id]
+        assert unknown[0]["attempts"] == 1
+        assert unknown[0]["settlement_id"]
         record = _read_run_record(store, delivery.id)
-        assert record["status"] == "interrupted"
+        assert record["status"] == "unknown"
         assert record["attempts"] == 1
+        assert record["settlement_id"] == unknown[0]["settlement_id"]
     finally:
         task.cancel()
         with suppress(asyncio.CancelledError):
