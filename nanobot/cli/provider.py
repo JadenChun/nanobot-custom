@@ -205,17 +205,19 @@ def provider_reimport(
     ),
 ) -> None:
     """Explicitly replace the canonical credential from a read-only legacy source."""
+    from nanobot.providers.oauth_credentials import CredentialOwner
     from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
     spec = _resolve_oauth_provider(provider)
+    owner = CredentialOwner.process_default()
     if spec.name == "openai_codex":
         from nanobot.providers.codex_auth import reimport_codex
 
-        token = reimport_codex()
+        token = reimport_codex(owner)
     elif spec.name == "github_copilot":
         from nanobot.providers.copilot_auth import reimport_copilot
 
-        token = reimport_copilot()
+        token = reimport_copilot(owner)
     else:
         console.print(f"[red]Reimport is not supported for {spec.label}[/red]")
         raise typer.Exit(1)

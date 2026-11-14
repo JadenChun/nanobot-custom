@@ -138,7 +138,7 @@ class Nanobot:
             model: Override the instance default model.
             model_preset: Override the instance default model preset.
         """
-        from nanobot.config.loader import load_config, resolve_config_env_vars
+        from nanobot.config.loader import load_config, resolve_config_env_vars, set_config_path
 
         ensure_single_model_selector(model=model, model_preset=model_preset)
         resolved: Path | None = None
@@ -146,6 +146,8 @@ class Nanobot:
             resolved = Path(config_path).expanduser().resolve()
             if not resolved.exists():
                 raise FileNotFoundError(f"Config not found: {resolved}")
+            # Select the instance once so its data root owns provider credentials.
+            set_config_path(resolved)
 
         config: Config = resolve_config_env_vars(
             load_config(resolved),

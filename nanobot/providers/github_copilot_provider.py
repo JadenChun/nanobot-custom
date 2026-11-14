@@ -21,6 +21,7 @@ from nanobot.providers.copilot_auth import (
     get_copilot_bearer_view,
     get_copilot_identity,
 )
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
 from nanobot.providers.oauth_model_catalog import (
     OAuthModelCatalog,
@@ -83,10 +84,12 @@ def get_github_copilot_login_status() -> OAuthToken | None:
 def login_github_copilot(
     print_fn: Callable[[str], None] | None = None,
     prompt_fn: Callable[[str], str] | None = None,
+    *,
+    owner: CredentialOwner | None = None,
 ) -> OAuthToken:
     """Run GitHub device flow and persist the GitHub OAuth token used for Copilot."""
     del prompt_fn
-    authority = get_copilot_authority()
+    authority = get_copilot_authority(owner)
     generation = authority.begin_login()
     printer = print_fn or print
     timeout = httpx.Timeout(20.0, connect=20.0)

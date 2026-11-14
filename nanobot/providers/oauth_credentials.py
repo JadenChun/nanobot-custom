@@ -3,6 +3,12 @@
 This module deliberately has no default path and performs no network work. The
 injected importer must return Codex refresh credentials or a Copilot GitHub
 token; cached Copilot bearer tokens and endpoint data are not accepted.
+
+A :class:`CredentialOwner` names the one gateway instance that owns a provider
+credential and its account-dependent caches. Callers that select an instance
+pass its owner explicitly. The injected importer stays a read-only legacy
+source and is consulted automatically only for the owner that already holds the
+shared legacy location; every other owner must import it on request.
 """
 
 from __future__ import annotations
@@ -47,6 +53,52 @@ _GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _REQUIRED_JSON_KEYS = frozenset({"access", "refresh", "expires_at_ms"})
 _OPTIONAL_JSON_KEYS = frozenset({"account_id"})
 _ENVELOPE_KEYS = frozenset({"version", "flavor", "generation", "token"})
+_AUTH_DIRNAME = "auth"
+_LEGACY_INSTANCE_DIRNAME = ".nanobot"
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialOwner:
+    """The one gateway instance that owns provider OAuth credentials and caches."""
+
+    data_root: Path
+
+    def __post_init__(self) -> None:
+        root = Path(self.data_root).expanduser()
+        if not root.is_absolute():
+            raise ValueError("absolute credential owner root required")
+        object.__setattr__(self, "data_root", root.resolve(strict=False))
+
+    @classmethod
+    def from_config_path(cls, config_path: str | Path) -> CredentialOwner:
+        """Return the owner of the instance that selects this config file."""
+        return cls(Path(config_path).expanduser().parent)
+
+    @classmethod
+    def from_data_root(cls, data_root: str | Path) -> CredentialOwner:
+        return cls(Path(data_root).expanduser())
+
+    @classmethod
+    def process_default(cls) -> CredentialOwner:
+        """Return the owner selected by the current process instance."""
+        from nanobot.config.paths import get_data_dir
+
+        return cls(get_data_dir())
+
+    def credential_path(self, filename: str) -> Path:
+        """Return this owner's credential file for one provider profile name."""
+        if not filename or Path(filename).name != filename:
+            raise ValueError("credential filename required")
+        return self.data_root / _AUTH_DIRNAME / filename
+
+    def owns_legacy_location(self) -> bool:
+        """Return whether this owner already holds the shared legacy location."""
+        home = Path(os.environ.get("HOME", str(Path.home()))).expanduser()
+        return self.data_root == (home / _LEGACY_INSTANCE_DIRNAME).resolve(strict=False)
+
+    def identity(self) -> str:
+        """Return the stable, non-secret identity used in account cache keys."""
+        return str(self.data_root)
 
 
 class CredentialError(RuntimeError):
@@ -790,6 +842,7 @@ class OAuthCredentialCoordinator:
         importer: Importer | None = None,
         *,
         clock_ms: Callable[[], int] | None = None,
+        auto_import: bool = True,
     ) -> None:
         if not isinstance(flavor, CredentialFlavor):
             try:
@@ -801,6 +854,7 @@ class OAuthCredentialCoordinator:
             _protect_windows_path(self.paths.canonical.parent)
         self.flavor = flavor
         self._importer = importer
+        self._auto_import = auto_import
         self._clock_ms = clock_ms or (lambda: time.time_ns() // 1_000_000)
         self._generation_owner = object()
 
@@ -1311,7 +1365,7 @@ class OAuthCredentialCoordinator:
                 if view is not None:
                     self._check_expiry(view.token)
                     return view
-                if self._importer is None:
+                if self._importer is None or not self._auto_import:
                     return None
                 token = self._imported_token()
                 if token is None:
@@ -1337,7 +1391,7 @@ class OAuthCredentialCoordinator:
                 if state is not None and state.logged_out:
                     raise CredentialError(_NEEDS_REFRESH_ERROR)
                 if view is None:
-                    token = self._imported_token()
+                    token = self._imported_token() if self._auto_import else None
                     if token is None:
                         raise CredentialError(_NEEDS_REFRESH_ERROR)
                     view = self._publish(directory_fd, state, token)
@@ -1375,7 +1429,7 @@ class OAuthCredentialCoordinator:
                 if state is not None and state.logged_out:
                     raise CredentialError(_NEEDS_REFRESH_ERROR)
                 if view is None:
-                    token = self._imported_token()
+                    token = self._imported_token() if self._auto_import else None
                     if token is None:
                         raise CredentialError(_NEEDS_REFRESH_ERROR)
                     view = self._publish(directory_fd, state, token)

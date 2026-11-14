@@ -1798,11 +1798,12 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
         def cancel(self) -> None:
             captured["cancelled"] = True
 
-    def fake_start(*, proxy=None, timeout_s=None, open_browser=None):
+    def fake_start(*, proxy=None, timeout_s=None, open_browser=None, owner=None):
         captured.update(
             proxy=proxy,
             timeout_s=timeout_s,
             open_browser=open_browser,
+            owner=owner,
         )
         return FakeFlow()
 
@@ -1816,10 +1817,13 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
         oauth_flows=oauth_flows,
     )
 
+    from nanobot.providers.oauth_credentials import CredentialOwner
+
     assert captured == {
         "proxy": proxy,
         "timeout_s": 600,
         "open_browser": True,
+        "owner": CredentialOwner.process_default(),
     }
     assert payload["status"] == "authorization_required"
     assert payload["provider"] == "openai_codex"
@@ -1974,8 +1978,8 @@ def test_xai_grok_login_starts_fresh_browser_flow_with_proxy(
         def cancel(self) -> None:
             captured["cancelled"] = True
 
-    def fake_start(*, proxy=None, timeout_s=None):
-        captured.update(proxy=proxy, timeout_s=timeout_s)
+    def fake_start(*, proxy=None, timeout_s=None, owner=None):
+        captured.update(proxy=proxy, timeout_s=timeout_s, owner=owner)
         return FakeFlow()
 
     monkeypatch.setattr("nanobot.providers.xai_oauth.start_xai_oauth_login", fake_start)
@@ -2069,7 +2073,7 @@ def test_xai_grok_logout_removes_token_through_shared_lock(
     token_path.with_suffix(".lock").write_text("", encoding="utf-8")
     monkeypatch.setattr(
         "nanobot.providers.xai_oauth.get_xai_oauth_storage_path",
-        lambda: token_path,
+        lambda *_args, **_kwargs: token_path,
     )
 
     logout_oauth_provider(

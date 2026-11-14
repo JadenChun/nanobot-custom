@@ -76,6 +76,20 @@ def _load_settings_config(config_path: Path | None) -> Config:
     return load_config(config_path) if config_path is not None else load_config()
 
 
+def _oauth_status_for(config_path: Path | None) -> Callable[[Any], dict[str, Any]]:
+    """Bind provider OAuth status reads to the selected gateway instance.
+
+    An explicitly injected reader keeps its own binding so a caller can replace
+    provider discovery without also rebuilding the instance owner.
+    """
+    if config_path is None or _oauth_provider_status is not models.oauth_provider_status:
+        return _oauth_provider_status
+    from nanobot.providers.oauth_credentials import CredentialOwner
+
+    owner = CredentialOwner.from_config_path(config_path)
+    return lambda spec: models.oauth_provider_status(spec, owner=owner)
+
+
 def _save_settings_config(config: Config, config_path: Path | None) -> None:
     if config_path is None:
         save_config(config)
@@ -167,11 +181,11 @@ def settings_payload(
     payload: dict[str, Any] = {
         **models.model_settings_payload(
             config,
-            oauth_status=_oauth_provider_status,
+            oauth_status=_oauth_status_for(config_path),
         ),
         **capabilities.capability_settings_payload(
             config,
-            oauth_status=_oauth_provider_status,
+            oauth_status=_oauth_status_for(config_path),
         ),
         **system.system_settings_payload(
             config,
@@ -202,7 +216,7 @@ def update_agent_settings(
     model_changed = models.update_agent_model_settings(
         config,
         query,
-        oauth_status=_oauth_provider_status,
+        oauth_status=_oauth_status_for(config_path),
     )
     system_changed, restart_required = system.update_agent_system_settings(config, query)
     if model_changed or system_changed:
@@ -222,7 +236,7 @@ def create_model_configuration(
     name = models.create_model_configuration(
         config,
         query,
-        oauth_status=_oauth_provider_status,
+        oauth_status=_oauth_status_for(config_path),
     )
     _save_settings_config(config, config_path)
     payload = settings_payload(config_path=config_path)
@@ -241,7 +255,7 @@ def update_model_configuration(
     changed = models.update_model_configuration(
         config,
         query,
-        oauth_status=_oauth_provider_status,
+        oauth_status=_oauth_status_for(config_path),
     )
     if changed:
         removed = names_before - set(config.model_presets)
@@ -272,7 +286,7 @@ def update_model_call_order(
     if models.update_model_call_order(
         config,
         query,
-        oauth_status=_oauth_provider_status,
+        oauth_status=_oauth_status_for(config_path),
     ):
         _save_settings_config(config, config_path)
     return settings_payload(config_path=config_path)
@@ -286,7 +300,7 @@ def migrate_model_configurations(
     config = _load_settings_config(config_path)
     if models.migrate_model_configurations(
         config,
-        oauth_status=_oauth_provider_status,
+        oauth_status=_oauth_status_for(config_path),
     ):
         _save_settings_config(config, config_path)
     return settings_payload(config_path=config_path)
@@ -443,7 +457,7 @@ def update_image_generation_settings(
     changed = capabilities.update_image_generation_settings(
         config,
         query,
-        oauth_status=_oauth_provider_status,
+        oauth_status=_oauth_status_for(config_path),
     )
     if changed:
         _save_settings_config(config, config_path)

@@ -31,6 +31,7 @@ from filelock import FileLock
 from loguru import logger
 
 from nanobot.config.paths import get_data_dir
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.utils.helpers import _write_text_atomic  # pyright: ignore[reportPrivateUsage]
 
 XAI_OAUTH_ISSUER = "https://auth.x.ai"
@@ -56,19 +57,21 @@ _DEFAULT_TOKEN_TTL_S = 60 * 60
 _HTTP_TIMEOUT_S = 15.0
 
 _login_generation_lock = threading.Lock()
-_login_generation = 0
+_login_generations: dict[str, int] = {}
+_XAI_CREDENTIAL_NAME = "xai.json"
 
 
-def _next_login_generation() -> int:
-    global _login_generation
+def _next_login_generation(owner: CredentialOwner) -> int:
+    key = owner.identity()
     with _login_generation_lock:
-        _login_generation += 1
-        return _login_generation
+        value = _login_generations.get(key, 0) + 1
+        _login_generations[key] = value
+        return value
 
 
-def _current_login_generation() -> int:
+def _current_login_generation(owner: CredentialOwner) -> int:
     with _login_generation_lock:
-        return _login_generation
+        return _login_generations.get(owner.identity(), 0)
 
 
 class XAIOAuthError(RuntimeError):
@@ -135,9 +138,11 @@ class XAIOAuthLoginFlow:
         server: ThreadingHTTPServer,
         timeout_s: float,
         login_generation: int,
+        owner: CredentialOwner,
     ) -> None:
         self.authorization_url = authorization_url
         self._login_generation = login_generation
+        self._owner = owner
         self.redirect_uri = redirect_uri
         self._verifier = verifier
         self._state = state
@@ -241,13 +246,13 @@ class XAIOAuthLoginFlow:
                     redirect_uri=self.redirect_uri,
                     proxy=self._proxy,
                 )
-                with _token_lock():
-                    if self._login_generation != _current_login_generation():
+                with _token_lock(self._owner):
+                    if self._login_generation != _current_login_generation(self._owner):
                         raise XAIOAuthError(
                             "xAI sign-in was superseded by a newer sign-in. "
                             "Run the sign-in again."
                         )
-                    _write_token(token)
+                    _write_token(token, self._owner)
             except Exception as exc:
                 self._error = exc
                 raise
@@ -280,21 +285,26 @@ class XAIOAuthLoginFlow:
             self._server_thread.join(timeout=2)
 
 
-def get_xai_oauth_storage_path() -> Path:
+def _resolve_owner(owner: CredentialOwner | None) -> CredentialOwner:
+    """Return the explicit owner, or the instance selected by this process."""
+    return CredentialOwner.from_data_root(get_data_dir()) if owner is None else owner
+
+
+def get_xai_oauth_storage_path(owner: CredentialOwner | None = None) -> Path:
     """Return the instance-scoped xAI OAuth credential path."""
-    return get_data_dir() / "auth" / "xai.json"
+    return _resolve_owner(owner).credential_path(_XAI_CREDENTIAL_NAME)
 
 
-def get_xai_oauth_login_status() -> XAIToken | None:
+def get_xai_oauth_login_status(owner: CredentialOwner | None = None) -> XAIToken | None:
     """Return locally stored login state without making a network request."""
-    return _load_token()
+    return _load_token(owner)
 
 
-def logout_xai_oauth() -> bool:
+def logout_xai_oauth(owner: CredentialOwner | None = None) -> bool:
     """Remove this instance's credentials while excluding token refreshes."""
-    path = get_xai_oauth_storage_path()
-    with _token_lock():
-        _next_login_generation()
+    path = get_xai_oauth_storage_path(owner)
+    with _token_lock(owner):
+        _next_login_generation(_resolve_owner(owner))
         try:
             path.unlink()
         except FileNotFoundError:
@@ -309,13 +319,14 @@ def login_xai_oauth(
     proxy: str | None = None,
     callback_timeout_s: float = 600,
     browser_opener: Callable[[str], bool] = webbrowser.open,
+    owner: CredentialOwner | None = None,
 ) -> XAIToken:
     """Run xAI's browser-based OAuth flow and persist the resulting token.
 
     ``prompt_fn`` is used only when no local browser could be opened. It lets a
     headless user paste either the final callback URL or its authorization code.
     """
-    flow = start_xai_oauth_login(proxy=proxy, timeout_s=callback_timeout_s)
+    flow = start_xai_oauth_login(proxy=proxy, timeout_s=callback_timeout_s, owner=owner)
 
     try:
         print_fn("Opening xAI sign-in in your browser...")
@@ -339,8 +350,10 @@ def start_xai_oauth_login(
     *,
     proxy: str | None = None,
     timeout_s: float = 600,
+    owner: CredentialOwner | None = None,
 ) -> XAIOAuthLoginFlow:
     """Create a non-blocking OAuth flow for browser or pasted-callback completion."""
+    resolved = _resolve_owner(owner)
     discovery = _discover(proxy)
     verifier, challenge = _generate_pkce()
     state = secrets.token_urlsafe(32)
@@ -365,7 +378,8 @@ def start_xai_oauth_login(
         result_queue=result_queue,
         server=server,
         timeout_s=timeout_s,
-        login_generation=_next_login_generation(),
+        login_generation=_next_login_generation(resolved),
+        owner=resolved,
     )
 
 
@@ -382,9 +396,10 @@ def get_xai_oauth_token(
     proxy: str | None = None,
     min_ttl_ms: int = _TOKEN_REFRESH_MARGIN_MS,
     force_refresh: bool = False,
+    owner: CredentialOwner | None = None,
 ) -> XAIToken:
     """Load a usable token, refreshing it under an inter-process lock when needed."""
-    token = _load_token()
+    token = _load_token(owner)
     if token is None:
         raise XAIOAuthError(
             "xAI is not signed in. Run `nanobot provider login xai-grok` first."
@@ -399,8 +414,8 @@ def get_xai_oauth_token(
             "Run `nanobot provider login xai-grok` again."
         )
 
-    with _token_lock():
-        latest = _load_token()
+    with _token_lock(owner):
+        latest = _load_token(owner)
         if latest is None:
             raise XAIOAuthError(
                 "xAI is not signed in. Run `nanobot provider login xai-grok` first."
@@ -413,7 +428,7 @@ def get_xai_oauth_token(
                 "Run `nanobot provider login xai-grok` again."
             )
         refreshed = _refresh_token(latest, proxy)
-        _write_token(refreshed)
+        _write_token(refreshed, owner)
         return refreshed
 
 
@@ -744,14 +759,14 @@ def _http_client(proxy: str | None) -> httpx.Client:
     return httpx.Client(**kwargs)
 
 
-def _token_lock() -> FileLock:
-    path = get_xai_oauth_storage_path()
+def _token_lock(owner: CredentialOwner | None = None) -> FileLock:
+    path = get_xai_oauth_storage_path(owner)
     path.parent.mkdir(parents=True, exist_ok=True)
     return FileLock(str(path.with_suffix(".lock")), timeout=15)
 
 
-def _load_token() -> XAIToken | None:
-    path = get_xai_oauth_storage_path()
+def _load_token(owner: CredentialOwner | None = None) -> XAIToken | None:
+    path = get_xai_oauth_storage_path(owner)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -762,8 +777,8 @@ def _load_token() -> XAIToken | None:
     return XAIToken.from_dict(payload)
 
 
-def _write_token(token: XAIToken) -> None:
-    path = get_xai_oauth_storage_path()
+def _write_token(token: XAIToken, owner: CredentialOwner | None = None) -> None:
+    path = get_xai_oauth_storage_path(owner)
     path.parent.mkdir(parents=True, exist_ok=True)
     with suppress(OSError):
         os.chmod(path.parent, 0o700)

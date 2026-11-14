@@ -592,7 +592,7 @@ def test_provider_logout_xai_grok_removes_instance_credentials(tmp_path, monkeyp
     lock_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(
         "nanobot.providers.xai_oauth.get_xai_oauth_storage_path",
-        lambda: token_path,
+        lambda *_args, **_kwargs: token_path,
     )
 
     result = runner.invoke(app, ["provider", "logout", "xai-grok"])

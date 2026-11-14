@@ -19,6 +19,7 @@ from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
 
 from nanobot.providers.oauth_credentials import (
     CredentialError,
+    CredentialOwner,
     CredentialStatus,
     CredentialView,
     OAuthCredentialCoordinator,
@@ -30,15 +31,21 @@ from nanobot.providers.oauth_credentials import (
 _REFRESH_EARLY_SECONDS = 300
 DEFAULT_CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 MALAYSIA_TIMEZONE = ZoneInfo("Asia/Kuala_Lumpur")
+_CODEX_CREDENTIAL_NAME = "openai-codex.json"
 
 
 class CodexUsageError(RuntimeError):
     """Raised when the Codex OAuth usage endpoint cannot be read."""
 
 
-def get_token(min_ttl_seconds: int = 60, proxy: str | None = None) -> OAuthToken:
+def get_token(
+    min_ttl_seconds: int = 60,
+    proxy: str | None = None,
+    *,
+    owner: CredentialOwner | None = None,
+) -> OAuthToken:
     """Load or refresh the canonical Codex credential under its process lock."""
-    authority = get_codex_authority()
+    authority = _authority(owner)
 
     def refresh(current: CanonicalToken) -> CanonicalToken:
         token = _refresh_token(current.refresh, current.account_id, proxy=proxy)
@@ -51,9 +58,12 @@ def get_token(min_ttl_seconds: int = 60, proxy: str | None = None) -> OAuthToken
 
 
 def get_codex_credential_view(
-    min_ttl_seconds: int = 60, proxy: str | None = None
+    min_ttl_seconds: int = 60,
+    proxy: str | None = None,
+    *,
+    owner: CredentialOwner | None = None,
 ) -> CredentialView:
-    authority = get_codex_authority()
+    authority = _authority(owner)
 
     def refresh(current: CanonicalToken) -> CanonicalToken:
         return _to_canonical(_refresh_token(current.refresh, current.account_id, proxy=proxy))
@@ -61,8 +71,9 @@ def get_codex_credential_view(
     return authority.refresh_codex(min_ttl_seconds, refresh)
 
 
-def get_codex_authority() -> OAuthCredentialCoordinator:
-    path = _canonical_codex_path()
+def get_codex_authority(owner: CredentialOwner | None = None) -> OAuthCredentialCoordinator:
+    resolved = CredentialOwner.process_default() if owner is None else owner
+    path = _canonical_codex_path(resolved)
     path.parent.mkdir(parents=True, exist_ok=True)
     path = path.parent.resolve(strict=True) / path.name
     try:
@@ -74,22 +85,32 @@ def get_codex_authority() -> OAuthCredentialCoordinator:
             raise CredentialError("invalid credential store")
     if os.name != "nt":
         path.parent.chmod(0o700)
-    return OAuthCredentialCoordinator(path, "codex", importer=_import_codex_token)
+    return OAuthCredentialCoordinator(
+        path,
+        "codex",
+        importer=_import_codex_token,
+        auto_import=resolved.owns_legacy_location(),
+    )
 
 
-def get_codex_login_status() -> CredentialStatus:
-    return get_codex_authority().peek_status()
+def _authority(owner: CredentialOwner | None) -> OAuthCredentialCoordinator:
+    return get_codex_authority() if owner is None else get_codex_authority(owner)
 
 
-def logout_codex() -> None:
-    get_codex_authority().logout()
+def get_codex_login_status(owner: CredentialOwner | None = None) -> CredentialStatus:
+    return _authority(owner).peek_status()
+
+
+def logout_codex(owner: CredentialOwner | None = None) -> None:
+    _authority(owner).logout()
     from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
     invalidate_oauth_model_catalog("openai_codex")
 
 
-def reimport_codex() -> OAuthToken | None:
-    authority = get_codex_authority()
+def reimport_codex(owner: CredentialOwner) -> OAuthToken | None:
+    """Import the read-only legacy source into exactly the named owner."""
+    authority = _authority(owner)
     generation = authority.begin_login()
     token = authority.explicit_reimport(generation)
     if token is not None:
@@ -225,18 +246,15 @@ def _as_timestamp(value: object) -> float | None:
     return timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
 
 
-def _canonical_codex_path() -> Path:
+def _canonical_codex_path(owner: CredentialOwner | None = None) -> Path:
     override = os.environ.get("NANOBOT_CODEX_AUTH_PATH")
     if override:
         return Path(os.path.abspath(os.fspath(Path(override).expanduser())))
-    from nanobot.config.paths import get_data_dir
-
-    return Path(
-        os.path.abspath(os.fspath(get_data_dir() / "auth" / "openai-codex.json"))
-    )
+    resolved = CredentialOwner.process_default() if owner is None else owner
+    return Path(os.path.abspath(os.fspath(resolved.credential_path(_CODEX_CREDENTIAL_NAME))))
 
 
-# Compatibility name for callers that only need the active Nanobot path.
+# Compatibility name for callers that only need the active owner's path.
 _nanobot_token_path = _canonical_codex_path
 
 

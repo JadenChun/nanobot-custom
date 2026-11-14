@@ -214,9 +214,9 @@ def test_older_login_cannot_overwrite_the_newer_token(
     writes: list[str] = []
     real_write = xai_oauth._write_token
 
-    def counting_write(token: XAIToken) -> None:
+    def counting_write(token: XAIToken, owner=None) -> None:
         writes.append(token.access)
-        real_write(token)
+        real_write(token, owner)
 
     monkeypatch.setattr(xai_oauth, "_write_token", counting_write)
 
@@ -360,9 +360,9 @@ def test_refresh_does_not_restore_credentials_removed_after_its_initial_read(
     refresh_errors: list[Exception] = []
     first_load = True
 
-    def gated_load_token() -> XAIToken | None:
+    def gated_load_token(owner=None) -> XAIToken | None:
         nonlocal first_load
-        token = real_load_token()
+        token = real_load_token(owner)
         if first_load:
             first_load = False
             initial_read_finished.set()

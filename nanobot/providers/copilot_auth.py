@@ -34,6 +34,7 @@ import httpx
 
 from nanobot.providers.oauth_credentials import (
     CredentialError,
+    CredentialOwner,
     CredentialStatus,
     DerivedBearer,
     OAuthCredentialCoordinator,
@@ -43,6 +44,7 @@ from nanobot.providers.oauth_credentials import (
 # Public GitHub Copilot OAuth client ID. Identical value is published in
 # copilot.vim, opencode, aider, neovim CopilotChat, etc. Not a secret.
 _COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
+_COPILOT_CREDENTIAL_NAME = "github-copilot.json"
 _DEVICE_CODE_URL = "https://github.com/login/device/code"
 _OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token"
 _COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
@@ -59,15 +61,12 @@ _USER_AGENT = "GitHubCopilotChat/0.22.0"
 # expires so in-flight requests don't race the expiry boundary.
 _REFRESH_EARLY_SECONDS = 300
 
-def _auth_path() -> Path:
+def _auth_path(owner: CredentialOwner | None = None) -> Path:
     override = os.environ.get("NANOBOT_COPILOT_AUTH_PATH")
     if override:
         return Path(os.path.abspath(os.fspath(Path(override).expanduser())))
-    from nanobot.config.paths import get_data_dir
-
-    return Path(
-        os.path.abspath(os.fspath(get_data_dir() / "auth" / "github-copilot.json"))
-    )
+    resolved = CredentialOwner.process_default() if owner is None else owner
+    return Path(os.path.abspath(os.fspath(resolved.credential_path(_COPILOT_CREDENTIAL_NAME))))
 
 
 def _legacy_auth_path() -> Path:
@@ -103,8 +102,9 @@ def _import_legacy_token() -> str | None:
     return token if isinstance(token, str) and token else None
 
 
-def get_copilot_authority() -> OAuthCredentialCoordinator:
-    path = _auth_path()
+def get_copilot_authority(owner: CredentialOwner | None = None) -> OAuthCredentialCoordinator:
+    resolved = CredentialOwner.process_default() if owner is None else owner
+    path = _auth_path(resolved)
     path.parent.mkdir(parents=True, exist_ok=True)
     path = path.parent.resolve(strict=True) / path.name
     try:
@@ -116,26 +116,36 @@ def get_copilot_authority() -> OAuthCredentialCoordinator:
             raise CredentialError("invalid credential store")
     if os.name != "nt":
         path.parent.chmod(0o700)
-    return OAuthCredentialCoordinator(path, "copilot", importer=_import_legacy_token)
+    return OAuthCredentialCoordinator(
+        path,
+        "copilot",
+        importer=_import_legacy_token,
+        auto_import=resolved.owns_legacy_location(),
+    )
 
 
-def get_copilot_login_status() -> CredentialStatus:
-    return get_copilot_authority().peek_status()
+def _authority(owner: CredentialOwner | None) -> OAuthCredentialCoordinator:
+    return get_copilot_authority() if owner is None else get_copilot_authority(owner)
 
 
-def get_copilot_identity() -> OAuthToken | None:
-    return get_copilot_authority().get_cached_or_import()
+def get_copilot_login_status(owner: CredentialOwner | None = None) -> CredentialStatus:
+    return _authority(owner).peek_status()
 
 
-def logout_copilot() -> None:
-    get_copilot_authority().logout()
+def get_copilot_identity(owner: CredentialOwner | None = None) -> OAuthToken | None:
+    return _authority(owner).get_cached_or_import()
+
+
+def logout_copilot(owner: CredentialOwner | None = None) -> None:
+    _authority(owner).logout()
     from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
     invalidate_oauth_model_catalog("github_copilot")
 
 
-def reimport_copilot() -> OAuthToken | None:
-    authority = get_copilot_authority()
+def reimport_copilot(owner: CredentialOwner) -> OAuthToken | None:
+    """Import the read-only legacy source into exactly the named owner."""
+    authority = _authority(owner)
     generation = authority.begin_login()
     token = authority.explicit_reimport(generation)
     if token is not None:
@@ -154,6 +164,7 @@ def device_login(
     *,
     on_user_code: Callable[[str, str], None] | None = None,
     poll_timeout: float = 600.0,
+    owner: CredentialOwner | None = None,
 ) -> dict[str, Any]:
     """Run the GitHub device-code flow for the Copilot client and persist.
 
@@ -161,11 +172,12 @@ def device_login(
         on_user_code: Optional callback invoked with ``(user_code, verification_uri)``
             so the caller can display the prompt. If omitted, prints to stdout.
         poll_timeout: Max seconds to wait for the user to approve.
+        owner: Optional explicit instance that owns the persisted credential.
 
     Returns:
         The full saved auth dict.
     """
-    authority = get_copilot_authority()
+    authority = _authority(owner)
     generation = authority.begin_login()
     try:
         client = httpx.Client(timeout=30.0)
@@ -248,7 +260,10 @@ def device_login(
     saved = {"github_token": access_token}
     # Eagerly mint a Copilot bearer so we surface entitlement errors at login
     # time (e.g. the GitHub account has no Copilot subscription).
-    get_copilot_bearer()
+    if owner is None:
+        get_copilot_bearer()
+    else:
+        get_copilot_bearer(owner=owner)
     return saved
 
 
@@ -310,6 +325,7 @@ def get_copilot_bearer_view(
     min_ttl_seconds: int = _REFRESH_EARLY_SECONDS,
     *,
     expected_generation: str | None = None,
+    owner: CredentialOwner | None = None,
 ) -> DerivedBearer:
     """Return a valid Copilot bearer token, refreshing if near expiry.
 
@@ -327,15 +343,19 @@ def get_copilot_bearer_view(
             "endpoint": endpoint,
         }
 
-    return get_copilot_authority().get_copilot_bearer(
+    return _authority(owner).get_copilot_bearer(
         min_ttl_seconds,
         exchange,
         expected_generation=expected_generation,
     )
 
 
-def get_copilot_bearer(min_ttl_seconds: int = _REFRESH_EARLY_SECONDS) -> str:
-    return get_copilot_bearer_view(min_ttl_seconds).bearer
+def get_copilot_bearer(
+    min_ttl_seconds: int = _REFRESH_EARLY_SECONDS,
+    *,
+    owner: CredentialOwner | None = None,
+) -> str:
+    return get_copilot_bearer_view(min_ttl_seconds, owner=owner).bearer
 
 
 def copilot_request_headers() -> dict[str, str]:
@@ -348,5 +368,5 @@ def copilot_request_headers() -> dict[str, str]:
     }
 
 
-def is_authenticated() -> bool:
-    return get_copilot_identity() is not None
+def is_authenticated(owner: CredentialOwner | None = None) -> bool:
+    return get_copilot_identity(owner) is not None

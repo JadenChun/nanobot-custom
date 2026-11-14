@@ -59,6 +59,10 @@ def test_load_official_codex_token_from_tokens_block(tmp_path: Path, monkeypatch
 def test_get_token_imports_official_codex_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("CODEX_HOME", raising=False)
+    from nanobot.config import loader
+
+    # Only the default instance owns the shared legacy location.
+    loader.set_config_path(tmp_path / ".nanobot" / "config.json")
     access = _jwt(
         {
             "exp": 4_102_444_800,

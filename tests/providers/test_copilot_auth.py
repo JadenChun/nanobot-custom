@@ -29,8 +29,12 @@ def test_imports_the_original_nanobot_default_without_changing_its_file(
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
+    # Only the default instance owns the shared legacy location.
+    from nanobot.config import loader
+
+    loader.set_config_path(tmp_path / ".nanobot" / "config.json")
     legacy = tmp_path / ".nanobot" / "copilot_auth.json"
-    legacy.parent.mkdir()
+    legacy.parent.mkdir(parents=True, exist_ok=True)
     legacy.write_text(json.dumps({field: "legacy-github-token"}), encoding="utf-8")
     original = legacy.read_bytes()
     token = copilot_auth.get_copilot_authority().get_cached_or_import()

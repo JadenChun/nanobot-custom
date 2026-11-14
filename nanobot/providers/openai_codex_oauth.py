@@ -19,6 +19,7 @@ from oauth_cli_kit.models import OAuthToken
 from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
 
 from nanobot.providers.codex_auth import get_codex_authority
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
 
 _AUTHORIZATION_URL_TIMEOUT_S = 5.0
@@ -44,6 +45,7 @@ class OpenAICodexOAuthLoginFlow:
         proxy: str | None,
         timeout_s: float,
         open_browser: bool,
+        owner: CredentialOwner | None = None,
     ) -> None:
         self.authorization_url = ""
         self._expected_state = ""
@@ -55,7 +57,7 @@ class OpenAICodexOAuthLoginFlow:
         self._ready = threading.Event()
         self._submission_lock = threading.Lock()
         self._submitted = False
-        self._authority = get_codex_authority()
+        self._authority = get_codex_authority(owner)
         self._generation = self._authority.begin_login()
         self._thread = threading.Thread(
             target=self._run,
@@ -223,12 +225,14 @@ def start_openai_codex_oauth_login(
     proxy: str | None = None,
     timeout_s: float = 600,
     open_browser: bool = True,
+    owner: CredentialOwner | None = None,
 ) -> OpenAICodexOAuthLoginFlow:
     """Start a non-blocking wrapper around oauth-cli-kit's Codex login."""
     return OpenAICodexOAuthLoginFlow(
         proxy=proxy,
         timeout_s=timeout_s,
         open_browser=open_browser,
+        owner=owner,
     ).start()
 
 
