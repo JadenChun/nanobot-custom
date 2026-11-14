@@ -5,6 +5,34 @@
 The November 15 decisions were applied to the last four findings. Every record
 used `commandcode/deepseek/deepseek-v4.1-flash`.
 
+### H01-F5 Git sync/shell approval and K01-F06 nested launch
+
+`019e3ae1` removes the `autoPush` shell/Git exemption from `policy.py`: every
+shell call now runs the ordinary risky-effect patterns, and the shell policy no
+longer reads context-repo state. Base allowed `git reset --hard`,
+`git clean -fd` and `git status && rm -rf build` with `autoPush=True`; the
+candidate requires approval for all three and still allows `git status`. The
+follow-up `c992dcbe` keeps `autoPush` as a sync-owner setting: off commits
+locally and reports `pending` without remote contact; on keeps the existing
+commit-audit-push path; re-enabling pushes the retained commit once. The
+reviewer accepted H01-F5 in `resume3/shell-review/REVIEW.md` and proved base
+discrimination, owner checks, idempotence and an unchanged shell decision.
+
+The same commit adds `nested_launch_path` and a launch-bound executor
+`LaunchConfinementAttestation`. A reduced-protection launch needs exact approval
+and a covering attestation in Sandbox and Full access, refuses with
+`policy_blocked`/`launch_confinement_unproven` before any process, and the
+executor repeats the check before spawn. The first review rejected two missed
+spellings: Claude `--permission-mode bypassPermissions` (the alternative was
+mixed-case against a lowercased command) and Codex `-c/--config
+sandbox_mode=danger-full-access`. `77ca5846` fixes the case handling and adds
+the config-override alternatives plus quoted `--sandbox`/`--ask-for-approval`.
+The recheck accepted at `9c55817b`: fifteen reduced forms and their tmux
+variants refuse with zero spawns in both access modes; approval alone is
+insufficient; a confined, approved launch dispatches once with an attestation
+bound to the launch id; protected forms and near-misses stay ordinary; the
+`f126a952` guidance is byte-identical.
+
 ### E02-F16 provider OAuth instance owner
 
 `ddfefdbb` (integrated `22caed46`) adds an explicit `CredentialOwner` derived
