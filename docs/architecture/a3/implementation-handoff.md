@@ -1,5 +1,32 @@
 # A3 implementation correction handoff
 
+## Fifth wave: OAuth and release readback
+
+Codex corrected E02-F16 in `dd8a02ca5d3b0dc52b6b11d5b320dc38d4659d0b`.
+The runtime captures its credential owner from the selected config. Explicit
+owners use their own credential paths. The legacy unscoped entry points keep
+their auth-path overrides. The settings catalog and active sign-in flows
+use the same owner as their credential store.
+
+Six regression cases failed at `509b29c9` and passed at `dd8a02ca`.
+A fresh requirements-only session authored the public cases. The receiving
+test recorded the account used by each provider's request.
+The focused run passed 2,278 tests with three skips. The full Linux run passed
+18,569 tests with 22 skips and six subtests. Strict checking found zero
+diagnostics in 546 files. The comparator found zero new signatures.
+
+The Linux wheel passed a clean install, dependency check, gateway startup,
+and an isolated switch and rollback. The stopped-copy session and cron
+rehearsal also passed. The signed APK installed and cold-launched twice on the
+Android 16 x86_64 emulator. The gateway passed 24 device-key checks over Serve
+TLS at `dd8a02ca`. The installed app's full pairing and recovery receipt
+still applies to the earlier signed APK `08e171e0`. The rebuilt APK includes
+different native library bytes. A3-9 and A3-10 therefore remain open.
+
+The evidence is in `a3-evidence/a3-reconciliation-2026-11-14/resume4/`.
+See the [run summary](reconciliation-run-summary.md#final-verification) for
+artifact digests and the remaining scope.
+
 ## Fourth wave 2026-11-15 (resume3)
 
 The November 15 decisions were applied to the last four findings. Every record

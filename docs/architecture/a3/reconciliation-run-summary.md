@@ -1,18 +1,18 @@
 # A3 reconciliation run summary
 
 **Date:** 2026-11-15 (Linux x86_64 and Android 16 x86_64 emulator)
-**Coordinator and workers:** `commandcode/deepseek/deepseek-v4.1-flash`
+**OpenCode run:** `commandcode/deepseek/deepseek-v4.1-flash`
+**Follow-up review and qualification:** Codex
 **Worktree:** `/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`
-**Branch:** `codex/a3-audit-reconciliation`, 174 commits ahead of
+**Branch:** `codex/a3-audit-reconciliation` follows
 `origin/codex/staging-audit-implementation` (`722bd8ec`).
-**Candidate:** `17114c02` (code at `9c55817b`, plus evidence and documentation).
+**Candidate:** `dd8a02ca`, tree `d5cbf40d9e3407a21af4d78f2f4b21af3c885918`.
 **Release state:** HOLD. Push, merge, deployment, and formal release
 qualification remain with the project owner.
 
-The [November 15 decisions](decisions.md#a3-release-decisions-for-the-four-remaining-findings)
-are applied: all four remaining findings were repaired, reviewed and accepted.
-The candidate above is the final integrated state. Release remains on hold until
-the project owner completes push, merge and release qualification.
+OpenCode closed the four findings from the
+[November 15 decisions](decisions.md#a3-release-decisions-for-the-four-remaining-findings).
+Codex reproduced and repaired a remaining OAuth isolation defect under E02-F16.
 
 ## Ledger
 
@@ -23,7 +23,7 @@ the project owner completes push, merge and release qualification.
 | Ready for review | 0 |
 | Unverified | 0 |
 | Review findings | 9 (all accepted; RR1 and RR3 accepted in the third wave) |
-| Evidence rows | 129 |
+| Evidence rows | 131 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
@@ -31,17 +31,17 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 
 | Stage | Status | Basis |
 | --- | --- | --- |
-| A3-0 | Accepted, Linux scope | Local qualification report; the final candidate passes 18,563 tests, strict 0/546, comparator clean. |
+| A3-0 | Accepted, Linux scope | Final source passes 18,569 tests. Strict checking reports 0/546 and the comparator reports zero new signatures. |
 | A3-1 | Accepted, Linux scope | AC1a-AC6b met; H01-F6/F7 structural debt deferred; the read_file instance media root is accepted. |
 | A3-2 | Accepted, Linux scope | AC2.1-AC2.5 met; X01-F01 gated; S02-F03 deferred; Windows/macOS unverified. |
 | A3-3 | Accepted, Linux scope | AC3.1-AC3.3 pass; five named gaps recorded. |
-| A3-4 | Findings complete | 14 accepted, including the applied-outcome and sidebar-identity repairs and the Git sync/shell approval repair. |
-| A3-5 | Findings complete | 3 accepted; nested-launch confinement and the bypass spellings are classified and refused before launch. |
-| A3-6 | Findings complete | 30 accepted, including the instance-owned OAuth credentials and the transport-attempt observer. |
-| A3-7 | Findings complete | 17 accepted, including the signed-app device-key qualification on the emulator. |
-| A3-8 | Findings complete | 24 accepted; durability, retention, cron, journal, approval and recovery repairs reviewed. |
-| A3-9 | Findings complete | 16 accepted; the signed release APK qualified device-key recovery and revocation over real Serve TLS. |
-| A3-10 | Findings complete | 8 accepted; AC10.3 still waits on a release artifact digest chosen by the project owner. |
+| A3-4 | Accepted, Linux scope | 14 findings accepted. Review receipts cover approval, admission, Stop and applied-result readback. |
+| A3-5 | Accepted, Linux scope | 3 findings accepted. Receipts cover native subagent ownership, history and control. The external backend stays gated. |
+| A3-6 | Accepted, Linux scope | 30 findings accepted, including the corrected SDK and gateway OAuth ownership. |
+| A3-7 | Accepted, emulator scope | 16 findings accepted. The earlier signed app proved pairing, recovery and revocation. The final APK has a separate launch receipt. |
+| A3-8 | Accepted, Linux scope | 24 findings accepted. Receipts cover durability, cleanup, crash recovery and asset paging. |
+| A3-9 | Release qualification open | 16 findings accepted. The final APK still needs an installed-app pairing, recovery and revoke receipt. |
+| A3-10 | Release qualification open | 8 findings accepted. AC10.3 depends on A3-9. The installed Linux rollback passed. |
 
 ## Repairs integrated in this run
 
@@ -52,48 +52,39 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | `dce41144` | Remote-access enable requires a JSON boolean; pairing renewal is routed and classified as a mutation. |
 | `19e95d33` | `desktop_use` state-changing actions require one exact-effect approval; AR1 deny and AR2 repeat cases added. |
 | `4b5c95a2` | Cron, clawhub and webapp-testing guidance matches the runtime. |
-
-The remaining commits record reviews, evidence, and the stage decisions.
-
-## Accepted findings by stage
-
-- **A3-1:** H01-F4, K01-F12, H01-F1, H01-F2, H03-F3, T01-F10, K01-F11, H01-F3, K01-F10.
-- **A3-2:** S01-F01, S01-F03, T01-F07, S02-F01, S02-F02, C00-F01, C00-F02, C00-F03, E02-F14, T01-F09, X01-F03.
-- **A3-3:** E02-F01.
-- **A3-4:** E02-F15, T01-F08, U01-F01, U01-F03, U01-F04, U01-F06, D01-F01, D01-F02, E02-F08, E02-F19, E02-F21.
-- **A3-6:** K01-F01, E02-F11, E02-F13, E02-F18, H03-F2, H03-F7, E02-F23, K01-F03, K01-F04, K01-F05, K01-F07, K01-F09, T01-F01, T01-F02, T01-F03, H01-F8, H03-F6.
-- **A3-7:** E02-F17, E02-F02, E02-F22, R01-F02, R01-F01, R01-F03, R01-F08, R01-F09, R01-F10, R01-F15, R01-F04, R01-F07.
-- **A3-8:** E02-F06, E02-F10, M01-F05, M01-F06.
-- **A3-9:** Q01-F02, R01-F06, C00-F07, Q01-F04, R01-F16, R01-F18, Q01-F06, Q01-F07, R01-F19.
-- **A3-10:** A01-F02, A01-F07.
-
-## Open findings by stage
-
-- **A3-4** — H01-F5.
-- **A3-5** — K01-F06.
-- **A3-6** — E02-F16.
-- **A3-9** — R01-F05.
+| `9aa150e5`, `487a99d8`, `9c55817b` | Shell approval and nested-agent launch admission. |
+| `22caed46`, `dd8a02ca` | Provider OAuth storage, requests and settings use the configured instance. |
 
 ## Final verification
 
 | Check | Result |
 | --- | --- |
-| Python full suite (code `9c55817b`) | 18,563 passed, 22 skipped, 6 subtests |
+| Python full suite at `dd8a02ca` | 18,569 passed, 22 skipped, 6 subtests |
 | Strict BasedPyright | 0 diagnostics / 546 files |
-| Go broker `-race` + C ABI | pass, `NANOBOT_CABI_SMOKE_OK version=1` |
-| Android JVM suite | 32 passed |
-| Signed-app device-key pass | 24/24 host and app checks |
+| WebUI activity and inspector | 68 passed |
+| Installed Linux wheel | Version, package contents, dependencies, startup and isolated rollback passed |
+| Stopped-copy rollback | Session and cron state rehearsal passed |
+| Final signed APK | Installed and cold-launched twice on Android 16 x86_64 |
+| Final gateway over Serve TLS | 24/24 host device-key checks passed |
+| Earlier signed APK `08e171e0` | Installed app pairing, recovery and revocation passed |
 
-The final full suite ran at `9c55817b` and is recorded in
-`resume3/final/full-suite-final.log`; `resume3/final/strict-final.json` is the
-matching 0/546 strict report.
+The `resume4/final/` receipts contain the suite logs, installed checks,
+and artifact identities. The wheel contains 546 matching Python files and 590
+WebUI files. The final APK shares 534 files byte for byte with that bundle.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Linux wheel | `435736784453bf865fb2f14e4d22fbe39a21bee3cb54a6823df65d436444a461` |
+| Source archive | `d74fefb49b8cafa0f610bc09fbf55ca11c5c184c226c7165f8a359a66ce37500` |
+| Android APK | `07d7e3e1103443d3bc35ffc8249b53a72cfd71bf5a36f21ac06eeeba45a492ff` |
 
 ## Remaining work and limits
 
-- **Release hold:** push, merge, deployment and formal release qualification
-  stay with the project owner. A3-10 AC10.3 needs a release artifact digest.
-- **Device coverage:** the signed-app pass is emulator coverage on a Linux host.
-  No physical device, hardware Keystore or process-death matrix was exercised.
+- The final signed APK needs a paired emulator run that covers recovery and
+  revocation at its digest. The rebuilt native libraries differ from those in
+  the earlier APK. Enroll a test app node in the tailnet before the run.
+- A3-10 AC10.3 needs the final A3-9 evidence. Release remains on hold.
+  The selected verification matrix is Linux and the Android emulator.
 - **Mobile WS frames:** `handle_ws_frame` has no caller and `build_mobile_edge`
   receives no replay cache or mutation handler, so mobile `mutation`/`logout`
   frames stay `scope_denied`. The November 15 decision leaves legacy bearer
