@@ -1,5 +1,52 @@
 # A3 implementation correction handoff
 
+## A3-6a guidance repair 2026-11-14
+
+Commit `4b5c95a2` aligns three shipped skill guidance files with the runtime.
+The cron skill now says every job starts an agent turn and uses the configured
+agent timezone, not a server-local default. The clawhub skill uses the effective
+agent workspace instead of four hardcoded paths. The webapp-testing skill names
+the operator-owned browser connection settings and lists the caller CDP flags
+that the wrapper blocks. K01-F04, K01-F05 and K01-F09 are accepted.
+
+The guidance tests pass 34 cases and the stale-claim grep finds no match. The
+remaining A3-6a items need code or a decision: skill metadata validation,
+alternative binary requirements, and the no-query projection ceiling.
+
+## Linux stage acceptance 2026-11-14
+
+The coordinator accepted A3-0, A3-1, A3-2 and A3-3 for the Linux scope. Each
+acceptance names its gaps, and none claims macOS, Windows, physical Android or
+an installed release artifact.
+
+A3-0 has a local qualification report. The candidate passed 18,357 tests with
+22 skips and 6 subtests. Strict BasedPyright is 0 diagnostics in 546 files. The
+frozen comparator reports `PASS_NO_NEW_DIAGNOSTICS` with 0 introduced. The
+WebUI suite passed 1,550 tests and lint, and the bundle rebuild is
+byte-identical.
+
+A3-1 met AC1a through AC6b. The AC1a probe writes the image and sidecar under
+the explicit instance media root, leaves the ambient root without an artifact,
+and keeps that root after reload. H01-F1, H01-F2, H01-F4, H01-F3, K01-F10,
+K01-F12, H03-F3, T01-F10 and K01-F11 are accepted. The structural findings
+H01-F6 and H01-F7 stay unverified. C5 remains: the built-in `read_file` does not
+yet resolve the instance media root.
+
+A3-2 met AC2.1 through AC2.5. S01-F01, S01-F03, T01-F07, S02-F02, C00-F01,
+C00-F02, C00-F03, E02-F14, T01-F09 and X01-F03 are accepted. X01-F01 stays a
+gated gap because `run_cli_app` is not registered and restricted activation
+needs qualified confinement. S02-F03 stays deferred because no contention
+measurement exists. Windows and macOS confinement claims remain unverified.
+
+A3-3 met AC3.1 through AC3.3. The review passed 145 tests in five named suites
+and 126 in each of two related groups. Its gaps are recorded: no single fixture
+holds completed, interrupted and uncertain together; a persisted RUNNING run
+record has no terminal projection; the unqualified platform is simulated; the
+`bc850a91` source-reader rollback leg is no longer reproducible; and the lost
+save-acknowledgement path is outside AC3.3.
+
+A3-4 remains in progress. A3-5 through A3-10 remain unverified.
+
 ## W21 named review 2026-11-14
 
 Reviewer W21 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`
