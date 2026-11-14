@@ -36,6 +36,8 @@ _MAX_TRANSCRIPT_FILE_BYTES = 8 * 1024 * 1024
 _ACTIVE_TRANSCRIPT_ROTATE_BYTES = 2 * 1024 * 1024
 _TARGET_ACTIVE_TRANSCRIPT_BYTES = _ACTIVE_TRANSCRIPT_ROTATE_BYTES // 2
 _TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 3
+_TRANSCRIPT_ROTATION_INTENT_VERSION = 1
+_TRANSCRIPT_ROTATION_INTENT_NAME = "rotation.json"
 _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
 _TRANSCRIPT_SEGMENT_RE = re.compile(r"^\d{6}\.jsonl$")
 _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
@@ -798,6 +800,125 @@ def _write_segment_manifest(
         raise
 
 
+def _transcript_file_name(value: object) -> str | None:
+    if not isinstance(value, str) or not value or not value.endswith(".jsonl"):
+        return None
+    if "/" in value or "\\" in value or value != Path(value).name:
+        return None
+    return value
+
+
+def _transcript_rotation_intent_path(session_key: str) -> Path:
+    return webui_transcript_segments_dir(session_key) / _TRANSCRIPT_ROTATION_INTENT_NAME
+
+
+class _TranscriptRotationIntent(NamedTuple):
+    source_active: str | None
+    target_active: str | None
+    committed_segments: frozenset[str]
+
+
+def _write_transcript_rotation_intent(
+    session_key: str,
+    *,
+    source_active: str,
+    target_active: str,
+    committed_segments: Sequence[str],
+) -> None:
+    """Record a rotation before any segment is published.
+
+    The intent is a committed watermark: it names the active file the rotation
+    started from and the segments that were committed at that point. A crash
+    before the manifest commit therefore leaves the source active authoritative
+    and the published segments uncommitted.
+    """
+    directory = webui_transcript_segments_dir(session_key)
+    directory.mkdir(parents=True, exist_ok=True)
+    _write_manifest_json(
+        _transcript_rotation_intent_path(session_key),
+        {
+            "version": _TRANSCRIPT_ROTATION_INTENT_VERSION,
+            "source_active": source_active,
+            "target_active": target_active,
+            "committed_segments": list(committed_segments),
+        },
+    )
+    _fsync_transcript_directory(directory)
+
+
+def _read_transcript_rotation_intent(
+    session_key: str,
+) -> _TranscriptRotationIntent | None:
+    path = _transcript_rotation_intent_path(session_key)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    intent = cast(dict[str, Any], data)
+    raw_segments = intent.get("committed_segments")
+    if (
+        intent.get("version") != _TRANSCRIPT_ROTATION_INTENT_VERSION
+        or not isinstance(raw_segments, list)
+    ):
+        return None
+    committed: set[str] = set()
+    for raw_segment in cast(list[Any], raw_segments):
+        if not isinstance(raw_segment, str) or not _TRANSCRIPT_SEGMENT_RE.fullmatch(
+            f"{raw_segment}.jsonl"
+        ):
+            return None
+        committed.add(raw_segment)
+    return _TranscriptRotationIntent(
+        _transcript_file_name(intent.get("source_active")),
+        _transcript_file_name(intent.get("target_active")),
+        frozenset(committed),
+    )
+
+
+def _committed_manifest_active(session_key: str) -> str | None:
+    path = _webui_transcript_manifest_path(session_key)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    manifest = cast(dict[str, Any], data)
+    if manifest.get("version") != _TRANSCRIPT_SEGMENT_MANIFEST_VERSION:
+        return None
+    return _transcript_file_name(manifest.get("active"))
+
+
+def _recover_interrupted_rotation(session_key: str) -> None:
+    """Roll back or finish a rotation that stopped before its manifest commit."""
+    intent = _read_transcript_rotation_intent(session_key)
+    if intent is None:
+        return
+    root = get_webui_dir()
+    if intent.target_active is not None and (
+        _committed_manifest_active(session_key) == intent.target_active
+    ):
+        # The manifest commit succeeded; only the old active unlink is left.
+        if intent.source_active is not None and intent.source_active != intent.target_active:
+            with suppress(OSError):
+                (root / intent.source_active).unlink()
+    else:
+        # No manifest commit: the source active still holds every turn. Drop the
+        # uncommitted segments and the uncommitted tail so the read path never
+        # sees both generations.
+        if intent.target_active is not None:
+            with suppress(OSError):
+                (root / intent.target_active).unlink()
+        for segment_id in _segment_ids_on_disk(session_key):
+            if segment_id not in intent.committed_segments:
+                with suppress(OSError):
+                    _segment_file_path(session_key, segment_id).unlink()
+    with suppress(OSError):
+        _transcript_rotation_intent_path(session_key).unlink()
+
+
 def _rebuild_segment_manifest(
     session_key: str,
 ) -> tuple[list[dict[str, Any]], str | None]:
@@ -821,11 +942,15 @@ def _rebuild_segment_manifest(
 
 def _read_segment_manifest_state(
     session_key: str,
+    *,
+    recover_rotation: bool = True,
 ) -> tuple[list[dict[str, Any]], str | None]:
     _migrate_legacy_transcript(session_key)
     directory = webui_transcript_segments_dir(session_key)
     if not directory.is_dir():
         return [], None
+    if recover_rotation:
+        _recover_interrupted_rotation(session_key)
     path = _webui_transcript_manifest_path(session_key)
     if not path.is_file():
         return _rebuild_segment_manifest(session_key)
@@ -858,8 +983,12 @@ def _read_segment_manifest_state(
         return _rebuild_segment_manifest(session_key)
 
 
-def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
-    return _read_segment_manifest_state(session_key)[0]
+def _read_segment_manifest_entries(
+    session_key: str,
+    *,
+    recover_rotation: bool = True,
+) -> list[dict[str, Any]]:
+    return _read_segment_manifest_state(session_key, recover_rotation=recover_rotation)[0]
 
 
 def _read_segment_ids(session_key: str) -> list[str]:
@@ -871,10 +1000,11 @@ def _append_segment_turns(
     turns: list[list[dict[str, Any]]],
     *,
     write_manifest: bool = True,
+    recover_rotation: bool = True,
 ) -> list[dict[str, Any]]:
     if not turns:
-        return _read_segment_manifest_entries(session_key)
-    entries = _read_segment_manifest_entries(session_key)
+        return _read_segment_manifest_entries(session_key, recover_rotation=recover_rotation)
+    entries = _read_segment_manifest_entries(session_key, recover_rotation=recover_rotation)
     next_id = int(entries[-1]["id"]) + 1 if entries else 1
     batch: list[list[dict[str, Any]]] = []
     batch_bytes = 0
@@ -943,13 +1073,31 @@ def _rotate_active_transcript_if_needed(session_key: str) -> None:
     kept = turns[keep_start:]
     if not moved:
         return
-    entries = _append_segment_turns(session_key, moved, write_manifest=False)
+    committed_entries = _read_segment_manifest_entries(session_key)
     active_name = f"{_transcript_stem(session_key)}.active.{secrets.token_hex(8)}.jsonl"
+    # Publish the intent first. A crash before the manifest commit leaves no
+    # committed rotation, so recovery keeps this active file and drops the
+    # uncommitted segments instead of reading both generations.
+    _write_transcript_rotation_intent(
+        session_key,
+        source_active=active_path.name,
+        target_active=active_name,
+        committed_segments=[str(entry["id"]) for entry in committed_entries],
+    )
+    entries = _append_segment_turns(
+        session_key,
+        moved,
+        write_manifest=False,
+        recover_rotation=False,
+    )
     next_active = get_webui_dir() / active_name
     _write_records_to_path(next_active, _flatten_turns(kept))
     # The manifest commit is the rotation point. Before it, readers use the
     # old active file. After it, readers use the segments plus the new active.
     _write_segment_manifest(session_key, entries, active_name=active_name)
+    with suppress(OSError):
+        _transcript_rotation_intent_path(session_key).unlink()
+    _fsync_transcript_directory(webui_transcript_segments_dir(session_key))
     with suppress(OSError):
         active_path.unlink()
 
