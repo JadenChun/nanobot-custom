@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ArrowLeft, X } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { SubagentStatus } from "@/components/thread/SubagentStatus";
+import { ThreadInspectorDialog } from "@/components/thread/ThreadInspector";
 import { ThreadMessages } from "@/components/thread/ThreadMessages";
 import { Button } from "@/components/ui/button";
 import { useMobileBack } from "@/hooks/useMobileBack";
@@ -39,6 +40,7 @@ export interface DelegatedChildHistoryOverlayProps {
   statusAvailable?: boolean;
   modal?: boolean;
   active?: boolean;
+  visible?: boolean;
   token: string;
   onClose: () => void;
 }
@@ -289,6 +291,7 @@ export function DelegatedChildHistoryOverlay({
   statusAvailable = true,
   modal = true,
   active = true,
+  visible = true,
   token,
   onClose,
 }: DelegatedChildHistoryOverlayProps) {
@@ -370,10 +373,6 @@ export function DelegatedChildHistoryOverlay({
   }, [child, expectedRoot, provenanceComplete, requestPage, rootKey]);
 
   useLayoutEffect(() => {
-    if (!modal) backButtonRef.current?.focus({ preventScroll: true });
-  }, [modal]);
-
-  useLayoutEffect(() => {
     const anchor = pendingScrollAnchorRef.current;
     const scroller = scrollerRef.current;
     if (!anchor || !scroller) return;
@@ -445,47 +444,32 @@ export function DelegatedChildHistoryOverlay({
   const Description = modal ? Dialog.Description : "span";
   const content = (
     <>
-      <header className="shrink-0 border-b border-border/70 px-4 pb-3 pt-2 sm:px-5">
-        <div className="flex min-h-11 items-center justify-between gap-2">
-          {modal ? (
-            <Button
-              ref={backButtonRef}
-              type="button"
-              variant="ghost"
-              className="-ms-2 h-11 gap-2 px-2"
-              onClick={onClose}
-            >
-              <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
-              {t("thread.delegatedChild.backToParent", "Back to parent chat")}
-            </Button>
-          ) : (
-            <>
-              <p className="text-xs font-medium text-muted-foreground">
-                {t("thread.delegatedChild.activity", "Subagent activity")}
-              </p>
-              <Button
-                ref={backButtonRef}
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onClose}
-                aria-label={t("thread.delegatedChild.closeActivity", "Close subagent activity")}
-              >
-                <X className="size-4" aria-hidden />
-              </Button>
-            </>
-          )}
-        </div>
-        <Title className="mt-1 break-words text-base font-semibold leading-snug">{taskLabel}</Title>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span aria-live="polite">
-            <SubagentStatus
-              child={displayedChild}
-              available={statusAvailable && provenanceComplete}
-              summaryLabel={false}
-            />
-          </span>
-          <Description className="text-xs text-muted-foreground">{readOnlyLabel}</Description>
+      <header className="flex shrink-0 items-start gap-1.5 border-b border-border/70 px-3 py-2.5 sm:px-4">
+        {modal ? (
+          <Button
+            ref={backButtonRef}
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="-ms-1 size-11 shrink-0 text-muted-foreground"
+            aria-label={t("thread.delegatedChild.backToParent", "Back to parent chat")}
+            onClick={onClose}
+          >
+            <ArrowLeft className="size-5 rtl:rotate-180" aria-hidden />
+          </Button>
+        ) : null}
+        <div className="min-w-0 flex-1 py-0.5">
+          <Title className="break-words text-sm font-semibold leading-5 sm:text-base">{taskLabel}</Title>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span aria-live="polite">
+              <SubagentStatus
+                child={displayedChild}
+                available={statusAvailable && provenanceComplete}
+                summaryLabel={false}
+              />
+            </span>
+            <Description className="text-xs text-muted-foreground">{readOnlyLabel}</Description>
+          </div>
         </div>
       </header>
       {historyKind === "summary" ? (
@@ -542,7 +526,7 @@ export function DelegatedChildHistoryOverlay({
     return (
       <section
         aria-label={taskLabel}
-        className="flex h-full min-h-0 w-[min(42%,30rem)] shrink-0 flex-col border-s border-border bg-background"
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
         data-testid="delegated-child-history"
       >
         {content}
@@ -550,21 +534,10 @@ export function DelegatedChildHistoryOverlay({
     );
   }
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Dialog.Portal>
-        <Dialog.Content
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]"
-          data-testid="delegated-child-history"
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            backButtonRef.current?.focus({ preventScroll: true });
-          }}
-          onCloseAutoFocus={(event) => event.preventDefault()}
-        >
-          {content}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    visible ? (
+      <ThreadInspectorDialog focusRef={backButtonRef} onClose={onClose} testId="delegated-child-history">
+        {content}
+      </ThreadInspectorDialog>
+    ) : null
   );
 }

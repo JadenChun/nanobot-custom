@@ -137,7 +137,9 @@ describe("DelegatedChildHistoryOverlay", () => {
     expect(screen.getByText(/A summary of the old delegated work\./)).toBeInTheDocument();
     expect(screen.getByText(/A message with a real epoch-zero timestamp\./)).toBeInTheDocument();
     expect(screen.getByText(/Full canonical activity is unavailable/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Back to parent chat" })).toBeInTheDocument();
+    const back = screen.getByRole("button", { name: "Back to parent chat" });
+    expect(back.textContent).toBe("");
+    expect(back.querySelector("svg")).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Fork" })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog").querySelectorAll("[data-message-timestamp]")).toHaveLength(1);

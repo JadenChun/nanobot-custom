@@ -114,9 +114,9 @@ topic alongside it. A group holds up to four panes. To bring in an existing
 topic, drag it onto the group or use **Move to** in its action menu.
 
 Use **Pane layout** to choose columns, rows, a grid, BSP, or a main pane with a
-stack. Drag a divider to resize panes. Each pane has its own conversation;
-select one to direct the shared composer to that topic. Group membership and
-layout persist across refreshes. Grouping topics does not merge their histories.
+stack. Drag a divider to resize panes. Select a conversation to show its
+composer inside that pane. Group membership and layout persist across
+refreshes. Grouping topics does not merge their histories.
 
 To bring another topic's work into a conversation, select it from the `@` menu
 or drag it from the sidebar into the composer. The agent can read the selected
@@ -135,6 +135,11 @@ shows available unified patches inline, and **Collapsed diff** lets you expand
 them with **View diff**. Large diffs may hide unchanged lines or truncate the
 inline preview. Select the filename in the activity row to open the read-only
 file preview panel.
+
+Select a subagent activity row to see its read-only history. On a wide screen,
+file previews and subagent activity open as tabs in the same side panel. Drag
+the divider to resize the panel. On a phone, subagent activity fills the screen.
+Select the arrow beside the task title to return to the chat.
 
 File previews follow the active topic's effective access. In managed mode, a
 preview is available only when the server grants read access to that folder;

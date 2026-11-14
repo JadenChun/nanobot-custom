@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { Bot, FileText } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
 import { FilePreviewPanel } from "@/components/FilePreviewPanel";
+import { splitFilePath } from "@/components/FileReferenceChip";
 import { ApprovalRequestCard } from "@/components/thread/ApprovalRequestCard";
 import {
   DelegatedChildHistoryOverlay,
@@ -30,13 +32,13 @@ import type {
 } from "@/components/thread/ComposerUsagePopover";
 import type { ModelPresetOption } from "@/components/thread/ModelPresetBadge";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
+import { MIN_INSPECTOR_DOCK_WIDTH, ThreadInspector, type InspectorTab, type InspectorTabId } from "@/components/thread/ThreadInspector";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import {
   ThreadViewport,
   type ThreadViewportHandle,
   type ThreadViewportState,
 } from "@/components/thread/ThreadViewport";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
 import {
@@ -685,28 +687,11 @@ function canonicalRunSnapshot(
   };
 }
 
-const FILE_PREVIEW_DEFAULT_WIDTH = 544;
-const FILE_PREVIEW_MIN_WIDTH = 360;
-const FILE_PREVIEW_MAX_WIDTH = 860;
-const FILE_PREVIEW_MIN_MAIN_WIDTH = 420;
-const FILE_PREVIEW_CLOSE_ANIMATION_MS = 320;
-
 type FilePreviewAvailabilityCacheEntry = {
   available?: boolean;
   promise: Promise<boolean>;
   revision: string;
 };
-
-function clampFilePreviewWidth(width: number, maxWidth: number): number {
-  return Math.min(Math.max(width, FILE_PREVIEW_MIN_WIDTH), maxWidth);
-}
-
-function maxFilePreviewWidth(containerWidth: number): number {
-  return Math.max(
-    FILE_PREVIEW_MIN_WIDTH,
-    Math.min(FILE_PREVIEW_MAX_WIDTH, containerWidth - FILE_PREVIEW_MIN_MAIN_WIDTH),
-  );
-}
 
 interface ThreadShellProps {
   session: ChatSummary | null;
@@ -738,7 +723,6 @@ interface ThreadShellProps {
   headerActions?: ReactNode;
   headerPortalTarget?: HTMLElement | null;
   headerActive?: boolean;
-  composerPortalTarget?: HTMLElement | null;
   composerActive?: boolean;
   composerInputAriaLabel?: string;
   emptyComposerVariant?: "hero" | "thread";
@@ -1040,7 +1024,6 @@ export function ThreadShell({
   headerActions,
   headerPortalTarget,
   headerActive = true,
-  composerPortalTarget,
   composerActive = true,
   composerInputAriaLabel,
   emptyComposerVariant = "hero",
@@ -1280,19 +1263,16 @@ export function ThreadShell({
     trigger: HTMLButtonElement;
     wasModal: boolean;
   } | null>(null);
-  const [canDockChildHistory, setCanDockChildHistory] = useState(false);
-  const wideViewport = useMediaQuery("(min-width: 1024px)");
-  const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
+  const [shellWidth, setShellWidth] = useState(0);
+  const [selectedInspector, setSelectedInspector] = useState<InspectorTabId>("subagents");
+  const [filePreview, setFilePreview] = useState<{ parentKey: string; path: string } | null>(null);
+  const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
-  const [filePreviewClosing, setFilePreviewClosing] = useState(false);
-  const [filePreviewWidth, setFilePreviewWidth] = useState(FILE_PREVIEW_DEFAULT_WIDTH);
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const shellRef = useRef<HTMLElement | null>(null);
   const composerSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const filePreviewWidthRef = useRef(FILE_PREVIEW_DEFAULT_WIDTH);
-  const filePreviewCloseTimerRef = useRef<number | null>(null);
   const pendingFirstRef = useRef<PendingFirstMessage | null>(null);
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
   const [pendingFullDraft, setPendingFullDraft] = useState<{
@@ -1305,14 +1285,17 @@ export function ThreadShell({
 
   useLayoutEffect(() => {
     const shell = shellRef.current;
-    if (!shell || !wideViewport) return;
-    const measure = () => setCanDockChildHistory(shell.clientWidth >= 760);
+    if (!shell) return;
+    const measure = () => setShellWidth(shell.clientWidth);
     measure();
-    if (typeof ResizeObserver === "undefined") return;
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
     const observer = new ResizeObserver(measure);
     observer.observe(shell);
     return () => observer.disconnect();
-  }, [wideViewport]);
+  }, []);
   const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
   const messageCacheRef = useRef<Map<string, UIMessage[]>>(new Map());
   const knownTemporaryChatIdsRef = useRef(new Set<string>());
@@ -1439,16 +1422,7 @@ export function ThreadShell({
   }, [chatId, historyKey]);
 
   useEffect(() => {
-    filePreviewWidthRef.current = filePreviewWidth;
-  }, [filePreviewWidth]);
-
-  useEffect(() => {
-    if (filePreviewCloseTimerRef.current !== null) {
-      window.clearTimeout(filePreviewCloseTimerRef.current);
-      filePreviewCloseTimerRef.current = null;
-    }
-    setFilePreviewClosing(false);
-    setFilePreviewPath(null);
+    setFilePreview(null);
     setQuotedContext(null);
     setSubmittedViewportTurnId(null);
   }, [historyKey]);
@@ -1468,14 +1442,6 @@ export function ThreadShell({
   const handleQuoteSelection = useCallback((text: string) => {
     setQuotedContext(text);
     setComposerFocusSignal((value) => value + 1);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (filePreviewCloseTimerRef.current !== null) {
-        window.clearTimeout(filePreviewCloseTimerRef.current);
-      }
-    };
   }, []);
 
   const displayMessages = useMemo(() => projectWebuiThreadMessages(messages), [messages]);
@@ -1607,8 +1573,13 @@ export function ThreadShell({
   const activeChildHistoryInspection = childHistoryInspection?.parentKey === historyKey
     ? childHistoryInspection
     : null;
-  const dockChildHistory = wideViewport && canDockChildHistory;
-  const childHistoryModal = activeChildHistoryInspection !== null && !dockChildHistory;
+  const inspectorTab = selectedInspector === "file" && filePreviewPath
+    ? "file"
+    : activeChildHistoryInspection ? "subagents" : filePreviewPath ? "file" : null;
+  const inspectorDocked = shellWidth >= MIN_INSPECTOR_DOCK_WIDTH;
+  const inspectorVisible = inspectorDocked || composerActive;
+  const inspectorModal = inspectorVisible && inspectorTab !== null && !inspectorDocked;
+  const childHistoryModal = inspectorModal && inspectorTab === "subagents";
   const delegatedStatusAvailable = connectionOpen && !delegatedChildrenError;
   const inspectedCurrentChild = activeChildHistoryInspection
     ? currentDelegatedChildReferences.find((child) => (
@@ -1689,13 +1660,8 @@ export function ThreadShell({
       return;
     }
     const viewportState = viewportRef.current?.captureViewState() ?? null;
-    inspectionReturnRef.current = { parentKey: historyKey, viewportState, trigger, wasModal: !dockChildHistory };
-    if (filePreviewCloseTimerRef.current !== null) {
-      window.clearTimeout(filePreviewCloseTimerRef.current);
-      filePreviewCloseTimerRef.current = null;
-    }
-    setFilePreviewPath(null);
-    setFilePreviewClosing(false);
+    inspectionReturnRef.current = { parentKey: historyKey, viewportState, trigger, wasModal: !inspectorDocked };
+    setSelectedInspector("subagents");
     setChildHistoryError(null);
     setChildHistoryInspection({
       parentKey: historyKey,
@@ -1706,9 +1672,9 @@ export function ThreadShell({
     currentDelegatedChildren,
     currentDelegatedChildReferences,
     delegatedChildrenError,
-    dockChildHistory,
     historyKey,
     historyStopTarget?.source,
+    inspectorDocked,
     stopTarget?.source,
     temporary,
   ]);
@@ -2791,14 +2757,10 @@ export function ThreadShell({
   }, [mutateWorkspaceAccessMode]);
 
   const handleOpenFilePreview = useCallback((path: string) => {
-    setChildHistoryInspection(null);
-    if (filePreviewCloseTimerRef.current !== null) {
-      window.clearTimeout(filePreviewCloseTimerRef.current);
-      filePreviewCloseTimerRef.current = null;
-    }
-    setFilePreviewClosing(false);
-    setFilePreviewPath(path);
-  }, []);
+    if (!historyKey) return;
+    setSelectedInspector("file");
+    setFilePreview({ parentKey: historyKey, path });
+  }, [historyKey]);
 
   useEffect(() => {
     filePreviewEditKeysRef.current = new Set();
@@ -2826,83 +2788,12 @@ export function ThreadShell({
   }, [filePreviewPath, messages]);
 
   const handleCloseFilePreview = useCallback(() => {
-    if (!filePreviewPath || filePreviewClosing) return;
-    setFilePreviewClosing(true);
-    filePreviewCloseTimerRef.current = window.setTimeout(() => {
-      filePreviewCloseTimerRef.current = null;
-      setFilePreviewPath(null);
-      setFilePreviewClosing(false);
-    }, FILE_PREVIEW_CLOSE_ANIMATION_MS);
-  }, [filePreviewClosing, filePreviewPath]);
-
-  const handleFilePreviewResizeStart = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const panel = event.currentTarget.closest<HTMLElement>("[data-file-preview-panel]");
-    const shellRect = shellRef.current?.getBoundingClientRect();
-    const rightEdge = shellRect?.right ?? window.innerWidth;
-    const maxWidth = maxFilePreviewWidth(shellRect?.width ?? window.innerWidth);
-    const originalBodyCursor = document.body.style.cursor;
-    const originalBodyUserSelect = document.body.style.userSelect;
-    const originalPanelTransition = panel?.style.transition ?? "";
-    let nextWidth = filePreviewWidthRef.current;
-    let frame: number | null = null;
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    if (panel) panel.style.transition = "none";
-
-    const applyWidth = (clientX: number) => {
-      nextWidth = clampFilePreviewWidth(rightEdge - clientX, maxWidth);
-      filePreviewWidthRef.current = nextWidth;
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        panel?.style.setProperty("--file-preview-width", `${nextWidth}px`);
-        panel?.style.setProperty("--file-preview-slot-width", `${nextWidth}px`);
-      });
-    };
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      moveEvent.preventDefault();
-      applyWidth(moveEvent.clientX);
-    };
-    const handlePointerUp = () => {
-      if (frame !== null) {
-        window.cancelAnimationFrame(frame);
-        frame = null;
-      }
-      panel?.style.setProperty("--file-preview-width", `${nextWidth}px`);
-      panel?.style.setProperty("--file-preview-slot-width", `${nextWidth}px`);
-      if (panel) panel.style.transition = originalPanelTransition;
-      setFilePreviewWidth(nextWidth);
-      document.body.style.cursor = originalBodyCursor;
-      document.body.style.userSelect = originalBodyUserSelect;
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
-
-    applyWidth(event.clientX);
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
+    setFilePreview(null);
   }, []);
-
-  useEffect(() => {
-    if (!filePreviewPath) return;
-    const clampToShell = () => {
-      const shellWidth = shellRef.current?.getBoundingClientRect().width ?? window.innerWidth;
-      const maxWidth = maxFilePreviewWidth(shellWidth);
-      const nextWidth = clampFilePreviewWidth(filePreviewWidthRef.current, maxWidth);
-      filePreviewWidthRef.current = nextWidth;
-      setFilePreviewWidth(nextWidth);
-    };
-    clampToShell();
-    window.addEventListener("resize", clampToShell);
-    return () => {
-      window.removeEventListener("resize", clampToShell);
-    };
-  }, [filePreviewPath]);
+  const handleCloseInspectorDialog = useCallback(() => {
+    handleCloseChildHistory();
+    handleCloseFilePreview();
+  }, [handleCloseChildHistory, handleCloseFilePreview]);
 
   const handleForkFromMessage = useCallback(
     async (beforeUserIndex: number) => {
@@ -3239,12 +3130,44 @@ export function ThreadShell({
       provenanceComplete={childHistoryProvenanceComplete}
       currentChild={childHistoryProvenanceComplete ? inspectedCurrentChild : null}
       statusAvailable={delegatedStatusAvailable}
-      modal={childHistoryModal}
-      active={composerActive}
+      modal={!inspectorDocked}
+      visible={inspectorVisible && inspectorTab === "subagents"}
+      active={composerActive && inspectorTab === "subagents"}
       token={token}
-      onClose={handleCloseChildHistory}
+      onClose={inspectorDocked ? handleCloseChildHistory : handleCloseInspectorDialog}
     />
   ) : null;
+  const inspectorTabs: InspectorTab[] = [];
+  if (childHistoryOverlay) {
+    inspectorTabs.push({
+      id: "subagents",
+      icon: Bot,
+      label: t("thread.inspector.subagents", "Subagents"),
+      closeLabel: t("thread.delegatedChild.closeActivity", "Close subagent activity"),
+      content: childHistoryOverlay,
+    });
+  }
+  if (filePreviewPath && historyKey) {
+    inspectorTabs.push({
+      id: "file",
+      icon: FileText,
+      label: splitFilePath(filePreviewPath).name || filePreviewPath,
+      closeLabel: t("filePreview.close", { defaultValue: "Close file preview" }),
+      content: (
+        <FilePreviewPanel
+          key={historyKey}
+          sessionKey={historyKey}
+          path={filePreviewPath}
+          token={token}
+          refreshKey={filePreviewRefreshKey}
+          modal={!inspectorDocked}
+          visible={inspectorVisible && inspectorTab === "file"}
+          active={composerActive && inspectorTab === "file"}
+          onClose={inspectorDocked ? handleCloseFilePreview : handleCloseInspectorDialog}
+        />
+      ),
+    });
+  }
 
   const threadHeader = !hideHeader ? (
     <ThreadHeader
@@ -3271,7 +3194,7 @@ export function ThreadShell({
   ) : null;
 
   return (
-    <section ref={shellRef} className="relative flex min-h-0 flex-1 overflow-hidden">
+    <section ref={shellRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {hideHeaderTitle && inlineHandle && !temporary && session?.handle ? (
           <div
@@ -3295,12 +3218,16 @@ export function ThreadShell({
             ref={viewportRef}
             messages={displayMessages}
             temporary={temporary}
-            obscured={childHistoryModal}
+            obscured={inspectorModal}
             isStreaming={turnActive}
             runStartedAt={currentRunStartedAt}
             retryStatus={retryStatus}
             emptyState={emptyState}
-            composer={composerPortalTarget === undefined ? composer : null}
+            composer={(
+              <div hidden={!composerActive} data-testid={composerActive ? "active-pane-composer" : undefined}>
+                {composer}
+              </div>
+            )}
             activeTurnId={viewportTurnId}
             activeTurnStartedHere={activeTurnStartedHere}
             conversationKey={historyKey}
@@ -3325,31 +3252,17 @@ export function ThreadShell({
       {headerPortalTarget && headerActive
         ? createPortal(threadHeader, headerPortalTarget)
         : null}
-      {composerPortalTarget ? createPortal(
-        <div
-          hidden={!composerActive}
-          aria-hidden={!composerActive || childHistoryModal}
-          {...(childHistoryModal ? { inert: "" } : {})}
-          style={childHistoryModal ? { visibility: "hidden" } : undefined}
-          data-testid={composerActive ? "active-pane-composer" : undefined}
-        >
-          {composer}
-        </div>,
-        composerPortalTarget,
-      ) : null}
-      {childHistoryOverlay}
-      {filePreviewPath && historyKey ? (
-        <FilePreviewPanel
-          sessionKey={historyKey}
-          path={filePreviewPath}
-          token={token}
-          refreshKey={filePreviewRefreshKey}
-          desktopWidth={filePreviewWidth}
-          isClosing={filePreviewClosing}
-          onResizeStart={handleFilePreviewResizeStart}
-          onClose={handleCloseFilePreview}
-        />
-      ) : null}
+      <ThreadInspector
+        tabs={inspectorTabs}
+        selected={inspectorTab}
+        containerWidth={shellWidth}
+        visible={inspectorVisible}
+        onSelect={setSelectedInspector}
+        onClose={(id) => {
+          if (id === "file") handleCloseFilePreview();
+          else handleCloseChildHistory();
+        }}
+      />
     </section>
   );
 }

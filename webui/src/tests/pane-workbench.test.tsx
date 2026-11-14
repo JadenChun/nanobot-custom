@@ -73,12 +73,9 @@ function WorkbenchHarness({
             context.headerActions,
             context.headerPortalTarget,
           ) : null}
-          {context.composerPortalTarget ? createPortal(
-            <div hidden={!context.active}>
-              <textarea aria-label={`Composer ${pane.title}`} />
-            </div>,
-            context.composerPortalTarget,
-          ) : null}
+          <div hidden={!context.active}>
+            <textarea aria-label={`Composer ${pane.title}`} />
+          </div>
         </>
       )}
     />
