@@ -65,6 +65,11 @@ describe("useSidebarState", () => {
     expect(setSidebarState.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
       title_overrides: { "websocket:a": "Second" },
     }));
+    // C3: the older response must not regress the newer accepted edit.
+    await waitFor(() => expect(result.current.saveState).toBe("saved"));
+    expect(result.current.state.title_overrides).toEqual({
+      "websocket:a": "Second",
+    });
   });
 });
 
@@ -89,7 +94,7 @@ describe("useSidebarState save status", () => {
     return renderHook(() => useSidebarState([], false), { wrapper });
   }
 
-  it("reports a failed save, keeps the optimistic state, and retries with the same request id", async () => {
+  it("reports a failed save, keeps the optimistic state, and sends a changed payload under a new request id", async () => {
     const setSidebarState = vi.fn()
       .mockRejectedValueOnce(new Error("save failed"))
       .mockImplementation(async (state: SidebarStatePayload) => state);
@@ -119,7 +124,47 @@ describe("useSidebarState save status", () => {
     });
 
     await waitFor(() => expect(setSidebarState).toHaveBeenCalledTimes(2));
-    expect(setSidebarState.mock.calls[1]?.[1]).toBe(requestId);
+    // C2: a changed payload must not reuse the failed request identity.
+    const changedRequestId = setSidebarState.mock.calls[1]?.[1];
+    expect(changedRequestId).toEqual(expect.any(String));
+    expect(changedRequestId).not.toBe(requestId);
+    await waitFor(() => expect(result.current.saveState).toBe("saved"));
+    expect(result.current.state.title_overrides).toEqual({
+      "websocket:a": "Retried",
+    });
+  });
+
+  it("retries an unchanged failed save with the same request id and identical payload", async () => {
+    const setSidebarState = vi.fn()
+      .mockRejectedValueOnce(new Error("save failed"))
+      .mockImplementation(async (state: SidebarStatePayload) => state);
+    const { result } = setup(setSidebarState);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      void result.current.update((current) => ({
+        ...current,
+        title_overrides: { "websocket:a": "Same" },
+      }));
+    });
+
+    await waitFor(() => expect(result.current.saveState).toBe("failed"));
+    expect(result.current.state.title_overrides).toEqual({
+      "websocket:a": "Same",
+    });
+    expect(setSidebarState).toHaveBeenCalledTimes(1);
+
+    // C1: the automatic retry keeps one identity and one byte-identical payload.
+    await waitFor(() => expect(setSidebarState).toHaveBeenCalledTimes(2), {
+      timeout: 5_000,
+    });
+    expect(setSidebarState.mock.calls[1]?.[1]).toBe(setSidebarState.mock.calls[0]?.[1]);
+    expect(setSidebarState.mock.calls[1]?.[0]).toEqual(setSidebarState.mock.calls[0]?.[0]);
+
+    await waitFor(() => expect(result.current.saveState).toBe("saved"));
+    expect(result.current.state.title_overrides).toEqual({
+      "websocket:a": "Same",
+    });
   });
 
   it("reports saved after a successful save", async () => {

@@ -152,6 +152,7 @@ export function useSidebarState(
   const connectionOpenRef = useRef(client.status === "open");
   const pendingPersistenceRef = useRef<SidebarStatePayload | null>(null);
   const pendingSaveRequestIdRef = useRef<string | null>(null);
+  const pendingSavePayloadRef = useRef<SidebarStatePayload | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistenceInFlightRef = useRef(false);
   const flushPersistenceRef = useRef<() => void>(() => {});
@@ -194,12 +195,22 @@ export function useSidebarState(
     pendingPersistenceRef.current = null;
     persistenceInFlightRef.current = true;
     setSaveState("pending");
-    const requestId = pendingSaveRequestIdRef.current ?? crypto.randomUUID();
+    // Reuse the failed request ID only for a byte-identical retry. The owner
+    // binds an ID to the first payload digest and refuses a different payload
+    // with that ID, so a changed edit must use a fresh identity.
+    const requestId =
+      pendingSaveRequestIdRef.current !== null
+      && pendingSavePayloadRef.current !== null
+      && sameState(next, pendingSavePayloadRef.current)
+        ? pendingSaveRequestIdRef.current
+        : crypto.randomUUID();
     pendingSaveRequestIdRef.current = requestId;
+    pendingSavePayloadRef.current = next;
     void client.setSidebarState(next, requestId)
       .then((saved) => {
         persistenceInFlightRef.current = false;
         pendingSaveRequestIdRef.current = null;
+        pendingSavePayloadRef.current = null;
         if (pendingPersistenceRef.current === null) {
           const canonical = normalizeSidebarState(saved);
           stateRef.current = canonical;
