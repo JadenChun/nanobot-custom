@@ -44,6 +44,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     loop.provider_retry_mode = 'standard'
     loop.sessions = None
     loop._artifact_reader_factory = None
+    loop.media_root = None
     loop.runner = SimpleNamespace(
         run=AsyncMock(return_value=AgentRunResult(final_content='done', messages=[])),
         artifact_reader_factory=None,
