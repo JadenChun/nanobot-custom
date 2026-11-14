@@ -1,5 +1,32 @@
 # A3 implementation correction handoff
 
+## A3-9 and A3-10 inventory 2026-11-14
+
+W22 mapped the A3-9 release and A3-10 retirement findings at the candidate.
+The focused suites passed 270 tests. The probes separate five satisfied items
+from the remaining defects.
+
+A3-9 is not ready. Q01-F02, Q01-F06 and Q01-F07 are accepted. R01-F20 is
+outside the selected first-release scope. These need bounded repairs: the CLI
+and gateway health parsers still disagree and the CLI crashes on non-object
+JSON (C00-F07); systemd supervision reports applied before running and ignores
+failures (R01-F06); the installer still uses `pipx run` (Q01-F03); toolchain
+checks do not verify the pinned Bun version (R01-F17); the update path advances
+source before success (Q01-F05); the release switch is not wired (E02-F12); the
+mobile data server still uses a fixture chat path (R01-F05). The Windows
+crawler stays out of this host scope.
+
+A3-10 has no absent goal or trigger runtime. The goal mutation tools are
+registered and `/goal` grants turn-scoped permission. The local-trigger consumer
+is owned by the gateway behind `gateway.localTriggers`, which defaults false, and
+both commands report the inactive state truthfully. A01-F02 and A01-F07 are
+accepted. The gated onboarding paths C00-F04 and C00-F05 stay isolated until a
+retire-or-repair decision. H02-ART-SOURCE, H02-IDLE-DORMANT, H02-LEGACY-ISOLATE
+and S01-F02 are retained by disposition.
+
+Neither stage is accepted. A3-9 needs the repairs above and an artifact digest.
+A3-10 needs the two onboarding decisions and A3-9.
+
 ## AR4 acceptance 2026-11-14
 
 W18 read the captured-binding path and ran the 34 request-binding tests. An
