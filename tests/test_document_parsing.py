@@ -14,6 +14,73 @@ from nanobot.utils.document import (
 )
 
 
+def _write_compressed_text_pdf(path: Path, markers: list[str]) -> Path:
+    """Write one page per marker with a FlateDecode-compressed content stream."""
+    import io
+    import zlib
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DictionaryObject, EncodedStreamObject, NameObject
+
+    writer = PdfWriter()
+    for marker in markers:
+        page = writer.add_blank_page(width=612, height=792)
+        font = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+        font_ref = writer._add_object(font)  # pyright: ignore[reportPrivateUsage]
+        page[NameObject("/Resources")] = DictionaryObject(
+            {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_ref})}
+        )
+        stream = EncodedStreamObject()
+        stream[NameObject("/Filter")] = NameObject("/FlateDecode")
+        stream._data = zlib.compress(  # pyright: ignore[reportAttributeAccessIssue]
+            f"BT /F1 12 Tf 72 720 Td ({marker}) Tj ET".encode(), 9
+        )
+        page[NameObject("/Contents")] = writer._add_object(stream)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    path.write_bytes(buffer.getvalue())
+    return path
+
+
+def _write_flate_expansion_pdf(path: Path, expanded_bytes: int) -> Path:
+    """Write a small PDF whose FlateDecode content stream expands to a large payload."""
+    import zlib
+
+    compressed = zlib.compress(
+        b"BT /F1 12 Tf 72 720 Td (" + b" " * expanded_bytes + b") Tj ET", 9
+    )
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << >> >>",
+        b"<< /Length " + str(len(compressed)).encode() + b" /Filter /FlateDecode >>\nstream\n"
+        + compressed + b"\nendstream",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{index} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for offset in offsets[1:]:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref}\n%%EOF\n"
+    ).encode()
+    path.write_bytes(bytes(out))
+    return path
+
+
 class TestExtractText:
     """Test the extract_text function."""
 
@@ -465,6 +532,55 @@ class TestExtractText:
 
         with pytest.raises(PdfSafetyError, match="content stream exceeds"):
             extract_pdf_pages(tmp_path / "large.pdf")
+
+    def test_extract_pdf_pages_refuses_expansion_budget_before_materialization(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """U4 / R2: an over-expansion stream is refused before it is decoded.
+
+        The compressed stream is far smaller than its expansion, so the refusal
+        must come from the decoded size and the peak allocation must stay well
+        below the expanded payload.
+        """
+        import tracemalloc
+
+        budget = 1024 * 1024
+        expanded = 8 * budget
+        pdf_file = _write_flate_expansion_pdf(tmp_path / "bomb.pdf", expanded)
+        monkeypatch.setattr("nanobot.utils.document._MAX_PDF_CONTENT_STREAM_SIZE", budget)
+
+        assert pdf_file.stat().st_size < expanded
+
+        # Warm the parser imports so the measurement covers the decode path only.
+        extract_pdf_pages(_write_compressed_text_pdf(tmp_path / "warm.pdf", ["WARM"]))
+
+        tracemalloc.start()
+        try:
+            with pytest.raises(PdfSafetyError, match="budget"):
+                extract_pdf_pages(pdf_file, max_pages=1, max_chars=4096)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert peak < 8 * budget
+
+    def test_extract_pdf_pages_accepts_bounded_expansion(
+        self, tmp_path: Path
+    ):
+        """U5 / R2: a PDF inside both bounds extracts every page in order."""
+        markers = ["MARKERONE", "PAGE2", "MARKEREND"]
+        pdf_file = _write_compressed_text_pdf(tmp_path / "bounded.pdf", markers)
+
+        result = extract_pdf_pages(pdf_file, max_pages=len(markers) + 10)
+
+        assert result.total_pages == len(markers)
+        assert result.end_page == len(markers) - 1
+        positions = [result.text.find(marker) for marker in markers]
+        assert all(position >= 0 for position in positions)
+        assert positions == sorted(positions)
+        assert result.text.count("--- Page ") == len(markers)
+        assert "(truncated" not in result.text
+        assert "(Showing pages" not in result.text
 
     def test_extract_text_pdf_not_found(self, tmp_path: Path):
         """Test that missing PDF files return error string."""

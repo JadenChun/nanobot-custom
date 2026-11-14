@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -32,6 +33,11 @@ _OPENROUTER_ATTRIBUTION_HEADERS = {
 _DEFAULT_TIMEOUT_S = 120.0
 _IMAGE_DOWNLOAD_MAX_BYTES = 32 * 1024 * 1024
 _IMAGE_DOWNLOAD_MAX_REDIRECTS = 5
+# Edit references are bounded before any image bytes are read and again at
+# every provider read, so a reference set cannot force an unbounded allocation.
+MAX_REFERENCE_IMAGES = 8
+MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_REFERENCE_TOTAL_BYTES = 16 * 1024 * 1024
 _AIHUBMIX_TIMEOUT_S = 300.0
 _AIHUBMIX_ASPECT_RATIO_SIZES = {
     "1:1": "1024x1024",
@@ -94,10 +100,67 @@ def _as_json_objects(value: object) -> list[dict[str, Any]]:
     return [cast(dict[str, Any], item) for item in cast(list[object], value) if isinstance(item, dict)]
 
 
+def _reference_image_size(path: str | Path) -> int:
+    """Return the on-disk size of a reference image without reading it."""
+    try:
+        return Path(path).expanduser().stat().st_size
+    except OSError as exc:
+        raise ImageGenerationError(f"reference image is not readable: {path}") from exc
+
+
+def check_reference_image_budget(
+    reference_images: list[str] | None,
+) -> None:
+    """Refuse an over-limit reference set before any image bytes are read.
+
+    The count and every file size come from directory metadata. The total is
+    the sum of raw file bytes, which is the materialization cost; base64
+    transport adds its fixed 4/3 inflation on top of that budget.
+    """
+    paths = list(reference_images or [])
+    if len(paths) > MAX_REFERENCE_IMAGES:
+        raise ImageGenerationError(
+            "reference_images exceeds the reference count limit of "
+            f"{MAX_REFERENCE_IMAGES} images"
+        )
+    total = 0
+    for path in paths:
+        size = _reference_image_size(path)
+        if size > MAX_REFERENCE_IMAGE_BYTES:
+            raise ImageGenerationError(
+                "reference image exceeds the per-image byte limit of "
+                f"{MAX_REFERENCE_IMAGE_BYTES // (1024 * 1024)} MB: {path}"
+            )
+        total += size
+    if total > MAX_REFERENCE_TOTAL_BYTES:
+        raise ImageGenerationError(
+            "reference_images total exceeds the total reference byte budget of "
+            f"{MAX_REFERENCE_TOTAL_BYTES // (1024 * 1024)} MB"
+        )
+
+
+def _read_reference_image_bytes(path: str | Path) -> bytes:
+    """Read one reference image with the per-image byte limit enforced first."""
+    p = Path(path).expanduser()
+    if _reference_image_size(p) > MAX_REFERENCE_IMAGE_BYTES:
+        raise ImageGenerationError(
+            "reference image exceeds the per-image byte limit of "
+            f"{MAX_REFERENCE_IMAGE_BYTES // (1024 * 1024)} MB: {p}"
+        )
+    with p.open("rb") as handle:
+        raw = handle.read(MAX_REFERENCE_IMAGE_BYTES + 1)
+    if len(raw) > MAX_REFERENCE_IMAGE_BYTES:
+        raise ImageGenerationError(
+            "reference image exceeds the per-image byte limit of "
+            f"{MAX_REFERENCE_IMAGE_BYTES // (1024 * 1024)} MB: {p}"
+        )
+    return raw
+
+
 def _read_image_b64(path: str | Path) -> tuple[str, str]:
     """Return ``(mime, base64)`` for the image at ``path``."""
     p = Path(path).expanduser()
-    raw = p.read_bytes()
+    raw = _read_reference_image_bytes(p)
     mime = detect_image_mime(raw)
     if mime is None:
         raise ImageGenerationError(f"unsupported reference image: {p}")
@@ -1171,12 +1234,19 @@ class OpenAIImageGenerationClient(ImageGenerationProvider):
         try:
             for path in reference_images:
                 p = Path(path).expanduser()
-                raw = p.read_bytes()
+                raw = _read_reference_image_bytes(p)
                 mime = detect_image_mime(raw)
                 if mime is None:
                     raise ImageGenerationError(f"unsupported reference image: {p}")
                 handle = p.open("rb")
                 handles.append(handle)
+                # The multipart upload streams the open file: refuse a file
+                # that grew past the reference byte limit after the first read.
+                if os.fstat(handle.fileno()).st_size > MAX_REFERENCE_IMAGE_BYTES:
+                    raise ImageGenerationError(
+                        "reference image exceeds the per-image byte limit of "
+                        f"{MAX_REFERENCE_IMAGE_BYTES // (1024 * 1024)} MB: {p}"
+                    )
                 files.append(("image[]", (p.name, handle, mime)))
 
             client = self._client

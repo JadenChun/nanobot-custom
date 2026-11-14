@@ -31,8 +31,10 @@ from nanobot.bus.events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.config_base import Base
 from nanobot.providers.image_generation import (
+    MAX_REFERENCE_IMAGES,
     ImageGenerationError,
     ImageGenerationProvider,
+    check_reference_image_budget,
     get_image_gen_provider,
     image_gen_provider_configs,
 )
@@ -74,6 +76,7 @@ class ImageGenerationToolConfig(Base):
         reference_images=ArraySchema(
             StringSchema("Local path of an existing image artifact or user-provided image to use as an edit reference."),
             description="Optional local image paths. Use generated artifact paths for iterative edits.",
+            max_items=MAX_REFERENCE_IMAGES,
         ),
         aspect_ratio=StringSchema(
             "Optional output aspect ratio, e.g. 1:1, 16:9, 9:16, 4:3.",
@@ -195,7 +198,8 @@ class ImageGenerationTool(Tool):
             kwargs["legacy_request"] = True
         return cls(**kwargs)
 
-    def _resolve_reference_image(self, value: str) -> str:
+    def _resolve_reference_path(self, value: str) -> str:
+        """Resolve one reference path without reading its content."""
         access = current_tool_workspace(self.workspace, restrict_to_workspace=True)
         workspace = access.project_path or self.workspace
         candidate = Path(value).expanduser()
@@ -210,15 +214,40 @@ class ImageGenerationTool(Tool):
             ) from exc
         if not resolved.is_file():
             raise ImageGenerationError(f"reference image not found: {value}")
-        raw = resolved.read_bytes()
-        if detect_image_mime(raw) is None:
-            raise ImageGenerationError(f"unsupported reference image: {value}")
         return str(resolved)
 
+    @staticmethod
+    def _check_reference_mime(value: str, path: str) -> None:
+        """Reject a non-image reference from its header bytes only."""
+        try:
+            with Path(path).open("rb") as handle:
+                header = handle.read(16)
+        except OSError as exc:
+            raise ImageGenerationError(f"reference image is not readable: {value}") from exc
+        if detect_image_mime(header) is None:
+            raise ImageGenerationError(f"unsupported reference image: {value}")
+
     def _resolve_reference_images(self, values: list[str] | None) -> list[str]:
-        if not values:
+        """Resolve the reference set inside its count and byte budget.
+
+        The count limit applies to the supplied list before any path is
+        resolved, the byte budget applies to resolved files before any content
+        is read, and only then are image headers inspected.
+        """
+        supplied = [value for value in values or [] if value]
+        if not supplied:
             return []
-        return [self._resolve_reference_image(value) for value in values if value]
+        if len(supplied) > MAX_REFERENCE_IMAGES:
+            raise ImageGenerationError(
+                "reference_images exceeds the reference count limit of "
+                f"{MAX_REFERENCE_IMAGES} images"
+            )
+        resolved_by_value = [(value, self._resolve_reference_path(value)) for value in supplied]
+        resolved = list(dict.fromkeys(path for _value, path in resolved_by_value))
+        check_reference_image_budget(resolved)
+        for value, path in resolved_by_value:
+            self._check_reference_mime(value, path)
+        return resolved
 
     async def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,

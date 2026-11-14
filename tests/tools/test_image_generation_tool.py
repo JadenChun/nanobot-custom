@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,12 @@ from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.image_generation import ImageGenerationTool
 from nanobot.config.loader import set_config_path
 from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig
-from nanobot.providers.image_generation import GeneratedImageResponse
+from nanobot.providers.image_generation import (
+    MAX_REFERENCE_IMAGE_BYTES,
+    MAX_REFERENCE_IMAGES,
+    MAX_REFERENCE_TOTAL_BYTES,
+    GeneratedImageResponse,
+)
 
 PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
@@ -22,6 +28,7 @@ PNG_DATA_URL = (
     "data:image/png;base64,"
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
+STUB_ARTIFACT = base64.b64decode(PNG_DATA_URL.split(",", 1)[1])
 
 
 class FakeImageClient:
@@ -233,3 +240,152 @@ async def test_generate_image_tool_rejects_reference_outside_workspace(tmp_path:
     result = await tool.execute(prompt="edit", reference_images=[str(outside)])
 
     assert "reference_images must be inside the workspace" in result
+
+
+def _write_reference(path: Path, size: int) -> Path:
+    """Write a reference image with the requested on-disk byte size."""
+    assert size >= len(PNG_BYTES)
+    path.write_bytes(PNG_BYTES + b"\x00" * (size - len(PNG_BYTES)))
+    assert path.stat().st_size == size
+    return path
+
+
+def _install_fake_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeImageClient.instances = []
+    monkeypatch.setattr(
+        "nanobot.agent.tools.image_generation.get_image_gen_provider",
+        lambda name: FakeImageClient if name == "openrouter" else None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reference_count_above_limit_is_refused_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U1 / R1: over-count references are refused before a provider request.
+
+    The last entry does not exist, so a refusal that names the count limit also
+    proves the over-limit path was never opened.
+    """
+    set_config_path(tmp_path / "config.json")
+    _install_fake_provider(monkeypatch)
+    references = []
+    for index in range(MAX_REFERENCE_IMAGES):
+        path = tmp_path / f"ref{index}.png"
+        path.write_bytes(PNG_BYTES)
+        references.append(str(path))
+    sentinel = tmp_path / "not-created.png"
+    references.append(str(sentinel))
+    tool = ImageGenerationTool(
+        workspace=tmp_path,
+        config=ImageGenerationToolConfig(enabled=True),
+        provider_config=ProviderConfig(api_key="sk-or-test"),
+    )
+
+    result = await tool.execute(prompt="edit", reference_images=references)
+
+    assert result.is_error
+    assert "reference count limit" in result
+    assert not sentinel.exists()
+    assert FakeImageClient.instances == []
+    assert result.media_artifacts == ()
+
+
+@pytest.mark.asyncio
+async def test_reference_total_bytes_above_budget_is_refused_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U2 / R1: an over-budget reference set is refused and the budget edge succeeds."""
+    set_config_path(tmp_path / "config.json")
+    _install_fake_provider(monkeypatch)
+    even_share = MAX_REFERENCE_TOTAL_BYTES * 3 // 8
+    remainder = MAX_REFERENCE_TOTAL_BYTES - 2 * even_share
+    first = _write_reference(tmp_path / "first.png", even_share)
+    second = _write_reference(tmp_path / "second.png", even_share)
+    third = _write_reference(tmp_path / "third.png", remainder + 1)
+    tool = ImageGenerationTool(
+        workspace=tmp_path,
+        config=ImageGenerationToolConfig(enabled=True),
+        provider_config=ProviderConfig(api_key="sk-or-test"),
+    )
+
+    over = await tool.execute(
+        prompt="edit", reference_images=[str(first), str(second), str(third)]
+    )
+
+    assert over.is_error
+    assert "byte budget" in over
+    assert FakeImageClient.instances == []
+
+    _write_reference(third, remainder)
+    under = await tool.execute(
+        prompt="edit", reference_images=[str(first), str(second), str(third)]
+    )
+
+    assert not under.is_error
+    assert len(FakeImageClient.instances) == 1
+    assert len(FakeImageClient.instances[0].calls) == 1
+    assert len(json.loads(under)["artifacts"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_reference_above_per_image_limit_is_refused_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1: a single over-limit reference is refused before dispatch."""
+    set_config_path(tmp_path / "config.json")
+    _install_fake_provider(monkeypatch)
+    reference = _write_reference(
+        tmp_path / "large.png", MAX_REFERENCE_IMAGE_BYTES + 1
+    )
+    tool = ImageGenerationTool(
+        workspace=tmp_path,
+        config=ImageGenerationToolConfig(enabled=True),
+        provider_config=ProviderConfig(api_key="sk-or-test"),
+    )
+
+    result = await tool.execute(prompt="edit", reference_images=[str(reference)])
+
+    assert result.is_error
+    assert "per-image byte limit" in result
+    assert FakeImageClient.instances == []
+
+
+@pytest.mark.asyncio
+async def test_reference_set_within_limits_reaches_provider_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U3 / R1: a reference set inside both limits is dispatched unchanged."""
+    set_config_path(tmp_path / "config.json")
+    _install_fake_provider(monkeypatch)
+    first = tmp_path / "first.png"
+    first.write_bytes(PNG_BYTES)
+    second = tmp_path / "second.png"
+    second.write_bytes(PNG_BYTES)
+    tool = ImageGenerationTool(
+        workspace=tmp_path,
+        config=ImageGenerationToolConfig(enabled=True),
+        provider_config=ProviderConfig(api_key="sk-or-test"),
+    )
+
+    result = await tool.execute(
+        prompt="edit", reference_images=["first.png", str(second)]
+    )
+
+    assert not result.is_error
+    assert len(FakeImageClient.instances) == 1
+    fake = FakeImageClient.instances[0]
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["reference_images"] == [
+        str(first.resolve()),
+        str(second.resolve()),
+    ]
+    artifacts = json.loads(result)["artifacts"]
+    assert len(artifacts) == 1
+    artifact_path = Path(artifacts[0]["path"])
+    assert artifact_path.is_file()
+    assert artifact_path.read_bytes() == STUB_ARTIFACT
