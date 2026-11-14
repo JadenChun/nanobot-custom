@@ -27,6 +27,7 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { SlashCommandText } from "@/components/SlashCommandText";
 import { ReasoningRow } from "@/components/thread/activity/ReasoningRow";
 import { ContextCompactionNotice } from "@/components/thread/ContextCompactionNotice";
+import { SubagentStatus } from "@/components/thread/SubagentStatus";
 import { UserMessageText } from "@/components/UserMessageText";
 import {
   Tooltip,
@@ -86,53 +87,33 @@ function DelegatedChildRow({
 }) {
   const { t } = useTranslation();
   const taskLabel = child.task_label?.trim() || child.profile || "Delegated task";
-  const knownState = child.state.replaceAll("_", " ");
-  const stateLabel = child.history_kind === "summary"
-    ? t("thread.delegatedChild.summaryState", {
-        defaultValue: `Summary only · ${knownState}`,
-        state: knownState,
-      })
-    : statusAvailable
-      ? knownState
-      : t("thread.delegatedChild.unavailable", {
-          defaultValue: `Status unavailable (last known ${knownState})`,
-          state: knownState,
-        });
-  const outcomeLabel = child.outcome && child.outcome !== child.state
-    ? child.outcome.replaceAll("_", " ")
-    : null;
   return (
     <section
-      className="my-2 flex max-w-[49.5rem] items-center gap-3 rounded-control border border-border/60 bg-muted/35 px-3 py-2 text-[13px]"
+      className="my-1 max-w-[49.5rem]"
       data-delegated-child={child.child_id}
       aria-label={taskLabel}
     >
-      <span className="min-w-0 flex-1">
-        <span className="block font-medium text-foreground">{taskLabel}</span>
-        <span className="block truncate text-muted-foreground">
-          {stateLabel}
-          {outcomeLabel ? ` · ${outcomeLabel}` : ""}
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center gap-3 rounded-control px-2.5 py-2 text-start text-[13px] transition-colors enabled:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+        onClick={(event) => onOpen?.(child, event.currentTarget)}
+        disabled={!onOpen}
+        aria-label={t("thread.delegatedChild.inspectTask", {
+          task: taskLabel,
+          defaultValue: "Inspect {{task}} activity",
+        })}
+      >
+        <span className="min-w-0 flex-1 space-y-0.5">
+          <span className="block break-words font-medium leading-snug text-foreground">{taskLabel}</span>
+          <SubagentStatus child={child} available={statusAvailable} />
+          {child.result_summary ? (
+            <span className="line-clamp-2 whitespace-pre-wrap break-words leading-snug text-muted-foreground">
+              {child.result_summary}
+            </span>
+          ) : null}
         </span>
-        {child.result_summary ? (
-          <span className="mt-1 block whitespace-pre-wrap break-words text-muted-foreground">
-            {child.result_summary}
-          </span>
-        ) : null}
-      </span>
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          className="rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-background disabled:opacity-50"
-          onClick={(event) => onOpen?.(child, event.currentTarget)}
-          disabled={!onOpen}
-          aria-label={t("thread.delegatedChild.inspectTask", {
-            task: taskLabel,
-            defaultValue: `Inspect ${taskLabel} activity`,
-          })}
-        >
-          {t("thread.delegatedChild.inspect", { defaultValue: "Inspect activity" })}
-        </button>
-      </div>
+        {onOpen ? <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" /> : null}
+      </button>
     </section>
   );
 }

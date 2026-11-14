@@ -57,7 +57,7 @@ interface ThreadViewportProps {
   runStartedAt?: number | null;
   retryStatus?: RetryStatus | null;
   composer?: ReactNode;
-  inspectionOverlay?: ReactNode;
+  obscured?: boolean;
   emptyState?: ReactNode;
   scrollToBottomSignal?: number;
   activeTurnId?: string | null;
@@ -243,7 +243,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   runStartedAt = null,
   retryStatus = null,
   composer,
-  inspectionOverlay,
+  obscured = false,
   emptyState,
   scrollToBottomSignal = 0,
   activeTurnId = null,
@@ -356,7 +356,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       ? forkBoundaryMessageCount - hiddenMessageCount
       : null;
   const hasComposer = composer !== null && composer !== undefined;
-  const inspectionActive = inspectionOverlay !== null && inspectionOverlay !== undefined;
   const scrollButtonBottom =
     keyboardInsetBottom
     + (composerDockHeight > 0
@@ -898,7 +897,12 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   ]);
 
   return (
-    <div className="thread-viewport relative flex min-h-0 flex-1 overflow-hidden">
+    <div
+      className="thread-viewport relative flex min-h-0 flex-1 overflow-hidden"
+      aria-hidden={obscured || undefined}
+      {...(obscured ? { inert: "" } : {})}
+      style={obscured ? { visibility: "hidden" } : undefined}
+    >
       <div
         ref={viewportFrameRef}
         className={cn(
@@ -934,7 +938,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                 "scroll-auto justify-start overflow-x-hidden px-3 pb-0 pt-3 sm:px-4",
                 "[overflow-anchor:none] [scrollbar-width:none]",
                 "[&::-webkit-scrollbar]:hidden",
-                inspectionActive
+                obscured
                   ? "overflow-hidden"
                   : hasVerticalOverflow ? "overflow-y-auto" : "overflow-hidden",
               )}
@@ -942,8 +946,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
               <div
                 ref={messageContentRef}
                 className="mx-auto w-full max-w-[49.5rem]"
-                aria-hidden={inspectionActive || undefined}
-                style={inspectionActive ? { visibility: "hidden" } : undefined}
               >
                 <ThreadMessages
                   messages={visibleMessages}
@@ -984,9 +986,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
             <div
               ref={composerDockRef}
               data-testid="thread-composer-dock"
-              aria-hidden={inspectionActive || undefined}
-              {...(inspectionActive ? { inert: "" } : {})}
-              style={inspectionActive ? { visibility: "hidden" } : undefined}
               onInputCapture={(event) => {
                 if (event.target instanceof HTMLTextAreaElement) {
                   composerInputScrollTopRef.current = scrollRef.current?.scrollTop ?? null;
@@ -1045,7 +1044,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         className="pointer-events-none absolute inset-x-0 top-0 h-3 bg-gradient-to-b from-background to-transparent"
       />
 
-      {hasMessages && !inspectionActive ? (
+      {hasMessages && !obscured ? (
         <PromptRail
           messages={visibleMessages}
           scrollRef={scrollRef}
@@ -1054,7 +1053,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         />
       ) : null}
 
-      {showScrollToBottomButton && !inspectionActive && !atBottom && (
+      {showScrollToBottomButton && !obscured && !atBottom && (
         <div
           className="absolute left-1/2 z-20 -translate-x-1/2"
           style={{ bottom: scrollButtonBottom }}
@@ -1074,11 +1073,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           </Button>
         </div>
       )}
-      {inspectionActive ? (
-        <div className="absolute inset-0 z-30 overflow-hidden bg-background">
-          {inspectionOverlay}
-        </div>
-      ) : null}
     </div>
   );
 });

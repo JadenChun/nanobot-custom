@@ -1080,7 +1080,7 @@ describe("MessageBubble", () => {
     render(<MessageBubble message={message} onOpenChildHistory={onOpen} />);
 
     const row = screen.getByRole("region", { name: "Inspect the API contract" });
-    expect(within(row).getByText("active")).toBeInTheDocument();
+    expect(within(row).getByText("Working")).toBeInTheDocument();
     expect(within(row).getByText("Two compatible routes were found.")).toBeInTheDocument();
     const inspect = within(row).getByRole("button", {
       name: "Inspect Inspect the API contract activity",
@@ -1112,7 +1112,7 @@ describe("MessageBubble", () => {
     render(<MessageBubble message={message} delegatedStatusAvailable={false} />);
 
     expect(screen.getByRole("region", { name: "Review test coverage" })).toBeInTheDocument();
-    expect(screen.getByText("Status unavailable (last known active)")).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known Working)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Inspect Review test coverage activity" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();

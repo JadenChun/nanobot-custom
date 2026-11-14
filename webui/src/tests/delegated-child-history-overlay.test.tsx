@@ -121,7 +121,7 @@ describe("DelegatedChildHistoryOverlay", () => {
     }));
 
     const onClose = vi.fn();
-    const { container } = render(
+    render(
       <DelegatedChildHistoryOverlay
         child={summaryChild}
         rootKey={root.session_key}
@@ -140,7 +140,7 @@ describe("DelegatedChildHistoryOverlay", () => {
     expect(screen.getByRole("button", { name: "Back to parent chat" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Fork" })).not.toBeInTheDocument();
-    expect(container.querySelectorAll("[data-message-timestamp]")).toHaveLength(1);
+    expect(screen.getByRole("dialog").querySelectorAll("[data-message-timestamp]")).toHaveLength(1);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/sessions/delegated%3Alegacy-child/webui-thread"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),

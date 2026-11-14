@@ -128,7 +128,7 @@ describe("ThreadMessages", () => {
     );
 
     expect(screen.getByText("Compare release notes")).toBeInTheDocument();
-    expect(screen.getByText("Status unavailable (last known running)")).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known Working)")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();

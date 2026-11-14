@@ -36,6 +36,7 @@ import {
   type ThreadViewportHandle,
   type ThreadViewportState,
 } from "@/components/thread/ThreadViewport";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
 import {
@@ -96,7 +97,6 @@ type MessageShape = Pick<UIMessage, "role" | "kind" | "content" | "isStreaming" 
 interface ChildHistoryInspection {
   parentKey: string;
   child: DelegatedChildReference;
-  rootRows: DelegatedChildReference[];
   expectedRoot: SourceOrigin | null;
 }
 
@@ -1273,11 +1273,15 @@ export function ThreadShell({
     new Map(),
   );
   const previousInspectionActiveRef = useRef(false);
+  const previousChildHistoryModalRef = useRef(false);
   const inspectionReturnRef = useRef<{
     parentKey: string;
     viewportState: ThreadViewportState | null;
     trigger: HTMLButtonElement;
+    wasModal: boolean;
   } | null>(null);
+  const [canDockChildHistory, setCanDockChildHistory] = useState(false);
+  const wideViewport = useMediaQuery("(min-width: 1024px)");
   const [filePreviewPath, setFilePreviewPath] = useState<string | null>(null);
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
@@ -1298,6 +1302,17 @@ export function ThreadShell({
   const [preparingFull, setPreparingFull] = useState(false);
   const [fullSetupError, setFullSetupError] = useState<string | null>(null);
   const viewportRef = useRef<ThreadViewportHandle | null>(null);
+
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (!shell || !wideViewport) return;
+    const measure = () => setCanDockChildHistory(shell.clientWidth >= 760);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, [wideViewport]);
   const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
   const messageCacheRef = useRef<Map<string, UIMessage[]>>(new Map());
   const knownTemporaryChatIdsRef = useRef(new Set<string>());
@@ -1592,6 +1607,9 @@ export function ThreadShell({
   const activeChildHistoryInspection = childHistoryInspection?.parentKey === historyKey
     ? childHistoryInspection
     : null;
+  const dockChildHistory = wideViewport && canDockChildHistory;
+  const childHistoryModal = activeChildHistoryInspection !== null && !dockChildHistory;
+  const delegatedStatusAvailable = connectionOpen && !delegatedChildrenError;
   const inspectedCurrentChild = activeChildHistoryInspection
     ? currentDelegatedChildReferences.find((child) => (
         child.child_id === activeChildHistoryInspection.child.child_id
@@ -1671,18 +1689,24 @@ export function ThreadShell({
       return;
     }
     const viewportState = viewportRef.current?.captureViewState() ?? null;
-    inspectionReturnRef.current = { parentKey: historyKey, viewportState, trigger };
+    inspectionReturnRef.current = { parentKey: historyKey, viewportState, trigger, wasModal: !dockChildHistory };
+    if (filePreviewCloseTimerRef.current !== null) {
+      window.clearTimeout(filePreviewCloseTimerRef.current);
+      filePreviewCloseTimerRef.current = null;
+    }
+    setFilePreviewPath(null);
+    setFilePreviewClosing(false);
     setChildHistoryError(null);
     setChildHistoryInspection({
       parentKey: historyKey,
       child: candidate,
-      rootRows: currentDelegatedChildReferences,
       expectedRoot,
     });
   }, [
     currentDelegatedChildren,
     currentDelegatedChildReferences,
     delegatedChildrenError,
+    dockChildHistory,
     historyKey,
     historyStopTarget?.source,
     stopTarget?.source,
@@ -1700,18 +1724,36 @@ export function ThreadShell({
   }, [childHistoryInspection, historyKey]);
   useLayoutEffect(() => {
     const isActive = activeChildHistoryInspection !== null;
-    if (previousInspectionActiveRef.current && !isActive) {
-      const returnState = inspectionReturnRef.current;
-      if (returnState?.parentKey === historyKey) {
+    const returnState = inspectionReturnRef.current;
+    const wasModal = previousChildHistoryModalRef.current;
+    if (returnState?.parentKey === historyKey) {
+      if (childHistoryModal && !wasModal) {
+        if (previousInspectionActiveRef.current) {
+          returnState.viewportState = viewportRef.current?.captureViewState() ?? null;
+        }
+        returnState.wasModal = true;
+      } else if (isActive && wasModal && !childHistoryModal) {
         viewportRef.current?.restoreViewState(returnState.viewportState);
-        window.requestAnimationFrame(() => {
-          if (returnState.trigger.isConnected) returnState.trigger.focus();
-        });
+        returnState.wasModal = false;
+      }
+    }
+    if (previousInspectionActiveRef.current && !isActive) {
+      if (returnState?.parentKey === historyKey) {
+        if (returnState.wasModal) viewportRef.current?.restoreViewState(returnState.viewportState);
+        const focus = document.activeElement;
+        if (focus === null || focus === document.body || !focus.isConnected) {
+          window.requestAnimationFrame(() => {
+            if (returnState.trigger.isConnected && document.activeElement === document.body) {
+              returnState.trigger.focus({ preventScroll: true });
+            }
+          });
+        }
       }
       inspectionReturnRef.current = null;
     }
     previousInspectionActiveRef.current = isActive;
-  }, [activeChildHistoryInspection, historyKey]);
+    previousChildHistoryModalRef.current = childHistoryModal;
+  }, [activeChildHistoryInspection, childHistoryModal, historyKey]);
   const riskyApproval = useMemo(() => {
     if (turnActive || booting) return null;
     for (let index = displayMessages.length - 1; index >= 0; index -= 1) {
@@ -2749,6 +2791,7 @@ export function ThreadShell({
   }, [mutateWorkspaceAccessMode]);
 
   const handleOpenFilePreview = useCallback((path: string) => {
+    setChildHistoryInspection(null);
     if (filePreviewCloseTimerRef.current !== null) {
       window.clearTimeout(filePreviewCloseTimerRef.current);
       filePreviewCloseTimerRef.current = null;
@@ -3192,8 +3235,12 @@ export function ThreadShell({
       child={activeChildHistoryInspection.child}
       rootKey={activeChildHistoryInspection.parentKey}
       rootRows={currentDelegatedChildren}
-      expectedRoot={inspectedExpectedRoot}
+      expectedRoot={activeChildHistoryInspection.expectedRoot}
       provenanceComplete={childHistoryProvenanceComplete}
+      currentChild={childHistoryProvenanceComplete ? inspectedCurrentChild : null}
+      statusAvailable={delegatedStatusAvailable}
+      modal={childHistoryModal}
+      active={composerActive}
       token={token}
       onClose={handleCloseChildHistory}
     />
@@ -3248,7 +3295,7 @@ export function ThreadShell({
             ref={viewportRef}
             messages={displayMessages}
             temporary={temporary}
-            inspectionOverlay={childHistoryOverlay}
+            obscured={childHistoryModal}
             isStreaming={turnActive}
             runStartedAt={currentRunStartedAt}
             retryStatus={retryStatus}
@@ -3270,7 +3317,7 @@ export function ThreadShell({
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
             onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
             onOpenChildHistory={handleOpenChildHistory}
-            delegatedStatusAvailable={connectionOpen && !delegatedChildrenError}
+            delegatedStatusAvailable={delegatedStatusAvailable}
             onQuoteSelection={session ? handleQuoteSelection : undefined}
           />
         </FilePreviewAvailabilityProvider>
@@ -3281,14 +3328,16 @@ export function ThreadShell({
       {composerPortalTarget ? createPortal(
         <div
           hidden={!composerActive}
-          aria-hidden={!composerActive || activeChildHistoryInspection !== null}
-          style={activeChildHistoryInspection ? { visibility: "hidden" } : undefined}
+          aria-hidden={!composerActive || childHistoryModal}
+          {...(childHistoryModal ? { inert: "" } : {})}
+          style={childHistoryModal ? { visibility: "hidden" } : undefined}
           data-testid={composerActive ? "active-pane-composer" : undefined}
         >
           {composer}
         </div>,
         composerPortalTarget,
       ) : null}
+      {childHistoryOverlay}
       {filePreviewPath && historyKey ? (
         <FilePreviewPanel
           sessionKey={historyKey}

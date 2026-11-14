@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { ArrowLeft, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { SubagentStatus } from "@/components/thread/SubagentStatus";
 import { ThreadMessages } from "@/components/thread/ThreadMessages";
 import { Button } from "@/components/ui/button";
+import { useMobileBack } from "@/hooks/useMobileBack";
 import { fetchWebuiThread } from "@/lib/api";
 import {
   parseDelegatedChildPayload,
@@ -31,6 +35,10 @@ export interface DelegatedChildHistoryOverlayProps {
   rootRows: DelegatedChildReference[];
   expectedRoot?: SourceOrigin | null;
   provenanceComplete?: boolean;
+  currentChild?: DelegatedChildReference | null;
+  statusAvailable?: boolean;
+  modal?: boolean;
+  active?: boolean;
   token: string;
   onClose: () => void;
 }
@@ -277,6 +285,10 @@ export function DelegatedChildHistoryOverlay({
   rootRows,
   expectedRoot = null,
   provenanceComplete = true,
+  currentChild = child,
+  statusAvailable = true,
+  modal = true,
+  active = true,
   token,
   onClose,
 }: DelegatedChildHistoryOverlayProps) {
@@ -318,6 +330,7 @@ export function DelegatedChildHistoryOverlay({
     setLoadingOlder(false);
     setError(null);
     usedCursorsRef.current = new Set();
+    pendingScrollAnchorRef.current = null;
     const authorized = child.history_kind === "summary"
       ? delegatedChildSummaryIsAuthorized(child, rootKey)
       : delegatedChildHasValidAncestry(
@@ -357,8 +370,8 @@ export function DelegatedChildHistoryOverlay({
   }, [child, expectedRoot, provenanceComplete, requestPage, rootKey]);
 
   useLayoutEffect(() => {
-    backButtonRef.current?.focus();
-  }, []);
+    if (!modal) backButtonRef.current?.focus({ preventScroll: true });
+  }, [modal]);
 
   useLayoutEffect(() => {
     const anchor = pendingScrollAnchorRef.current;
@@ -417,46 +430,62 @@ export function DelegatedChildHistoryOverlay({
     }
   }, [beforeCursor, hasMoreBefore, historyKind, loadingOlder, requestPage]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  useMobileBack(() => {
+    onClose();
+    return true;
+  }, active);
 
-  const taskLabel = child.task_label?.trim() || child.profile || "Delegated task";
-  const displayMessages = projectWebuiThreadMessages(messages);
-  return (
-    <section
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="delegated-child-history-title"
-      className="flex h-full min-h-0 flex-col bg-background"
-      data-testid="delegated-child-history"
-    >
-      <header className="flex shrink-0 items-center gap-3 border-b border-border/70 px-3 py-2.5 sm:px-4">
-        <Button
-          ref={backButtonRef}
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onClose}
-          aria-label={t("thread.delegatedChild.backToParent", { defaultValue: "Back to parent chat" })}
-        >
-          {t("thread.delegatedChild.back", { defaultValue: "Back" })}
-        </Button>
-        <div className="min-w-0 flex-1">
-          <h2 id="delegated-child-history-title" className="truncate text-sm font-semibold">
-            {taskLabel}
-          </h2>
-          <p className="text-xs text-muted-foreground">
-            {historyKind === "summary"
-              ? t("thread.delegatedChild.summaryHistory", { defaultValue: "Summary-only history · read only" })
-              : t("thread.delegatedChild.canonicalHistory", { defaultValue: "Canonical activity · read only" })}
-          </p>
+  const displayedChild = currentChild ?? child;
+  const taskLabel = displayedChild.task_label?.trim() || displayedChild.profile || "Delegated task";
+  const displayMessages = provenanceComplete ? projectWebuiThreadMessages(messages) : [];
+  const readOnlyLabel = historyKind === "summary"
+    ? t("thread.delegatedChild.summaryHistory", "Summary-only history · read only")
+    : t("thread.delegatedChild.readOnly", "Read only");
+  const Title = modal ? Dialog.Title : "h2";
+  const Description = modal ? Dialog.Description : "span";
+  const content = (
+    <>
+      <header className="shrink-0 border-b border-border/70 px-4 pb-3 pt-2 sm:px-5">
+        <div className="flex min-h-11 items-center justify-between gap-2">
+          {modal ? (
+            <Button
+              ref={backButtonRef}
+              type="button"
+              variant="ghost"
+              className="-ms-2 h-11 gap-2 px-2"
+              onClick={onClose}
+            >
+              <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
+              {t("thread.delegatedChild.backToParent", "Back to parent chat")}
+            </Button>
+          ) : (
+            <>
+              <p className="text-xs font-medium text-muted-foreground">
+                {t("thread.delegatedChild.activity", "Subagent activity")}
+              </p>
+              <Button
+                ref={backButtonRef}
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                aria-label={t("thread.delegatedChild.closeActivity", "Close subagent activity")}
+              >
+                <X className="size-4" aria-hidden />
+              </Button>
+            </>
+          )}
+        </div>
+        <Title className="mt-1 break-words text-base font-semibold leading-snug">{taskLabel}</Title>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span aria-live="polite">
+            <SubagentStatus
+              child={displayedChild}
+              available={statusAvailable && provenanceComplete}
+              summaryLabel={false}
+            />
+          </span>
+          <Description className="text-xs text-muted-foreground">{readOnlyLabel}</Description>
         </div>
       </header>
       {historyKind === "summary" ? (
@@ -473,7 +502,7 @@ export function DelegatedChildHistoryOverlay({
       ) : null}
       <div
         ref={scrollerRef}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-5 pt-3 sm:px-4"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6 pt-3 sm:px-5"
         onScroll={(event) => {
           if (event.currentTarget.scrollTop < 80 && hasMoreBefore && !loadingOlder) {
             void loadOlder();
@@ -491,7 +520,7 @@ export function DelegatedChildHistoryOverlay({
         ) : null}
         {loading ? (
           <p role="status" className="py-10 text-center text-sm text-muted-foreground">
-            {t("thread.delegatedChild.loadingHistory", { defaultValue: "Loading delegated history…" })}
+            {t("thread.delegatedChild.loadingHistory", { defaultValue: "Loading subagent activity…" })}
           </p>
         ) : displayMessages.length > 0 ? (
           <div ref={contentRef} className="mx-auto w-full max-w-[49.5rem]">
@@ -499,13 +528,43 @@ export function DelegatedChildHistoryOverlay({
           </div>
         ) : !error ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            {t("thread.delegatedChild.emptyHistory", { defaultValue: "No canonical activity is available." })}
+            {t("thread.delegatedChild.emptyHistory", { defaultValue: "No activity yet." })}
           </p>
         ) : null}
       </div>
       <p className="sr-only" aria-live="polite">
         {olderRequestRef.current ? t("thread.delegatedChild.loadingEarlier", { defaultValue: "Loading earlier activity…" }) : ""}
       </p>
-    </section>
+    </>
+  );
+
+  if (!modal) {
+    return (
+      <section
+        aria-label={taskLabel}
+        className="flex h-full min-h-0 w-[min(42%,30rem)] shrink-0 flex-col border-s border-border bg-background"
+        data-testid="delegated-child-history"
+      >
+        {content}
+      </section>
+    );
+  }
+  return (
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Content
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]"
+          data-testid="delegated-child-history"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            backButtonRef.current?.focus({ preventScroll: true });
+          }}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          {content}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

@@ -768,7 +768,7 @@ describe("ThreadShell", () => {
     />));
 
     expect(await screen.findByLabelText("Inspect GUI child")).toBeInTheDocument();
-    expect(await screen.findByText("active")).toBeInTheDocument();
+    expect(await screen.findByText("Working")).toBeInTheDocument();
     const stopButton = await screen.findByRole("button", { name: "Stop response" });
     expect(stopButton).toBeEnabled();
     fireEvent.click(stopButton);
@@ -790,7 +790,7 @@ describe("ThreadShell", () => {
     });
 
     await waitFor(() => expect(threadRequests).toBeGreaterThan(1));
-    expect(await screen.findByText("stopped")).toBeInTheDocument();
+    expect(await screen.findByText("Stopped")).toBeInTheDocument();
     expect(screen.queryByText(
       "Stop is unavailable until the current owned-work identity can be verified.",
     )).not.toBeInTheDocument();
