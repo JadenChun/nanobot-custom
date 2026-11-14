@@ -8,7 +8,7 @@
 `722bd8ec6cbc5c223ee2b4b22c03950071ccd1ef`. `origin/staging` is still
 `f1a6bb85`, unchanged since the snapshot. Working tree clean.
 
-**Ledger state:** 16 accepted, 18 ready-for-review, 102 unverified, of the 136
+**Ledger state:** 16 accepted, 16 ready-for-review, 104 unverified, of the 136
 original findings. `docs/architecture/a3/evidence.json` holds 26 evidence rows.
 Every ready-for-review entry still needs a named reviewer; this pass did not
 self-accept any finding.
