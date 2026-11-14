@@ -28,10 +28,10 @@ identifies the tested artifacts and the release work that remains.
 
 | Review finding | Current evidence |
 | --- | --- |
-| AR1 | The exact-effect approval suite checks racing decisions, repeated dispatch, and one file replacement per consent. |
-| AR2 | The installed WebUI held two worker actions under the same parent. Approval changed one file. Denial left the other file intact. |
+| AR1 | Accepted. W21 reviewed the exact-effect suite: one consent yields one effect in duplicate batches and later iterations; racing, stale, expired, revoked and changed-target decisions start none; an instrumented deny starts no call; chat text cannot grant. |
+| AR2 | Accepted. W21 reviewed the real child path: the file stays unchanged before approval, one approval applies one bulk edit, a later identical effect needs fresh approval, and parent revocation or a stale child generation refuses. |
 | AR3 | Accepted. The Linux review confirmed that a child retained its tool history and interrupted disposition after Stop and restart. Earlier browser and emulator runs read the canonical child tool rows. |
-| AR4 | The MCP request-binding suite checks captured definitions, replacement, revocation, and release after the old request settles. |
+| AR4 | Accepted. W18 read the captured-binding path and ran the 34 request-binding tests: an admitted call uses its original wrapper and schema, and a same-name replacement is refused rather than dispatched. |
 | AR5 | The owner revokes only the device issued for the cancelled attempt. The Android bridge waits for UI acceptance before it saves access. The emulator verified the race across owner restart. A fresh attempt recovered from a dropped proof response. |
 | AR6 | The installed mobile WebSocket accepted an authorized attachment. It rejected another attachment after a scope reduction. The stored bytes stayed the same. |
 | RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |

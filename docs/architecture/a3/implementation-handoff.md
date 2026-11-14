@@ -1,5 +1,15 @@
 # A3 implementation correction handoff
 
+## AR4 acceptance 2026-11-14
+
+W18 read the captured-binding path and ran the 34 request-binding tests. An
+admitted call uses its original wrapper and schema. A same-name replacement is
+revoked at unregister and the call is refused; it is never dispatched to the
+replacement. The executor count stays zero and the old resource closes once. A
+failed replacement keeps the authorized old connection usable. AR4 is accepted
+with the refuse-on-replacement choice. The concurrent initial-caller race stays
+a separate partial finding under T01-F03.
+
 ## A3-6a guidance repair 2026-11-14
 
 Commit `4b5c95a2` aligns three shipped skill guidance files with the runtime.
