@@ -1,5 +1,21 @@
 # A3 implementation correction handoff
 
+## S01-F01 Once projection repair 2026-11-14
+
+W1 demonstrated that only the Full branch asked the live path policy. A live
+Once/task root over a configured protected directory reported read and write
+true while the policy denied the path. The repair commits `107fecb6` and
+`a6131d0c` make the Once/task branch ask the same predicate for read, write and
+exec. Command eligibility now also requires the task command mask and a target
+outside every managed configured-repository root.
+
+The W1 probe now reports read false and write false with no drift. The matrix
+probe moved from 11 disagreements to full agreement. The requirements-only
+cases C1-C6 preserve the Once, Full, normal, proposal and managed-repository
+scopes. The repair passes 19 focused tests at its commit and 63 at integration
+HEAD. Strict BasedPyright reports 0 diagnostics in 546 files before and after,
+with no new signatures. Named reviewer acceptance remains open.
+
 ## W1 named review 2026-11-14
 
 Reviewer W1 used the exact model `commandcode/deepseek/deepseek-v4.1-flash`.
