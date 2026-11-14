@@ -76,32 +76,27 @@ The remaining commits record reviews, evidence, and the stage decisions.
 
 ## Next ready packages
 
-1. **A3-4 P3/P4:** admission, Stop and outcome/projection. Blocked before this
-   run; A3-2 and A3-3 are now accepted. P3 needs one backend writer and one TUI
-   writer. P4 needs the backend replay owner and the settings/projection client
-   owner.
-2. **A3-4 P6/P7:** instance-root folder grants and the search/read contract.
-   A3-2 and A3-3 are accepted, so both are ready.
-3. **A3-4 P8:** autoPush exemption. Needs the K01/D4 product decision.
-4. **A3-6a behavioral:** K01-F03 metadata shadowing, K01-F07 alternative
-   binaries, E02-F23 no-query projection ceiling. Requirements-only cases are
-   in `req-a36a/CASES.md`.
-5. **A3-6b/c:** T01-F02 plugin disposer, T01-F03 waiter cancellation, H03-F2
-   Codex cancel/expiry, H03-F7 xAI ordering, H03-F6 route capabilities,
-   T01-F01 plugin schemas, H03-F5 attempt totals; CLI-apps/MCP/usage instance
-   roots, credential profiles (decision needed), repo entrypoint confinement.
-6. **A3-7:** listener auth, owner instance scope and authenticated notification
-   are accepted. Native media logging and broker bounds need Go/JVM toolchains.
-7. **A3-8:** image reference budget, PDF pre-decode bound, session-delete
-   completeness, Temporary Chat tombstone retirement. Requirements-only cases
-   are in `req-a38/CASES.md`. RR1 and RR3 remain open.
-8. **A3-9:** unify the health parser (C00-F07), truthful systemd outcomes
-   (R01-F06), installed pipx executable (Q01-F03), toolchain identity
-   (R01-F17), staged update (Q01-F05), release switch (E02-F12), and real
-   chat-path qualification (R01-F05). The Windows crawler stays out of scope.
-9. **A3-10:** two onboarding decisions (C00-F04, C00-F05); the other six are
-   retained or isolated by disposition.
-10. **A3-5:** all three findings await a packet pass.
+1. **A3-4:** verify E02-F20 (mutation outcome) and U01-F05 (sidebar persistence)
+   against the now-integrated outcome and client paths; H01-F5 needs the K01/D4
+   autoPush decision.
+2. **A3-5:** verify T01-F04 (remote MCP read-only hint), K01-F06 (tmux `--yolo`
+   guidance and nested-agent policy) and X01-F02 (crawler expand). T01-F04 and
+   X01-F02 appear satisfied in current source; K01-F06 needs a text/policy fix.
+3. **A3-6:** accept the verified-but-unreviewed items (T01-F11, U01-F02,
+   K01-F02, K01-F08, X01-F04, H03-F4, T01-F05, T01-F06, H03-F1). E02-F16 needs
+   a credential-profile decision. C00-F06 needs the instance media root. H03-F5
+   needs attempt-total evidence.
+4. **A3-7:** native R01-F11 through R01-F14 need Go/JVM or Android toolchains;
+   source-only evidence exists.
+5. **A3-8:** the durability group remains: A01-F01/F03/F04/F05/F06/F08/F09,
+   H02-CAP-SOURCE64/JOURNAL4096, H02-IO, E02-F07, K01-F13, M01-F01/F02/F04, and
+   E02-F03/F04/F05/F09. Slice order is in `w8-a38a/REPAIRS.md`.
+6. **A3-9:** installer (`Q01-F03`), toolchain identity (`R01-F17`), staged
+   update (`Q01-F05`), release switch (`E02-F12`), and real chat-path
+   qualification (`R01-F05`). Q01-F01 and R01-F20 are dispositions.
+7. **A3-10:** decide C00-F04/C00-F05; record the four retained dispositions.
+8. **RR1 and RR3:** open review findings; RR1 needs complete-reference proof and
+   RR3 needs the retired-migration whole-tree proof.
 
 ## Blockers
 
