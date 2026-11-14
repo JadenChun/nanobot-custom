@@ -1,5 +1,16 @@
 # A3 implementation correction handoff
 
+## Test-environment note (read before the full suite)
+
+Run the full local suite with `--basetemp` on a tmpfs path such as `/tmp`.
+`/home` is btrfs on this machine, and several memory-recovery suites assert
+`st_nlink == 2` on published records. Hard-link accounting on btrfs fails those
+assertions, which produced 423 false failures and 65 false errors in one run.
+The same suites pass 267 of 267 on `/tmp`. Also keep the base path short:
+`nanobot/remote/ipc.py` binds a Unix socket and fails with `AF_UNIX path too
+long` on a long base path. `/tmp` is inode-limited, so clean
+`/tmp/pytest-of-jaden` before a full run.
+
 ## A3-2 reconciliation batch (2026-11-14, Linux)
 
 Branch `codex/a3-audit-reconciliation`, base
