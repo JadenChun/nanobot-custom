@@ -14,11 +14,11 @@ qualification remain with the project owner.
 | Measure | Value |
 | --- | --- |
 | Original findings | 136 |
-| Accepted | 41 |
+| Accepted | 46 |
 | Ready for review | 0 |
-| Unverified | 95 |
+| Unverified | 90 |
 | Review findings | 9 (AR1-AR6 and RR2 accepted; RR1 and RR3 open) |
-| Evidence rows | 53 |
+| Evidence rows | 54 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
@@ -35,8 +35,8 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | A3-6 | In progress | 4 accepted; 26 open. |
 | A3-7 | In progress | 9 accepted; 7 open. |
 | A3-8 | Inventory complete | 24 open; repairs packaged. |
-| A3-9 | Inventory complete | 4 accepted; 12 open; repair/disposition list prepared. |
-| A3-10 | Inventory complete | 8 open; dispositions pending. |
+| A3-9 | Inventory complete | 7 accepted; 9 open; repair/disposition list prepared. |
+| A3-10 | Inventory complete | 2 accepted; 6 dispositioned (2 isolate decisions, 3 retain, 1 retain gate). |
 
 ## Repairs integrated in this run
 
@@ -61,7 +61,8 @@ The remaining commits record reviews, evidence, and the stage decisions.
 - **A3-6:** K01-F04, K01-F05, K01-F09, H01-F8.
 - **A3-7:** R01-F01, R01-F02, R01-F03, R01-F04, R01-F07, R01-F08, R01-F09,
   R01-F10, R01-F15.
-- **A3-9:** Q01-F04, R01-F16, R01-F18, R01-F19.
+- **A3-9:** Q01-F02, Q01-F04, Q01-F06, Q01-F07, R01-F16, R01-F18, R01-F19.
+- **A3-10:** A01-F02, A01-F07.
 
 ## Open findings by stage
 
@@ -76,9 +77,10 @@ The remaining commits record reviews, evidence, and the stage decisions.
   T01-F06, H03-F6.
 - **A3-7:** E02-F17, E02-F02, E02-F22, R01-F11, R01-F12, R01-F13, R01-F14.
 - **A3-8:** all 24.
-- **A3-9:** Q01-F01, Q01-F02, R01-F06, C00-F07, R01-F05, Q01-F03, E02-F12,
-  R01-F17, Q01-F05, Q01-F06, Q01-F07, R01-F20.
-- **A3-10:** all 8.
+- **A3-9:** Q01-F01, R01-F06, C00-F07, R01-F05, Q01-F03, E02-F12, R01-F17,
+  Q01-F05, R01-F20. R01-F20 is outside the first-release scope.
+- **A3-10:** C00-F04, C00-F05, S01-F02, H02-ART-SOURCE, H02-LEGACY-ISOLATE,
+  H02-IDLE-DORMANT.
 
 ## Next ready packages
 
@@ -102,8 +104,13 @@ The remaining commits record reviews, evidence, and the stage decisions.
 7. **A3-8:** image reference budget, PDF pre-decode bound, session-delete
    completeness, Temporary Chat tombstone retirement. Requirements-only cases
    are in `req-a38/CASES.md`. RR1 and RR3 remain open.
-8. **A3-9/A3-10:** W22 inventory and dispositions are in progress.
-9. **A3-5:** all three findings await a packet pass.
+8. **A3-9:** unify the health parser (C00-F07), truthful systemd outcomes
+   (R01-F06), installed pipx executable (Q01-F03), toolchain identity
+   (R01-F17), staged update (Q01-F05), release switch (E02-F12), and real
+   chat-path qualification (R01-F05). The Windows crawler stays out of scope.
+9. **A3-10:** two onboarding decisions (C00-F04, C00-F05); the other six are
+   retained or isolated by disposition.
+10. **A3-5:** all three findings await a packet pass.
 
 ## Blockers
 

@@ -1,5 +1,25 @@
 # A3 implementation correction handoff
 
+## A3-7 authority repair 2026-11-14
+
+Commit `ab994c3b` closes the three Python and WebUI A3-7 gaps. A non-loopback
+listener with no token, token-issue secret or trusted proxy assertion is refused
+at configuration validation. A handshake that bypasses validation returns 401,
+and token issuance without a secret returns 403 and issues nothing. Loopback
+local behavior is unchanged.
+
+Remote-access owner sockets and state now resolve from the explicit instance
+root. Two instances resolve distinct sockets under their own roots. The desktop
+notification is an authenticated local WebSocket mutation with a same-origin
+check; an unauthenticated or cross-origin request is refused and spawns no
+notifier. The client sends the mutation instead of an unauthenticated GET.
+
+The probes show the before defects and the after behavior. The focused run
+passed 226 tests, and the integration target files pass 32. Strict BasedPyright
+is 0/546 before and after. Named reviewer acceptance is pending. The native
+media-logging and broker-bound findings remain blocked without the native
+toolchain.
+
 ## A3-9 and A3-10 inventory 2026-11-14
 
 W22 mapped the A3-9 release and A3-10 retirement findings at the candidate.
