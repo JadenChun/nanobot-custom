@@ -3,9 +3,9 @@
 **Date:** 2026-11-15 (Linux x86_64 and Android 16 x86_64 emulator)
 **Coordinator and workers:** `commandcode/deepseek/deepseek-v4.1-flash`
 **Worktree:** `/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`
-**Branch:** `codex/a3-audit-reconciliation`, 172 commits ahead of
+**Branch:** `codex/a3-audit-reconciliation`, 174 commits ahead of
 `origin/codex/staging-audit-implementation` (`722bd8ec`).
-**Candidate:** `a1be2169` (code at `9c55817b`, plus evidence and documentation).
+**Candidate:** `17114c02` (code at `9c55817b`, plus evidence and documentation).
 **Release state:** HOLD. Push, merge, deployment, and formal release
 qualification remain with the project owner.
 
@@ -31,7 +31,7 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 
 | Stage | Status | Basis |
 | --- | --- | --- |
-| A3-0 | Accepted, Linux scope | Local qualification report; the final candidate passes 18,543 tests, strict 0/546, comparator clean. |
+| A3-0 | Accepted, Linux scope | Local qualification report; the final candidate passes 18,563 tests, strict 0/546, comparator clean. |
 | A3-1 | Accepted, Linux scope | AC1a-AC6b met; H01-F6/F7 structural debt deferred; the read_file instance media root is accepted. |
 | A3-2 | Accepted, Linux scope | AC2.1-AC2.5 met; X01-F01 gated; S02-F03 deferred; Windows/macOS unverified. |
 | A3-3 | Accepted, Linux scope | AC3.1-AC3.3 pass; five named gaps recorded. |
@@ -78,16 +78,15 @@ The remaining commits record reviews, evidence, and the stage decisions.
 
 | Check | Result |
 | --- | --- |
-| Python full suite (code `487a99d8`) | 18,543 passed, 22 skipped, 6 subtests |
+| Python full suite (code `9c55817b`) | 18,563 passed, 22 skipped, 6 subtests |
 | Strict BasedPyright | 0 diagnostics / 546 files |
 | Go broker `-race` + C ABI | pass, `NANOBOT_CABI_SMOKE_OK version=1` |
 | Android JVM suite | 32 passed |
 | Signed-app device-key pass | 24/24 host and app checks |
 
-After `487a99d8` only the K01-F06 bypass classifier changed (`9c55817b`); its
-focused, targeted (237) and broad (7,211) suites pass, and its own strict run is
-0/546. A final full suite at the last commit is recorded in
-`resume3/final/full-suite-final.log`.
+The final full suite ran at `9c55817b` and is recorded in
+`resume3/final/full-suite-final.log`; `resume3/final/strict-final.json` is the
+matching 0/546 strict report.
 
 ## Remaining work and limits
 
