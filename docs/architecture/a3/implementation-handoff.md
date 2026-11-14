@@ -1,5 +1,32 @@
 # A3 implementation correction handoff
 
+## W1 A3-7 review 2026-11-14
+
+Reviewer W1 used the exact model `commandcode/deepseek/deepseek-v4.1-flash` and
+accepted E02-F02, E02-F17 and E02-F22.
+
+E02-F02: a non-loopback host without a token, token-issue secret or trusted
+proxy assertion is refused at config validation. A validation-bypassing
+handshake returns 401. Issuance without a secret returns 403 and stores no
+token. A valid issued token is accepted. Loopback behavior is unchanged.
+
+E02-F17: the remote-access root, owner socket, store and service plan take the
+explicit instance root. Two instances resolve distinct sockets and state. An
+owner live at A is unavailable at B, and A's pairing leaves B byte-identical.
+Out-of-root sockets are refused.
+
+E02-F22: desktop notification is an authenticated same-origin WebSocket
+mutation. A direct GET is 405, an unauthenticated request is 401, a cross-origin
+request is 403, and every refusal spawns no notifier. A same-origin
+authenticated request returns 200 with exactly one notifier call. The client
+removed the GET.
+
+The independent probe passed 58 checks. The new tests pass 10, the remote suite
+226, the WebSocket suite 421, the mixed suite 63, and the client notification
+tests 6. The parity inventory now classifies `desktop.notify` as the mutation
+(commit `cd7c8e09`). The review has no blocking missing proof. The ledger now
+has 49 accepted findings and 87 unverified.
+
 ## A3-7 authority repair 2026-11-14
 
 Commit `ab994c3b` closes the three Python and WebUI A3-7 gaps. A non-loopback

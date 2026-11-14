@@ -14,11 +14,11 @@ qualification remain with the project owner.
 | Measure | Value |
 | --- | --- |
 | Original findings | 136 |
-| Accepted | 46 |
+| Accepted | 49 |
 | Ready for review | 0 |
-| Unverified | 90 |
+| Unverified | 87 |
 | Review findings | 9 (AR1-AR6 and RR2 accepted; RR1 and RR3 open) |
-| Evidence rows | 54 |
+| Evidence rows | 56 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
@@ -33,7 +33,7 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | A3-4 | In progress | 3 findings accepted; 11 open. |
 | A3-5 | Not started | 3 open. |
 | A3-6 | In progress | 4 accepted; 26 open. |
-| A3-7 | In progress | 9 accepted; 7 open. |
+| A3-7 | In progress | 12 accepted; 4 open (native only). |
 | A3-8 | Inventory complete | 24 open; repairs packaged. |
 | A3-9 | Inventory complete | 7 accepted; 9 open; repair/disposition list prepared. |
 | A3-10 | Inventory complete | 2 accepted; 6 dispositioned (2 isolate decisions, 3 retain, 1 retain gate). |
@@ -59,8 +59,8 @@ The remaining commits record reviews, evidence, and the stage decisions.
 - **A3-3:** E02-F01.
 - **A3-4:** T01-F08, E02-F19, E02-F21.
 - **A3-6:** K01-F04, K01-F05, K01-F09, H01-F8.
-- **A3-7:** R01-F01, R01-F02, R01-F03, R01-F04, R01-F07, R01-F08, R01-F09,
-  R01-F10, R01-F15.
+- **A3-7:** E02-F02, E02-F17, E02-F22, R01-F01, R01-F02, R01-F03, R01-F04,
+  R01-F07, R01-F08, R01-F09, R01-F10, R01-F15.
 - **A3-9:** Q01-F02, Q01-F04, Q01-F06, Q01-F07, R01-F16, R01-F18, R01-F19.
 - **A3-10:** A01-F02, A01-F07.
 
@@ -75,7 +75,7 @@ The remaining commits record reviews, evidence, and the stage decisions.
   H03-F4, K01-F08, X01-F04, H03-F1, H03-F2, H03-F5, H03-F7, T01-F12, E02-F23,
   T01-F11, U01-F02, K01-F03, K01-F07, T01-F01, T01-F02, T01-F03, T01-F05,
   T01-F06, H03-F6.
-- **A3-7:** E02-F17, E02-F02, E02-F22, R01-F11, R01-F12, R01-F13, R01-F14.
+- **A3-7:** R01-F11, R01-F12, R01-F13, R01-F14 (native, no toolchain).
 - **A3-8:** all 24.
 - **A3-9:** Q01-F01, R01-F06, C00-F07, R01-F05, Q01-F03, E02-F12, R01-F17,
   Q01-F05, R01-F20. R01-F20 is outside the first-release scope.
@@ -98,9 +98,8 @@ The remaining commits record reviews, evidence, and the stage decisions.
    Codex cancel/expiry, H03-F7 xAI ordering, H03-F6 route capabilities,
    T01-F01 plugin schemas, H03-F5 attempt totals; CLI-apps/MCP/usage instance
    roots, credential profiles (decision needed), repo entrypoint confinement.
-6. **A3-7:** W24 repairs for listener auth, owner instance scope and
-   authenticated notification are in progress. Native media logging and broker
-   bounds need Go/JVM toolchains.
+6. **A3-7:** listener auth, owner instance scope and authenticated notification
+   are accepted. Native media logging and broker bounds need Go/JVM toolchains.
 7. **A3-8:** image reference budget, PDF pre-decode bound, session-delete
    completeness, Temporary Chat tombstone retirement. Requirements-only cases
    are in `req-a38/CASES.md`. RR1 and RR3 remain open.
