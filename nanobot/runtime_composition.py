@@ -11,7 +11,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from nanobot.runtime_errors import RuntimeOwnedWorkError
+from nanobot.runtime_errors import has_owned_work_error
 from nanobot.session.runtime_authority import (
     DurableSessionAuthority,
     SessionAuthority,
@@ -345,7 +345,7 @@ async def _close_reverse(callbacks: list[CloseCallback]) -> list[BaseException]:
         except BaseException as exc:
             errors.append(exc)
             unsettled.add(index)
-            if isinstance(exc, RuntimeOwnedWorkError):
+            if has_owned_work_error(exc):
                 # Resistant effects still own shared channels/sessions. Keep
                 # this callback and every earlier dependency for the retry.
                 unsettled.update(range(index))

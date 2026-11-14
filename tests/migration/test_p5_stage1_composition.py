@@ -21,6 +21,7 @@ from nanobot.runtime_composition import (
     inspect_session_modes,
     runtime_preflight,
 )
+from nanobot.runtime_errors import RuntimeOwnedWorkError
 from nanobot.session.runtime_authority import (
     SessionAuthorityLease,
     SessionAuthorityUnavailableError,
@@ -277,6 +278,72 @@ async def test_acquisition_failure_and_cleanup_failure_are_ordered(tmp_path: Pat
     assert mcp.close_calls == 2
     assert composition._closers == []
     assert composition.state is RuntimeState.CLOSED
+
+
+@pytest.mark.parametrize("failure_kind", ["direct", "nested", "mixed"])
+async def test_acquisition_rollback_retains_dependencies_of_owned_work(
+    tmp_path: Path, failure_kind: str,
+) -> None:
+    receipts: list[str] = []
+    startup_error = ValueError("late acquisition failed")
+    owned_work = RuntimeOwnedWorkError("worker has outstanding work")
+    ordinary_error = OSError("worker cleanup also failed")
+    sentinel = BaseException("worker cleanup stopped")
+    cleanup_error: BaseException = owned_work
+    if failure_kind != "direct":
+        nested = ExceptionGroup("nested cleanup", [owned_work, ordinary_error])
+        cleanup_error = ExceptionGroup("worker cleanup", [nested])
+        if failure_kind == "mixed":
+            cleanup_error = BaseExceptionGroup("worker cleanup", [nested, sentinel])
+    worker_closable = False
+    defaults = _factories([])
+
+    async def close_worker() -> None:
+        receipts.append("worker")
+        if not worker_closable:
+            raise cleanup_error
+
+    def reader(_config, bus, sessions, _tools, _worker, _cron, delivery):
+        async def close() -> None:
+            receipts.append("reader")
+
+        return SimpleNamespace(
+            bus=bus, sessions=sessions, turn_delivery_factory=delivery, aclose=close,
+        )
+
+    def fail_late(*_args, **_kwargs):
+        raise startup_error
+
+    composition = RuntimeComposition.define(
+        _config(tmp_path),
+        session_authority=Authority(object(), receipts, close=True),
+        factories=RuntimeFactories(
+            defaults.bus, defaults.tools, lambda *_: SimpleNamespace(aclose=close_worker),
+            defaults.cron, reader,
+        ),
+        channel_options=ChannelBuildOptions(factory=fail_late),
+        startup_receipt_admitted=True,
+    )
+
+    def exception_nodes(error: BaseException):
+        yield error
+        if isinstance(error, BaseExceptionGroup):
+            for child in error.exceptions:
+                yield from exception_nodes(child)
+
+    with pytest.raises(BaseExceptionGroup) as failure:
+        await composition.acquire()
+    assert receipts == ["authority", "reader", "worker"]
+    nodes = list(exception_nodes(failure.value))
+    assert startup_error in nodes and cleanup_error in nodes and owned_work in nodes
+    if failure_kind != "direct":
+        assert ordinary_error in nodes
+    if failure_kind == "mixed":
+        assert sentinel in nodes
+
+    worker_closable = True
+    await composition.aclose()
+    assert receipts == ["authority", "reader", "worker", "worker", "authority-close"]
 
 
 async def test_composition_close_retries_only_unsettled_resources_in_reverse(

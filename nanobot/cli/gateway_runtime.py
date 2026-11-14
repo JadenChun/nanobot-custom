@@ -39,7 +39,7 @@ from nanobot.cli.webui_support import (
 from nanobot.config.paths import get_default_sessions_root, is_default_workspace
 from nanobot.config.schema import Config
 from nanobot.gateway.runtime import GatewayInstance
-from nanobot.runtime_errors import RuntimeOwnedWorkError
+from nanobot.runtime_errors import has_owned_work_error
 from nanobot.security.network import is_loopback_host
 from nanobot.utils.helpers import sync_workspace_templates
 from nanobot.webui.build import BuildMode
@@ -179,15 +179,6 @@ def _gateway_failure_group(message: str, errors: Sequence[BaseException]) -> Bas
     return BaseExceptionGroup(message, list(errors))
 
 
-def _has_owned_work_error(error: BaseException) -> bool:
-    if isinstance(error, RuntimeOwnedWorkError):
-        return True
-    if isinstance(error, BaseExceptionGroup):
-        group = cast(BaseExceptionGroup[BaseException], error)
-        return any(_has_owned_work_error(item) for item in group.exceptions)
-    return False
-
-
 def _print_gateway_health_endpoint(host: str, port: int) -> None:
     console.print(
         f"[green]✓[/green] Health endpoint: {_gateway_health_url(host, port)}"
@@ -299,7 +290,7 @@ async def _close_gateway_runtime(
         await composition.aclose()
     except BaseException as exc:
         errors.append(exc)
-        if _has_owned_work_error(exc):
+        if has_owned_work_error(exc):
             try:
                 restore()
             except BaseException as restore_error:
@@ -534,7 +525,7 @@ def _run_gateway(
 
         def record_cleanup_error(error: BaseException) -> None:
             cleanup_errors.append(error)
-            if _has_owned_work_error(error):
+            if has_owned_work_error(error):
                 errors = ([primary_error] if primary_error is not None else []) + cleanup_errors
                 try:
                     restore()
