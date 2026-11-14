@@ -18,6 +18,7 @@ import pytest
 from nanobot.agent.policy import (
     RiskyActionPolicy,
     nested_launch_id,
+    nested_launch_path,
 )
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.turn import ApprovalDecision, TurnContext
@@ -433,3 +434,125 @@ async def test_u8_executor_refuses_unattested_launch_before_spawn(
     assert LAUNCH_REFUSAL in str(result)
     assert getattr(result, "is_error", False) is True
     launch.assert_not_awaited()
+
+
+# K01-F06 review follow-up: case-correct and config-override bypass forms ------
+
+# A lowercased classifier alternative never matched ``bypassPermissions``, and a
+# Codex ``-c``/``--config`` override was not classified. These are the same
+# reduced-protection launch as ``--yolo`` and must be refused before launch
+# unless exact approval and a covering attestation exist.
+BYPASS_LAUNCHES = (
+    "claude --permission-mode bypassPermissions 'fix the bug'",
+    "claude --permission-mode=bypassPermissions 'fix the bug'",
+    "claude --permission-mode=\"bypassPermissions\" 'fix the bug'",
+    "codex -c 'sandbox_mode=\"danger-full-access\"' 'fix the bug'",
+    "codex --config sandbox_mode=danger-full-access 'fix the bug'",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", BYPASS_LAUNCHES)
+async def test_k01f06_bypass_form_refused_before_spawn(
+    tmp_path: Path, command: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = ExecTool(working_dir=str(tmp_path))  # unconfined executor
+    launch, spawn = AsyncMock(return_value="started"), AsyncMock()
+    monkeypatch.setattr(tool, "_execute_session", launch)
+    monkeypatch.setattr(tool, "_spawn", spawn)
+
+    decision = await _decide(
+        RiskyActionPolicy(workspace=tmp_path), _exec(command, str(tmp_path)),
+    )
+    assert decision.stop_reason == "policy_blocked"
+    assert decision.metadata["reason_id"] == LAUNCH_REFUSAL
+    assert decision.requires_approval is False
+
+    result = await tool.execute(command=command)
+    assert LAUNCH_REFUSAL in str(result)
+    launch.assert_not_awaited()
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", BYPASS_LAUNCHES)
+async def test_k01f06_bypass_form_with_approval_still_refused(
+    tmp_path: Path, command: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call = _exec(command, str(tmp_path))
+    approved, context = await _approved_policy(tmp_path, call)
+    tool = ExecTool(working_dir=str(tmp_path))
+    launch = AsyncMock(return_value="started")
+    monkeypatch.setattr(tool, "_execute_session", launch)
+
+    decision = await _decide(approved, call)
+    assert decision.stop_reason == "policy_blocked"
+    assert decision.metadata["reason_id"] == LAUNCH_REFUSAL
+    assert decision.requires_approval is False
+    refused = approved.authorize_dispatch(call, dict(call.arguments), context)
+    assert refused.metadata["reason_id"] == LAUNCH_REFUSAL
+    result = await tool.execute(command=command)
+    assert LAUNCH_REFUSAL in str(result)
+    launch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", BYPASS_LAUNCHES)
+async def test_k01f06_bypass_form_allowed_with_approval_and_attestation(
+    tmp_path: Path, command: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = ExecTool(working_dir=str(tmp_path), sandbox="bwrap")
+    call = _exec(command, str(tmp_path))
+    approved, context = await _approved_policy(tmp_path, call)
+
+    assert (await _decide(approved, call)).action == "allow"
+    assert approved.authorize_dispatch(call, dict(call.arguments), context).action == "allow"
+
+    launch = AsyncMock(return_value="started")
+    monkeypatch.setattr(tool, "_execute_session", launch)
+    assert await tool.execute(command=command, yield_time_ms=0) == "started"
+    launch.assert_awaited_once()
+    prepared = launch.call_args.args[0]
+    attestation = prepared.launch_attestation
+    assert attestation is not None
+    assert attestation.covers(nested_launch_id(command, str(tmp_path)), "shell")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    (
+        "tmux send-keys -t a1 \"claude --permission-mode bypassPermissions 'x'\" Enter",
+        "tmux send-keys -t a1 \"codex --config sandbox_mode=danger-full-access 'x'\" Enter",
+    ),
+)
+async def test_k01f06_bypass_form_via_tmux_cannot_prove_ownership(
+    tmp_path: Path, command: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = ExecTool(working_dir=str(tmp_path), sandbox="bwrap")
+    launch, spawn = AsyncMock(return_value="started"), AsyncMock()
+    monkeypatch.setattr(tool, "_execute_session", launch)
+    monkeypatch.setattr(tool, "_spawn", spawn)
+
+    decision = await _decide(
+        RiskyActionPolicy(workspace=tmp_path), _exec(command, str(tmp_path)),
+    )
+    assert decision.stop_reason == "policy_blocked"
+    assert decision.metadata["reason_id"] == LAUNCH_REFUSAL
+    assert decision.metadata["launch_path"] == "tmux"
+    result = await tool.execute(command=command)
+    assert LAUNCH_REFUSAL in str(result)
+    launch.assert_not_awaited()
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "codex exec --sandbox workspace-write 'fix the bug'",
+        "codex -c model=o3 'fix the bug'",
+        "claude --permission-mode acceptEdits 'fix the bug'",
+    ),
+)
+def test_k01f06_protected_forms_stay_ordinary(command: str) -> None:
+    assert nested_launch_path(command) is None

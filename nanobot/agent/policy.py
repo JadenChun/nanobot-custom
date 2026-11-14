@@ -32,7 +32,9 @@ _READ_ONLY_DESKTOP_ACTIONS = frozenset({"info", "screenshot", "cursor_position",
 
 # External agent launches that lower their own sandbox or approval protection.
 # A launch that keeps the tool's default protection is not listed and stays an
-# ordinary command.
+# ordinary command. These patterns match the lowercased command, so every
+# alternative is written in lowercase, including values such as
+# ``bypassPermissions`` and ``danger-full-access``.
 _REDUCED_PROTECTION_LAUNCHES = (
     re.compile(
         r"\bcodex\b[^|;&\n]*?"
@@ -40,11 +42,19 @@ _REDUCED_PROTECTION_LAUNCHES = (
     ),
     re.compile(
         r"\bcodex\b[^|;&\n]*?"
-        r"(?:--sandbox[= ]+danger-full-access\b|--ask-for-approval[= ]+never\b)"
+        r"(?:--sandbox[= ]+[\\'\"]*danger-full-access\b"
+        r"|--ask-for-approval[= ]+[\\'\"]*never\b)"
+    ),
+    # Codex config overrides that select a full-access sandbox or disable approval.
+    re.compile(
+        r"\bcodex\b[^|;&\n]*?(?:-c\s+|--config\s+|--config=)[\\'\"]*"
+        r"(?:sandbox_mode|approval_policy)\s*=\s*[\\'\"]*"
+        r"(?:danger-full-access|never)\b"
     ),
     re.compile(
         r"\bclaude\b[^|;&\n]*?"
-        r"(?:--dangerously-skip-permissions\b|--permission-mode[= ]+bypassPermissions\b)"
+        r"(?:--dangerously-skip-permissions\b"
+        r"|--permission-mode[= ]+[\\'\"]*bypasspermissions\b)"
     ),
     re.compile(r"\bgemini\b[^|;&\n]*?(?:--yolo\b|\s-y\b)"),
 )
