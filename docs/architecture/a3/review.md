@@ -35,7 +35,7 @@ identifies the tested artifacts and the release work that remains.
 | AR5 | The owner revokes only the device issued for the cancelled attempt. The Android bridge waits for UI acceptance before it saves access. The emulator verified the race across owner restart. A fresh attempt recovered from a dropped proof response. |
 | AR6 | The installed mobile WebSocket accepted an authorized attachment. It rejected another attachment after a scope reduction. The stored bytes stayed the same. |
 | RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |
-| RR2 | The current runtime rejects stale completions. Older readers reject current process records that contain the source identity. Process-journal compatibility remains open. |
+| RR2 | Accepted. The current runtime rejects stale completions and does not replay unknown effects. An older reader starts safely only with process continuations disabled and then never opens the journal. With continuations enabled it refuses the whole journal at `source_state`. The journal, terminal, unknown and originless rows, and revocations stay readable with the current reader. |
 | RR3 | The retired attachment migration route and CLI preview tests leave the whole tree intact. |
 
 ### Pairing lifetime and live WebSocket checks

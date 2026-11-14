@@ -60,8 +60,10 @@ downgraded and the journal bytes did not change.
 
 Commit `b6000cef` records this behavior in the rollback procedure. No product
 code changed. Receipts are in
-`a3-evidence/a3-reconciliation-2026-11-14/w2-rr2/`. Named review of RR2
-remains open.
+`a3-evidence/a3-reconciliation-2026-11-14/w2-rr2/`. The coordinator readback
+accepted RR2 on 2026-11-14 for the identity fence, the non-replay disposition,
+and the explicit-refusal rollback path. The controlled refusal message and a
+CLI export stay with the CLI owner.
 
 ## A3-4 inventory and A3-6 preparation
 
