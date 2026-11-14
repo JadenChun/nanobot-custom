@@ -1,5 +1,38 @@
 # A3 implementation correction handoff
 
+## Fourth wave 2026-11-15 (resume3)
+
+The November 15 decisions were applied to the last four findings. Every record
+used `commandcode/deepseek/deepseek-v4.1-flash`.
+
+### E02-F16 provider OAuth instance owner
+
+`ddfefdbb` (integrated `22caed46`) adds an explicit `CredentialOwner` derived
+from the resolved instance root. The reproduced leak was real: a settings
+request for instance B reported A's Codex/Copilot/xAI logins, and a logout for B
+deleted A's Codex credential. Login, cancel, refresh, logout, status and caches
+now bind per instance; legacy shared data imports only through an explicit
+target. 65 focused and 3,617 broad tests pass; strict 0/546. Review receipt:
+`resume3/oauth-review/REVIEW.md`.
+
+### R01-F05 signed-app device-key qualification
+
+The release APK (52,016,558 B, SHA-256 `08e171e0`, package
+`ai.nanobot.mobile`, one RSA-4096 `CN=jaden` signer, v2+v3) ran on a headless
+API 36 x86_64 emulator against a disposable production gateway over real Serve
+TLS. The reviewer tied the APK to `918f6bb3` through a byte-identical
+`mobile-bootstrap.js`, then accepted all six decision criteria: P-256
+proof-bound pairing and read; one-effect mutation replay with a 409 on
+changed-payload reuse; expiry/restart/lost-delivery recovery; `410`, `403
+origin_mismatch` and `403 pairing_rejected` refusals; owner revoke with an
+applied audit entry, after which the app got `401`/`403 device_revoked`, cleared
+local custody 198 ms later, and a live device-key socket closed `1008`. Emulator
+coverage only; no physical device. The mobile WS mutation/logout frame gap is a
+disclosed limit: `handle_ws_frame` has no caller and `build_mobile_edge` has no
+replay cache or mutation handler. The decision explicitly leaves legacy bearer
+refresh/logout routes, headless enrollment keys and historical APK upgrades out
+of this pass.
+
 ## Third wave 2026-11-14 (resume2)
 
 Every record below used the exact model
