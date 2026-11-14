@@ -1469,9 +1469,16 @@ class DesktopPermissionOwner:
             )
         else:
             references = (reference,)
+
+        # Request-derived Full references for one chat and epoch share a single
+        # durable native owner tag, and each registers the same aggregate count
+        # provider for it.  Summing every related provider counts one live
+        # launch once per reference.  Keep per-handle stdin closers per
+        # reference, but read each shared owner aggregate once.
         active_total = 0
         unknown_total = 0
         seen: set[int] = set()
+        counted_owners: set[tuple[object, ...]] = set()
         for candidate in references:
             marker = id(candidate)
             if marker in seen:
@@ -1480,6 +1487,12 @@ class DesktopPermissionOwner:
             process_counts = self._native_process_counts.get(candidate)
             if process_counts is None:
                 continue
+            owner_key = self._native_count_owner_key(candidate)
+            if owner_key is None:
+                owner_key = ("provider", id(process_counts))
+            if owner_key in counted_owners:
+                continue
+            counted_owners.add(owner_key)
             try:
                 active_processes, unknown_processes = process_counts()
             except Exception:
@@ -1489,6 +1502,23 @@ class DesktopPermissionOwner:
                 active_total += _count(active_processes)
                 unknown_total += _count(unknown_processes)
         return _count(active_total), _count(unknown_total)
+
+    def _native_count_owner_key(self, reference: object) -> tuple[object, ...] | None:
+        """Return the durable owner identity shared by related references."""
+        if type(reference) is not WorkspaceFullAccessReference:
+            return None
+        if not reference.is_owner_issued():
+            return None
+        binding = reference.source_binding
+        return (
+            "chat_full",
+            self._runtime_id,
+            reference.session_key,
+            reference.epoch,
+            binding["store_identity"],
+            binding["incarnation"],
+            binding["generation"],
+        )
 
     def _refresh_retirement_counts_unlocked(self, retirement: _Retirement) -> bool:
         if retirement.private_reference is None:
