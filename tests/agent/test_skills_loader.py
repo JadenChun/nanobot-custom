@@ -593,7 +593,9 @@ def test_check_requirements_tolerates_null_requires_and_lists(tmp_path: Path) ->
     assert {"null-requires", "null-bins", "null-elems"} <= listed
     assert loader.get_skill_requirements("null-requires") == {
         "bins": [],
+        "any_bins": [],
         "env": [],
         "missing_bins": [],
+        "missing_any_bins": [],
         "missing_env": [],
     }

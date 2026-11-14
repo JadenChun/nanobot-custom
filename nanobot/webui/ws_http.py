@@ -1845,15 +1845,21 @@ class GatewayHTTPHandler:
 
         data: dict[str, Any] | None = build_thread(limit)
         # Bound one response by showing fewer turns, never by trimming a turn:
-        # every client receives identical content for the turns it gets.
-        if data is not None and limit is not None:
+        # every client receives identical content for the turns it gets. The
+        # ceiling applies to the no-query compatibility path as well, so it is
+        # independent of a caller-supplied ``limit``.
+        if data is not None:
             effective_limit = limit
             while (
                 len(json.dumps(data, ensure_ascii=False).encode("utf-8"))
                 > THREAD_PROJECTION_BUDGET_BYTES
-                and effective_limit > 1
             ):
-                effective_limit = max(1, effective_limit // 2)
+                if effective_limit is None:
+                    effective_limit = max(1, len(data["messages"]) // 2)
+                elif effective_limit > 1:
+                    effective_limit = max(1, effective_limit // 2)
+                else:
+                    break
                 smaller_page = build_thread(effective_limit)
                 if smaller_page is None:
                     break

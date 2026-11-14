@@ -87,8 +87,9 @@ class SkillsLoader:
         """Validate one candidate before it enters precedence/shadowing.
 
         Legacy skills without frontmatter remain readable. A declared identity
-        must match the directory, and malformed YAML must not hide a valid
-        lower-precedence candidate.
+        must satisfy the same contract as ``valid_skill_metadata``, so a
+        candidate that the packaging validator rejects cannot hide a valid
+        lower-precedence skill. Malformed YAML must also not hide one.
         """
         try:
             content = skill_file.read_text(encoding="utf-8")
@@ -113,19 +114,11 @@ class SkillsLoader:
             logger.warning("Ignoring skill '{}': malformed frontmatter", name)
             return False
         metadata = {str(key): value for key, value in cast(dict[object, object], parsed).items()}
-        declared_name = metadata.get("name")
-        if declared_name is not None and declared_name != name:
+        if not valid_skill_metadata(metadata, name):
             logger.warning(
-                "Ignoring skill '{}': declared name '{}' does not match its directory",
+                "Ignoring skill '{}': invalid identity metadata (name or description)",
                 name,
-                declared_name,
             )
-            return False
-        description = metadata.get("description")
-        if description is not None and (
-            not isinstance(description, str) or not description.strip()
-        ):
-            logger.warning("Ignoring skill '{}': invalid description", name)
             return False
         return True
 
@@ -398,24 +391,44 @@ class SkillsLoader:
         return "\n\n".join(sections)
 
     @staticmethod
-    def _requirement_lists(skill_meta: dict[str, Any]) -> tuple[list[str], list[str]]:
-        """Return (bins, env) lists from skill metadata, tolerating null/wrong shapes."""
-        requires = cast(dict[str, Any], skill_meta.get("requires") or {})
-        if not isinstance(skill_meta.get("requires") or {}, dict):
-            return [], []
+    def _requirement_lists(
+        skill_meta: dict[str, Any],
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Return (bins, any_bins, env) lists from metadata, tolerating bad shapes.
+
+        ``bins`` and ``env`` are conjunctive. ``any_bins`` is one alternatives
+        group: at least one listed command must be present.
+        """
+        requires_raw: object = skill_meta.get("requires") or {}
+        if not isinstance(requires_raw, dict):
+            return [], [], []
+        requires = cast(dict[str, Any], requires_raw)
         bins_raw: object = requires.get("bins") or []
+        any_bins_raw: object = requires.get("anyBins") or []
         env_raw: object = requires.get("env") or []
         bins = [value for value in cast(list[object], bins_raw) if isinstance(value, str) and value.strip()] if isinstance(bins_raw, list) else []
+        any_bins = [value for value in cast(list[object], any_bins_raw) if isinstance(value, str) and value.strip()] if isinstance(any_bins_raw, list) else []
         env = [value for value in cast(list[object], env_raw) if isinstance(value, str) and value.strip()] if isinstance(env_raw, list) else []
-        return bins, env
+        return bins, any_bins, env
 
     def _get_missing_requirements(self, skill_meta: dict[str, Any]) -> str:
         """Get a description of missing requirements."""
-        required_bins, required_env_vars = self._requirement_lists(skill_meta)
-        return ", ".join(
-            [f"CLI: {command_name}" for command_name in required_bins if not shutil.which(command_name)]
-            + [f"ENV: {env_name}" for env_name in required_env_vars if not os.environ.get(env_name)]
+        required_bins, required_any_bins, required_env_vars = self._requirement_lists(skill_meta)
+        missing: list[str] = [
+            f"CLI: {command_name}"
+            for command_name in required_bins
+            if not shutil.which(command_name)
+        ]
+        if required_any_bins and not any(
+            shutil.which(command_name) for command_name in required_any_bins
+        ):
+            missing.append(f"CLI: one of {', '.join(required_any_bins)}")
+        missing.extend(
+            f"ENV: {env_name}"
+            for env_name in required_env_vars
+            if not os.environ.get(env_name)
         )
+        return ", ".join(missing)
 
     def get_skill_availability(self, name: str) -> tuple[bool, str]:
         """Return whether a skill can run and why not when it cannot."""
@@ -425,11 +438,15 @@ class SkillsLoader:
 
     def get_skill_requirements(self, name: str) -> dict[str, list[str]]:
         """Return explicit command/env requirements and currently missing entries."""
-        bins, env = self._requirement_lists(self._get_skill_meta(name))
+        bins, any_bins, env = self._requirement_lists(self._get_skill_meta(name))
         return {
             "bins": bins,
+            "any_bins": any_bins,
             "env": env,
             "missing_bins": [value for value in bins if not shutil.which(value)],
+            "missing_any_bins": [
+                value for value in any_bins if not shutil.which(value)
+            ],
             "missing_env": [value for value in env if not os.environ.get(value)],
         }
 
@@ -471,10 +488,15 @@ class SkillsLoader:
         return cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
 
     def _check_requirements(self, skill_meta: dict[str, Any]) -> bool:
-        """Check if skill requirements are met (bins, env vars)."""
-        required_bins, required_env_vars = self._requirement_lists(skill_meta)
-        return all(shutil.which(cmd) for cmd in required_bins) and all(
-            os.environ.get(var) for var in required_env_vars
+        """Check if skill requirements are met (bins, any-of bins, env vars)."""
+        required_bins, required_any_bins, required_env_vars = self._requirement_lists(skill_meta)
+        return (
+            all(shutil.which(cmd) for cmd in required_bins)
+            and (
+                not required_any_bins
+                or any(shutil.which(cmd) for cmd in required_any_bins)
+            )
+            and all(os.environ.get(var) for var in required_env_vars)
         )
 
     def _get_skill_meta(self, name: str) -> dict[str, Any]:
