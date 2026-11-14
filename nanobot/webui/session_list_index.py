@@ -45,6 +45,10 @@ _MODEL_PRESET_FIELD = "model_preset"
 _ROW_SOURCE_FIELD = "_source"
 _SESSION_SOURCE = "session"
 _TRANSCRIPT_SOURCE = "webui_transcript"
+# Canonical rows have a session file with metadata, so the documented read path
+# can serve them. Transcript-only rows are display records with no metadata.
+CANONICAL_ROW_SOURCE = _SESSION_SOURCE
+TRANSCRIPT_ROW_SOURCE = _TRANSCRIPT_SOURCE
 _WORKSPACE_SCOPE_PRESENT_FIELD = "_workspace_scope_present"
 _WORKSPACE_SCOPE_VALUE_FIELD = "_workspace_scope_value"
 WEBUI_SESSION_INDEX_INTERNAL_FIELDS = frozenset(
@@ -607,7 +611,7 @@ def _scan_transcript_row(
                         or scanned_chars >= _SESSION_LIST_PREVIEW_MAX_CHARS
                     ):
                         break
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         if preview or (
             scanned_records >= _SESSION_LIST_PREVIEW_MAX_RECORDS

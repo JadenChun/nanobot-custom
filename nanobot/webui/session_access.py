@@ -15,7 +15,10 @@ from nanobot.runtime_context import (
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import SessionManager
 from nanobot.session.session_handles import SessionHandleResolver
-from nanobot.webui.session_list_index import list_webui_sessions
+from nanobot.webui.session_list_index import (
+    CANONICAL_ROW_SOURCE,
+    list_webui_sessions,
+)
 from nanobot.webui.transcript import (
     build_webui_thread_response,
     normalize_session_mentions_metadata,
@@ -40,6 +43,7 @@ class SessionMessage(TypedDict):
 
 class SessionMatch(TypedDict):
     session_key: str
+    source_kind: str
     title: str
     updated_at: str | None
     messages: list[SessionMessage]
@@ -149,8 +153,15 @@ class WebuiSessionAccess:
         rows: list[dict[str, Any]] = []
         for row in list_webui_sessions(self._sessions):
             key = row.get("key")
-            if isinstance(key, str) and key != exclude_session_key:
-                rows.append(row)
+            if not isinstance(key, str) or key == exclude_session_key:
+                continue
+            # Every hit must be readable through ``read``. Transcript-only
+            # display rows have no session metadata, so rejecting rows whose
+            # metadata is absent keeps them out of the hit list instead of
+            # returning a hit that resolves to no content.
+            if self._metadata(key, exclude_session_key=exclude_session_key) is None:
+                continue
+            rows.append(row)
         ranked: list[tuple[int, SessionMatch]] = []
         remaining: list[dict[str, Any]] = []
         for row in rows:
@@ -168,6 +179,7 @@ class WebuiSessionAccess:
             updated = row.get("updated_at")
             ranked.append((rank, {
                 "session_key": cast(str, row["key"]),
+                "source_kind": CANONICAL_ROW_SOURCE,
                 "title": title,
                 "updated_at": updated if isinstance(updated, str) else None,
                 "messages": [],
@@ -189,6 +201,7 @@ class WebuiSessionAccess:
             updated = row.get("updated_at")
             ranked.append((3, {
                 "session_key": key,
+                "source_kind": CANONICAL_ROW_SOURCE,
                 "title": _row_title(row),
                 "updated_at": updated if isinstance(updated, str) else None,
                 "messages": matches[-2:],
@@ -214,6 +227,7 @@ class WebuiSessionAccess:
         updated = payload.get("updated_at")
         return {
             "session_key": session_key,
+            "source_kind": CANONICAL_ROW_SOURCE,
             "title": _text(_session_metadata(payload).get("title")),
             "updated_at": updated if isinstance(updated, str) else None,
             "messages": messages[-limit:],
