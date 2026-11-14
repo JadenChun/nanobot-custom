@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 
 from nanobot import __logo__
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
 
 if TYPE_CHECKING:
@@ -95,6 +96,17 @@ def _resolve_oauth_provider(provider: str) -> ProviderSpec:
     return spec
 
 
+def _select_oauth_owner(config: str | None) -> CredentialOwner | None:
+    if config is None:
+        return None
+    from nanobot.config.loader import set_config_path
+
+    path = Path(config).expanduser().resolve()
+    set_config_path(path)
+    console.print(f"[dim]Using config: {path}[/dim]")
+    return CredentialOwner.from_config_path(path)
+
+
 def _set_oauth_provider_as_main(
     provider_name: str,
     *,
@@ -157,15 +169,10 @@ def provider_login(
         console.print(f"[red]Login not implemented for {spec.label}[/red]")
         raise typer.Exit(1)
 
-    if config:
-        from nanobot.config.loader import set_config_path
-
-        resolved_config_path = Path(config).expanduser().resolve()
-        set_config_path(resolved_config_path)
-        console.print(f"[dim]Using config: {resolved_config_path}[/dim]")
+    owner = _select_oauth_owner(config)
 
     console.print(f"{__logo__} OAuth Login - {spec.label}\n")
-    handler()
+    handler(owner)
     if set_main or model:
         _set_oauth_provider_as_main(spec.name, model=model, config_path=config)
 
@@ -186,15 +193,10 @@ def provider_logout(
         console.print(f"[red]Logout not implemented for {spec.label}[/red]")
         raise typer.Exit(1)
 
-    if config:
-        from nanobot.config.loader import set_config_path
-
-        resolved_config_path = Path(config).expanduser().resolve()
-        set_config_path(resolved_config_path)
-        console.print(f"[dim]Using config: {resolved_config_path}[/dim]")
+    owner = _select_oauth_owner(config)
 
     console.print(f"{__logo__} OAuth Logout - {spec.label}\n")
-    handler()
+    handler(owner)
 
 
 @provider_app.command("reimport")
@@ -228,7 +230,7 @@ def provider_reimport(
     console.print(f"[green]✓ Reimported {spec.label} credential[/green]")
 
 
-def _login_openai_codex() -> None:
+def _login_openai_codex(owner: CredentialOwner | None = None) -> None:
     try:
         from nanobot.config.loader import load_config, resolve_config_env_vars
         from nanobot.providers.codex_auth import get_codex_authority
@@ -241,7 +243,7 @@ def _login_openai_codex() -> None:
         except ValueError as e:
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(1) from e
-        authority = get_codex_authority()
+        authority = get_codex_authority(owner)
         generation = authority.begin_login()
         console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
         capture = AcquisitionOnlyStorage()
@@ -260,7 +262,7 @@ def _login_openai_codex() -> None:
         )
         from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-        invalidate_oauth_model_catalog("openai_codex")
+        invalidate_oauth_model_catalog("openai_codex", owner=owner)
         console.print("[green]✓ Authenticated with OpenAI Codex[/green]")
     except ImportError:
         console.print(f"[red]{OAUTH_CLI_KIT_MISSING_MESSAGE}[/red]")
@@ -272,17 +274,14 @@ def _login_openai_codex() -> None:
         raise typer.Exit(1) from exc
 
 
-def _logout_openai_codex() -> None:
+def _logout_openai_codex(owner: CredentialOwner | None = None) -> None:
     """Clear local OAuth credentials for OpenAI Codex."""
     from nanobot.providers.codex_auth import logout_codex
-    from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
-
-    logout_codex()
-    invalidate_oauth_model_catalog("openai_codex")
+    logout_codex(owner)
     console.print("[green]✓ Logged out from OpenAI Codex[/green]")
 
 
-def _login_xai_grok() -> None:
+def _login_xai_grok(owner: CredentialOwner | None = None) -> None:
     """Authenticate with xAI using the Grok subscription OAuth contract."""
     from nanobot.config.loader import load_config, resolve_config_env_vars
     from nanobot.providers.xai_oauth import get_xai_oauth_token, login_xai_oauth
@@ -295,7 +294,7 @@ def _login_xai_grok() -> None:
 
     token = None
     with suppress(Exception):
-        token = get_xai_oauth_token(proxy=proxy)
+        token = get_xai_oauth_token(proxy=proxy, owner=owner)
     if not (token and token.access):
         console.print(
             "[cyan]Starting xAI browser sign-in for your X Premium / Grok subscription...[/cyan]\n"
@@ -305,6 +304,7 @@ def _login_xai_grok() -> None:
                 print_fn=lambda message: console.print(message),
                 prompt_fn=lambda prompt: typer.prompt(prompt),
                 proxy=proxy,
+                owner=owner,
             )
         except Exception as exc:
             console.print(f"[red]Authentication error: {exc}[/red]")
@@ -316,30 +316,27 @@ def _login_xai_grok() -> None:
     )
 
 
-def _logout_xai_grok() -> None:
+def _logout_xai_grok(owner: CredentialOwner | None = None) -> None:
     """Clear local xAI OAuth credentials for this nanobot instance."""
     from nanobot.providers.xai_oauth import get_xai_oauth_storage_path, logout_xai_oauth
 
-    token_path = get_xai_oauth_storage_path()
+    token_path = get_xai_oauth_storage_path(owner)
     provider_label = _PROVIDER_DISPLAY["xai_grok"]
-    if logout_xai_oauth():
+    if logout_xai_oauth(owner):
         console.print(f"[green]✓ Logged out from {provider_label}[/green]")
         console.print(f"[dim]Removed: {token_path}[/dim]")
     else:
         console.print(f"[yellow]! No local OAuth credentials found for {provider_label}[/yellow]")
 
 
-def _logout_github_copilot() -> None:
+def _logout_github_copilot(owner: CredentialOwner | None = None) -> None:
     """Clear local OAuth credentials for GitHub Copilot."""
     from nanobot.providers.copilot_auth import logout_copilot
-    from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
-
-    logout_copilot()
-    invalidate_oauth_model_catalog("github_copilot")
+    logout_copilot(owner)
     console.print("[green]✓ Logged out from GitHub Copilot[/green]")
 
 
-def _login_github_copilot() -> None:
+def _login_github_copilot(owner: CredentialOwner | None = None) -> None:
     try:
         from nanobot.providers.github_copilot_provider import login_github_copilot
 
@@ -347,22 +344,23 @@ def _login_github_copilot() -> None:
         login_github_copilot(
             print_fn=lambda s: console.print(s),
             prompt_fn=lambda s: typer.prompt(s),
+            owner=owner,
         )
         from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-        invalidate_oauth_model_catalog("github_copilot")
+        invalidate_oauth_model_catalog("github_copilot", owner=owner)
         console.print("[green]✓ Authenticated with GitHub Copilot[/green]")
     except Exception as e:
         console.print(f"[red]Authentication error ({type(e).__name__})[/red]")
         raise typer.Exit(1)
 
 
-_LOGIN_HANDLERS: dict[str, Callable[[], None]] = {
+_LOGIN_HANDLERS: dict[str, Callable[[CredentialOwner | None], None]] = {
     "openai_codex": _login_openai_codex,
     "xai_grok": _login_xai_grok,
     "github_copilot": _login_github_copilot,
 }
-_LOGOUT_HANDLERS: dict[str, Callable[[], None]] = {
+_LOGOUT_HANDLERS: dict[str, Callable[[CredentialOwner | None], None]] = {
     "openai_codex": _logout_openai_codex,
     "xai_grok": _logout_xai_grok,
     "github_copilot": _logout_github_copilot,

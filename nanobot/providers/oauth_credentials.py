@@ -7,8 +7,8 @@ token; cached Copilot bearer tokens and endpoint data are not accepted.
 A :class:`CredentialOwner` names the one gateway instance that owns a provider
 credential and its account-dependent caches. Callers that select an instance
 pass its owner explicitly. The injected importer stays a read-only legacy
-source and is consulted automatically only for the owner that already holds the
-shared legacy location; every other owner must import it on request.
+source. Automatic import is limited to the unscoped legacy entry point in the
+default instance.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class CredentialOwner:
     @classmethod
     def from_config_path(cls, config_path: str | Path) -> CredentialOwner:
         """Return the owner of the instance that selects this config file."""
-        return cls(Path(config_path).expanduser().parent)
+        return cls(Path(config_path).expanduser().resolve(strict=False).parent)
 
     @classmethod
     def from_data_root(cls, data_root: str | Path) -> CredentialOwner:

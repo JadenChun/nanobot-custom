@@ -16,6 +16,7 @@ import httpx
 from nanobot import __version__
 from nanobot.config.loader import get_config_path, load_config, save_config
 from nanobot.config.schema import Config
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.webui import settings_capabilities as capabilities
 from nanobot.webui import settings_contracts as contracts
 from nanobot.webui import settings_models as models
@@ -84,8 +85,6 @@ def _oauth_status_for(config_path: Path | None) -> Callable[[Any], dict[str, Any
     """
     if config_path is None or _oauth_provider_status is not models.oauth_provider_status:
         return _oauth_provider_status
-    from nanobot.providers.oauth_credentials import CredentialOwner
-
     owner = CredentialOwner.from_config_path(config_path)
     return lambda spec: models.oauth_provider_status(spec, owner=owner)
 
@@ -354,6 +353,7 @@ def provider_models_payload(
         _load_settings_config(config_path),
         query,
         http_get=httpx.get,
+        credential_owner=(None if config_path is None else CredentialOwner.from_config_path(config_path)),
     )
 
 

@@ -435,7 +435,7 @@ async def test_codex_provider_passes_proxy_to_oauth_and_response_request(monkeyp
     proxy = "http://127.0.0.1:23458"
     seen: dict[str, object] = {}
 
-    def fake_token(*, proxy=None):
+    def fake_token(*, proxy=None, owner=None):
         seen["token_proxy"] = proxy
         return SimpleNamespace(account_id="acct", access="token")
 

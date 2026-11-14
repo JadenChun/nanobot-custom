@@ -62,7 +62,7 @@ _USER_AGENT = "GitHubCopilotChat/0.22.0"
 _REFRESH_EARLY_SECONDS = 300
 
 def _auth_path(owner: CredentialOwner | None = None) -> Path:
-    override = os.environ.get("NANOBOT_COPILOT_AUTH_PATH")
+    override = os.environ.get("NANOBOT_COPILOT_AUTH_PATH") if owner is None else None
     if override:
         return Path(os.path.abspath(os.fspath(Path(override).expanduser())))
     resolved = CredentialOwner.process_default() if owner is None else owner
@@ -104,7 +104,7 @@ def _import_legacy_token() -> str | None:
 
 def get_copilot_authority(owner: CredentialOwner | None = None) -> OAuthCredentialCoordinator:
     resolved = CredentialOwner.process_default() if owner is None else owner
-    path = _auth_path(resolved)
+    path = _auth_path(owner)
     path.parent.mkdir(parents=True, exist_ok=True)
     path = path.parent.resolve(strict=True) / path.name
     try:
@@ -120,7 +120,7 @@ def get_copilot_authority(owner: CredentialOwner | None = None) -> OAuthCredenti
         path,
         "copilot",
         importer=_import_legacy_token,
-        auto_import=resolved.owns_legacy_location(),
+        auto_import=owner is None and resolved.owns_legacy_location(),
     )
 
 
@@ -140,7 +140,7 @@ def logout_copilot(owner: CredentialOwner | None = None) -> None:
     _authority(owner).logout()
     from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-    invalidate_oauth_model_catalog("github_copilot")
+    invalidate_oauth_model_catalog("github_copilot", owner=owner)
 
 
 def reimport_copilot(owner: CredentialOwner) -> OAuthToken | None:
@@ -151,7 +151,7 @@ def reimport_copilot(owner: CredentialOwner) -> OAuthToken | None:
     if token is not None:
         from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-        invalidate_oauth_model_catalog("github_copilot")
+        invalidate_oauth_model_catalog("github_copilot", owner=owner)
     return token
 
 

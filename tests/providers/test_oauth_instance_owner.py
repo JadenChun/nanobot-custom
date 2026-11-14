@@ -16,12 +16,16 @@ from typing import Any
 import pytest
 
 from nanobot.config import loader
+from nanobot.nanobot import Nanobot
 from nanobot.providers import codex_auth, copilot_auth, xai_oauth
+from nanobot.providers.base import LLMResponse
 from nanobot.providers.oauth_credentials import (
     CredentialOwner,
     CredentialStatus,
     OAuthToken,
 )
+from nanobot.session.manager import SessionManager
+from nanobot.session.runtime_authority import BorrowedSessionAuthority
 
 FUTURE_MS = 9_999_999_999_999
 PROVIDERS = ("codex", "copilot", "xai")
@@ -288,12 +292,117 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("NANOBOT_CODEX_AUTH_PATH", raising=False)
     monkeypatch.delenv("NANOBOT_COPILOT_AUTH_PATH", raising=False)
     monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
+    monkeypatch.setattr(loader, "_current_config_path", home / ".nanobot" / "config.json")
     return home
 
 
 @pytest.fixture
 def roots(tmp_path: Path) -> tuple[CredentialOwner, CredentialOwner]:
     return _root(tmp_path, "instance-a"), _root(tmp_path, "instance-b")
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+async def test_sdk_keeps_the_configured_account_across_interleaved_bots(
+    provider, roots, monkeypatch,
+):
+    from nanobot.providers import openai_codex_provider, xai_grok_provider
+    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+
+    providers = {
+        "codex": ("openai_codex", "openai-codex/gpt-5.6-sol"),
+        "copilot": ("github_copilot", "github-copilot/gpt-4.1"),
+        "xai": ("xai_grok", "xai-grok/grok-4.6"),
+    }
+    provider_name, model = providers[provider]
+    driver = _DRIVERS[provider]
+    observed = []
+
+    async def codex_response(_url, headers, _body, **_kwargs):
+        observed.append(headers["Authorization"].removeprefix("Bearer access-"))
+        return LLMResponse(content="ok")
+
+    async def xai_response(_url, headers, _body, **_kwargs):
+        observed.append(headers["Authorization"].removeprefix("Bearer xai-access-"))
+        return "ok", [], "stop", None, None
+
+    async def copilot_response(self, **_kwargs):
+        observed.append(self.api_key.split("-")[1])
+        return LLMResponse(content="ok")
+
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr(openai_codex_provider, "_request_codex", codex_response)
+    monkeypatch.setattr(xai_grok_provider, "_request_xai", xai_response)
+    monkeypatch.setattr(OpenAICompatProvider, "chat", copilot_response)
+    monkeypatch.setattr(OpenAICompatProvider, "chat_stream", copilot_response)
+
+    def make(owner, account):
+        workspace = owner.data_root / "workspace"
+        workspace.mkdir()
+        path = owner.data_root / "config.json"
+        _write_json(path, {
+            "agents": {"defaults": {"model": model, "provider": provider_name, "workspace": str(workspace)}},
+            "providers": {provider_name: {"extraBody": {"tools": []}}},
+            "tools": {key: {"enabled": False} for key in ("agentBrowser", "agentDevice", "desktopUse")},
+        })
+        driver.sign_in(owner, account)
+        if provider == "copilot":
+            driver.refresh(owner)
+        sessions = SessionManager(workspace, sessions_root=owner.data_root / "sessions")
+        return Nanobot.from_config(path, session_authority=BorrowedSessionAuthority(sessions))
+
+    async with make(roots[0], "A") as a:
+        async with make(roots[1], "B") as b:
+            assert (await a.run("first request")).content == "ok"
+            assert (await b.run("second request")).content == "ok"
+            assert (await a.run("third request")).content == "ok"
+    assert observed == ["A", "B", "A"]
+
+
+@pytest.mark.parametrize("provider,env", [
+    ("codex", "NANOBOT_CODEX_AUTH_PATH"),
+    ("copilot", "NANOBOT_COPILOT_AUTH_PATH"),
+])
+def test_explicit_instance_keeps_its_own_account_with_inherited_auth_path(
+    provider, env, roots, tmp_path, monkeypatch,
+):
+    driver = _DRIVERS[provider]
+    legacy_path = tmp_path / "legacy" / "auth.json"
+    monkeypatch.setenv(env, str(legacy_path))
+    authority = (
+        codex_auth.get_codex_authority() if provider == "codex"
+        else copilot_auth.get_copilot_authority()
+    )
+    legacy_refresh = "legacy-refresh" if provider == "codex" else ""
+    authority.commit_login(OAuthToken("legacy-access", legacy_refresh, FUTURE_MS, "L"), authority.begin_login())
+    driver.sign_in(roots[0], "A")
+    driver.sign_in(roots[1], "B")
+    assert driver.stored_access(roots[0]).endswith("-A")
+    assert driver.stored_access(roots[1]).endswith("-B")
+    assert authority.get_cached_or_import().account_id == "L"
+
+
+def test_settings_model_catalog_uses_the_selected_instance_account(roots, monkeypatch):
+    from nanobot.providers import openai_codex_provider
+    from nanobot.providers.registry import ProviderModelSpec
+    from nanobot.webui.settings_api import provider_models_payload
+
+    driver = _DRIVERS["codex"]
+    observed = []
+
+    def fetch(_proxy, *, token):
+        observed.append(token.account_id)
+        return (ProviderModelSpec(id=f"openai-codex/model-{token.account_id}"),)
+
+    monkeypatch.setattr(openai_codex_provider, "_fetch_openai_codex_models", fetch)
+    configs = [owner.data_root / "config.json" for owner in roots]
+    for owner, config, account in zip(roots, configs, ("A", "B"), strict=True):
+        driver.sign_in(owner, account)
+        _write_json(config, {})
+    query = {"provider": ["openai-codex"]}
+    for config, account in zip(configs, ("A", "B"), strict=True):
+        payload = provider_models_payload(query, config_path=config)
+        assert [row["id"] for row in payload["models"]] == [f"openai-codex/model-{account}"]
+    assert observed == ["A", "B"]
 
 
 def _legacy_profile(provider: str, home: Path, account: str) -> Path:

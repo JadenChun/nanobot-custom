@@ -27,6 +27,7 @@ import httpx
 from nanobot.config.loader import resolve_config_env_vars
 from nanobot.config.schema import Config, FallbackCandidate, ModelPresetConfig, ProviderConfig
 from nanobot.providers.image_generation import get_image_gen_provider
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
 from nanobot.providers.oauth_model_catalog import (
     get_oauth_model_catalog,
@@ -294,13 +295,9 @@ def provider_requires_api_base(spec: Any) -> bool:
     return bool(spec.backend == "openai_compat" and spec.is_direct and not spec.default_api_base)
 
 
-def _credential_owner_for(config_path: Path | None) -> Any:
+def _credential_owner_for(config_path: Path | None) -> CredentialOwner | None:
     """Return the provider credential owner selected for this settings request."""
-    from nanobot.providers.oauth_credentials import CredentialOwner
-
-    if config_path is not None:
-        return CredentialOwner.from_config_path(config_path)
-    return CredentialOwner.process_default()
+    return None if config_path is None else CredentialOwner.from_config_path(config_path)
 
 
 def _codex_authority(owner: Any) -> Any:
@@ -675,6 +672,7 @@ def provider_models_payload(
     query: QueryParams,
     *,
     http_get: HttpGet,
+    credential_owner: CredentialOwner | None = None,
 ) -> dict[str, Any]:
     """Fetch an advisory model list without mutating configuration."""
     provider_name = (query_first(query, "provider") or "").strip()
@@ -721,7 +719,7 @@ def provider_models_payload(
         }
     if catalog_kind == "hybrid":
         proxy = _resolve_env_placeholders(provider_config.proxy)
-        catalog = get_oauth_model_catalog(spec.name, proxy=proxy)
+        catalog = get_oauth_model_catalog(spec.name, proxy=proxy, owner=credential_owner)
         rows = [
             {
                 "id": model.id,
@@ -1602,8 +1600,10 @@ def login_oauth_provider(
     if spec is None or not spec.is_oauth:
         raise WebUISettingsError("unknown OAuth provider")
 
+    owner = _credential_owner_for(config_path)
+    flow_scope = spec.name if owner is None else (owner, spec.name)
     if (query_first(query, "mode") or "").strip() == "reimport":
-        owner = _credential_owner_for(config_path)
+        owner = owner or CredentialOwner.process_default()
         if spec.name == "openai_codex":
             from nanobot.providers.codex_auth import reimport_codex
 
@@ -1616,7 +1616,7 @@ def login_oauth_provider(
             raise WebUISettingsError("OAuth reimport is not supported for this provider")
         if token is None:
             raise WebUISettingsError("No importable credential was found", status=404)
-        invalidate_oauth_model_catalog(spec.name)
+        invalidate_oauth_model_catalog(spec.name, owner=owner)
         return settings_payload(config_path=config_path)
 
     if spec.name == "openai_codex":
@@ -1643,7 +1643,7 @@ def login_oauth_provider(
                 proxy=proxy,
                 timeout_s=_WEBUI_OAUTH_TIMEOUT_S,
                 open_browser=not remote_browser,
-                owner=_credential_owner_for(config_path),
+                owner=owner,
             )
         except Exception as exc:
             raise WebUISettingsError(
@@ -1651,7 +1651,7 @@ def login_oauth_provider(
                 status=502,
             ) from exc
         flow_id = secrets.token_urlsafe(24)
-        oauth_flows.register(spec.name, flow_id, flow)
+        oauth_flows.register(flow_scope, flow_id, flow)
         return {
             "status": "authorization_required",
             "provider": spec.name,
@@ -1669,11 +1669,11 @@ def login_oauth_provider(
 
         token = login_github_copilot(
             print_fn=lambda _message: None,
-            owner=_credential_owner_for(config_path),
+            owner=owner,
         )
         if not (token and token.access):
             raise WebUISettingsError("OAuth login failed", status=401)
-        invalidate_oauth_model_catalog(spec.name)
+        invalidate_oauth_model_catalog(spec.name, owner=owner)
         return settings_payload(config_path=config_path)
 
     if spec.name == "xai_grok":
@@ -1690,12 +1690,12 @@ def login_oauth_provider(
             flow = start_xai_oauth_login(
                 proxy=proxy,
                 timeout_s=_WEBUI_OAUTH_TIMEOUT_S,
-                owner=_credential_owner_for(config_path),
+                owner=owner,
             )
         except Exception as exc:
             raise WebUISettingsError(f"xAI OAuth login failed: {exc}", status=502) from exc
         flow_id = secrets.token_urlsafe(24)
-        oauth_flows.register(spec.name, flow_id, flow)
+        oauth_flows.register(flow_scope, flow_id, flow)
         return {
             "status": "authorization_required",
             "provider": spec.name,
@@ -1724,7 +1724,9 @@ def complete_oauth_provider(
     if not flow_id:
         raise WebUISettingsError("flow_id is required")
 
-    flow = oauth_flows.get(spec.name, flow_id)
+    owner = _credential_owner_for(config_path)
+    flow_scope = spec.name if owner is None else (owner, spec.name)
+    flow = oauth_flows.get(flow_scope, flow_id)
     if flow is None:
         raise WebUISettingsError(f"{spec.label} sign-in expired. Start again.", status=410)
 
@@ -1746,7 +1748,7 @@ def complete_oauth_provider(
     except WebUISettingsError:
         raise
     except Exception as exc:
-        oauth_flows.remove(spec.name, flow_id, flow)
+        oauth_flows.remove(flow_scope, flow_id, flow)
         detail = str(exc) if spec.name == "xai_grok" else type(exc).__name__
         raise WebUISettingsError(
             f"{spec.label} OAuth login failed ({detail})",
@@ -1758,10 +1760,10 @@ def complete_oauth_provider(
             "provider": spec.name,
             "flow_id": flow_id,
         }
-    oauth_flows.remove(spec.name, flow_id, flow, cancel=False)
+    oauth_flows.remove(flow_scope, flow_id, flow, cancel=False)
     if not token.access:
         raise WebUISettingsError("OAuth login failed", status=401)
-    invalidate_oauth_model_catalog(spec.name)
+    invalidate_oauth_model_catalog(spec.name, owner=owner)
     return settings_payload(config_path=config_path)
 
 
@@ -1779,27 +1781,27 @@ def logout_oauth_provider(
     if spec is None or not spec.is_oauth:
         raise WebUISettingsError("unknown OAuth provider")
 
+    owner = _credential_owner_for(config_path)
+    flow_scope = spec.name if owner is None else (owner, spec.name)
     if spec.name == "openai_codex":
         from nanobot.providers.codex_auth import logout_codex
 
-        oauth_flows.clear(spec.name)
-        logout_codex(_credential_owner_for(config_path))
+        oauth_flows.clear(flow_scope)
+        logout_codex(owner)
     elif spec.name == "github_copilot":
         from nanobot.providers.copilot_auth import logout_copilot
 
-        oauth_flows.clear(spec.name)
-        logout_copilot(_credential_owner_for(config_path))
+        oauth_flows.clear(flow_scope)
+        logout_copilot(owner)
     elif spec.name == "xai_grok":
         from nanobot.providers.xai_oauth import logout_xai_oauth
 
-        oauth_flows.clear(spec.name)
-        logout_xai_oauth(_credential_owner_for(config_path))
-        invalidate_oauth_model_catalog(spec.name)
-        return settings_payload(config_path=config_path)
+        oauth_flows.clear(flow_scope)
+        logout_xai_oauth(owner)
+        invalidate_oauth_model_catalog(spec.name, owner=owner)
     else:
         raise WebUISettingsError("OAuth logout is not supported for this provider")
 
-    invalidate_oauth_model_catalog(spec.name)
     return settings_payload(config_path=config_path)
 
 

@@ -1815,6 +1815,7 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
     payload = login_oauth_provider(
         {"provider": ["openai-codex"]},
         oauth_flows=oauth_flows,
+        config_path=config_path,
     )
 
     from nanobot.providers.oauth_credentials import CredentialOwner
@@ -1823,7 +1824,7 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
         "proxy": proxy,
         "timeout_s": 600,
         "open_browser": True,
-        "owner": CredentialOwner.process_default(),
+        "owner": CredentialOwner.from_config_path(config_path),
     }
     assert payload["status"] == "authorization_required"
     assert payload["provider"] == "openai_codex"
@@ -1850,11 +1851,13 @@ def test_openai_codex_oauth_login_passes_configured_proxy(
     pending = complete_oauth_provider(
         {"provider": ["openai-codex"], "flow_id": [payload["flow_id"]]},
         oauth_flows=oauth_flows,
+        config_path=config_path,
     )
     completed = complete_oauth_provider(
         {"provider": ["openai-codex"], "flow_id": [payload["flow_id"]]},
         "http://localhost:1455/auth/callback?code=secret&state=test",
         oauth_flows=oauth_flows,
+        config_path=config_path,
     )
 
     assert pending == {

@@ -57,6 +57,7 @@ class OpenAICodexOAuthLoginFlow:
         self._ready = threading.Event()
         self._submission_lock = threading.Lock()
         self._submitted = False
+        self._owner = owner
         self._authority = get_codex_authority(owner)
         self._generation = self._authority.begin_login()
         self._thread = threading.Thread(
@@ -162,7 +163,7 @@ class OpenAICodexOAuthLoginFlow:
                 )
                 from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-                invalidate_oauth_model_catalog("openai_codex")
+                invalidate_oauth_model_catalog("openai_codex", owner=self._owner)
             except Exception as exc:
                 with suppress(Exception):
                     self._result.set_exception(_safe_login_error(exc))

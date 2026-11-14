@@ -705,7 +705,7 @@ def test_provider_login_can_set_openai_codex_as_main_provider(tmp_path):
     called = False
     original = provider_commands._LOGIN_HANDLERS["openai_codex"]
 
-    def fake_login() -> None:
+    def fake_login(_owner=None) -> None:
         nonlocal called
         called = True
 
@@ -739,7 +739,7 @@ def test_provider_login_can_set_openai_codex_as_main_provider(tmp_path):
 def test_provider_login_can_set_github_copilot_as_main_provider(tmp_path):
     config_path = tmp_path / "config.json"
     original = provider_commands._LOGIN_HANDLERS["github_copilot"]
-    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda: None
+    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda _owner=None: None
     try:
         result = runner.invoke(
             app,
@@ -768,7 +768,7 @@ def test_provider_login_can_set_github_copilot_as_main_provider(tmp_path):
 def test_provider_login_can_set_xai_grok_as_main_provider(tmp_path):
     config_path = tmp_path / "config.json"
     original = provider_commands._LOGIN_HANDLERS["xai_grok"]
-    provider_commands._LOGIN_HANDLERS["xai_grok"] = lambda: None
+    provider_commands._LOGIN_HANDLERS["xai_grok"] = lambda _owner=None: None
     try:
         result = runner.invoke(
             app,
@@ -798,7 +798,7 @@ def test_provider_login_can_set_xai_grok_as_main_provider(tmp_path):
 def test_provider_login_model_implies_set_main_provider(tmp_path):
     config_path = tmp_path / "config.json"
     original = provider_commands._LOGIN_HANDLERS["github_copilot"]
-    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda: None
+    provider_commands._LOGIN_HANDLERS["github_copilot"] = lambda _owner=None: None
     try:
         result = runner.invoke(
             app,
@@ -948,7 +948,7 @@ def test_provider_login_xai_grok_runs_browser_flow_with_configured_proxy(monkeyp
     )
     captured: dict[str, object] = {}
 
-    def fake_login(*, print_fn, prompt_fn, proxy=None):
+    def fake_login(*, print_fn, prompt_fn, proxy=None, owner=None):
         captured.update(print_fn=print_fn, prompt_fn=prompt_fn, proxy=proxy)
         return SimpleNamespace(access="access-token", account_id="user@example.com")
 

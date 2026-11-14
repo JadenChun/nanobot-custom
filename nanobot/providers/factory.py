@@ -9,6 +9,7 @@ from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfi
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.providers.capabilities import ModelCapabilities
 from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.provider_policy import ProviderPolicy, resolve_provider_policy
 from nanobot.providers.registry import ProviderSpec, create_dynamic_spec, find_by_name
 
@@ -191,6 +192,8 @@ def _make_provider_core(
     backend = setup.backend
     policy = setup.policy
     effective_key = p.effective_keys[0] if p and p.effective_keys else None
+    data_root = config.runtime_data_dir
+    credential_owner = None if data_root is None else CredentialOwner.from_data_root(data_root)
 
     if backend == "openai_codex":
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
@@ -200,6 +203,7 @@ def _make_provider_core(
             proxy=getattr(p, "proxy", None) if p else None,
             extra_body=p.extra_body if p else None,
             provider_name=provider_name,
+            credential_owner=credential_owner,
         )
     elif backend == "xai_grok":
         from nanobot.providers.xai_grok_provider import XAIGrokProvider
@@ -209,6 +213,7 @@ def _make_provider_core(
             proxy=getattr(p, "proxy", None) if p else None,
             extra_body=p.extra_body if p else None,
             provider_name=provider_name,
+            credential_owner=credential_owner,
         )
     elif backend == "azure_openai":
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
@@ -224,7 +229,9 @@ def _make_provider_core(
     elif backend == "github_copilot":
         from nanobot.providers.github_copilot_provider import GitHubCopilotProvider
 
-        provider = GitHubCopilotProvider(default_model=model, provider_name=provider_name)
+        provider = GitHubCopilotProvider(
+            default_model=model, provider_name=provider_name, credential_owner=credential_owner,
+        )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
 

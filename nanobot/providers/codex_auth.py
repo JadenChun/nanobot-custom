@@ -73,7 +73,7 @@ def get_codex_credential_view(
 
 def get_codex_authority(owner: CredentialOwner | None = None) -> OAuthCredentialCoordinator:
     resolved = CredentialOwner.process_default() if owner is None else owner
-    path = _canonical_codex_path(resolved)
+    path = _canonical_codex_path(owner)
     path.parent.mkdir(parents=True, exist_ok=True)
     path = path.parent.resolve(strict=True) / path.name
     try:
@@ -89,7 +89,7 @@ def get_codex_authority(owner: CredentialOwner | None = None) -> OAuthCredential
         path,
         "codex",
         importer=_import_codex_token,
-        auto_import=resolved.owns_legacy_location(),
+        auto_import=owner is None and resolved.owns_legacy_location(),
     )
 
 
@@ -105,7 +105,7 @@ def logout_codex(owner: CredentialOwner | None = None) -> None:
     _authority(owner).logout()
     from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-    invalidate_oauth_model_catalog("openai_codex")
+    invalidate_oauth_model_catalog("openai_codex", owner=owner)
 
 
 def reimport_codex(owner: CredentialOwner) -> OAuthToken | None:
@@ -116,7 +116,7 @@ def reimport_codex(owner: CredentialOwner) -> OAuthToken | None:
     if token is not None:
         from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-        invalidate_oauth_model_catalog("openai_codex")
+        invalidate_oauth_model_catalog("openai_codex", owner=owner)
     return None if token is None else _to_oauth(token)
 
 
@@ -247,7 +247,7 @@ def _as_timestamp(value: object) -> float | None:
 
 
 def _canonical_codex_path(owner: CredentialOwner | None = None) -> Path:
-    override = os.environ.get("NANOBOT_CODEX_AUTH_PATH")
+    override = os.environ.get("NANOBOT_CODEX_AUTH_PATH") if owner is None else None
     if override:
         return Path(os.path.abspath(os.fspath(Path(override).expanduser())))
     resolved = CredentialOwner.process_default() if owner is None else owner

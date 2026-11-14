@@ -25,6 +25,7 @@ from nanobot.providers.base import (
 )
 from nanobot.providers.codex_auth import get_codex_authority, get_codex_credential_view
 from nanobot.providers.codex_auth import get_token as get_codex_token
+from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
 from nanobot.providers.oauth_model_catalog import (
     OAuthModelCatalog,
@@ -63,10 +64,12 @@ class OpenAICodexProvider(LLMProvider):
         extra_body: dict[str, Any] | None = None,
         *,
         provider_name: str = "openai_codex",
+        credential_owner: CredentialOwner | None = None,
     ):
         super().__init__(api_key=None, api_base=None, provider_name=provider_name)
         self.default_model = default_model
         self.proxy = proxy or None
+        self._credential_owner = credential_owner
         self._extra_body = dict(extra_body or {})
         self._native_compaction_available = True
         self._ssl_contexts: dict[bool, ssl.SSLContext] = {}
@@ -144,7 +147,9 @@ class OpenAICodexProvider(LLMProvider):
         native_compaction_applied = False
         native_compaction_state: ProviderConversationState | None = None
         try:
-            token = await asyncio.to_thread(get_codex_token, proxy=self.proxy)
+            token = await asyncio.to_thread(
+                get_codex_token, proxy=self.proxy, owner=self._credential_owner,
+            )
             headers = _build_headers(
                 cast(str, token.account_id),
                 token.access,
@@ -633,21 +638,25 @@ def _should_retry_status(
 
 def get_openai_codex_model_catalog(
     proxy: str | None = None,
+    *,
+    owner: CredentialOwner | None = None,
 ) -> OAuthModelCatalogSnapshot:
-    view = get_codex_credential_view(proxy=proxy)
+    authority = get_codex_authority(owner)
+    view = get_codex_credential_view(proxy=proxy, owner=owner)
     account_key = _catalog_account_key(view.token.account_id)
     cache_key = f"{view.generation}\0{account_key}\0{proxy or ''}"
     generation = view.generation
 
     def generation_is_current() -> bool:
         try:
-            latest = get_codex_authority().get_view_or_import()
+            latest = authority.get_view_or_import()
         except Exception:
             return False
         return latest is not None and latest.generation == generation
 
     return _OPENAI_CODEX_MODEL_CATALOG.get(
         cache_key=cache_key,
+        owner=owner,
         proxy=proxy,
         fetch=lambda selected_proxy: _fetch_openai_codex_models(
             selected_proxy, token=view.token
@@ -656,8 +665,8 @@ def get_openai_codex_model_catalog(
     )
 
 
-def invalidate_openai_codex_model_catalog() -> None:
-    _OPENAI_CODEX_MODEL_CATALOG.invalidate()
+def invalidate_openai_codex_model_catalog(owner: CredentialOwner | None = None) -> None:
+    _OPENAI_CODEX_MODEL_CATALOG.invalidate(owner=owner)
 
 
 def _fetch_openai_codex_models(
