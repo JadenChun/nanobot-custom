@@ -59,8 +59,11 @@ class NativeNetworkPlugin : Plugin() {
 
     @Volatile private var transportHandle: Long = 0L
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    private val retryExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    private val retryTimer = ScheduledRetryTimer(retryExecutor)
     private val operationExecutor = Executors.newCachedThreadPool()
     @Volatile private var requests = NativeRequestCorrelator<JSONObject>()
+    @Volatile private var admission = NativeRequestAdmission(timer = retryTimer)
     private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
     private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
     @Volatile private var activePairing: PairingChallenge? = null
@@ -895,23 +898,38 @@ class NativeNetworkPlugin : Plugin() {
         }
         call.getString("bodyBase64")?.let { request.put("body_base64", it) }
         call.getInt("timeoutMs")?.let { request.put("timeout_ms", it) }
+        // Build once: every admission retry must carry the same bytes, so a
+        // mutation keeps its request identity for the server's replay guard.
         val encodedRequest = request.toString()
         val refusal = NativeRequestLimits.refusal(
             encodedRequest.toByteArray(Charsets.UTF_8).size,
             requests.pendingCount(),
         )
-        if (refusal != null) throw IllegalArgumentException(refusal)
-        val requestId = try {
-            requests.launch(false) { NativeNetwork.http(current, encodedRequest) }.id
-        } catch (exception: Exception) {
-            call.reject(exception.message ?: "native request was not admitted")
+        if (refusal != null) {
+            call.reject(refusal)
             return
         }
-        if (requestId == 0L) {
-            call.reject(NativeNetwork.lastError())
-            return
+        val requestOwner = requests
+        val retry = admission
+        operationExecutor.execute {
+            try {
+                val admitted = retry.run {
+                    requestOwner.launch(
+                        false,
+                        lastError = { NativeNetwork.lastError() },
+                        start = { NativeNetwork.http(current, encodedRequest) },
+                    )
+                }.get()
+                mainHandler.post {
+                    call.resolve(JSObject().put("requestId", admitted.id))
+                }
+            } catch (exception: Exception) {
+                val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
+                mainHandler.post {
+                    call.reject(cause.message ?: "native request was not admitted")
+                }
+            }
         }
-        call.resolve(JSObject().put("requestId", requestId))
     }
 
     @PluginMethod
@@ -1366,6 +1384,7 @@ class NativeNetworkPlugin : Plugin() {
         RunKeepAliveService.stop(context.applicationContext)
         stopInternal()
         pollExecutor.shutdownNow()
+        retryExecutor.shutdownNow()
         operationExecutor.shutdownNow()
     }
 
@@ -1468,6 +1487,7 @@ class NativeNetworkPlugin : Plugin() {
     private fun startTransport(record: CustodyRecord) {
         stopInternal()
         requests = NativeRequestCorrelator()
+        admission = NativeRequestAdmission(timer = retryTimer)
         val stateRoot = context.filesDir.resolve("network-state")
         val safeInstallation = record.installationId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
         val stateDir = stateRoot.resolve(safeInstallation)
@@ -1552,7 +1572,9 @@ class NativeNetworkPlugin : Plugin() {
         timeoutSeconds: Long = 30,
         expectedHandle: Long? = null,
     ): JSONObject {
-        val (current, requestOwner) = synchronized(this) { transportHandle to requests }
+        val (current, requestOwner, retry) = synchronized(this) {
+            Triple(transportHandle, requests, admission)
+        }
         check(current != 0L) { "transport is not started" }
         check(expectedHandle == null || current == expectedHandle) { "Native transport changed." }
         val request = JSONObject()
@@ -1571,7 +1593,20 @@ class NativeNetworkPlugin : Plugin() {
                 Base64.encodeToString(body.toString().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
             )
         }
-        val admission = requestOwner.launch(true) { NativeNetwork.http(current, request.toString()) }
+        // The same encoded bytes carry the same request identity on retry.
+        val encodedRequest = request.toString()
+        val admission = try {
+            retry.run {
+                requestOwner.launch(
+                    true,
+                    lastError = { NativeNetwork.lastError() },
+                    start = { NativeNetwork.http(current, encodedRequest) },
+                )
+            }.get()
+        } catch (exception: Exception) {
+            val cause = (exception as? java.util.concurrent.ExecutionException)?.cause ?: exception
+            throw cause as? Exception ?: exception
+        }
         val requestId = admission.id
         val future = admission.future
         try {
@@ -1603,6 +1638,7 @@ class NativeNetworkPlugin : Plugin() {
     @Synchronized
     private fun stopInternal() {
         pairingApproval = null
+        admission.close()
         requests.close()
         pollTask?.cancel(false)
         pollTask = null

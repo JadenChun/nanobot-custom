@@ -76,4 +76,14 @@ class NativeRequestCorrelatorTest {
         assertTrue(owner.dispatch(41, "handshake-response") { visible += it })
         assertEquals(listOf("handshake-response"), visible)
     }
+
+    @Test fun failed_launch_surfaces_the_broker_reason_not_a_correlation_placeholder() {
+        val owner = NativeRequestCorrelator<String>()
+        val failure = assertThrows(NativeAdmissionFailure::class.java) {
+            owner.launch(false, lastError = { "bounded queue is full" }, start = { 0L })
+        }
+        assertEquals("bounded queue is full", failure.reason)
+        assertEquals(AdmissionFailureKind.NOT_ADMITTED, failure.kind)
+        assertEquals(0, owner.pendingCount())
+    }
 }

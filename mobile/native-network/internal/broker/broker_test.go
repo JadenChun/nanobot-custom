@@ -834,6 +834,72 @@ func TestTerminalBudgetHoldsEveryAdmittedResult(t *testing.T) {
 	}
 }
 
+func TestLaunchBurstReproducesTerminalReservationRefusal(t *testing.T) {
+	release := make(chan struct{})
+	releaseResponses := sync.OnceFunc(func() { close(release) })
+	defer releaseResponses()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	// Production config: an 8 MiB response ceiling reserves only four terminal
+	// slots, so a ten-request launch burst is refused six times even though the
+	// transport is ready. The app must retry those admissions.
+	core := testCore(t, server, nil)
+	admitted := make([]uint64, 0, 10)
+	refused := 0
+	for i := 0; i < 10; i++ {
+		id, err := core.HTTP(HTTPRequest{
+			Operation: "fixture_read",
+			Method:    http.MethodGet,
+			Path:      "/fixture/v1/read",
+		})
+		if err != nil {
+			if !errors.Is(err, ErrQueueFull) {
+				t.Fatalf("burst request %d: %v", i, err)
+			}
+			refused++
+			continue
+		}
+		admitted = append(admitted, id)
+	}
+	if len(admitted) != 4 || refused != 6 {
+		t.Fatalf("launch burst admitted %d refused %d, want 4 and 6", len(admitted), refused)
+	}
+	releaseResponses()
+	buffer := make([]byte, 1<<20)
+	drained := 0
+	deadline := time.After(10 * time.Second)
+	for drained < len(admitted) {
+		n, err := core.PollEvent(buffer)
+		if err != nil {
+			t.Fatalf("poll: %v", err)
+		}
+		if n == 0 {
+			select {
+			case <-deadline:
+				t.Fatalf("admitted results did not settle: %d/%d", drained, len(admitted))
+			case <-time.After(5 * time.Millisecond):
+			}
+			continue
+		}
+		drained++
+	}
+	id, err := core.HTTP(HTTPRequest{
+		Operation: "fixture_read",
+		Method:    http.MethodGet,
+		Path:      "/fixture/v1/read",
+	})
+	if err != nil {
+		t.Fatalf("retry after drained reservation: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("retry after drained reservation returned no identity")
+	}
+}
+
 func TestHTTPRequestCountIsBounded(t *testing.T) {
 	server := testServer(t)
 	core := testCore(t, server, func(cfg *Config) { cfg.MaxRequests = 1 })
