@@ -9,6 +9,10 @@
 **Release state:** HOLD. Push, merge, deployment, and formal release
 qualification remain with the project owner.
 
+The [November 15 decisions](decisions.md#a3-release-decisions-for-the-four-remaining-findings)
+and [OpenCode continuation](opencode-handoff.md#continue-from-the-reconciliation-branch)
+define the next pass. The candidate above identifies the November 14 run.
+
 ## Ledger
 
 | Measure | Value |
@@ -18,7 +22,7 @@ qualification remain with the project owner.
 | Ready for review | 0 |
 | Unverified | 4 |
 | Review findings | 9 (all accepted; RR1 and RR3 accepted in the third wave) |
-| Evidence rows | 118 |
+| Evidence rows | 119 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
@@ -30,12 +34,12 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | A3-1 | Accepted, Linux scope | AC1a-AC6b met; H01-F6/F7 structural debt deferred; the read_file instance media root is accepted. |
 | A3-2 | Accepted, Linux scope | AC2.1-AC2.5 met; X01-F01 gated; S02-F03 deferred; Windows/macOS unverified. |
 | A3-3 | Accepted, Linux scope | AC3.1-AC3.3 pass; five named gaps recorded. |
-| A3-4 | Findings complete except one decision | 13 accepted; H01-F5 autoPush-exemption decision open. |
-| A3-5 | Findings complete except one decision | 2 accepted; K01-F06 guidance repaired; nested-bypass policy decision open. |
-| A3-6 | Findings complete except one decision | 29 accepted; E02-F16 credential-profile decision open. |
-| A3-7 | Findings complete | 16 accepted, including the cleaned app UI receipt and the launch admission repair; physical device remains an environment gap. |
+| A3-4 | H01-F5 unverified | 13 accepted. Remove the shell approval exemption for autoPush. |
+| A3-5 | K01-F06 unverified | 2 accepted. The guidance repair is in place. Verify admission under the selected launch policy. |
+| A3-6 | E02-F16 unverified | 29 accepted. Bind provider OAuth state to the gateway instance. |
+| A3-7 | Findings complete | 16 accepted, including the app UI receipt and launch admission repair. |
 | A3-8 | Findings complete | 24 accepted; durability, retention, cron, journal, approval and recovery repairs reviewed. |
-| A3-9 | Findings complete except R01-F05 | 15 accepted; R01-F05 partial for /mobile/v1 POST refresh/logout, remote logout, auth_key, proof-bound origin and physical device. |
+| A3-9 | R01-F05 unverified | 15 accepted. Qualify current device-key recovery and revocation through the installed emulator app and production gateway. |
 | A3-10 | Dispositions complete | 8 accepted; AC10.3 waits on A3-9 and an artifact digest. |
 
 ## Repairs integrated in this run
@@ -64,52 +68,23 @@ The remaining commits record reviews, evidence, and the stage decisions.
 
 ## Open findings by stage
 
-- **A3-1:** H01-F6, H01-F7.
-- **A3-2:** X01-F01, S02-F03.
-- **A3-4:** H01-F5, E02-F20, U01-F05.
-- **A3-5:** T01-F04, K01-F06, X01-F02.
-- **A3-6:** K01-F02, C00-F06, E02-F16, H03-F4, K01-F08, X01-F04, H03-F1, H03-F5, T01-F12, T01-F11, U01-F02, T01-F05, T01-F06.
-- **A3-7:** R01-F11, R01-F12, R01-F13, R01-F14.
-- **A3-8:** A01-F09, K01-F13, H02-CAP-SOURCE64, H02-CAP-JOURNAL4096, H02-IO, A01-F04, E02-F07, A01-F01, A01-F03, A01-F05, A01-F08, M01-F01, M01-F02, M01-F04, E02-F03, E02-F05, E02-F09, M01-F03, E02-F04, A01-F06.
-- **A3-9:** Q01-F01, R01-F05, Q01-F03, E02-F12, R01-F17, Q01-F05, R01-F20.
-- **A3-10:** C00-F04, C00-F05, S01-F02, H02-ART-SOURCE, H02-LEGACY-ISOLATE, H02-IDLE-DORMANT.
+- **A3-4** — H01-F5.
+- **A3-5** — K01-F06.
+- **A3-6** — E02-F16.
+- **A3-9** — R01-F05.
 
 ## Next ready packages
 
-1. **A3-7/A3-9 mobile recovery:** the cleaned app receipt exposed a launch-time
-   admission failure: 6 of 10 requests are rejected as `native request was not
-   admitted`, the broker reason is masked, and a read succeeds only after a
-   manual refresh. A bounded native repair and a clean re-run are in progress.
-2. **A3-8:** all durability findings are accepted. The remaining residuals are
-   the unwired cron admin key, off-loop `pre_begin`, the process-local cache
-   index, unknown-trigger resolution UI, and the unvalidated sync journal API.
-3. **A3-9:** Q01-F03, R01-F17, Q01-F05, E02-F12 and H03-F5 are accepted.
-   R01-F05 remains partial for launch recovery, legacy `/mobile/v1` POST
-   refresh/logout, remote logout, refresh rotation replay, headless auth key and
-   a physical device.
-4. **A3-10:** all six dispositions accepted; AC10.1 still needs the six R18
-   durability findings (now accepted) recorded in the stage ledger and the C00
-   activation decision remains future work.
+1. Give one worker shell approval work for H01-F5 and K01-F06.
+2. Give one worker provider credential work for E02-F16.
+3. Prepare the signed emulator qualification for R01-F05 in parallel.
 
 ## Blockers
 
-- **Product decisions:** H01-F5 autoPush subset; E02-F16 credential-profile
-  policy; K01-F06 nested-bypass policy (K01-Q5/D2-D4). C00-F04/C00-F05 stay
-  isolated by the migration guard; retire-or-repair is a future activation
-  decision.
-- **A3-9 R01-F05:** `/mobile/v1` has no composed refresh path and a rotated
-  bearer grant carries `origin=""` (`auth.py:213`), so it would answer
-  `403 origin_mismatch`; `/mobile/v1` POST refresh/logout and remote logout do
-  not exist; `auth_key` is not wired into the app transport; no physical device
-  ran. Rotation itself is qualified on `/remote/v1` (18/18).
-- **Latent defect:** `TokenService.refresh` omits `device_generation`
-  (`auth.py:238-242`), issuing 0 while `validate_access` compares the proof
-  generation (`auth.py:201`). Unreachable today because pairing issues an empty
-  refresh token (`auth.py:148-153`, `auth.py:177-181`, `store.py:421`).
-- **Environment:** macOS, Windows and physical Android remain absent. The Linux
-  host has the full Android toolchain and a live Tailscale Serve mapping.
-- **A3-3 gaps:** no single mixed fixture, no RUNNING terminal projection,
-  simulated unqualified platform, unreproducible source-reader rollback leg.
+- Release acceptance needs matching evidence for the four unverified findings.
+- AC10.3 needs A3-9 acceptance and the exact release artifact digest.
+- Qualify Linux and the Android emulator in this pass. The existing
+  `/remote/v1` bearer rotation receipt applies to the historical path.
 
 ## Repository integrity
 

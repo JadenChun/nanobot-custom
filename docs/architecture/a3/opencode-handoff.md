@@ -1,6 +1,83 @@
 # OpenCode handoff for the remaining A3 audit
 
-## Prompt to paste into OpenCode
+## Continue from the reconciliation branch
+
+Paste this prompt into OpenCode. The original 120-finding handoff is recorded
+below for reference.
+
+```text
+Continue the last four Nanobot A3 findings in the existing local checkout at
+/home/jaden/Documents/Utilities/nanobot-a3-reconciliation.
+Read docs/architecture/a3/opencode-handoff.md. Follow "Continue from the
+reconciliation branch" and the November 15 decisions linked there.
+Use only DeepSeek V4.1 Flash, model commandcode/deepseek/deepseek-v4.1-flash,
+for the coordinator and every subagent. Run independent work in parallel
+with one writer per boundary. Start from the existing reconciliation branch.
+Preserve accepted work. Work on Linux and use the Android emulator.
+Integrate and verify locally. Report exact evidence and any remaining blockers.
+```
+
+### Starting point
+
+- Use `codex/a3-audit-reconciliation` in the checkout above. The reviewed
+  product base is `310d2056699196109f539e8bf98916a61f996b12`, tree
+  `224a2d030caa8f875b6c6fa7adb0df117feee696`. It is 157 commits ahead of
+  `origin/codex/staging-audit-implementation` at `722bd8ec`.
+- Run `git status --short --branch` and `git rev-parse HEAD 'HEAD^{tree}'`.
+  Review changes since the base and use the latest valid descendant. Preserve
+  local work. Keep the local reconciliation history if you fetch remote refs.
+- Read `AGENTS.md`, the [November 15 decisions](decisions.md#a3-release-decisions-for-the-four-remaining-findings),
+  the [run summary](reconciliation-run-summary.md), and the newest relevant
+  entries in the [implementation handoff](implementation-handoff.md). Read the
+  [ledger](evidence.json) and the original reports for the four assigned IDs.
+- Recompute status from the ledger. It has 132 accepted and four unverified
+  original findings. All nine separate review findings are accepted.
+- Reuse relevant receipts under
+  `/home/jaden/Documents/Utilities/nanobot-custom-worktrees/a3-evidence/a3-reconciliation-2026-11-14/`.
+  The Linux baseline at `3f763a41` passed 18,506 tests, skipped 22, and passed
+  six subtests. Strict BasedPyright reported zero diagnostics across 546 files.
+  For Android, start with `resume2/a37-admission-review/REVIEW.md` and
+  `resume2/a39-r01f05-review/REVIEW.md`. The `30f8cd4c` launch repair and earlier
+  installed-app navigation already have receipts. The proof-bound recovery and
+  revocation checks still need matching installed-app evidence.
+
+### Work packages
+
+| Finding | Write owner and entry points | Focused checks |
+| --- | --- | --- |
+| H01-F5 and K01-F06 | One shell-policy worker. Own command risk and launch admission in `nanobot/agent/policy.py` and the existing shell and tmux launch boundary. Read the knowledge sync owner to confirm its scope. Start from the existing K01-F06 guidance repair at `f126a952`. | Check a normal Git read, configured knowledge sync, exact approval on risky effects with `autoPush` enabled, ordinary nested launch, and refusal when reduced protections lack required proof. Start with `tests/context_repo/test_git_sync_safe_push.py` and `tests/tools/test_migration_exec_policy.py`. Use disposable targets. |
+| E02-F16 | One OAuth worker. Own provider credential storage and its gateway, settings, SDK, and CLI bindings. Reuse `OAuthCredentialCoordinator` and the resolved instance root. Check the existing xAI instance binding. | Check that login, refresh, status, logout, and cache state stay within the selected instance. Start with `tests/providers/test_oauth_credential_coordinator.py`, `tests/providers/test_oauth_sdk_contracts.py`, and `tests/webui/test_ws_http_oauth.py`. Use two disposable instance roots and synthetic credentials. |
+| R01-F05 | One mobile worker. Own the Android custody and production mobile routes needed for device-key recovery, and the emulator for this pass. Reuse the existing owner revoke operation. Reserve any shared gateway file with the coordinator before editing it. | Start with `tests/remote/test_device_proof.py`, `test_device_recovery.py`, `test_edge_pair_proof.py`, and `test_pairing_persistence.py` in the same directory. Run the signed app through Serve TLS for the acceptance criteria in the decision. Record the production routing and signed artifact identity. |
+
+Start the three packages together if the runtime has capacity. Give each writer
+a separate branch and worktree at the selected base. Assign distinct ports,
+writable runtime roots, and test directories. Use a pinned shared dependency
+environment read-only. For each worker, record the allowed paths before edits.
+Serialize any shared gateway, registry, or protocol change under one owner.
+The coordinator owns integration, the ledger, and final artifact receipts.
+
+Select `commandcode/deepseek/deepseek-v4.1-flash` explicitly for the coordinator,
+workers, and any requirements-only test author. Verify the effective model in
+each session. If a subagent route cannot guarantee that model, use a fresh
+OpenCode session with `run --model` and its assigned working directory. Report
+a model blocker for any package that cannot use the selected model. Continue
+the other packages when possible. Workers return to the coordinator.
+
+Use existing focused evidence first. When a new case is necessary, follow the
+requirements-only session contract in `AGENTS.md`. For each Python repair,
+retain frozen before and after full-source BasedPyright reports with the same
+dependencies. Run the comparator and verify zero new signatures across all
+files. Run the affected checks again where integration changes their inputs.
+For P6 or release closure, run the required full checks and tie the receipts
+to the integrated candidate. Preserve the release hold until its gates pass.
+
+Each worker returns the finding ID, base and commit, exact changed paths,
+commands and exits, receipt path, and remaining gaps. The coordinator checks
+the integrated diff and exact evidence before updating the ledger. Keep the
+commits local. Use disposable state and test credentials. Leave push, merge,
+and deployment to the project owner.
+
+## Historical prompt from the 120-finding checkpoint
 
 ```text
 Continue the remaining A3 implementation audit for JadenChun/nanobot-custom.
