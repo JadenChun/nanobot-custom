@@ -62,8 +62,14 @@ def _is_valid_desktop_port(value: object) -> bool:
     return type(value) is int and 1 <= value <= 65535
 
 
-def _gateway_health_ready(host: str, port: int, *, timeout_s: float = 0.4) -> bool:
-    """Read readiness from the management listener without using proxy settings."""
+def gateway_health_ready(host: str, port: int, *, timeout_s: float = 0.4) -> bool:
+    """Read readiness from the management listener without using proxy settings.
+
+    This is the single readiness contract used by the gateway status path and the
+    CLI. Only a 200 response whose JSON body is an object with ``status == "ok"``
+    and ``ready`` not false is ready. A non-object or malformed body, a non-200
+    status, a connection error and a timeout all return ``False``.
+    """
     connect_host = "127.0.0.1" if host in {"", "0.0.0.0"} else "::1" if host == "::" else host
     connection = http.client.HTTPConnection(connect_host, port, timeout=timeout_s)
     try:
@@ -87,6 +93,10 @@ def _gateway_health_ready(host: str, port: int, *, timeout_s: float = 0.4) -> bo
         payload.get("status") == "ok"
         and payload.get("ready") is not False
     )
+
+
+# Existing call sites and tests address the private name. Keep one implementation.
+_gateway_health_ready = gateway_health_ready
 
 
 def _default_config_path() -> Path:
