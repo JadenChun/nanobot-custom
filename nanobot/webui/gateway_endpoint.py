@@ -11,6 +11,7 @@ from websockets.http11 import Request as WsRequest
 
 from nanobot.webui.gateway_tokens import GatewayTokenStore
 from nanobot.webui.http_utils import (
+    is_loopback_host,
     is_trusted_proxy_authenticated_request,
     normalize_config_path,
     parse_request_path,
@@ -33,6 +34,18 @@ def is_websocket_upgrade(request: WsRequest) -> bool:
         and connection
         and "upgrade" in connection.lower()
     )
+
+
+def listener_requires_authentication(config: Any) -> bool:
+    """Return whether every handshake on this listener needs a credential.
+
+    A loopback listener keeps the configured local behavior. A Unix socket
+    listener is local by construction. Any other bind needs effective
+    authentication even when ``websocket_requires_token`` is disabled.
+    """
+    if getattr(config, "unix_socket_path", ""):
+        return bool(config.websocket_requires_token)
+    return bool(config.websocket_requires_token) or not is_loopback_host(config.host)
 
 
 class WebUIGatewayEndpoint:
@@ -116,7 +129,7 @@ class WebUIGatewayEndpoint:
                 return None
             return connection.respond(401, "Unauthorized")
 
-        if self._config.websocket_requires_token:
+        if listener_requires_authentication(self._config):
             if supplied and self.consume_issued_token(connection, supplied):
                 return None
             return connection.respond(401, "Unauthorized")

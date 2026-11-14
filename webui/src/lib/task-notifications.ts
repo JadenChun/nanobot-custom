@@ -147,10 +147,16 @@ export function showTaskNotification({
   body,
   tag,
   title = DEFAULT_NOTIFICATION_TITLE,
+  requestMutation,
 }: {
   body: string;
   tag?: string;
   title?: string;
+  /** Authenticated WebSocket mutation control; the desktop side effect needs it. */
+  requestMutation?: (
+    action: string,
+    payload: Record<string, unknown>,
+  ) => Promise<unknown>;
 }): void {
   // The desktop shell dispatches ``nanobot:desktop-hide`` before hiding the
   // window. Suppress even the browser Notification fallback in that state:
@@ -158,10 +164,13 @@ export function showTaskNotification({
   if (!desktopWindowOpen) return;
   if (isDesktopShell()) {
     if (!clientWindowIsOpen()) return;
-    const query = new URLSearchParams({ title, body });
-    if (tag) query.set("tag", tag);
-    void fetch(`/api/desktop/notify?${query.toString()}`, {
-      credentials: "same-origin",
+    // The desktop notifier is an authenticated local mutation. Without the
+    // control there is no unauthenticated fallback request.
+    if (!requestMutation) return;
+    void requestMutation("desktop.notify", {
+      title,
+      body,
+      ...(tag ? { tag } : {}),
     }).catch(() => {
       // Desktop notifications are best-effort and must not affect chat.
     });

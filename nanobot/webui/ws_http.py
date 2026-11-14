@@ -98,6 +98,9 @@ from nanobot.webui.http_utils import (
 )
 from nanobot.webui.http_utils import is_loopback_host as _is_loopback_host
 from nanobot.webui.http_utils import (
+    is_same_origin_request as _is_same_origin_request,
+)
+from nanobot.webui.http_utils import (
     is_trusted_proxy_authenticated_request as _is_trusted_proxy_authenticated_request,
 )
 from nanobot.webui.http_utils import (
@@ -320,9 +323,11 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.mcp.oauth_start": "/api/settings/mcp-oauth/start",
     "settings.mcp.oauth_complete": "/api/settings/mcp-oauth/complete",
     "settings.mcp.oauth_cancel": "/api/settings/mcp-oauth/cancel",
+    "desktop.notify": "/api/desktop/notify",
 }
 
 _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
+    "/api/desktop/notify",
     "/api/workspaces/pick-folder",
     "/api/workspaces/grants/upsert",
     "/api/workspaces/grants/revoke",
@@ -1126,6 +1131,7 @@ class GatewayHTTPHandler:
         if path in {"/api/webui/recovery/continue", "/api/webui/recovery/dismiss"}:
             return True
         return path in {
+            "/api/desktop/notify",
             "/api/webui/skills/install",
             "/api/webui/skills/update",
             "/api/webui/skills/delete",
@@ -1260,14 +1266,18 @@ class GatewayHTTPHandler:
 
     def _handle_token_issue(self, connection: Any, request: Any) -> Any:
         secret = self.config.token_issue_secret.strip() or self.config.token.strip()
-        if secret:
-            if not _issue_route_secret_matches(request.headers, secret):
-                return connection.respond(401, "Unauthorized")
-        else:
-            self._log.warning(
-                "token_issue_path is set but token_issue_secret is empty; "
-                "any client can obtain connection tokens — set token_issue_secret for production."
+        if not secret:
+            self._log.error(
+                "token_issue_path is set but token_issue_secret and token are empty; "
+                "refusing to issue connection tokens without a secret"
             )
+            return _http_json_response(
+                {"error": "token issuance requires a configured secret"},
+                status=403,
+                extra_headers=_NO_STORE_HEADERS,
+            )
+        if not _issue_route_secret_matches(request.headers, secret):
+            return connection.respond(401, "Unauthorized")
         if not self.tokens.can_issue():
             self._log.error(
                 "too many outstanding issued tokens ({}), rejecting issuance",
@@ -2608,6 +2618,18 @@ class GatewayHTTPHandler:
         connection: Any,
         request: WsRequest,
     ) -> Response:
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(
+                405,
+                "desktop notifications require an authenticated WebSocket mutation",
+            )
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if not _is_same_origin_request(
+            request.headers,
+            secure=bool(self.config.ssl_certfile.strip()),
+        ):
+            return _http_error(403, "cross_origin_denied")
         if not (
             _is_loopback_host(self.config.host)
             and _is_local_browser_request(connection, request.headers)

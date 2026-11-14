@@ -39,6 +39,9 @@ from nanobot.session.webui_turns import (
 )
 from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.http_utils import (
+    is_loopback_host,
+)
+from nanobot.webui.http_utils import (
     normalize_config_path as _normalize_config_path,
 )
 from nanobot.webui.http_utils import (
@@ -285,14 +288,15 @@ class WebSocketConfig(Base):
         return self
 
     @model_validator(mode="after")
-    def wildcard_host_requires_auth(self) -> Self:
-        if self.host not in ("0.0.0.0", "::"):
+    def non_loopback_host_requires_auth(self) -> Self:
+        if self.unix_socket_path or is_loopback_host(self.host):
             return self
         if self.token.strip() or self.token_issue_secret.strip() or self.trusted_proxy_auth is not None:
             return self
         raise ValueError(
-            "host is 0.0.0.0 (all interfaces) but neither token, token_issue_secret, "
-            "nor trusted_proxy_auth is set — set one to prevent unauthenticated access"
+            f"host {self.host!r} is not a loopback address but neither token, "
+            "token_issue_secret, nor trusted_proxy_auth is set — set one to "
+            "prevent unauthenticated access"
         )
 
 

@@ -18,20 +18,22 @@ from nanobot.webui.settings_services import WebUISettingsConfig
 _PREFIX = "/api/settings/remote-access"
 
 
-def owner_paths(config: RemoteAccessConfig) -> tuple[Path, Path]:
-    if config.state_dir:
-        root = Path(config.state_dir).expanduser()
-    else:
-        from nanobot.config.paths import get_data_dir
+def owner_paths(
+    config: RemoteAccessConfig,
+    *,
+    instance_root: Path | str | None = None,
+) -> tuple[Path, Path]:
+    from nanobot.remote.composition import owner_socket_path, remote_access_root
 
-        root = get_data_dir() / "remote-access"
-    socket = Path(config.socket_path).expanduser() if config.socket_path else root / "owner.sock"
-    return root, socket
+    return (
+        remote_access_root(config, instance_root=instance_root),
+        owner_socket_path(config, instance_root=instance_root),
+    )
 
 
 def _manager(config: WebUISettingsConfig) -> tuple[RemoteAccessManager, Config]:
     cfg = config.load()
-    root, socket = owner_paths(cfg.remote_access)
+    root, socket = owner_paths(cfg.remote_access, instance_root=config.path.parent)
     token = RemoteAccessStore(root).admin_token()
     return RemoteAccessManager(socket, token), cfg
 

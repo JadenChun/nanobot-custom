@@ -107,12 +107,19 @@ class RemoteAccessStore:
     """Atomic, mode-restricted state under ``<instance-root>/remote-access``."""
 
     def __init__(
-        self, root: Path | str | None = None, *, clock: Callable[[], float] = time.time
+        self,
+        root: Path | str | None = None,
+        *,
+        instance_root: Path | str | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         if root is None:
-            from nanobot.config.paths import get_data_dir
+            from nanobot.config.schema import RemoteAccessConfig
+            from nanobot.remote.composition import remote_access_root
 
-            root = get_data_dir() / "remote-access"
+            root = remote_access_root(
+                RemoteAccessConfig(), instance_root=instance_root
+            )
         self.root = Path(root).expanduser()
         self.state_path = self.root / "state.json"
         self.lock_path = self.root / "state.lock"

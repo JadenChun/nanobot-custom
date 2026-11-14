@@ -29,6 +29,7 @@ export function useTaskNotifications(): void {
     showTaskNotification({
       body: buildTaskNotificationBody(event, t),
       tag: `nanobot-turn-${event.chatId}`,
+      requestMutation: (action, payload) => client.requestMutation(action, payload),
     });
   }), [client, t]);
 }

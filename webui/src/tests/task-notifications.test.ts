@@ -17,15 +17,30 @@ describe("desktop task notifications", () => {
 
   it("does not notify while the desktop shell is hidden", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({} as Response);
+    const mutate = vi.fn().mockResolvedValue({ ok: true });
 
     window.dispatchEvent(new Event("nanobot:desktop-hide"));
-    showTaskNotification({ body: "hidden window" });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    showTaskNotification({ body: "hidden window", requestMutation: mutate });
+    expect(mutate).not.toHaveBeenCalled();
 
     window.dispatchEvent(new Event("nanobot:desktop-show"));
-    showTaskNotification({ body: "visible window" });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0]?.[0]).toContain("/api/desktop/notify");
+    showTaskNotification({ body: "visible window", tag: "tag", requestMutation: mutate });
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate).toHaveBeenCalledWith("desktop.notify", {
+      title: "nanobot",
+      body: "visible window",
+      tag: "tag",
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends no unauthenticated request without the mutation control", () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({} as Response);
+
+    window.dispatchEvent(new Event("nanobot:desktop-show"));
+    showTaskNotification({ body: "no control" });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

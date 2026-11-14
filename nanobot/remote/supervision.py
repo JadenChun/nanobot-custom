@@ -58,13 +58,12 @@ def build_service_plan(
     *,
     python_executable: str | None = None,
     unit_dir: Path | None = None,
+    instance_root: Path | str | None = None,
 ) -> ServicePlan:
-    state_dir = Path(config.state_dir).expanduser() if config.state_dir else None
-    if state_dir is None:
-        from nanobot.config.paths import get_data_dir
+    from nanobot.remote.composition import owner_socket_path, remote_access_root
 
-        state_dir = get_data_dir() / "remote-access"
-    socket_path = Path(config.socket_path).expanduser() if config.socket_path else state_dir / "owner.sock"
+    state_dir = remote_access_root(config, instance_root=instance_root)
+    socket_path = owner_socket_path(config, instance_root=instance_root)
     digest = hashlib.sha256(str(socket_path).encode()).hexdigest()[:12]
     unit_name = f"{UNIT_PREFIX}{digest}.service"
     target_dir = unit_dir or (Path.home() / ".config" / "systemd" / "user")

@@ -185,14 +185,19 @@ def build_gateway_services(
     if mobile_edge is None and remote_access is not None and remote_access.enabled:
         from nanobot.remote.composition import build_mobile_edge
 
-        mobile_edge = build_mobile_edge(remote_access, http, media)
+        mobile_edge = build_mobile_edge(
+            remote_access,
+            http,
+            media,
+            instance_root=settings.config.path.parent,
+        )
     if remote_access is not None and remote_access.enabled:
         from nanobot.remote.client import RemoteAccessClient
         from nanobot.remote.composition import owner_socket_path
         from nanobot.remote.permissions import OwnerPermissionAdapter
 
         owner_client = RemoteAccessClient(
-            owner_socket_path(remote_access),
+            owner_socket_path(remote_access, instance_root=settings.config.path.parent),
             timeout=remote_access.owner_timeout_seconds,
         )
         http.owner_permission_adapter = OwnerPermissionAdapter(owner_client)

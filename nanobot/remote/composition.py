@@ -17,21 +17,43 @@ from nanobot.remote.edge import MediaResult, MobileGatewayEdge, OwnerAccessValid
 from nanobot.webui.media_gateway import WebUIMediaGateway
 
 
-def owner_socket_path(config: RemoteAccessConfig) -> Path:
+def remote_access_root(
+    config: RemoteAccessConfig,
+    *,
+    instance_root: Path | str | None = None,
+) -> Path:
+    """Return the owner state root for this instance.
+
+    An explicit ``state_dir`` wins. Otherwise the root is
+    ``<instance-root>/remote-access`` where the instance root is the directory
+    of the explicit config path. Callers without an explicit instance keep the
+    process-global data directory.
+    """
+    if config.state_dir:
+        return Path(config.state_dir).expanduser()
+    base = Path(instance_root).expanduser() if instance_root is not None else get_data_dir()
+    return base / "remote-access"
+
+
+def owner_socket_path(
+    config: RemoteAccessConfig,
+    *,
+    instance_root: Path | str | None = None,
+) -> Path:
     if config.socket_path:
         return Path(config.socket_path).expanduser()
-    if config.state_dir:
-        return Path(config.state_dir).expanduser() / "owner.sock"
-    return get_data_dir() / "remote-access" / "owner.sock"
+    return remote_access_root(config, instance_root=instance_root) / "owner.sock"
 
 
 def build_mobile_edge(
     config: RemoteAccessConfig,
     http: Any,
     media: WebUIMediaGateway,
+    *,
+    instance_root: Path | str | None = None,
 ) -> MobileGatewayEdge:
     client = RemoteAccessClient(
-        owner_socket_path(config),
+        owner_socket_path(config, instance_root=instance_root),
         timeout=config.owner_timeout_seconds,
     )
     validator = OwnerAccessValidator(client)
