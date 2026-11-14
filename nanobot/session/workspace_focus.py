@@ -155,14 +155,25 @@ class WorkspaceFocusOwner:
             from nanobot.agent.tools.native_process import native_supervisor_available
 
             commands_available = exists and native_supervisor_available()
+            # Full access does not override configured context-repository
+            # protection: `ResourceAccessPolicy.validate_path` still denies a
+            # protected path even with a live Full reference.  Ask the same
+            # predicate so the projection cannot advertise a read or write the
+            # file tools will refuse.
+            read_allowed = exists and self._full_path_allowed(
+                target, "read", permission_owner, full_reference,
+            )
+            write_allowed = exists and self._full_path_allowed(
+                target, "write", permission_owner, full_reference,
+            )
             return {
                 "boundary": "unrestricted",
                 "policy": "managed" if managed_mode else "legacy",
                 "source": "full",
                 "grant_root": None,
                 "exists": exists,
-                "read": exists,
-                "write": exists,
+                "read": read_allowed,
+                "write": write_allowed,
                 "commands": {
                     "requested": True,
                     "available": commands_available,
@@ -858,6 +869,28 @@ class WorkspaceFocusOwner:
                 managed=True,
                 allow_folder_grants=True,
                 target_kind="directory",
+            )
+        except PermissionError:
+            return False
+        return True
+
+    def _full_path_allowed(
+        self,
+        target: Path,
+        action: str,
+        permission_owner: DesktopPermissionOwner | None,
+        full_reference: WorkspacePermissionReference | None,
+    ) -> bool:
+        """Return whether a live Full reference may read or write *target*."""
+        try:
+            self.policy.validate_path(
+                target,
+                action,
+                managed=True,
+                allow_folder_grants=True,
+                target_kind="directory",
+                permission_owner=permission_owner,
+                permission_reference=full_reference,
             )
         except PermissionError:
             return False
