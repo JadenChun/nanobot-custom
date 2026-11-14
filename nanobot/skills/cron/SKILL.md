@@ -11,7 +11,9 @@ Do not use `cron` for periodic background checks that should stay quiet when the
 
 ## Three Modes
 
-1. **Reminder** - message is sent directly to user
+Every job starts an agent turn that receives the job message as its instruction. The agent then replies to the originating chat/session.
+
+1. **Reminder** - message tells the agent what to remind the user about
 2. **Task** - message is a task description, agent executes and sends result
 3. **One-time** - runs once at a specific time, then auto-deletes
 
@@ -56,4 +58,4 @@ cron(action="remove", job_id="abc123")
 
 ## Timezone
 
-Use `tz` with `cron_expr` to schedule in a specific IANA timezone. Without `tz`, the server's local timezone is used.
+Use `tz` with `cron_expr` to schedule in a specific IANA timezone. Without `tz`, the job uses the configured agent timezone (`agents.defaults.timezone`) from the active request context, not the server's local time. A naive `at` value uses the same configured timezone.
