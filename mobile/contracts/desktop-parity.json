@@ -7600,13 +7600,15 @@
               "nanobot/webui/ws_http.py:_handle_desktop_notify"
             ],
             "tests": [
-              "webui/src/tests/task-notifications.test.ts"
+              "webui/src/tests/task-notifications.test.ts",
+              "tests/webui/test_a3_7_desktop_notify_cases.py"
             ],
             "implementation": "present"
           },
           "api": {
-            "kind": "http",
-            "method": "GET",
+            "kind": "ws",
+            "ws_type": "webui_request",
+            "mutation_action": "desktop.notify",
             "path": "/api/desktop/notify"
           },
           "ui": {
@@ -7629,7 +7631,9 @@
             "negative": [
               "non-loopback request denied",
               "non-local browser origin denied",
-              "missing body rejected"
+              "missing body rejected",
+              "unauthenticated notification request denied without spawning a notifier",
+              "cross-origin notification request denied without spawning a notifier"
             ]
           },
           "status": {
