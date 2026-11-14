@@ -413,6 +413,33 @@ def test_stale_login_commit_is_rejected_after_logout_or_new_login(tmp_path: Path
     assert coordinator.commit_login(_codex_token(), second) == _codex_token()
 
 
+def test_revoke_intent_withdraws_only_the_callers_publication_authority(
+    tmp_path: Path,
+) -> None:
+    coordinator = OAuthCredentialCoordinator(tmp_path / "codex.json", CredentialFlavor.CODEX)
+    generation = coordinator.begin_login()
+
+    assert coordinator.revoke_intent(generation) is True
+    with pytest.raises(CredentialError, match="login attempt is stale"):
+        coordinator.commit_login(_codex_token(), generation)
+    assert coordinator.revoke_intent(generation) is False
+
+    newer = coordinator.begin_login()
+    assert coordinator.revoke_intent(generation) is False
+    assert coordinator.commit_login(_codex_token(), newer) == _codex_token()
+
+    coordinator.logout()
+    assert coordinator.revoke_intent(newer) is False
+
+
+def test_login_generation_sequence_is_monotonic_per_issue(tmp_path: Path) -> None:
+    coordinator = OAuthCredentialCoordinator(tmp_path / "codex.json", CredentialFlavor.CODEX)
+    first = coordinator.begin_login()
+    second = coordinator.begin_login()
+
+    assert second.sequence > first.sequence
+
+
 def test_generation_is_opaque_process_local_noncopyable_and_nonpickleable(
     tmp_path: Path,
 ) -> None:

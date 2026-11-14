@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import os
+import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from oauth_cli_kit.models import OAuthToken
 
 import nanobot.providers.openai_codex_oauth as codex_oauth
+from nanobot.providers.codex_auth import (
+    get_codex_credential_view,
+    get_codex_login_status,
+    logout_codex,
+)
+from nanobot.providers.oauth_credentials import CredentialStatus
 from nanobot.providers.openai_codex_oauth import (
     OpenAICodexOAuthError,
     OpenAICodexOAuthInputError,
@@ -249,4 +258,123 @@ def test_remote_flow_expires_while_waiting_for_callback(
         with pytest.raises(OpenAICodexOAuthError, match="expired"):
             complete_openai_codex_oauth_login(flow)
     finally:
+        flow.cancel()
+
+
+def _gated_login(
+    exchange_started: threading.Event,
+    release_exchange: threading.Event,
+    *,
+    access: str,
+) -> Callable[..., OAuthToken]:
+    def login(**kwargs) -> OAuthToken:
+        kwargs["print_fn"]("Open this URL:")
+        kwargs["print_fn"](_authorization_url())
+        exchange_started.set()
+        assert release_exchange.wait(timeout=2)
+        return OAuthToken(
+            access=access,
+            refresh=f"{access}-refresh",
+            expires=2_000_000_000_000,
+            account_id="acct-test",
+        )
+
+    return login
+
+
+def test_cancelled_login_cannot_publish_after_the_exchange_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exchange_started = threading.Event()
+    release_exchange = threading.Event()
+    monkeypatch.setattr(
+        codex_oauth,
+        "login_oauth_interactive",
+        _gated_login(exchange_started, release_exchange, access="late-access"),
+    )
+
+    flow = start_openai_codex_oauth_login(timeout_s=5)
+    try:
+        assert exchange_started.wait(timeout=2)
+        first_generation = flow.login_generation
+        flow.cancel()
+        release_exchange.set()
+        flow._thread.join(timeout=2)
+
+        assert not Path(os.environ["NANOBOT_CODEX_AUTH_PATH"]).exists()
+        assert get_codex_login_status() is CredentialStatus.ABSENT
+        with pytest.raises(OpenAICodexOAuthError, match="cancelled"):
+            flow.complete()
+    finally:
+        release_exchange.set()
+        flow.cancel()
+
+    monkeypatch.setattr(
+        codex_oauth,
+        "login_oauth_interactive",
+        _fake_interactive_login({}),
+    )
+    newer = start_openai_codex_oauth_login(timeout_s=5)
+    try:
+        assert newer.login_generation > first_generation
+        newer_token = _wait_for_completion(newer)
+    finally:
+        newer.cancel()
+
+    assert newer_token.access == "access-token"
+    assert get_codex_credential_view().token.access == "access-token"
+    assert get_codex_login_status() is CredentialStatus.AVAILABLE
+
+
+def test_inflight_login_cannot_publish_after_logout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exchange_started = threading.Event()
+    release_exchange = threading.Event()
+    monkeypatch.setattr(
+        codex_oauth,
+        "login_oauth_interactive",
+        _gated_login(exchange_started, release_exchange, access="late-access"),
+    )
+
+    flow = start_openai_codex_oauth_login(timeout_s=5)
+    try:
+        assert exchange_started.wait(timeout=2)
+        logout_codex()
+        release_exchange.set()
+        flow._thread.join(timeout=2)
+
+        assert not Path(os.environ["NANOBOT_CODEX_AUTH_PATH"]).exists()
+        assert get_codex_login_status() is CredentialStatus.LOGGED_OUT
+        with pytest.raises(OpenAICodexOAuthError):
+            flow.complete()
+    finally:
+        release_exchange.set()
+        flow.cancel()
+
+
+def test_expired_login_cannot_publish_after_the_exchange_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exchange_started = threading.Event()
+    release_exchange = threading.Event()
+    monkeypatch.setattr(
+        codex_oauth,
+        "login_oauth_interactive",
+        _gated_login(exchange_started, release_exchange, access="late-access"),
+    )
+
+    flow = start_openai_codex_oauth_login(timeout_s=5)
+    try:
+        assert exchange_started.wait(timeout=2)
+        flow._expires_at = 0
+        with pytest.raises(OpenAICodexOAuthError, match="expired"):
+            flow.complete()
+        release_exchange.set()
+        flow._thread.join(timeout=2)
+
+        assert not Path(os.environ["NANOBOT_CODEX_AUTH_PATH"]).exists()
+        assert get_codex_login_status() is CredentialStatus.ABSENT
+    finally:
+        release_exchange.set()
         flow.cancel()

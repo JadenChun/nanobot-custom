@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
@@ -553,22 +554,52 @@ def resolve_credential_store_paths(canonical_path: str | Path) -> CredentialStor
     )
 
 
-class _LoginGeneration:
-    __slots__ = ("__owner", "__value")
+_login_sequence_lock = threading.Lock()
+_login_sequence = 0
 
-    def __init__(self, owner: object, value: str) -> None:
+
+def _next_login_sequence() -> int:
+    global _login_sequence
+    with _login_sequence_lock:
+        _login_sequence += 1
+        return _login_sequence
+
+
+class _LoginGeneration:
+    __slots__ = ("__owner", "__value", "__sequence")
+
+    def __init__(self, owner: object, value: str, sequence: int) -> None:
         self.__owner = owner
         self.__value = value
+        self.__sequence = sequence
+
+    @property
+    def sequence(self) -> int:
+        """Return the process-local issue order of this login attempt."""
+        return self.__sequence
 
     def _value_for(self, owner: object) -> str | None:
         return self.__value if self.__owner is owner else None
+
+    def current_value(
+        self,
+        observe_owner: Callable[[], object],
+        intent_generation: str | None,
+    ) -> str | None:
+        """Return this generation's durable value when it is still the current intent."""
+        value = self._value_for(observe_owner())
+        return value if value is not None and value == intent_generation else None
 
     def require_current_intent(
         self, observe_owner: Callable[[], object], state: _StoreState | None,
     ) -> str:
         """Validate this generation's owner and intent without publishing credentials."""
-        value = self._value_for(observe_owner())
-        if value is None or state is None or value != state.intent_generation:
+        value = (
+            None
+            if state is None
+            else self.current_value(observe_owner, state.intent_generation)
+        )
+        if value is None:
             raise CredentialError(_STALE_ERROR)
         return value
 
@@ -1439,7 +1470,45 @@ class OAuthCredentialCoordinator:
                         intent_generation=generation,
                     ),
                 )
-                return _LoginGeneration(self._generation_owner, generation)
+                return _LoginGeneration(
+                    self._generation_owner,
+                    generation,
+                    _next_login_sequence(),
+                )
+        except _InvalidStoreError:
+            raise CredentialError(_INVALID_ERROR) from None
+        except _UnavailableError:
+            raise CredentialError(_UNAVAILABLE_ERROR) from None
+
+    def revoke_intent(self, generation: _LoginGeneration) -> bool:
+        """Clear publication authority for this generation only.
+
+        A newer login or a logout has already replaced the durable intent, so
+        this call is a no-op in that case.
+        """
+        try:
+            with self._locked() as directory_fd:
+                state, _view = self._read_consistent(directory_fd)
+                if state is None:
+                    return False
+                if (
+                    generation.current_value(
+                        lambda: self._generation_owner,
+                        state.intent_generation,
+                    )
+                    is None
+                ):
+                    return False
+                self._write_state(
+                    directory_fd,
+                    _StoreState(
+                        state.active_generation,
+                        state.logged_out,
+                        intent_generation=None,
+                        publication=state.publication,
+                    ),
+                )
+                return True
         except _InvalidStoreError:
             raise CredentialError(_INVALID_ERROR) from None
         except _UnavailableError:

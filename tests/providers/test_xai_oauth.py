@@ -191,6 +191,57 @@ def test_pending_login_accepts_authorization_code_from_remote_browser(
     assert get_xai_oauth_login_status() == token
 
 
+def test_older_login_cannot_overwrite_the_newer_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _use_temp_credentials(monkeypatch, tmp_path)
+    discovery = _Discovery(
+        authorization_endpoint="https://auth.x.ai/oauth2/authorize",
+        token_endpoint="https://auth.x.ai/oauth2/token",
+        userinfo_endpoint=None,
+    )
+    monkeypatch.setattr(xai_oauth, "_discover", lambda _proxy: discovery)
+    monkeypatch.setattr(
+        xai_oauth,
+        "_exchange_code",
+        lambda _endpoint, *, code, **_kwargs: {
+            "access_token": code,
+            "expires_in": 3600,
+        },
+    )
+    monkeypatch.setattr(xai_oauth, "_fetch_account", lambda *_args, **_kwargs: None)
+    writes: list[str] = []
+    real_write = xai_oauth._write_token
+
+    def counting_write(token: XAIToken) -> None:
+        writes.append(token.access)
+        real_write(token)
+
+    monkeypatch.setattr(xai_oauth, "_write_token", counting_write)
+
+    older = start_xai_oauth_login(timeout_s=5)
+    newer = start_xai_oauth_login(timeout_s=5)
+    try:
+        assert newer.login_generation > older.login_generation
+        assert not older.expired and not newer.expired
+
+        newer_token = complete_xai_oauth_login(newer, "token-newer")
+        assert newer_token is not None
+        assert newer_token.access == "token-newer"
+
+        with pytest.raises(XAIOAuthError, match="superseded"):
+            complete_xai_oauth_login(older, "token-older")
+
+        stored = get_xai_oauth_login_status()
+        assert stored is not None
+        assert stored.access == "token-newer"
+        assert writes == ["token-newer"]
+    finally:
+        older.cancel()
+        newer.cancel()
+
+
 def test_expired_token_refreshes_once_and_persists_rotated_refresh_token(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

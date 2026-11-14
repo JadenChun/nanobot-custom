@@ -55,6 +55,21 @@ _TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000
 _DEFAULT_TOKEN_TTL_S = 60 * 60
 _HTTP_TIMEOUT_S = 15.0
 
+_login_generation_lock = threading.Lock()
+_login_generation = 0
+
+
+def _next_login_generation() -> int:
+    global _login_generation
+    with _login_generation_lock:
+        _login_generation += 1
+        return _login_generation
+
+
+def _current_login_generation() -> int:
+    with _login_generation_lock:
+        return _login_generation
+
 
 class XAIOAuthError(RuntimeError):
     """An actionable xAI OAuth failure with no credential material."""
@@ -119,8 +134,10 @@ class XAIOAuthLoginFlow:
         result_queue: queue.Queue[_CallbackResult],
         server: ThreadingHTTPServer,
         timeout_s: float,
+        login_generation: int,
     ) -> None:
         self.authorization_url = authorization_url
+        self._login_generation = login_generation
         self.redirect_uri = redirect_uri
         self._verifier = verifier
         self._state = state
@@ -144,6 +161,11 @@ class XAIOAuthLoginFlow:
         self._timeout_timer = threading.Timer(timeout_s, self._expire)
         self._timeout_timer.daemon = True
         self._timeout_timer.start()
+
+    @property
+    def login_generation(self) -> int:
+        """Return the monotonic issue order of this login flow."""
+        return self._login_generation
 
     @property
     def expired(self) -> bool:
@@ -220,6 +242,11 @@ class XAIOAuthLoginFlow:
                     proxy=self._proxy,
                 )
                 with _token_lock():
+                    if self._login_generation != _current_login_generation():
+                        raise XAIOAuthError(
+                            "xAI sign-in was superseded by a newer sign-in. "
+                            "Run the sign-in again."
+                        )
                     _write_token(token)
             except Exception as exc:
                 self._error = exc
@@ -267,6 +294,7 @@ def logout_xai_oauth() -> bool:
     """Remove this instance's credentials while excluding token refreshes."""
     path = get_xai_oauth_storage_path()
     with _token_lock():
+        _next_login_generation()
         try:
             path.unlink()
         except FileNotFoundError:
@@ -337,6 +365,7 @@ def start_xai_oauth_login(
         result_queue=result_queue,
         server=server,
         timeout_s=timeout_s,
+        login_generation=_next_login_generation(),
     )
 
 

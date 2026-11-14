@@ -64,6 +64,11 @@ class OpenAICodexOAuthLoginFlow:
         )
 
     @property
+    def login_generation(self) -> int:
+        """Return the process-local issue order of this login attempt."""
+        return self._generation.sequence
+
+    @property
     def expired(self) -> bool:
         return time.monotonic() >= self._expires_at
 
@@ -160,9 +165,18 @@ class OpenAICodexOAuthLoginFlow:
                 with suppress(Exception):
                     self._result.set_exception(_safe_login_error(exc))
             else:
-                self._result.set_result(token)
+                with suppress(Exception):
+                    self._result.set_result(token)
         finally:
+            self._revoke_publication()
             self._ready.set()
+
+    def _revoke_publication(self) -> None:
+        """Withdraw this flow's authority to publish credentials."""
+        try:
+            self._authority.revoke_intent(self._generation)
+        except Exception:
+            pass
 
     def _capture_output(self, message: str) -> None:
         raw = str(message)
@@ -193,6 +207,7 @@ class OpenAICodexOAuthLoginFlow:
         return value
 
     def _fail(self, error: OpenAICodexOAuthError) -> None:
+        self._revoke_publication()
         try:
             self._result.set_exception(error)
         except Exception:
