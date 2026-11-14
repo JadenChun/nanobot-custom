@@ -4300,3 +4300,227 @@ describe("queued prompt retention after busy admission rejection", () => {
     expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
   });
 });
+
+describe("A3-4 P3 queued admission cases (U1-U3)", () => {
+  function deferredAdmission(turnId: string, userMessageId: string) {
+    let resolve!: (admitted: boolean) => void;
+    const admission = new Promise<boolean>((resolvePromise) => {
+      resolve = resolvePromise;
+    });
+    return {
+      submitted: { turnId, userMessageId, sideChannel: false, admission },
+      resolve,
+    };
+  }
+
+  it("U1 keeps an attachment-only head in FIFO order until each owner receipt", async () => {
+    mockBlobUrls();
+    const first = deferredAdmission("turn-1", "user-1");
+    const second = deferredAdmission("turn-2", "user-2");
+    const onSend = vi.fn()
+      .mockReturnValueOnce(first.submitted)
+      .mockReturnValueOnce(second.submitted);
+    const { container, rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["image"], "draft.png", { type: "image/png" })] },
+    });
+    await screen.findByText("draft.png");
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "later text" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend).toHaveBeenNthCalledWith(
+      1,
+      "",
+      [expect.objectContaining({
+        media: expect.objectContaining({ name: "draft.png" }),
+      })],
+    );
+    expect(screen.getByText("later text")).toBeInTheDocument();
+    expect(onSend.mock.calls[0]).not.toEqual(onSend.mock.calls[1]);
+
+    await act(async () => first.resolve(true));
+    expect(screen.queryByText("draft.png")).not.toBeInTheDocument();
+    expect(screen.getByText("later text")).toBeInTheDocument();
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend).toHaveBeenNthCalledWith(2, "later text");
+    expect(first.submitted.turnId).not.toBe(second.submitted.turnId);
+
+    await act(async () => second.resolve(true));
+    expect(screen.queryByText("later text")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
+  });
+
+  it("U2 leaves the item on route acceptance without an owner receipt and never skips ahead", async () => {
+    const first = deferredAdmission("turn-1", "user-1");
+    const second = deferredAdmission("turn-2", "user-2");
+    const onSend = vi.fn()
+      .mockReturnValueOnce(first.submitted)
+      .mockReturnValueOnce(second.submitted);
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "first item" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "second item" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("first item")).toBeInTheDocument();
+    expect(screen.getByText("second item")).toBeInTheDocument();
+
+    // Another drain without an owner receipt must not resend the head or
+    // advance to the second item.
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("first item")).toBeInTheDocument();
+
+    await act(async () => first.resolve(true));
+    expect(screen.queryByText("first item")).not.toBeInTheDocument();
+    expect(screen.getByText("second item")).toBeInTheDocument();
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    expect(onSend).toHaveBeenNthCalledWith(2, "second item");
+
+    await act(async () => second.resolve(true));
+    expect(screen.queryByText("second item")).not.toBeInTheDocument();
+  });
+
+  it("U3 keeps the exact item when the local send throws and does not resubmit it", async () => {
+    const onSend = vi.fn(() => {
+      throw new Error("transport down");
+    });
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "exact payload" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("exact payload")).toBeInTheDocument();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("exact payload")).toBeInTheDocument();
+  });
+});

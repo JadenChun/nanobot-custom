@@ -328,3 +328,44 @@ describe("queued prompt admission", () => {
     }
   })
 })
+
+describe("A3-4 P3 reconnect admission (U4)", () => {
+  test("owner admission reconciles once and a reconnect without proof creates no second prompt", async () => {
+    const sent: string[] = []
+    const { app, ui } = await mount(
+      makeClient(sent, [], undefined, ["turn-follow", "turn-unproof"]),
+    )
+    const connection = app as unknown as {
+      handleStatus(status: "connected" | "reconnecting"): void
+    }
+
+    await queueFollowUp(app, ui, "admitted follow")
+    app.accept({ event: "turn_end", chat_id: "chat", turn_id: "turn-1" })
+    await waitUntil(() => sent.includes("admitted follow"))
+    admitOwner(app, "turn-follow")
+    expect(ui.promptQueue.length).toBe(0)
+
+    connection.handleStatus("reconnecting")
+    connection.handleStatus("connected")
+    app.accept({ event: "attached", chat_id: "chat" })
+    await waitUntil(() => ui.ready)
+    expect(ui.promptQueue.length).toBe(0)
+    expect(sent).toEqual(["admitted follow"])
+
+    app.accept({ event: "goal_status", chat_id: "chat", status: "running", turn_id: "turn-2" })
+    ui.composer.setText("unproven follow")
+    setup!.mockInput.pressTab()
+    await waitUntil(() => ui.composer.plainText === "")
+    app.accept({ event: "turn_end", chat_id: "chat", turn_id: "turn-2" })
+    await waitUntil(() => sent.includes("unproven follow"))
+    expect(ui.promptQueue.length).toBe(1)
+
+    connection.handleStatus("reconnecting")
+    connection.handleStatus("connected")
+    app.accept({ event: "attached", chat_id: "chat" })
+    await waitUntil(() => ui.ready)
+    await Bun.sleep(25)
+    expect(ui.promptQueue.length).toBe(1)
+    expect(sent).toEqual(["admitted follow", "unproven follow"])
+  })
+})

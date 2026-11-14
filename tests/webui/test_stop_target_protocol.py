@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -206,3 +207,54 @@ async def test_channel_manager_wires_live_callback_to_attach_hydration_and_threa
     finally:
         await http_channel.stop()
         await manager.stop_all()
+
+
+class _StopCaseLoop:
+    """Minimal owner surface for the repeated-Stop guard."""
+
+    def __init__(self, current_target):
+        self.current_target = current_target
+        self.cancelled: list[tuple[object, dict[str, Any]]] = []
+
+    def stop_target_for_key(self, key: str):
+        return self.current_target
+
+    async def _cancel_active_tasks(self, key: str, **kwargs: Any) -> int:
+        self.cancelled.append((key, kwargs))
+        return 1
+
+
+@pytest.mark.parametrize("with_expectation", [True, False])
+async def test_repeated_stop_after_settlement_does_not_stop_a_later_turn(with_expectation):
+    from nanobot.agent.stop_target import parse_stop_expectation
+    from nanobot.bus.events import InboundMessage
+    from nanobot.command.builtin import cmd_stop
+    from nanobot.command.router import CommandContext
+
+    settled = target_value()
+    later = {**target_value(), "active_turn_id": "turn-later"}
+    turns.register_queued_websocket_turn_if_idle("exact-stop", "turn-later")
+    loop = _StopCaseLoop(later)
+    metadata: dict[str, Any] = {
+        INBOUND_META_STOP_CLIENT: True,
+        "webui_turn_id": "stop-attempt",
+        "webui_target_turn_id": "turn-earlier",
+    }
+    if with_expectation:
+        metadata[INBOUND_META_STOP_EXPECTATION] = parse_stop_expectation(settled)
+    message = InboundMessage(
+        channel="websocket",
+        sender_id="webui",
+        chat_id="exact-stop",
+        content="/stop",
+        metadata=metadata,
+    )
+
+    reply = await cmd_stop(CommandContext(
+        msg=message, session=None, key=message.session_key, raw="/stop", loop=loop,
+    ))
+
+    assert isinstance(reply.event, WebUIAdmissionRejectedEvent)
+    assert reply.event.reason == "stale_stop_target"
+    assert loop.cancelled == []
+    assert turns.websocket_turn_id("exact-stop") == "turn-later"

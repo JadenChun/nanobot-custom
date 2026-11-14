@@ -226,6 +226,10 @@ export interface SubmittedTurn {
   turnId: string;
   userMessageId: string;
   sideChannel: boolean;
+  /** Owner admission for this attempt. Resolves true only after the session
+   * owner commits the input; a route-level ``message_accepted`` never resolves
+   * it. Undefined for surfaces that do not need to hold queue state. */
+  admission?: Promise<boolean>;
 }
 
 function eventTurnId(ev: InboundEvent): string | undefined {
@@ -360,6 +364,7 @@ export function useNanobotStream(
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
   const liveStopTargetSeenRef = useRef(false);
   const stopTargetRef = useRef(stopTarget);
+  const admissionWaitersRef = useRef(new Map<string, (admitted: boolean) => void>());
   const trustedStopSourceRef = useRef(initialStopTarget?.source ?? null);
   const stopTargetRequiresRefreshRef = useRef(false);
   const stopTargetRefreshBaselineRef = useRef<StopExpectation | null>(null);
@@ -402,6 +407,13 @@ export function useNanobotStream(
 
   const dismissStreamError = useCallback(() => setStreamError(null), []);
   const dismissStopNotice = useCallback(() => setStopNotice(null), []);
+  const resolveAdmission = useCallback((turnId: string | null | undefined, admitted: boolean) => {
+    if (!turnId) return;
+    const resolve = admissionWaitersRef.current.get(turnId);
+    if (!resolve) return;
+    admissionWaitersRef.current.delete(turnId);
+    resolve(admitted);
+  }, []);
 
   useEffect(() => client.onStatus(setConnectionStatus), [client]);
 
@@ -853,6 +865,7 @@ export function useNanobotStream(
     liveStopTargetSeenRef.current = false;
     setStopPending(false);
     setStopNotice(null);
+    admissionWaitersRef.current.clear();
     childRowsRef.current = initialMessages.filter((message) => message.kind === "delegated_child");
     buffer.current = null;
     activeAssistantRef.current = null;
@@ -934,6 +947,7 @@ export function useNanobotStream(
 
     const handle = (ev: InboundEvent) => {
       if (ev.event === "error") {
+        resolveAdmission(ev.turn_id, false);
         if (
           ev.detail === "stale_stop_target"
           || ev.reason === "stale_stop_target"
@@ -979,6 +993,11 @@ export function useNanobotStream(
         setMessages((prev) => transitionTurnDelivery(prev, turnId, "accepted"));
       }
       if (ev.event === "message_accepted") return;
+      if (ev.event === "message_admitted") {
+        // Owner receipt: only this event commits a queued attempt.
+        resolveAdmission(turnId, true);
+        return;
+      }
       if (ev.event === "user_message") {
         if (ev.provenance?.session_message) {
           flushPendingStreamEvents({ closeAnswerSegment: true });
@@ -1163,6 +1182,9 @@ export function useNanobotStream(
           setStreamError(null);
           setRunStartedAt(ev.started_at);
           setIsStreaming(true);
+          // An owner run status for this attempt is proof of admission even if
+          // the transient receipt was lost while the client was disconnected.
+          if (ev.turn_id) resolveAdmission(ev.turn_id, true);
         } else if (ev.status === "stopping") {
           // Stop was accepted; keep the turn visible until settlement.
           setStopPending(true);
@@ -1209,6 +1231,9 @@ export function useNanobotStream(
 
       if (ev.event === "turn_end") {
         const completedTurnId = typeof ev.turn_id === "string" ? ev.turn_id : null;
+        // A turn that ends without an owner receipt cannot be treated as
+        // admitted; keep the queued item unresolved and held.
+        resolveAdmission(completedTurnId, false);
         if (completedTurnId) sideChannelTurnIdsRef.current.delete(completedTurnId);
         if ("goal_state" in ev && ev.goal_state != null && typeof ev.goal_state === "object") {
           setGoalState(ev.goal_state);
@@ -1308,6 +1333,8 @@ export function useNanobotStream(
 
       if (ev.event === "attached") {
         if ("stop_target" in ev) acceptStopTarget(ev.stop_target);
+        const activeTurnId = client.getRunTurnId(chatId);
+        if (activeTurnId) resolveAdmission(activeTurnId, true);
         setRecoveryState(ev.recovery_state ?? null);
         if (ev.recovery_state?.status === "resuming") {
           setRunStartedAt((current) => current ?? Date.now() / 1000);
@@ -1540,6 +1567,7 @@ export function useNanobotStream(
     flushPendingStreamEvents,
     isSideChannelEvent,
     onTurnEnd,
+    resolveAdmission,
     schedulePendingStreamFlush,
     expectedRootSessionKey,
     initialStopTarget,
@@ -1568,6 +1596,11 @@ export function useNanobotStream(
       }
       const turnId = crypto.randomUUID();
       const userMessageId = crypto.randomUUID();
+      const admission = sideChannel
+        ? undefined
+        : new Promise<boolean>((resolve) => {
+            admissionWaitersRef.current.set(turnId, resolve);
+          });
       if (sideChannel) sideChannelTurnIdsRef.current.add(turnId);
       const previews = hasAttachments ? images!.map((i) => i.preview) : undefined;
       setMessages((prev) => {
@@ -1645,7 +1678,7 @@ export function useNanobotStream(
       } else {
         client.sendMessage(chatId, outboundContent, wireMedia, clientOptions);
       }
-      return { turnId, userMessageId, sideChannel };
+      return { turnId, userMessageId, sideChannel, ...(admission ? { admission } : {}) };
     },
     [chatId, clearActivitySegment, client, flushPendingStreamEvents],
   );

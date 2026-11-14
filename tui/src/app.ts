@@ -690,6 +690,7 @@ export class NanobotTui {
   private sessionModelPreset: string | null | undefined
   private sessionTitle = ""
   private sessionMetadataId = 0
+  private contextRequestId = 0
   private contextTokens: number | null = null
   private contextWindowTokens: number | null = null
   private lastUsage: TokenUsage | null = null
@@ -1844,6 +1845,7 @@ export class NanobotTui {
         this.approvalDetailErrorKeys.clear()
       }
       this.currentChatId = event.chat_id
+      this.contextRequestId += 1
       if (hasOwn(event, "stop_target")) {
         this.modernStopTargetChats.add(event.chat_id)
         this.acceptStopTarget(event.stop_target ?? null, event.chat_id)
@@ -3380,6 +3382,7 @@ export class NanobotTui {
       this.ready = false
       this.clearPromptQueue()
       this.sessionMetadataId += 1
+      this.contextRequestId += 1
       this.sessionTitle = `Fork · ${preview.slice(0, 48)}`
       this.host.reportTitle(preview)
       this.contextTokens = null
@@ -3475,6 +3478,7 @@ export class NanobotTui {
       this.clearRecoveryState()
       this.queuePreview.update([])
       this.sessionMetadataId += 1
+      this.contextRequestId += 1
       this.host.reportTitle("")
       this.sessionTitle = sessionLabel(session)
       this.applySessionModel(session)
@@ -3511,6 +3515,7 @@ export class NanobotTui {
       this.clearRecoveryState()
       this.clearPromptQueue()
       this.sessionMetadataId += 1
+      this.contextRequestId += 1
       this.host.reportTitle("")
       this.sessionTitle = "New chat"
       this.sessionModelPreset = null
@@ -3671,13 +3676,23 @@ export class NanobotTui {
     this.branchMenu.hide()
     this.clearComposer()
     this.status.content = "Reading agent context…"
+    const chatId = this.client.activeChatId
+    const requestId = ++this.contextRequestId
+    const hydrationId = this.hydrationId
+    const isCurrent = () => (
+      !this.quitting
+      && requestId === this.contextRequestId
+      && hydrationId === this.hydrationId
+      && chatId === this.client.activeChatId
+    )
     try {
       const context = await fetchSessionContext(
         this.options.apiUrl,
         this.options.apiToken,
-        this.client.activeChatId,
+        chatId,
         this.apiReauthenticator,
       )
+      if (!isCurrent()) return
       if (!context) {
         this.status.content = "Context unavailable · new session or older gateway"
         return
@@ -3689,6 +3704,7 @@ export class NanobotTui {
       this.status.content = "Context snapshot"
       this.updateMeta()
     } catch (error) {
+      if (!isCurrent()) return
       this.status.content = error instanceof Error ? error.message : String(error)
     }
   }

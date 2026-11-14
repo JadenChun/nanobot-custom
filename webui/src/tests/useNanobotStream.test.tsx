@@ -2429,6 +2429,73 @@ describe("useNanobotStream", () => {
     ]);
   });
 
+  it("resolves queued admission only on the owner receipt, not the route acceptance", async () => {
+    const fake = fakeClient();
+    const { result } = renderHook(
+      () => useNanobotStream("chat-admission-receipt", EMPTY_MESSAGES),
+      { wrapper: wrap(fake.client) },
+    );
+    let submitted: ReturnType<typeof result.current.send> = null;
+    act(() => {
+      submitted = result.current.send("hold until admitted");
+    });
+    let admitted: boolean | null = null;
+    void submitted!.admission!.then((value) => {
+      admitted = value;
+    });
+
+    act(() => {
+      fake.emit("chat-admission-receipt", {
+        event: "message_accepted",
+        chat_id: "chat-admission-receipt",
+        turn_id: submitted!.turnId,
+        starts_turn: true,
+      });
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(admitted).toBeNull();
+
+    act(() => {
+      fake.emit("chat-admission-receipt", {
+        event: "message_admitted",
+        chat_id: "chat-admission-receipt",
+        turn_id: submitted!.turnId,
+        attempt_id: submitted!.turnId,
+        starts_turn: true,
+      });
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(admitted).toBe(true);
+  });
+
+  it("reconciles a pending queued attempt from an owner run status after reconnect", async () => {
+    const fake = fakeClient();
+    const { result } = renderHook(
+      () => useNanobotStream("chat-admission-reconnect", EMPTY_MESSAGES),
+      { wrapper: wrap(fake.client) },
+    );
+    let submitted: ReturnType<typeof result.current.send> = null;
+    act(() => {
+      submitted = result.current.send("reconnect proof");
+    });
+    let admitted: boolean | null = null;
+    void submitted!.admission!.then((value) => {
+      admitted = value;
+    });
+
+    act(() => {
+      fake.emit("chat-admission-reconnect", {
+        event: "goal_status",
+        chat_id: "chat-admission-reconnect",
+        status: "running",
+        turn_id: submitted!.turnId,
+        started_at: 1234,
+      });
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(admitted).toBe(true);
+  });
+
   it("projects a user turn submitted from another attached client exactly once", () => {
     const fake = fakeClient();
     const { result } = renderHook(

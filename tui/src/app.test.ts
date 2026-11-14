@@ -1850,6 +1850,84 @@ describe("NanobotTui layout", () => {
     }
   })
 
+  test("drops a /context completion after the chat changes", async () => {
+    setup = await createRenderer({ width: 96, height: 26, screenMode: "alternate-screen" })
+    const original = globalThis.fetch
+    let resolveFirstContext: ((response: Response) => void) | undefined
+    let contextRequests = 0
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/context")) {
+        contextRequests += 1
+        if (contextRequests === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveFirstContext = resolve
+          })
+        }
+        return Promise.resolve(Response.json({
+          total_messages: 2,
+          archived_messages: 0,
+          replay_messages: 2,
+          estimated_replay_tokens: 900,
+          estimated_summary_tokens: 99,
+          estimated_session_tokens: 999,
+          archived_summary: "chat B context",
+          archived_summary_at: null,
+        }))
+      }
+      return Promise.resolve(Response.json({ messages: [] }))
+    }) as typeof fetch
+    const transport = client()
+    const app = NanobotTui.mount(
+      setup.renderer,
+      { ...options, apiUrl: "http://nanobot.test", apiToken: "secret" },
+      transport,
+      new MockTreeSitterClient({ autoResolveTimeout: 0 }),
+    )
+    const ui = app as unknown as {
+      composer: TextareaRenderable
+      contextPanel: { visible: boolean }
+      status: { plainText: string }
+      runtimeControls: { contextText: { plainText: string } }
+    }
+
+    try {
+      app.accept({ event: "attached", chat_id: "chat" })
+      await waitUntil(() => (app as unknown as { ready: boolean }).ready)
+      ui.composer.setText("/context")
+      ui.composer.submit()
+      await waitUntil(() => contextRequests === 1)
+
+      transport.activeChatId = "chat-b"
+      app.accept({ event: "attached", chat_id: "chat-b" })
+      await waitUntil(() => (app as unknown as { ready: boolean }).ready)
+      resolveFirstContext!(Response.json({
+        total_messages: 9,
+        archived_messages: 0,
+        replay_messages: 9,
+        estimated_replay_tokens: 5000,
+        estimated_summary_tokens: 0,
+        estimated_session_tokens: 5000,
+        archived_summary: "chat A context",
+        archived_summary_at: null,
+      }))
+      await setup.flush()
+
+      expect(ui.contextPanel.visible).toBe(false)
+      expect(ui.status.plainText).not.toContain("Context snapshot")
+      expect(ui.runtimeControls.contextText.plainText).not.toContain("~5.0k ctx")
+
+      ui.composer.setText("/context")
+      ui.composer.submit()
+      await waitUntil(() => contextRequests === 2)
+      await waitUntil(() => ui.status.plainText.includes("Context snapshot"))
+      expect(ui.contextPanel.visible).toBe(true)
+      expect(ui.runtimeControls.contextText.plainText).toContain("~999 ctx")
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   test("opens the latest turn diff as a full-screen, navigable view", async () => {
     setup = await createRenderer({ width: 96, height: 28, screenMode: "alternate-screen" })
     const app = mount(setup)

@@ -1966,11 +1966,43 @@ export function ThreadComposer({
     }
   }, []);
 
+  /**
+   * A queued item leaves the queue only when the send producer proves
+   * admission. A route-level acceptance is not proof; the producer returns an
+   * admission promise that resolves on the owner receipt. While it is pending
+   * the item stays at the head and is held against automatic resubmission.
+   */
+  const settleQueuedSubmission = useCallback((
+    submitted: SubmittedTurn | boolean | null | void | Promise<boolean | void>,
+    prompt: QueuedPrompt,
+  ) => {
+    if (!isSubmittedTurn(submitted)) {
+      heldQueuedPromptIdsRef.current.delete(prompt.id);
+      setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
+      return;
+    }
+    rememberQueuedSend(submitted, prompt);
+    const admission = submitted.admission;
+    if (!admission) {
+      heldQueuedPromptIdsRef.current.delete(prompt.id);
+      setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
+      return;
+    }
+    void admission.then((admitted) => {
+      if (!admitted) return;
+      queuedSendSnapshotsRef.current.delete(submitted.turnId);
+      heldQueuedPromptIdsRef.current.delete(prompt.id);
+      setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
+    }).catch(() => {
+      // An unresolved attempt stays held; never resubmit it automatically.
+    });
+  }, [rememberQueuedSend]);
+
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt) => {
       if (workspaceFullRetiring) return;
       secondEnterPromptIdRef.current = null;
-      heldQueuedPromptIdsRef.current.delete(prompt.id);
+      heldQueuedPromptIdsRef.current.add(prompt.id);
       const text = prompt.text.trim();
       const queuedImages = queuedImagesToSendImages(prompt.images);
       if (text || queuedImages?.length) {
@@ -1987,34 +2019,39 @@ export function ThreadComposer({
               ...(isStreaming ? { continueActiveTurn: true } : {}),
             }
           : undefined;
-        const submitted = onSend(text, queuedImages, options);
-        if (submitted === false || submitted === null) {
-          heldQueuedPromptIdsRef.current.add(prompt.id);
-        } else {
-          setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-          if (isSubmittedTurn(submitted)) rememberQueuedSend(submitted, prompt);
+        let submitted: SubmittedTurn | null | boolean | void | Promise<boolean | void>;
+        try {
+          submitted = onSend(text, queuedImages, options);
+        } catch {
+          // A local transport failure keeps this exact item, held.
+          requestAnimationFrame(() => textareaRef.current?.focus());
+          return;
         }
+        if (submitted === false || submitted === null) {
+          requestAnimationFrame(() => textareaRef.current?.focus());
+          return;
+        }
+        settleQueuedSubmission(submitted, prompt);
       } else {
+        heldQueuedPromptIdsRef.current.delete(prompt.id);
         setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
       }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    [isStreaming, onSend, rememberQueuedSend, workspaceFullRetiring],
+    [isStreaming, onSend, settleQueuedSubmission, workspaceFullRetiring],
   );
 
   const sendNextQueuedPrompt = useCallback(() => {
     if (workspaceFullRetiring) return;
     if (queuedPrompts.length === 0) return;
-    // Queue selection accepts text, attachments, or both. The same rule
-    // applies to manual and automatic sends.
+    // Queue selection accepts text, attachments, or both. Only the first
+    // eligible item is a candidate: a held head blocks later items instead of
+    // letting them skip ahead.
     const nextPrompt = queuedPrompts.find(
-      (prompt) => (
-        (prompt.text.trim().length > 0 || (prompt.images?.length ?? 0) > 0)
-        && !heldQueuedPromptIdsRef.current.has(prompt.id)
-      ),
+      (prompt) => prompt.text.trim().length > 0 || (prompt.images?.length ?? 0) > 0,
     );
-    if (!nextPrompt) return;
-    heldQueuedPromptIdsRef.current.delete(nextPrompt.id);
+    if (!nextPrompt || heldQueuedPromptIdsRef.current.has(nextPrompt.id)) return;
+    heldQueuedPromptIdsRef.current.add(nextPrompt.id);
     const queuedImages = queuedImagesToSendImages(nextPrompt.images);
     const options: SendOptions | undefined = (
       nextPrompt.quotedContext
@@ -2028,23 +2065,28 @@ export function ThreadComposer({
         }
       : undefined;
     let submitted: SubmittedTurn | null | boolean | void | Promise<boolean | void>;
-    if (queuedImages?.length && options) {
-      submitted = onSend(nextPrompt.text.trim(), queuedImages, options);
-    } else if (queuedImages?.length) {
-      submitted = onSend(nextPrompt.text.trim(), queuedImages);
-    } else if (options) {
-      submitted = onSend(nextPrompt.text.trim(), undefined, options);
-    } else {
-      submitted = onSend(nextPrompt.text.trim());
+    try {
+      if (queuedImages?.length && options) {
+        submitted = onSend(nextPrompt.text.trim(), queuedImages, options);
+      } else if (queuedImages?.length) {
+        submitted = onSend(nextPrompt.text.trim(), queuedImages);
+      } else if (options) {
+        submitted = onSend(nextPrompt.text.trim(), undefined, options);
+      } else {
+        submitted = onSend(nextPrompt.text.trim());
+      }
+    } catch {
+      // A local transport failure keeps this exact item, held.
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
     }
     if (submitted === false || submitted === null) {
-      heldQueuedPromptIdsRef.current.add(nextPrompt.id);
-    } else {
-      setQueuedPrompts((items) => items.filter((item) => item.id !== nextPrompt.id));
-      if (isSubmittedTurn(submitted)) rememberQueuedSend(submitted, nextPrompt);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
     }
+    settleQueuedSubmission(submitted, nextPrompt);
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [onSend, queuedPrompts, rememberQueuedSend, workspaceFullRetiring]);
+  }, [onSend, queuedPrompts, settleQueuedSubmission, workspaceFullRetiring]);
 
   useEffect(() => {
     const wasStreaming = wasStreamingRef.current;
