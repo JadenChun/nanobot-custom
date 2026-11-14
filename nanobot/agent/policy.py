@@ -6,7 +6,6 @@ import difflib
 import hashlib
 import json
 import re
-import shlex
 import uuid
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
@@ -20,12 +19,134 @@ from nanobot.context_repo import ContextRepoManager
 from nanobot.providers.base import ToolCallRequest
 
 _APPROVAL_REQUIRED = "approval_required"
+_POLICY_BLOCKED = "policy_blocked"
+# A reduced-protection nested agent launch is refused, not approved, when the
+# launch path cannot prove outer confinement and process ownership.
+_LAUNCH_CONFINEMENT_UNPROVEN = "launch_confinement_unproven"
 
 # Desktop control actions that only observe the local screen. Every other
 # action, and every action value that is not an exact match, emits global
 # input events or is unknown, so it needs the same exact-effect approval as
 # other state-changing tools.
 _READ_ONLY_DESKTOP_ACTIONS = frozenset({"info", "screenshot", "cursor_position", "wait"})
+
+# External agent launches that lower their own sandbox or approval protection.
+# A launch that keeps the tool's default protection is not listed and stays an
+# ordinary command.
+_REDUCED_PROTECTION_LAUNCHES = (
+    re.compile(
+        r"\bcodex\b[^|;&\n]*?"
+        r"(?:--yolo\b|--dangerously-bypass-approvals-and-sandbox\b|--full-auto\b)"
+    ),
+    re.compile(
+        r"\bcodex\b[^|;&\n]*?"
+        r"(?:--sandbox[= ]+danger-full-access\b|--ask-for-approval[= ]+never\b)"
+    ),
+    re.compile(
+        r"\bclaude\b[^|;&\n]*?"
+        r"(?:--dangerously-skip-permissions\b|--permission-mode[= ]+bypassPermissions\b)"
+    ),
+    re.compile(r"\bgemini\b[^|;&\n]*?(?:--yolo\b|\s-y\b)"),
+)
+
+# A tmux command starts or types into a process the shell executor does not own.
+_TMUX_LAUNCH_COMMANDS = re.compile(
+    r"\btmux\b[^|;&\n]*\b(?:send-keys|new-session|new-window|respawn-pane|split-window)\b"
+)
+
+
+def nested_launch_path(command: str) -> str | None:
+    """Classify a reduced-protection nested launch and its launch path.
+
+    Returns ``"shell"`` for a direct launch the shell executor starts itself,
+    ``"tmux"`` when the launch is typed into a tmux session, and ``None`` when
+    the command does not lower a nested agent's protection.
+    """
+    lower = command.strip().lower()
+    if not lower:
+        return None
+    if not any(pattern.search(lower) for pattern in _REDUCED_PROTECTION_LAUNCHES):
+        return None
+    return "tmux" if _TMUX_LAUNCH_COMMANDS.search(lower) else "shell"
+
+
+def nested_launch_id(
+    command: str, working_dir: str | None = None, workspace: Path | str | None = None,
+) -> str:
+    """Identity of one nested launch: the exact command and effective directory.
+
+    The policy and the executor resolve the same directory from the same
+    workspace, so one launch has one identity on both sides of the boundary.
+    """
+    base = Path(str(workspace if workspace is not None else Path.cwd())).expanduser()
+    target = Path(working_dir).expanduser() if working_dir else base
+    if not target.is_absolute():
+        target = base / target
+    payload = json.dumps(
+        {"command": " ".join(command.split()), "cwd": str(target.resolve(strict=False))},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class LaunchConfinementAttestation:
+    """Executor statement that confinement and process ownership hold for one launch."""
+
+    launch_id: str
+    path: str
+    sandbox: str
+    process_owner: str
+
+    def covers(self, launch_id: str, path: str) -> bool:
+        """True only for the attested launch, path, and non-empty providers."""
+        return (
+            bool(launch_id)
+            and launch_id == self.launch_id
+            and path == self.path
+            and bool(self.sandbox)
+            and bool(self.process_owner)
+        )
+
+
+LaunchConfinementAttestor = Callable[[str, str | None], LaunchConfinementAttestation | None]
+
+# Executors register the attestor they can honestly issue for their workspace.
+_LAUNCH_CONFINEMENT_ATTESTORS: dict[str, LaunchConfinementAttestor] = {}
+
+
+def _workspace_key(workspace: Path | str | None) -> str | None:
+    if workspace is None:
+        return None
+    raw = str(workspace)
+    if not raw:
+        return None
+    try:
+        return str(Path(raw).expanduser().resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        return raw
+
+
+def register_launch_confinement_attestor(
+    workspace: Path | str, attestor: LaunchConfinementAttestor,
+) -> None:
+    key = _workspace_key(workspace)
+    if key is not None:
+        _LAUNCH_CONFINEMENT_ATTESTORS[key] = attestor
+
+
+def unregister_launch_confinement_attestor(workspace: Path | str) -> None:
+    key = _workspace_key(workspace)
+    if key is not None:
+        _LAUNCH_CONFINEMENT_ATTESTORS.pop(key, None)
+
+
+def resolve_launch_confinement_attestor(
+    workspace: Path | None,
+) -> LaunchConfinementAttestor | None:
+    key = _workspace_key(workspace)
+    return None if key is None else _LAUNCH_CONFINEMENT_ATTESTORS.get(key)
 
 
 @dataclass(slots=True)
@@ -240,6 +361,11 @@ class RiskyActionPolicy(ToolPolicy):
     write_target_resolver: Callable[[str, str], Path | None] | None = field(
         default=None, repr=False, compare=False,
     )
+    # The executor that starts a nested launch issues its own confinement
+    # attestation. ``None`` resolves the executor registered for this workspace.
+    launch_confinement_attestor: LaunchConfinementAttestor | None = field(
+        default=None, repr=False, compare=False,
+    )
     _assessed_write_targets: dict[str, Path] = field(
         default_factory=dict, init=False, repr=False, compare=False,
     )
@@ -287,7 +413,12 @@ class RiskyActionPolicy(ToolPolicy):
         self._risky_calls.clear()
         blocked: list[tuple[ToolCallRequest, str]] = []
         for tool_call in tool_calls:
-            reason = self._risky_reason(tool_call)
+            assessment = self._risky_reason(tool_call)
+            if isinstance(assessment, ToolPolicyDecision):
+                # A launch whose path cannot prove confinement is refused here,
+                # before any approval request and before any process starts.
+                return assessment
+            reason = assessment
             effect_id = self._effect_fingerprint(tool_call)
             if self.effect_authority is not None and effect_id == self.effect_authority.effect_id:
                 reason = reason or "repeat the previously approved risky action"
@@ -330,7 +461,15 @@ class RiskyActionPolicy(ToolPolicy):
         prepared = ToolCallRequest(id=tool_call.id, name=tool_call.name, arguments=arguments)
         effect_id = self._effect_fingerprint(prepared)
         assessed = self._risky_calls.get(tool_call.id)
+        if prepared.name == "exec" and nested_launch_path(
+            str(prepared.arguments.get("command") or ""),
+        ) is not None:
+            # Recheck the executor attestation for the prepared launch itself.
+            assessed = None
         reason = assessed[1] if assessed is not None else self._risky_reason(prepared)
+        if isinstance(reason, ToolPolicyDecision):
+            # The executor must still prove confinement at the launch boundary.
+            return reason
         if self.effect_authority is not None and effect_id == self.effect_authority.effect_id:
             reason = reason or "repeat the previously approved risky action"
         if reason is None:
@@ -346,12 +485,17 @@ class RiskyActionPolicy(ToolPolicy):
     def batch_has_mutation(self, tool_calls: list[ToolCallRequest]) -> bool:
         return any(tc.name in self.mutating_tool_names() for tc in tool_calls)
 
-    def _risky_reason(self, tool_call: ToolCallRequest) -> str | None:
+    def _risky_reason(self, tool_call: ToolCallRequest) -> str | ToolPolicyDecision | None:
         if tool_call.name == "exec":
-            return self._risky_exec_reason(
-                str(tool_call.arguments.get("command") or ""),
-                str(tool_call.arguments.get("working_dir") or ""),
-            )
+            command = str(tool_call.arguments.get("command") or "")
+            working_dir = str(tool_call.arguments.get("working_dir") or "")
+            launch_path = nested_launch_path(command)
+            if launch_path is not None:
+                if not self._launch_confinement_covers(command, working_dir, launch_path):
+                    return self._refuse_launch(launch_path)
+                # Exact approval is required in addition to the attestation.
+                return "launch a nested agent with reduced sandbox or approval protections"
+            return self._risky_exec_reason(command, working_dir)
         if tool_call.name in {"write_file", "edit_file"}:
             raw_path = str(tool_call.arguments.get("path") or "")
             resolved = self._resolve_write_target(tool_call.name, raw_path)
@@ -404,60 +548,68 @@ class RiskyActionPolicy(ToolPolicy):
         return None
 
     def _risky_exec_reason(self, command: str, working_dir: str | None = None) -> str | None:
+        _ = working_dir
         lower = command.strip().lower()
         if not lower:
             return None
-        if self._is_autonomous_context_git_command(command, working_dir):
-            return None
+        # The ordinary shell policy applies to every shell call. A Git word,
+        # an autoPush repository, or a benign segment never exempts an effect.
         for pattern, label in self._RISKY_EXEC_PATTERNS:
             if pattern.search(lower):
                 return label
         return None
 
-    def _command_working_dir(self, command: str, working_dir: str | None) -> Path:
-        base = self._resolve_workspace_path(working_dir or ".")
-        git_c_path = self._extract_git_c_path(command)
-        if git_c_path:
-            candidate = Path(git_c_path).expanduser()
-            if not candidate.is_absolute():
-                candidate = base / candidate
-            return candidate.resolve(strict=False)
-        return base
+    def _launch_confinement_covers(
+        self, command: str, working_dir: str | None, launch_path: str,
+    ) -> bool:
+        """True only when the executor attests this launch's confinement."""
+        if launch_path != "shell":
+            # A tmux command types into a process the shell executor neither
+            # confines for that launch nor owns; it cannot attest either.
+            return False
+        attestation = self._launch_confinement_attestation(command, working_dir)
+        if attestation is None:
+            return False
+        return attestation.covers(
+            nested_launch_id(command, working_dir, self.workspace), launch_path,
+        )
 
-    def _extract_git_c_path(self, command: str) -> str | None:
-        try:
-            tokens = shlex.split(command, posix=False)
-        except ValueError:
+    def _launch_confinement_attestation(
+        self, command: str, working_dir: str | None,
+    ) -> LaunchConfinementAttestation | None:
+        attestor = self.launch_confinement_attestor or resolve_launch_confinement_attestor(
+            self.workspace,
+        )
+        if attestor is None:
             return None
-        cleaned = [token.strip("'\"") for token in tokens]
-        lowered = [token.lower() for token in cleaned]
-        for index, token in enumerate(lowered):
-            if token != "git":
-                continue
-            if index + 2 < len(tokens) and cleaned[index + 1] == "-C":
-                return cleaned[index + 2]
-        return None
+        try:
+            return attestor(command, working_dir)
+        except (OSError, ValueError):
+            return None
 
-    def _is_autonomous_context_git_command(self, command: str, working_dir: str | None) -> bool:
-        lower = command.strip().lower()
-        if not re.search(r"\bgit\b", lower):
-            return False
-        if self._deletes_git_branch(lower):
-            return False
-
-        cwd = self._command_working_dir(command, working_dir)
-        target = self.context_manager.find_target_repo_for_path(cwd)
-        repo = self.context_manager.find_repo_for_path(cwd)
-        if target and (repo is None or len(str(target.path or "")) >= len(str(repo.path))):
-            return False
-        return bool(repo and repo.auto_push_enabled())
-
-    def _deletes_git_branch(self, lower_command: str) -> bool:
-        return bool(
-            re.search(r"\bgit\b[^|;&\n]*\bbranch\b[^|;&\n]*(?:\s-D\b|\s-d\b|--delete\b)", lower_command)
-            or re.search(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--delete\b", lower_command)
-            or re.search(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*(?:^|\s)\+?:[^\s|;&]+", lower_command)
-            or re.search(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--mirror\b", lower_command)
+    def _refuse_launch(self, launch_path: str) -> ToolPolicyDecision:
+        """Typed refusal that precedes every process start for this launch."""
+        summary = (
+            "launch a nested agent with reduced sandbox or approval protections without "
+            "proven outer confinement and process ownership"
+        )
+        return ToolPolicyDecision(
+            action="respond",
+            stop_reason=_POLICY_BLOCKED,
+            response=(
+                "I cannot start that nested agent launch. Its settings reduce the sandbox "
+                "or approval protection, and this launch path cannot prove outer "
+                "confinement and process ownership. Use the agent's default protection, "
+                "or run it inside a confined shell this executor owns."
+            ),
+            metadata={
+                "reason_id": _LAUNCH_CONFINEMENT_UNPROVEN,
+                "reasons": [summary],
+                "summary": summary,
+                "launch_path": launch_path,
+                "requires_approval": False,
+            },
+            requires_approval=False,
         )
 
     def _resolve_workspace_path(self, raw_path: str) -> Path:

@@ -50,7 +50,11 @@ from nanobot.agent.tools.native_process import (
     native_supervisor_available,
     spawn_native_process,
 )
-from nanobot.agent.tools.sandbox import wrap_command, wrap_managed_command
+from nanobot.agent.tools.sandbox import (
+    managed_bwrap_available,
+    wrap_command,
+    wrap_managed_command,
+)
 from nanobot.agent.tools.schema import (
     ArraySchema,
     BooleanSchema,
@@ -74,6 +78,7 @@ from nanobot.security.workspace_access import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.policy import LaunchConfinementAttestation
     from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.security.workspace_policy import is_path_within
 
@@ -159,6 +164,7 @@ class _PreparedCommand:
     managed: bool = False
     logical_cwd: str | None = None
     grant_snapshot: FolderGrantSnapshot | None = None
+    launch_attestation: LaunchConfinementAttestation | None = None
 
 
 @tool_parameters(
@@ -322,6 +328,94 @@ class ExecTool(Tool):
         self.sandbox_rw_binds = self._normalize_bind_roots(sandbox_rw_binds)
         self.allowed_env_keys = allowed_env_keys or []
         self._session_manager = session_manager or DEFAULT_EXEC_SESSION_MANAGER
+        from nanobot.agent.policy import register_launch_confinement_attestor
+
+        register_launch_confinement_attestor(
+            self.working_dir or os.getcwd(), self.attest_launch_confinement,
+        )
+
+    def _full_access_active(self) -> bool:
+        focus = current_workspace_focus()
+        return bool(
+            focus is not None
+            and focus.permission_owner is not None
+            and focus.full_reference is not None
+            and focus.permission_owner.is_current_full_reference(focus.full_reference)
+        )
+
+    def _outer_confinement_provider(self, working_dir: str | None) -> str | None:
+        """Name the OS sandbox this executor applies to a launched command.
+
+        The provider is named only when that sandbox can actually wrap this
+        command here. An unavailable backend proves nothing.
+        """
+        policy = self.resource_policy
+        if policy is not None and policy.managed_mode and not self._full_access_active():
+            return "managed" if managed_bwrap_available() else None
+        if not self.sandbox or _IS_WINDOWS:
+            return None
+        workspace = self.working_dir or os.getcwd()
+        try:
+            wrap_command(self.sandbox, "true", workspace, working_dir or workspace)
+        except (OSError, ValueError):
+            return None
+        return self.sandbox
+
+    @staticmethod
+    def _process_ownership_identity() -> str | None:
+        """Name the process owner that can reap the launched command tree."""
+        if native_supervisor_available():
+            return "native-supervisor"
+        if os.name == "posix" or _IS_WINDOWS:
+            return "process-tree"
+        return None
+
+    def attest_launch_confinement(
+        self, command: str, working_dir: str | None = None,
+    ) -> LaunchConfinementAttestation | None:
+        """Attest confinement and process ownership for one nested launch.
+
+        Returns ``None`` when this executor cannot prove both for that exact
+        launch, including every tmux launch and every unconfined shell.
+        """
+        from nanobot.agent.policy import (
+            LaunchConfinementAttestation,
+            nested_launch_id,
+            nested_launch_path,
+        )
+
+        if nested_launch_path(command) != "shell":
+            return None
+        sandbox = self._outer_confinement_provider(working_dir)
+        owner = self._process_ownership_identity()
+        if sandbox is None or owner is None:
+            return None
+        return LaunchConfinementAttestation(
+            launch_id=nested_launch_id(
+                command, working_dir, self.working_dir or os.getcwd(),
+            ),
+            path="shell",
+            sandbox=sandbox,
+            process_owner=owner,
+        )
+
+    def _admit_nested_launch(
+        self, command: str, working_dir: str | None,
+    ) -> LaunchConfinementAttestation | ToolResult | None:
+        """Refuse a reduced-protection launch this executor cannot attest."""
+        from nanobot.agent.policy import nested_launch_path
+
+        if nested_launch_path(command) is None:
+            return None
+        attestation = self.attest_launch_confinement(command, working_dir)
+        if attestation is None:
+            return ToolResult.error(
+                "Error: nested agent launch refused before start "
+                "(launch_confinement_unproven): this launch reduces the nested agent's "
+                "sandbox or approval protection, and this executor cannot prove outer "
+                "confinement and process ownership for it."
+            )
+        return attestation
 
     def _input_path_is_private(self, resolved: Path) -> bool:
         from nanobot.config.paths import get_data_dir, get_media_dir
@@ -703,13 +797,7 @@ class ExecTool(Tool):
         input_mounts: tuple[tuple[Path, str], ...] = (),
     ) -> _PreparedCommand | str | ToolOutcome:
         focus = current_workspace_focus()
-        full_reference = focus.full_reference if focus is not None else None
-        full_active = bool(
-            focus is not None
-            and focus.permission_owner is not None
-            and full_reference is not None
-            and focus.permission_owner.is_current_full_reference(full_reference)
-        )
+        full_active = self._full_access_active()
         managed = bool(
             self.resource_policy
             and self.resource_policy.managed_mode
@@ -756,6 +844,9 @@ class ExecTool(Tool):
         )
         if guard_error:
             return guard_error
+        launch_admission = self._admit_nested_launch(command, working_dir)
+        if isinstance(launch_admission, str):
+            return launch_admission
         grant_snapshot: FolderGrantSnapshot | None = None
         logical_cwd = cwd if managed else None
         if managed:
@@ -854,6 +945,7 @@ class ExecTool(Tool):
             managed=managed,
             logical_cwd=logical_cwd,
             grant_snapshot=grant_snapshot,
+            launch_attestation=launch_admission,
         )
 
     def _reserve_native_admission(
