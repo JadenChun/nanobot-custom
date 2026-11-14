@@ -3,9 +3,9 @@
 **Date:** 2026-11-14 (Linux x86_64)
 **Coordinator and workers:** `commandcode/deepseek/deepseek-v4.1-flash`
 **Worktree:** `/home/jaden/Documents/Utilities/nanobot-a3-reconciliation`
-**Branch:** `codex/a3-audit-reconciliation`, 117 commits ahead of
+**Branch:** `codex/a3-audit-reconciliation`, 146 commits ahead of
 `origin/codex/staging-audit-implementation` (`722bd8ec`).
-**Candidate:** `a75c0c68` (code at `ef315ec1`, plus evidence and documentation).
+**Candidate:** `58c25692` (code at `74abe219`, plus evidence and documentation).
 **Release state:** HOLD. Push, merge, deployment, and formal release
 qualification remain with the project owner.
 
@@ -14,11 +14,11 @@ qualification remain with the project owner.
 | Measure | Value |
 | --- | --- |
 | Original findings | 136 |
-| Accepted | 113 |
-| Ready for review | 3 |
-| Unverified | 19 |
+| Accepted | 132 |
+| Ready for review | 0 |
+| Unverified | 4 |
 | Review findings | 9 (all accepted; RR1 and RR3 accepted in the third wave) |
-| Evidence rows | 93 |
+| Evidence rows | 115 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
@@ -76,43 +76,33 @@ The remaining commits record reviews, evidence, and the stage decisions.
 
 ## Next ready packages
 
-1. **A3-4:** E02-F20 and U01-F05 are accepted. H01-F5 still needs the
-   autoPush-exemption decision.
-2. **A3-5:** T01-F04 and X01-F02 are accepted. K01-F06 guidance is repaired;
-   its policy half needs the K01-Q5/D2-D4 decision on nested-agent bypass.
-3. **A3-6:** ten evidence-reviewed findings are accepted. E02-F16 needs the
-   credential-profile decision. C00-F06 is in review with the instance-media
-   policy follow-up. H03-F5 needs attempt-total evidence.
-4. **A3-7:** R01-F11 through R01-F14 are accepted on native unit evidence. The
-   app chat scenario needs a Tailscale identity, a Serve mapping and a signed
-   APK on a device.
-5. **A3-8:** A01-F01, E02-F07 and A01-F05 repairs are in review. The durability
-   review covers H02-CAP-SOURCE64, H02-CAP-JOURNAL4096, H02-IO, A01-F03,
-   A01-F08, M01-F03 and A01-F06.
-6. **A3-9:** Q01-F03, R01-F17, Q01-F05 and E02-F12 are accepted. R01-F05 is
-   qualified through the real gateway/edge for typed read, mutation and
-   disconnect; its phone-to-Serve transport is blocked. Q01-F01 and R01-F20
-   scope exclusions are under review.
-7. **A3-10:** all six dispositions are accepted. C00-F04/C00-F05 stay
-   offline by the unconditional guard; retire-or-repair is a future decision.
-8. **A3-1/A3-2 residuals:** H01-F6, H01-F7, X01-F01 and S02-F03 are under
-   review.
+1. **A3-7/A3-9 mobile recovery:** the cleaned app receipt exposed a launch-time
+   admission failure: 6 of 10 requests are rejected as `native request was not
+   admitted`, the broker reason is masked, and a read succeeds only after a
+   manual refresh. A bounded native repair and a clean re-run are in progress.
+2. **A3-8:** all durability findings are accepted. The remaining residuals are
+   the unwired cron admin key, off-loop `pre_begin`, the process-local cache
+   index, unknown-trigger resolution UI, and the unvalidated sync journal API.
+3. **A3-9:** Q01-F03, R01-F17, Q01-F05, E02-F12 and H03-F5 are accepted.
+   R01-F05 remains partial for launch recovery, legacy `/mobile/v1` POST
+   refresh/logout, remote logout, refresh rotation replay, headless auth key and
+   a physical device.
+4. **A3-10:** all six dispositions accepted; AC10.1 still needs the six R18
+   durability findings (now accepted) recorded in the stage ledger and the C00
+   activation decision remains future work.
 
 ## Blockers
 
 - **Product decisions:** H01-F5 autoPush subset; E02-F16 credential-profile
-  policy; C00-F04/C00-F05 onboarding retire-or-repair before any future
-  activation (v1 keeps the guard); K01-F06 nested-bypass policy (K01-Q5/D2-D4).
-- **Environment:** macOS, Windows, physical Android, and Tailscale
-  qualification remain absent. The Linux host has the Android SDK, adb, an
-  API 36 x86_64 emulator image, JDK 21 and Go 1.27.3 under the ignored
-  `mobile/toolchain`.
-- **A3-7 app scenario:** no tailnet auth key or Serve mapping, and no loopback
-  HTTPS fixture; `AllowInsecureLoopback` is not exposed.
-- **A3-9 R01-F05:** phone-to-Serve/TLS transport, refresh and logout semantics
-  are unqualified.
-- **A3-1 residual:** the retargeted read path is bound to the request media
-  root; the loop-registered restricted-instance policy path is in review.
+  policy; K01-F06 nested-bypass policy (K01-Q5/D2-D4); C00-F04/C00-F05
+  retire-or-repair before any future onboarding activation.
+- **Environment:** macOS, Windows and physical Android remain absent. The Linux
+  host has the full Android toolchain under the ignored `mobile/toolchain`, and
+  Tailscale Serve is live at `fedora.taila1e707.ts.net`.
+- **A3-7/A3-9:** headless tailnet login needs a product-supported auth-key input
+  or test transport; the app ignores `Config.auth_key`.
+- **A3-9 R01-F05:** launch admission recovery, legacy `/mobile/v1` POST routes,
+  remote logout, refresh rotation replay and device-only TLS trust.
 - **A3-3 gaps:** no single mixed fixture, no RUNNING terminal projection,
   simulated unqualified platform, unreproducible source-reader rollback leg.
 
