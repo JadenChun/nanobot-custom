@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
-import subprocess
-
 from nanobot.apps.cli.service import CliAppManager
+
+
+class _FakeProcess:
+    def __init__(self, argv: list[str]) -> None:
+        self.args = argv
+        self.returncode = 0
+        self.pid = 123
+
+    def communicate(self, timeout=None):
+        return ("ok", "")
+
+
+def _fake_popen(captured: dict[str, object]):
+    def popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return _FakeProcess(argv)
+
+    return popen
 
 
 def test_subprocess_env_excludes_api_keys(monkeypatch, tmp_path) -> None:
@@ -42,17 +59,10 @@ def test_run_passes_filtered_env(monkeypatch, tmp_path) -> None:
     manager = CliAppManager(workspace=tmp_path, data_dir=tmp_path / "cli-apps")
     captured: dict[str, object] = {}
 
-    def fake_run(*args, **kwargs):
-        captured.update(kwargs)
-
-        class Result:
-            returncode = 0
-            stdout = "ok"
-            stderr = ""
-
-        return Result()
-
-    monkeypatch.setattr("nanobot.apps.cli.service.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "nanobot.apps.cli.service.subprocess.Popen",
+        _fake_popen(captured),
+    )
     monkeypatch.setattr(manager, "get_app", lambda name: {"name": name, "entry_point": "echo"})
     monkeypatch.setattr(
         manager,
@@ -75,11 +85,10 @@ def test_management_subprocesses_use_filtered_env(monkeypatch, tmp_path) -> None
     monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-leak")
     captured: dict[str, object] = {}
 
-    def fake_run(*args, **kwargs):
-        captured.update(kwargs)
-        return subprocess.CompletedProcess(args[0], 0, stdout="ok", stderr="")
-
-    monkeypatch.setattr("nanobot.apps.cli.service.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "nanobot.apps.cli.service.subprocess.Popen",
+        _fake_popen(captured),
+    )
     manager = CliAppManager(workspace=tmp_path, data_dir=tmp_path / "cli-apps")
 
     manager._run_argv(["example-cli", "--help"], timeout=5)

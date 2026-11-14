@@ -6,9 +6,10 @@ import json
 import socket
 from unittest.mock import patch
 
+import httpx
 import pytest
 
-from nanobot.agent.tools.web import WebFetchTool
+from nanobot.agent.tools.web import WebFetchConfig, WebFetchTool
 
 
 @pytest.mark.asyncio
@@ -52,23 +53,30 @@ async def test_web_fetch_blocks_localhost():
 @pytest.mark.asyncio
 async def test_web_fetch_result_contains_untrusted_flag():
     """When fetch succeeds, result JSON must include untrusted=True and the banner."""
-    tool = WebFetchTool()
+    tool = WebFetchTool(config=WebFetchConfig(use_jina_reader=False))
 
     fake_html = "<html><head><title>Test</title></head><body><p>Hello world</p></body></html>"
 
-    class FakeResponse:
+    class FakeStreamResponse:
         status_code = 200
-        url = "https://example.com/page"
-        text = fake_html
         headers = {"content-type": "text/html"}
-        def raise_for_status(self): pass
-        def json(self): return {}
+        url = "https://example.com/page"
+        request = httpx.Request("GET", "https://example.com/page")
 
-    async def _fake_get(self, url, **kwargs):
-        return FakeResponse()
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self):
+            yield fake_html.encode()
+
+    def _fake_stream(self, method, url, headers=None, **kwargs):
+        return FakeStreamResponse()
 
     with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public), \
-         patch("httpx.AsyncClient.get", _fake_get):
+         patch("httpx.AsyncClient.stream", _fake_stream):
         result = await tool.execute(url="https://example.com/page")
 
     data = json.loads(result)

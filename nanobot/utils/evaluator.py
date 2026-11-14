@@ -46,7 +46,10 @@ def evaluator_prompt_file(workspace: Path) -> Path:
 
 def has_evaluator_prompt_override(workspace: Path) -> bool:
     """True when the workspace defines a non-empty evaluator prompt override."""
-    return has_workspace_prompt_override(evaluator_prompt_file(workspace))
+    return has_workspace_prompt_override(
+        evaluator_prompt_file(workspace),
+        workspace=workspace,
+    )
 
 
 def default_evaluator_prompt() -> str:
@@ -60,7 +63,10 @@ def resolve_evaluator_prompt(workspace: Path) -> str:
     Oversized overrides are truncated so a runaway file cannot blow up the
     evaluator call.
     """
-    text, original_chars = load_workspace_prompt_override(evaluator_prompt_file(workspace))
+    text, original_chars = load_workspace_prompt_override(
+        evaluator_prompt_file(workspace),
+        workspace=workspace,
+    )
     if text is not None:
         if original_chars > EVALUATOR_PROMPT_MAX_CHARS:
             logger.warning(

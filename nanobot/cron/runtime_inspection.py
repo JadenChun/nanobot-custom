@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -29,6 +31,45 @@ def inspect_occurrences(root: Path, *, namespace: str) -> dict[str, object]:
         max_records=lambda: MAX_INSPECTION_RECORDS)
 
 
+def export_scheduler_rollback(
+    root: Path, *, occurrence_root: Path, namespace: str, runtime_identity: str, destination: Path,
+) -> dict[str, object]:
+    """Export the previous format to a new directory on a stopped copy."""
+    if not destination.is_absolute() or ".." in destination.parts or destination.is_symlink():
+        raise ValueError("new absolute rollback export directory required")
+    destination = destination.resolve()
+    for source in (root.resolve(), occurrence_root.resolve()):
+        if destination.is_relative_to(source) or source.is_relative_to(destination):
+            raise ValueError("rollback export directory overlaps retained state")
+    if destination.exists():
+        raise FileExistsError("rollback export directory already exists")
+    inspect_scheduler(root, namespace=namespace, runtime_identity=runtime_identity)
+    inspect_occurrences(occurrence_root, namespace=namespace)
+    scheduler = SchedulerStore(root, namespace=namespace, runtime_identity=runtime_identity)
+    with scheduler.stopped_writer() as lease:
+        records = CronOccurrenceStore(occurrence_root, namespace=namespace).inspect_records()
+        state, encoded = scheduler.prepare_rollback_export(lease, records)
+        destination.mkdir(mode=0o700)
+        fd = os.open(destination / "state.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        for directory in (destination, destination.parent):
+            dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        return {
+            "classification": "scheduler_rollback_export",
+            "schema_version": state["schema_version"],
+            "generation": state["generation"],
+            "occurrence_count": len(records),
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+        }
+
+
 def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
                          expected_owner: str, expected_generation: int,
                          resolution: str, external_evidence: str, successor_owner: str,
@@ -53,7 +94,7 @@ def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
         if record is None:
             raise SchedulerConflictError("reconciliation occurrence absent")
         digest = immutable_occurrence_digest(record)
-        prove_trigger_request(state, record)
+        prove_trigger_request(scheduler.retained_evidence(state), record)
         bridge: ReconciliationBridge = {"occurrence_id": occurrence_id,
             "identity": record.identity.as_dict(), "immutable_digest": digest,
             "predecessor_owner": expected_owner, "predecessor_generation": expected_generation,
@@ -65,25 +106,37 @@ def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
             raise SchedulerConflictError("reconciliation exact successor conflict")
         if not retry and (record.owner, record.generation) != (expected_owner, expected_generation):
             raise SchedulerConflictError("reconciliation predecessor stale")
-        retained = next((item for item in state.get("bridges", []) if item["occurrence_id"] == occurrence_id
-                         and item["predecessor_generation"] == expected_generation), None)
+        retained = next((item for item in scheduler.bridge_records(state, occurrence_id)
+                         if item["predecessor_generation"] == expected_generation), None)
         if retained is not None:
             bridge["publication_generation"] = retained["publication_generation"]
             if not retry or retained != bridge:
                 raise SchedulerConflictError("reconciliation retained bridge conflict")
-            successor = state
-        else:
-            successor = scheduler.prepare_bridge(state, bridge)  # Bounds BEFORE occurrence mutation.
         if not retry:
             # A previous transition must be durably retained before its last
             # occurrence reconciliation attestation can be overwritten.
-            if record.reconciliation is not None and not any(item["occurrence_id"] == occurrence_id
-                    and item["successor_generation"] == record.generation for item in state.get("bridges", [])):
+            if record.reconciliation is not None and not any(
+                item["successor_generation"] == record.generation
+                for item in scheduler.bridge_records(state, occurrence_id)
+            ):
                 raise SchedulerConflictError("repair prior reconciliation bridge first")
-            verify_occurrence_evidence(state, records)
+            verify_occurrence_evidence(
+                scheduler.retained_evidence(state), records, bridge_lookup=scheduler.bridge_records,
+            )
+        if retained is None:
+            state = scheduler.rollover_epoch_if_needed(lease, state, pending_bridge=bridge)
+            bridge["publication_generation"] = state["generation"] + 1
+            successor = scheduler.prepare_bridge(state, bridge)
+        else:
+            successor = state
+        if not retry:
             anticipated = replace(record, owner=successor_owner, generation=expected_generation + 1,
                                   reconciliation=bridge_reconciliation(bridge))
-            verify_occurrence_evidence(successor, [anticipated if item is record else item for item in records])
+            verify_occurrence_evidence(
+                scheduler.retained_evidence(successor),
+                [anticipated if item is record else item for item in records],
+                bridge_lookup=scheduler.bridge_records,
+            )
             lease.reprove()
             # No short scheduler lock spans this unchanged internally fenced CAS.
             store.reclaim_after_reconciliation(occurrence_id, owner=successor_owner,
@@ -95,11 +148,16 @@ def reconcile_occurrence(root: Path, *, namespace: str, occurrence_id: str,
                 or not matches_bridge_reconciliation(verified, bridge)
                 or immutable_occurrence_digest(verified) != digest):
             raise SchedulerConflictError("reconciliation successor changed")
-        verify_occurrence_evidence(successor, records)
+        verify_occurrence_evidence(
+            scheduler.retained_evidence(successor), records, bridge_lookup=scheduler.bridge_records,
+        )
         lease.reprove()
         scheduler.compare_and_swap(state, successor)
         published = scheduler.read()
-        verify_occurrence_evidence(published, store.inspect_records())
+        verify_occurrence_evidence(
+            scheduler.retained_evidence(published), store.inspect_records(),
+            bridge_lookup=scheduler.bridge_records,
+        )
         lease.reprove()
     return {"classification": "reconciled_claim", "occurrence_id": occurrence_id,
             "owner": successor_owner, "generation": expected_generation + 1}

@@ -126,9 +126,10 @@ Build and verify the signed release:
 mobile/scripts/build-release.sh
 ```
 
-The script packages `mobile/www-shared` and the native transport, runs `assembleRelease`,
-checks `zipalign` and `apksigner`, and writes the APK, certificate report and SHA-256 under
-`mobile/evidence/<date>-m22-release/`. Release tasks fail closed when signing material is absent.
+The script packages `mobile/www-shared` and the native transport, then builds an unsigned APK.
+The signing phase aligns the APK and loads the signing settings for `apksigner`.
+The script writes the verified APK, certificate report, and SHA-256 under
+`mobile/evidence/<date>-m22-release/`. The signing phase requires the signing material.
 
 ## Debug and release side by side
 

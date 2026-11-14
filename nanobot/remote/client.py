@@ -82,25 +82,7 @@ class RemoteAccessClient:
             "set_enabled", {"enabled": enabled}, role="admin", require_admin=True
         )
 
-    def add_device(
-        self,
-        installation_id: str,
-        label: str,
-        scopes: list[str],
-        refresh_token: str,
-    ) -> dict[str, Any]:
-        return self._call(
-            "add_device",
-            {
-                "installation_id": installation_id,
-                "label": label,
-                "scopes": scopes,
-                "refresh_token": refresh_token,
-            },
-            role="admin",
-            require_admin=True,
-        )
-
+        return {"ok": False, "error": {"code": "unknown_method", "message": "unknown owner method"}}
     def collect_pairing(
         self,
         *,
@@ -111,6 +93,7 @@ class RemoteAccessClient:
         label: str,
         platform: str | None = None,
         model: str | None = None,
+        device_public_key: str | None = None,
     ) -> dict[str, Any]:
         return self._call(
             "pair_collect",
@@ -122,6 +105,7 @@ class RemoteAccessClient:
                 "label": label,
                 "platform": platform,
                 "model": model,
+                "device_public_key": device_public_key,
             },
             role="pairing",
         )
@@ -135,6 +119,7 @@ class RemoteAccessClient:
         label: str,
         platform: str | None = None,
         model: str | None = None,
+        device_public_key: str | None = None,
     ) -> dict[str, Any]:
         return self._call(
             "pair_collect_code",
@@ -145,6 +130,58 @@ class RemoteAccessClient:
                 "label": label,
                 "platform": platform,
                 "model": model,
+                "device_public_key": device_public_key,
+            },
+            role="pairing",
+        )
+
+    def begin_pairing_recovery(
+        self,
+        *,
+        installation_id: str,
+        device_public_key: str,
+        pairing_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_recover_begin",
+            {
+                "installation_id": installation_id,
+                "device_public_key": device_public_key,
+                "pairing_id": pairing_id,
+            },
+            role="pairing",
+        )
+
+    def complete_pairing_recovery(
+        self,
+        *,
+        installation_id: str,
+        claims: dict[str, object],
+        signature: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_recover_complete",
+            {
+                "installation_id": installation_id,
+                "claims": claims,
+                "signature": signature,
+            },
+            role="pairing",
+        )
+
+    def prove_pairing(
+        self,
+        *,
+        pairing_id: str,
+        claims: dict[str, object],
+        signature: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_prove",
+            {
+                "pairing_id": pairing_id,
+                "claims": claims,
+                "signature": signature,
             },
             role="pairing",
         )
@@ -165,6 +202,28 @@ class RemoteAccessClient:
             },
             role="pairing",
         )
+
+    def cancel_pairing_attempt(
+        self,
+        *,
+        pairing_id: str,
+        nonce: str,
+        collector_secret: str,
+        origin: str,
+        installation_id: str | None = None,
+    ) -> bool:
+        result = self._call(
+            "pair_cancel_attempt",
+            {
+                "pairing_id": pairing_id,
+                "nonce": nonce,
+                "collector_secret": collector_secret,
+                "origin": origin,
+                "installation_id": installation_id,
+            },
+            role="pairing",
+        )
+        return bool(result.get("cancelled"))
 
     def create_pairing(
         self,
@@ -302,14 +361,6 @@ class RemoteAccessClient:
                 "actor_installation_id": actor_installation_id,
             },
             role="gateway",
-        )
-
-    def rotate_refresh(self, installation_id: str, refresh_token: str) -> dict[str, Any]:
-        return self._call(
-            "rotate_refresh",
-            {"installation_id": installation_id, "refresh_token": refresh_token},
-            role="admin",
-            require_admin=True,
         )
 
     def _call(

@@ -6,7 +6,7 @@ import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import HistoryMode, TraceMode, TurnRequest
+from nanobot.agent.turn import ApprovalDecision, HistoryMode, TraceMode, TurnRequest
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.source import validate_execution_links
 from tests.agent import test_migration_engine as engine_fixtures
@@ -24,10 +24,17 @@ def upgrade(loop, key='cli:source'):
     return backend
 
 
-def forbid_legacy(loop, monkeypatch):
+def forbid_legacy(loop, monkeypatch, *, allow_child_source_bootstrap=False):
     for method in ('_save_turn', '_set_runtime_checkpoint'):
         monkeypatch.setattr(loop, method, Mock(side_effect=AssertionError('legacy source path')))
-    monkeypatch.setattr(loop.sessions, 'save', Mock(side_effect=AssertionError('legacy save')))
+    original_save = loop.sessions.save
+
+    def guarded_save(session):
+        if allow_child_source_bootstrap and session.key.startswith('delegated:'):
+            return original_save(session)
+        raise AssertionError('legacy save')
+
+    monkeypatch.setattr(loop.sessions, 'save', guarded_save)
     monkeypatch.setattr(loop.auto_compact, 'prepare_session', Mock(side_effect=AssertionError('legacy compaction')))
 
 
@@ -84,20 +91,46 @@ async def test_source_reload_ignores_archive_cursor_and_fresh_excludes_old_input
 
 
 async def test_source_nested_planner_stream_does_not_leak_into_root_history(engine_config, monkeypatch):
+    from nanobot.session.execution_owner import ExecutionOwner
+
     provider = ScriptedProvider([
         LLMResponse(content=None, tool_calls=[ToolCallRequest(id='plan', name='plan_task', arguments={'objective': 'fixture plan'})]),
         LLMResponse(content='child plan'), LLMResponse(content='parent final'), LLMResponse(content='next'),
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
     backend = upgrade(loop)
-    forbid_legacy(loop, monkeypatch)
+    forbid_legacy(loop, monkeypatch, allow_child_source_bootstrap=True)
+    owner_tasks = []
+    original_track_task = ExecutionOwner.track_task
+
+    def record_owner_task(owner, task):
+        owner_tasks.append((owner.key, task.get_coro().__qualname__))
+        return original_track_task(owner, task)
+
+    monkeypatch.setattr(ExecutionOwner, 'track_task', record_owner_task)
     try:
         result = await loop.execute_turn(TurnRequest(content='plan fixture', session_key='cli:source'))
         assert result.error is None, result.error
         assert result.content == 'parent final'
-        events = backend.source.load_source_snapshot('cli:source').events
-        assert sum('_parent_stream_id' in e for e in events) == 2
-        assert not validate_execution_links(events)
+        parent_events = backend.source.load_source_snapshot('cli:source').events
+        assert not any('_parent_stream_id' in event for event in parent_events)
+        assert not validate_execution_links(parent_events)
+        tree = loop._fork_dependencies.foreground_manager._delegation_tree
+        assert tree is not None
+        children = tree.children_of('cli:source')
+        assert len(children) == 1
+        child = children[0]
+        assert any(
+            key == 'cli:source' and 'run_and_finalize' in coroutine
+            for key, coroutine in owner_tasks
+        )
+        child_events = backend.source.load_source_snapshot(child.session_key).events
+        assert [event['role'] for event in child_events] == ['user', 'assistant']
+        assert 'fixture plan' in child_events[0]['content']
+        assert child_events[1]['content'] == 'child plan'
+        assert all(event['_run_id'] == child.current_run_id for event in child_events)
+        assert not any('_parent_stream_id' in event for event in child_events)
+        assert not validate_execution_links(child_events)
         result = await loop.execute_turn(TurnRequest(content='next input', session_key='cli:source'))
         assert result.error is None, result.error
         assert not any(m.get('role') == 'assistant' and m.get('content') == 'child plan' for m in provider.calls[-1][0])
@@ -229,10 +262,19 @@ async def test_source_scoped_worker_records_child_effects_under_parent_owner(eng
         assert result.error is None, result.error
         assert result.content == 'main complete'
         assert (engine_config.workspace_path / 'allowed.txt').read_text() == 'worker output'
-        events = backend.source.load_source_snapshot('cli:source').events
-        assert not validate_execution_links(events)
-        assert len([e for e in events if e.get('_parent_stream_id')]) == 4
-        assert len([e for e in events if e['role'] == 'tool' and e['_dispatched']]) == 2
+        parent_events = backend.source.load_source_snapshot('cli:source').events
+        assert not validate_execution_links(parent_events)
+        # The parent source owns only parent events: no inline child rows and no
+        # worker tool evidence.
+        assert not any(e.get('_parent_stream_id') for e in parent_events)
+        assert not any(e.get('tool_call_id') == 'write' for e in parent_events)
+        assert any(e.get('tool_call_id') == 'delegate' for e in parent_events)
+        tree = loop._fork_dependencies.foreground_manager._delegation_tree
+        assert tree is not None
+        child, = tree.children_of('cli:source')
+        child_events = backend.source.load_source_snapshot(child.session_key).events
+        assert not validate_execution_links(child_events)
+        assert any(e.get('tool_call_id') == 'write' for e in child_events)
     finally:
         await loop.aclose()
 
@@ -279,10 +321,22 @@ async def test_source_waiter_does_not_consume_approval_before_owner_releases(eng
     backend = upgrade(loop)
     consume = AsyncMock(wraps=loop.approval_admission.consume)
     loop.approval_admission.consume = consume
+    pending = await loop.approval_admission.store(
+        session_key='cli:source', channel='cli', chat_id='direct', summary='task',
+    )
+    decision = ApprovalDecision(
+        approval_id=pending.approval_id,
+        decision='approve',
+        session_key='cli:source',
+    )
     task = None
     try:
         async with acquire_execution(backend, 'cli:source', run_id='other-process-equivalent'):
-            task = asyncio.create_task(loop.execute_turn(TurnRequest(content='input', session_key='cli:source')))
+            task = asyncio.create_task(loop.execute_turn(TurnRequest(
+                content='approval_decision',
+                session_key='cli:source',
+                approval_decision=decision,
+            )))
             await asyncio.sleep(0.08)
             assert not task.done() and not provider.calls
             consume.assert_not_awaited()
@@ -812,40 +866,56 @@ async def test_real_local_pressure_compaction_preserves_root_and_continues_lengt
         assert result.error is None, result.error
         assert result.content.endswith('local done' if mode == 'fresh' else 'parent done')
         assert not provider.responses
-        assert len(local_states) == 3
-        main_calls = [
-            call[0] for call in provider.calls
-            if not call[0][0]['content'].startswith('Summarize historical evidence')
-        ]
-        assert local_requests == [rows for rows in main_calls if rows in local_requests]
-        assert all('root private' not in str(rows) and 'root original' not in str(rows)
-                   for rows in local_requests)
-        assert local_requests[-1].count(build_length_recovery_message('first_segment')) == 1
-        assert local_requests[-1].count(build_length_recovery_message('second_segment')) == 1
-        state = local_states[-1]
-        assert len(state.source_compaction.attempts) >= 1
-        assert all(attempt.calls >= 1 for attempt in state.source_compaction.attempts)
-        assert state.source_compaction.attempts[-1].status == 'succeeded'
-        assert state.source_compaction.local_checkpoint.summary == 'local historical facts'
-        assert not state.source.has_pending_requests
-        assert not any(row.get('role') == 'assistant' and row.get('content') == 'first_segment'
-                       for row in state.messages)
-        assert 'second_segment' in str(state.messages)
-        assert 'local historical facts' in str(state.messages)
-        assert 'root private' not in str(state.messages)
         after = backend.source.load_source_snapshot('cli:source')
-        assert after.checkpoint == before.checkpoint
-        assert after.events[:len(before.events)] == before.events
-        for segment in ('first_segment', 'second_segment'):
-            persisted = [row for row in after.events if row.get('content') == segment]
-            assert len(persisted) == 1
-            assert persisted[0]['_stream_id'] == state.source_compaction.stream_id
-        if mode == 'child':
-            intents = [row for row in after.events if any(
-                call.get('id') == 'plan' for call in row.get('tool_calls', []))]
-            results = [row for row in after.events if row.get('tool_call_id') == 'plan']
-            assert len(intents) == len(results) == 1
-            assert results[0]['_execution_id'] == intents[0]['_execution_ids'][0]
+        if mode == 'fresh':
+            assert len(local_states) == 3
+            main_calls = [
+                call[0] for call in provider.calls
+                if not call[0][0]['content'].startswith('Summarize historical evidence')
+            ]
+            assert local_requests == [rows for rows in main_calls if rows in local_requests]
+            assert all('root private' not in str(rows) and 'root original' not in str(rows)
+                       for rows in local_requests)
+            assert local_requests[-1].count(build_length_recovery_message('first_segment')) == 1
+            assert local_requests[-1].count(build_length_recovery_message('second_segment')) == 1
+            state = local_states[-1]
+            assert len(state.source_compaction.attempts) >= 1
+            assert all(attempt.calls >= 1 for attempt in state.source_compaction.attempts)
+            assert state.source_compaction.attempts[-1].status == 'succeeded'
+            assert state.source_compaction.local_checkpoint.summary == 'local historical facts'
+            assert not state.source.has_pending_requests
+            assert not any(row.get('role') == 'assistant' and row.get('content') == 'first_segment'
+                           for row in state.messages)
+            assert 'second_segment' in str(state.messages)
+            assert 'local historical facts' in str(state.messages)
+            assert 'root private' not in str(state.messages)
+            assert after.checkpoint == before.checkpoint
+            assert after.events[:len(before.events)] == before.events
+            for segment in ('first_segment', 'second_segment'):
+                persisted = [row for row in after.events if row.get('content') == segment]
+                assert len(persisted) == 1
+                assert persisted[0]['_stream_id'] == state.source_compaction.stream_id
+        else:
+            # The planner child now runs a canonical child source, so the local
+            # pressure compaction and its length recovery live in the child
+            # source, not the parent. Root history stays unchanged.
+            tree = loop._fork_dependencies.foreground_manager._delegation_tree
+            assert tree is not None
+            child, = tree.children_of('cli:source')
+            child_snapshot = backend.source.load_source_snapshot(child.session_key)
+            contents = [row.get('content') for row in child_snapshot.events]
+            assert contents.index('first_segment') < contents.index('second_segment') < contents.index('local done')
+            assert child_snapshot.checkpoint is not None
+            assert child_snapshot.checkpoint['summary'] == 'local historical facts'
+            # Child compaction must not leak root text into child history.
+            assert 'root private' not in str(contents)
+            assert 'root original' not in str(contents)
+            # Root history is unchanged and gains no child segment events.
+            assert after.checkpoint == before.checkpoint
+            assert after.events[:len(before.events)] == before.events
+            assert not any(row.get('content') == segment
+                           for row in after.events
+                           for segment in ('first_segment', 'second_segment', 'local done'))
         assert not validate_execution_links(after.events)
         summaries = [call[0] for call in provider.calls if call[0][0]['content'].startswith('Summarize historical evidence')]
         assert len(summaries) >= 1

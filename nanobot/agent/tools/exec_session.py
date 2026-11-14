@@ -14,7 +14,12 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import RequestContext, ToolContext, current_request_session_key
+from nanobot.agent.tools.context import (
+    RequestContext,
+    ToolContext,
+    current_request_context,
+    current_request_session_key,
+)
 from nanobot.agent.tools.native_process import NativeProcessHandle
 from nanobot.agent.tools.schema import (
     BooleanSchema,
@@ -31,6 +36,7 @@ if TYPE_CHECKING:
         DesktopPermissionOwner,
         WorkspacePermissionReference,
     )
+    from nanobot.session.source_store import SourceState
 
 DEFAULT_YIELD_MS = 1000
 MAX_YIELD_MS = 30_000
@@ -56,7 +62,8 @@ class ExecCompletionSink(Protocol):
     def inline_completed(self, session_id: str) -> None: ...
     def finished(self, session_id: str, result: ExecCompletion) -> None: ...
     def cancelled(self, session_id: str, reason: str) -> None: ...
-    def result(self, session_id: str, owner_session_key: str | None) -> ExecCompletion | None: ...
+    def result(self, session_id: str, owner_session_key: str | None, *,
+               source_state: SourceState | None = None) -> ExecCompletion | None: ...
 
 
 @dataclass(slots=True)
@@ -180,8 +187,37 @@ class _ExecSession:
         self._stderr = _BoundedOutputBuffer(MAX_OUTPUT_CHARS)
         self._lock = asyncio.Lock()
         self._timed_out = False
+        self._termination_task: asyncio.Task[None] | None = None
+        self._termination_lock = asyncio.Lock()
         self._stdout_task = asyncio.create_task(self._read_stream(process.stdout, self._stdout))
         self._stderr_task = asyncio.create_task(self._read_stream(process.stderr, self._stderr))
+        self._deadline_task = (
+            asyncio.create_task(self._expire_at_deadline())
+            if self.deadline != float("inf")
+            else None
+        )
+
+    async def _expire_at_deadline(self) -> None:
+        remaining = self.deadline - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        if await self._tree_quiescent():
+            self._cancel_deadline()
+            return
+        self._timed_out = True
+        try:
+            await self.kill()
+        except Exception:
+            logger.exception(
+                "Exec session {} deadline termination failed; owned process remains",
+                self.session_id,
+            )
+
+    def _cancel_deadline(self) -> None:
+        task = self._deadline_task
+        if task is None or task is asyncio.current_task() or task.done():
+            return
+        task.cancel()
     def validate_input_access(self) -> None:
         permission_owner = self._permission_owner
         permission_reference = self._permission_reference
@@ -249,6 +285,40 @@ class _ExecSession:
             await self.process.stdin.wait_closed()
         return None
 
+    async def _tree_quiescent(self, timeout: float = 0.0) -> bool:
+        if isinstance(self.process, NativeProcessHandle):
+            if timeout <= 0:
+                return self.process.quiescence_proven()
+            return await self.process.wait_quiescent(timeout)
+        if not self._process_tree:
+            return self.process.returncode is not None
+        from nanobot.agent.tools.shell import ExecTool
+
+        return await ExecTool.process_tree_quiescent(self.process, timeout=timeout)
+
+    async def wait_settled(self, timeout: float | None = None) -> bool:
+        """Wait for root exit and whole-tree quiescence within one bound."""
+        if isinstance(self.process, NativeProcessHandle):
+            remaining = timeout
+            if self.process.returncode is None:
+                if remaining is None:
+                    await self.process.wait()
+                else:
+                    try:
+                        await asyncio.wait_for(self.process.wait(), timeout=max(0.0, remaining))
+                    except asyncio.TimeoutError:
+                        return False
+                if timeout is not None:
+                    remaining = max(0.0, timeout)
+            return await self.process.wait_quiescent(remaining)
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+        while True:
+            if await self._tree_quiescent():
+                return True
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.02)
+
     async def poll(
         self,
         yield_time_ms: int,
@@ -258,22 +328,39 @@ class _ExecSession:
         stdin_closed: bool = False,
     ) -> _SessionPoll:
         self.last_access = time.monotonic()
-        if yield_time_ms > 0 and self.process.returncode is None:
+        wait_s = 0.0
+        wait_started = time.monotonic()
+        if yield_time_ms > 0:
             wait_s = min(yield_time_ms, MAX_YIELD_MS) / 1000
             remaining_s = self.deadline - time.monotonic()
-            if remaining_s <= 0:
-                wait_s = 0
-            else:
-                wait_s = min(wait_s, remaining_s)
-            if wait_s > 0:
+            wait_s = 0 if remaining_s <= 0 else min(wait_s, remaining_s)
+            if wait_s > 0 and self.process.returncode is None:
                 with suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self.process.wait(), timeout=wait_s)
 
-        if self.process.returncode is None and time.monotonic() >= self.deadline:
-            self._timed_out = True
-            await self.kill()
+        if (
+            wait_s > 0
+            and self.process.returncode is not None
+            and not await self._tree_quiescent()
+        ):
+            remaining = max(0.0, wait_s - (time.monotonic() - wait_started))
+            if remaining > 0:
+                await self._tree_quiescent(timeout=remaining)
 
-        if self.process.returncode is not None:
+        deadline_reached = time.monotonic() >= self.deadline
+        if deadline_reached and not await self._tree_quiescent():
+            self._timed_out = True
+            try:
+                await self.kill()
+            except Exception:
+                logger.exception(
+                    "Exec session {} deadline termination failed; owned process remains",
+                    self.session_id,
+                )
+
+        quiescent = await self._tree_quiescent()
+        if quiescent:
+            self._cancel_deadline()
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
                     asyncio.gather(self._stdout_task, self._stderr_task),
@@ -300,7 +387,7 @@ class _ExecSession:
         output, response_truncated = _truncate_output(output, max_output_chars)
         return _SessionPoll(
             output=output,
-            done=self.process.returncode is not None,
+            done=quiescent,
             exit_code=self.process.returncode,
             elapsed_s=max(0.0, time.monotonic() - self.started_at),
             timed_out=self._timed_out,
@@ -310,13 +397,28 @@ class _ExecSession:
         )
 
     async def kill(self) -> None:
+        async with self._termination_lock:
+            task = self._termination_task
+            if task is None or (
+                task.done() and (task.cancelled() or task.exception() is not None)
+            ):
+                task = asyncio.create_task(self._terminate_once())
+                self._termination_task = task
+        await asyncio.shield(task)
+        self._cancel_deadline()
+
+    async def _terminate_once(self) -> None:
         from nanobot.agent.tools.shell import ExecTool
 
         try:
             if isinstance(self.process, NativeProcessHandle):
                 await self.process.kill_process_tree()
+                if not await self._tree_quiescent(timeout=2.0):
+                    raise RuntimeError("native process tree did not settle")
             elif self._process_tree:
                 await ExecTool.kill_process_tree(self.process)
+                if not await self._tree_quiescent(timeout=2.0):
+                    raise RuntimeError("owned process tree did not settle")
             else:
                 await ExecTool._kill_process(self.process)  # pyright: ignore[reportPrivateUsage]
         finally:
@@ -397,7 +499,13 @@ class ExecSessionManager:
                 if notify_on_exit:
                     if sink is None or origin is None or not owner_session_key or origin.session_key != owner_session_key:
                         raise ValueError("background continuation requires an enabled gateway and an owned request")
-                    sink.started(session_id, command, effective_logical_cwd, origin)
+                    await asyncio.to_thread(
+                        sink.started,
+                        session_id,
+                        command,
+                        effective_logical_cwd,
+                        origin,
+                    )
                 try:
                     process = await self._spawn(
                         command,
@@ -409,7 +517,7 @@ class ExecSessionManager:
                     )
                 except BaseException:
                     if sink is not None:
-                        sink.cancelled(session_id, "spawn_failed")
+                        await asyncio.to_thread(sink.cancelled, session_id, "spawn_failed")
                     raise
                 session = _ExecSession(
                     session_id=session_id,
@@ -437,13 +545,17 @@ class ExecSessionManager:
         except BaseException:
             if sink is not None:
                 await session.kill()
-                sink.cancelled(session_id, "initial_turn_interrupted")
+                await asyncio.to_thread(
+                    sink.cancelled,
+                    session_id,
+                    "initial_turn_interrupted",
+                )
             raise
         if poll.done:
             async with self._lock:
                 self._sessions.pop(session_id, None)
             if sink is not None:
-                sink.inline_completed(session_id)
+                await asyncio.to_thread(sink.inline_completed, session_id)
         elif sink is not None:
             task = asyncio.create_task(self._watch_completion(session, sink, poll.output))
             self._monitors[session_id] = task
@@ -456,18 +568,28 @@ class ExecSessionManager:
             logger.error("Process completion could not settle; retained job requires inspection: {}", type(task.exception()).__name__)
 
     async def _watch_completion(self, session: _ExecSession, sink: ExecCompletionSink, initial_output: str) -> None:
-        try:
-            remaining = session.deadline - time.monotonic()
-            await asyncio.wait_for(session.process.wait(), timeout=remaining if remaining != float("inf") else None)
-        except asyncio.TimeoutError:
+        remaining = session.deadline - time.monotonic()
+        settled = await session.wait_settled(
+            remaining if remaining != float("inf") else None
+        )
+        if not settled:
             await session.expire()
+            settled = await session.wait_settled(0)
+        if not settled:
+            raise RuntimeError("exec session tree did not settle")
         poll = await session.poll(0, MAX_OUTPUT_CHARS)
+        if not poll.done:
+            raise RuntimeError("exec session tree did not settle")
         reason = self._cancel_reasons.pop(session.session_id, None)
         if reason is not None:
-            sink.cancelled(session.session_id, reason)
+            await asyncio.to_thread(sink.cancelled, session.session_id, reason)
         else:
             output, _omitted = _truncate_output("\n".join(part for part in (initial_output, poll.output) if part), MAX_OUTPUT_CHARS)
-            sink.finished(session.session_id, ExecCompletion(output, poll.exit_code, poll.timed_out))
+            await asyncio.to_thread(
+                sink.finished,
+                session.session_id,
+                ExecCompletion(output, poll.exit_code, poll.timed_out),
+            )
         async with self._lock:
             self._sessions.pop(session.session_id, None)
 
@@ -487,7 +609,9 @@ class ExecSessionManager:
             session = self._sessions.get(session_id)
         if session is None:
             if self._completion_sink is not None and not (chars or close_stdin or terminate):
-                completed = self._completion_sink.result(session_id, owner_session_key)
+                request = current_request_context()
+                completed = self._completion_sink.result(session_id, owner_session_key,
+                    source_state=request.source_state if request is not None else None)
                 if completed is not None:
                     return _SessionPoll(completed.output, True, completed.exit_code, timed_out=completed.timed_out,
                                         terminated=completed.terminated, completion_state=completed.state)
@@ -621,7 +745,14 @@ class ExecSessionManager:
             session = self._sessions[session_id]
             if session_id in self._monitors:
                 self._cancel_reasons[session_id] = "idle_timeout"
-            await session.kill()
+            try:
+                await session.kill()
+            except Exception:
+                logger.exception(
+                    "Exec session {} idle cleanup failed; owned process remains",
+                    session_id,
+                )
+                raise
             self._sessions.pop(session_id, None)
 
     async def _spawn(

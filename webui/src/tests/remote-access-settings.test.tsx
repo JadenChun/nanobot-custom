@@ -30,6 +30,8 @@ const pending = {
   state: "pending_approval" as const,
   expires_at: Math.floor(Date.now() / 1000) + 300,
   device: { installation_id: "phone-1", label: "Pixel 10", platform: "Android" },
+  device_fingerprint: "ab".repeat(32),
+  device_generation: 1,
   scopes: ["chat.read", "chat.write", "media.read", "attachment.write", "owner"],
 };
 
@@ -136,6 +138,20 @@ describe("RemoteAccessSettings", () => {
       { pairingId: "pair-1", comparisonCode: "12345678" },
     ));
     expect(await screen.findByText("Owner phone connected")).toBeInTheDocument();
+  });
+
+  it("shows the bound device key fingerprint while approval is pending", async () => {
+    const collection = { collected: false };
+    const mutate = mutationTransport(() => {
+      collection.collected = true;
+    });
+    vi.stubGlobal("fetch", pendingFetch(collection));
+    render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
+    await screen.findByText(/Pixel 10 wants owner access/, {}, { timeout: 3000 });
+    expect(
+      screen.getAllByText(/Key fingerprint/)[0],
+    ).toHaveTextContent("ab".repeat(32));
   });
 
   it("denies a pending owner request", async () => {

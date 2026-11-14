@@ -7,7 +7,7 @@ existing WebUI tests and callers until the W6 removal gate.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from nanobot.attachments.ingress import AttachmentIngress, extract_data_url_mime
 from nanobot.attachments.models import AttachmentRecord
@@ -78,7 +78,7 @@ def store_inbound_records(
         policy=AttachmentPolicy(limits=limits),
         logger=logger,
     )
-    result = ingress.accept_batch(cast(list[Any], media), source=source)
+    result = ingress.accept_batch(media, source=source)
     if result.rejection is not None:
         return [], result.rejection
     records, rejection = ingress.commit_batch(result.staged)

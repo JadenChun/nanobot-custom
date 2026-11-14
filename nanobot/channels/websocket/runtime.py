@@ -21,6 +21,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve, unix_serv
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request as WsRequest
 
+from nanobot.attachments._inventory import retained_markdown_media
 from nanobot.attachments.models import AttachmentRecord
 from nanobot.bus.events import (
     OUTBOUND_META_AGENT_UI,
@@ -320,6 +321,19 @@ def _is_valid_chat_id(value: Any) -> TypeGuard[str]:  # pyright: ignore[reportUn
     return is_valid_webui_chat_id(value)
 
 
+class _ParsedJSONObject(dict[str, Any]):
+    """Retain duplicate JSON member names until the typed edge validates them."""
+
+    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+        super().__init__()
+        duplicates: set[str] = set()
+        for key, value in pairs:
+            if key in self:
+                duplicates.add(key)
+            self[key] = value
+        self.duplicate_keys = frozenset(duplicates)
+
+
 def _parse_envelope(raw: str) -> dict[str, Any] | None:
     """Return a typed envelope dict if the frame is a new-style JSON envelope, else None.
 
@@ -331,7 +345,7 @@ def _parse_envelope(raw: str) -> dict[str, Any] | None:
     if not text.startswith("{"):
         return None
     try:
-        data = cast(object, json.loads(text))
+        data = cast(object, json.loads(text, object_pairs_hook=_ParsedJSONObject))
     except json.JSONDecodeError:
         return None
     if not isinstance(data, dict):
@@ -436,14 +450,14 @@ class WebSocketChannel(BaseChannel):
         return await self.gateway.endpoint.revalidate_mobile_connection(connection)
 
     async def _revalidate_raw_mobile_frame(self, connection: ServerConnection) -> bool:
-        identity = getattr(connection, "mobile_identity", None)
-        if identity is None:
-            return True
-        if not isinstance(getattr(identity, "installation_id", None), str):
-            return True
-        if not isinstance(getattr(identity, "scopes", None), (tuple, list, set, frozenset)):
-            return True
         return await self.revalidate_mobile_connection(connection)
+
+    async def _mobile_delivery_allowed(self, connection: ServerConnection) -> bool:
+        """Revalidate mobile authority immediately before private delivery."""
+        try:
+            return await self.revalidate_mobile_connection(connection)
+        except Exception:
+            return False
 
     async def webui_send_event(
         self,
@@ -993,6 +1007,16 @@ class WebSocketChannel(BaseChannel):
                     return
                 try:
                     async with asyncio.timeout(_OUTBOUND_SEND_TIMEOUT_S):
+                        if not await self._mobile_delivery_allowed(connection):
+                            self.logger.debug("dropping outbound frame for stale mobile connection")
+                            self._schedule_connection_retirement(
+                                connection,
+                                state,
+                                close_connection=True,
+                                close_code=1008,
+                                close_reason="mobile access is no longer current",
+                            )
+                            return
                         await connection.send(frame.raw)
                 except asyncio.CancelledError:
                     raise
@@ -1274,7 +1298,10 @@ class WebSocketChannel(BaseChannel):
             metadata=msg.metadata,
             phase=phase,
             include_source=True,
-            transcript_overrides={"text": text},
+            transcript_overrides={
+                "text": text,
+                "media_publications": retained_markdown_media(wire_text),
+            },
         )
         raw = json.dumps(payload, ensure_ascii=False)
         if not conns:

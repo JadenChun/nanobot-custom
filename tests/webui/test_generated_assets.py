@@ -567,10 +567,25 @@ async def test_route_paginates_generated_assets(assets_client) -> None:
     assert second_payload["next"] is None
 
 
-async def test_global_generated_asset_library_aggregates_sessions(assets_client) -> None:
+async def test_global_generated_asset_library_pages_across_retained_sessions(
+    assets_client,
+) -> None:
+    from urllib.parse import urlencode
+
     _project, instance, services, token = assets_client
-    for index, session in enumerate(("library-a", "library-b")):
-        path = _media_file(instance / "media", f"library-{index}.png")
+    asset_indices = {0, 100, 200}
+    expected_ids = set()
+    for index in range(201):
+        session = f"library-page-{index:03d}"
+        append_transcript_object(
+            f"websocket:{session}",
+            {"event": "user", "text": "hello", "turn_id": "turn-1"},
+        )
+        if index not in asset_indices:
+            continue
+        artifact_id = f"library-page-{index:03d}"
+        path = _media_file(instance / "media", f"{artifact_id}.png")
+        expected_ids.add(artifact_id)
         append_transcript_object(
             f"websocket:{session}",
             {
@@ -580,29 +595,58 @@ async def test_global_generated_asset_library_aggregates_sessions(assets_client)
                 "tool_events": [
                     _event(
                         call_id=f"call-{index}",
-                        result={
-                            "artifacts": [
-                                _artifact(path, artifact_id=f"library-{index}")
-                            ]
-                        },
+                        result={"artifacts": [_artifact(path, artifact_id=artifact_id)]},
                     )
                 ],
             },
         )
 
-    response = await services.endpoint.process_request(
+    first = await services.endpoint.process_request(
         None,
         Request("/api/generated-assets", Headers({"Authorization": f"Bearer {token}"})),
         is_allowed=lambda _client: True,
     )
-
-    assert response.status_code == 200, response.body
-    payload = json.loads(response.body)
-    assert payload["total"] == 2
-    assert {group["sessionKey"] for group in payload["groups"]} == {
-        "websocket:library-a",
-        "websocket:library-b",
+    assert first.status_code == 200, first.body
+    first_payload = json.loads(first.body)
+    assert first_payload["complete"] is False
+    assert first_payload["sessionsScanned"] == 200
+    assert first_payload["totalScope"] == "page"
+    assert json.loads(first_payload["next"]) == ["websocket:library-page-200", 0]
+    first_ids = {
+        artifact["id"]
+        for group in first_payload["groups"]
+        for artifact in group["artifacts"]
     }
+    assert first_ids == {"library-page-000", "library-page-100"}
+
+    second = await services.endpoint.process_request(
+        None,
+        Request(
+            f"/api/generated-assets?{urlencode({'cursor': first_payload['next']})}",
+            Headers({"Authorization": f"Bearer {token}"}),
+        ),
+        is_allowed=lambda _client: True,
+    )
+    assert second.status_code == 200, second.body
+    second_payload = json.loads(second.body)
+    assert second_payload["next"] is None
+    assert second_payload["complete"] is True
+    assert second_payload["sessionsScanned"] == 1
+    second_ids = {
+        artifact["id"]
+        for group in second_payload["groups"]
+        for artifact in group["artifacts"]
+    }
+    assert second_ids == {"library-page-200"}
+
+    keys = [
+        group["sessionKey"]
+        for payload in (first_payload, second_payload)
+        for group in payload["groups"]
+    ]
+    assert len(keys) == len(set(keys)) == 3
+    assert first_ids | second_ids == expected_ids
+    assert len(first_ids) + len(second_ids) == len(expected_ids)
 
 
 @pytest.mark.parametrize("session_count", [0, 200, 205])
@@ -723,3 +767,30 @@ def test_forked_session_keeps_generated_asset_references(assets_client) -> None:
 
     assert payload["total"] == 1
     assert payload["groups"][0]["artifacts"][0]["id"] == "img-fork"
+
+
+async def test_repeated_library_gets_do_not_pin_published_media(assets_client) -> None:
+    from nanobot.attachments.store import AttachmentStore
+    from nanobot.utils.artifacts import store_generated_image_artifact
+    from nanobot.webui.media_maintenance import garbage_collect_generated_media
+    from tests.attachments.test_media_publication_retention import PNG
+
+    _project, instance, services, token = assets_client
+    artifact = store_generated_image_artifact(PNG, prompt="read purity", model="fixture")
+    key = "websocket:pure-library"
+    append_transcript_object(key, {"event": "message", "tool_events": [
+        _event(result={"artifacts": [artifact]})]})
+    store = AttachmentStore(instance / "media" / "attachments", media_root=instance / "media")
+    assert store.custody.records("pending") == []
+    for url in [f"/api/sessions/{key}/generated-assets", "/api/generated-assets"] * 2:
+        response = await services.endpoint.process_request(None,
+            Request(url, Headers({"Authorization": f"Bearer {token}"})),
+            is_allowed=lambda _client: True)
+        assert response.status_code == 200, response.body
+        assert json.loads(response.body)["total"] == 1
+        assert store.custody.records("pending") == []
+    assert delete_webui_transcript(key)
+    result = garbage_collect_generated_media(artifact_root=instance / "media" / "generated",
+        max_bytes=1, orphan_grace_days=0)
+    assert result["evidence_complete"], result["reasons"]
+    assert result["deleted"] == 1 and not Path(artifact["path"]).exists()

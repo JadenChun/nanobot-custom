@@ -318,6 +318,7 @@ def test_real_ordinary_owning_thread_read_projects_permissions_without_request(
     recovery = WorkspaceAccessRecoveryOwner(sessions, workspaces)
 
     handler = object.__new__(GatewayHTTPHandler)
+    handler.stop_target_for_key = None
     handler.config = SimpleNamespace(host="127.0.0.1")
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
@@ -1212,6 +1213,7 @@ async def test_permission_projection_is_attached_only_to_local_owning_thread_rea
 
     recovery = Recovery()
     handler = object.__new__(GatewayHTTPHandler)
+    handler.stop_target_for_key = None
     handler.config = SimpleNamespace(host="127.0.0.1")
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
@@ -1346,6 +1348,7 @@ async def test_local_thread_request_permissions_and_scope_share_live_once_author
             return owner, reference
 
     handler = object.__new__(GatewayHTTPHandler)
+    handler.stop_target_for_key = None
     handler.config = SimpleNamespace(host="127.0.0.1")
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True

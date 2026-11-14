@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import subprocess
 import sys
@@ -14,7 +15,16 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from loguru import logger
 
 from nanobot import __version__
-from nanobot.bus.events import INBOUND_META_USER_SHELL, OutboundMessage
+from nanobot.agent.child_sessions import OriginalChatStopAdmission
+from nanobot.agent.stop_target import StopExpectation, parse_stop_expectation
+from nanobot.bus.events import (
+    INBOUND_META_STOP_CLIENT,
+    INBOUND_META_STOP_EXPECTATION,
+    INBOUND_META_USER_SHELL,
+    InboundMessage,
+    OutboundMessage,
+)
+from nanobot.bus.outbound_events import WebUIAdmissionRejectedEvent
 from nanobot.command.router import CommandContext, CommandRouter, normalize_command_text
 from nanobot.providers.base import LLMUsage
 from nanobot.session.manager import SESSION_MODEL_PRESET_METADATA_KEY
@@ -217,17 +227,164 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Cancel all active tasks and subagents for the session."""
     loop = ctx.loop
     msg = ctx.msg
+    metadata = dict(msg.metadata or {})
+    from nanobot.session.webui_turns import websocket_turn_id
+    from nanobot.webui.metadata import WEBUI_TARGET_TURN_METADATA_KEY
+
+    target_turn_id = metadata.get(WEBUI_TARGET_TURN_METADATA_KEY)
+    protocol_client = metadata.get(INBOUND_META_STOP_CLIENT) is True
+    expectation_present = INBOUND_META_STOP_EXPECTATION in metadata
+    if protocol_client:
+        raw_expectation = metadata.get(INBOUND_META_STOP_EXPECTATION)
+        if expectation_present and type(raw_expectation) is not StopExpectation:
+            return _stop_admission_rejection(
+                msg,
+                metadata,
+                "invalid_stop_expectation",
+            )
+        if not expectation_present:
+            current_turn_id = websocket_turn_id(str(msg.chat_id))
+            # Older clients may still use the guarded turn-targeted root path.
+            # They cannot use omission to stop children or pending-only work.
+            if (
+                not isinstance(target_turn_id, str)
+                or not target_turn_id
+                or current_turn_id != target_turn_id
+            ):
+                return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+        else:
+            current_target_fn = getattr(type(loop), "stop_target_for_key", None)
+            current_target = (
+                current_target_fn(loop, ctx.key)
+                if callable(current_target_fn)
+                else None
+            )
+            try:
+                current_expectation = (
+                    parse_stop_expectation(current_target)
+                    if current_target is not None else None
+                )
+            except (TypeError, ValueError):
+                current_expectation = None
+            if (
+                current_expectation != raw_expectation
+                or (
+                    isinstance(target_turn_id, str)
+                    and target_turn_id
+                    and websocket_turn_id(str(msg.chat_id)) != target_turn_id
+                )
+            ):
+                return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+    if isinstance(target_turn_id, str) and target_turn_id:
+        current_turn_id = websocket_turn_id(str(msg.chat_id))
+        if current_turn_id != target_turn_id:
+            # A repeated or late Stop must not stop a later turn.
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+
+    capture_stop = getattr(type(loop), "_capture_original_chat_stop", None)
     try:
-        total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+        stop_admission = cast(
+            OriginalChatStopAdmission | None,
+            capture_stop(
+                loop,
+                ctx.key,
+                target_turn_id if isinstance(target_turn_id, str) else None,
+                **({"require_root_only": True} if protocol_client and not expectation_present else {}),
+            )
+            if callable(capture_stop)
+            else None
+        )
+    except Exception:
+        logger.exception("Stop request could not capture its source lifetime for {}", ctx.key)
+        if protocol_client:
+            return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+        return OutboundMessage(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content="Could not complete the stop request. Please retry.",
+            metadata=metadata,
+        )
+    if protocol_client and stop_admission is None:
+        return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+    pending_at_admission = getattr(loop, "_pending_queues", {}).get(ctx.key)
+
+    if protocol_client:
+        # The exact expectation and source/queue viability were checked above,
+        # synchronously with Stop admission. Only this admitted input may retire
+        # the captured source's authority and access request.
+        try:
+            loop.retire_workspace_task_after_stop_admission(
+                ctx.key, active_turn=pending_at_admission is not None,
+            )
+            loop.sessions.invalidate_workspace_access_request(ctx.key)
+        except Exception:
+            logger.exception("Admitted Stop could not retire workspace authority for {}", ctx.key)
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="Could not complete the stop request. Please retry.", metadata=metadata,
+            )
+
+    publisher = getattr(loop, "runtime_event_publisher", None)
+
+    async def project(status: str) -> None:
+        if publisher is None:
+            return
+        with suppress(Exception):
+            await publisher.run_status_changed(msg, ctx.key, status)
+
+    await project("stopping")
+    try:
+        if stop_admission is None:
+            total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+        else:
+            total = await loop._cancel_active_tasks(  # pyright: ignore[reportPrivateUsage]
+                ctx.key,
+                _stop_admission=stop_admission,
+            )
     except PendingFollowupStopError:
         logger.exception("Stop request failed for session {}", ctx.key)
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id,
             content="Could not complete the stop request. Please retry.",
-            metadata=dict(msg.metadata or {}),
+            metadata=metadata,
         )
+    if stop_admission is not None:
+        validate_stop = getattr(type(loop), "_validate_original_chat_stop", None)
+        current_queue = getattr(loop, "_pending_queues", {}).get(ctx.key)
+        queue_replaced = current_queue is not None and current_queue is not pending_at_admission
+        stop_is_current = (
+            callable(validate_stop)
+            and validate_stop(loop, ctx.key, stop_admission)
+            and not queue_replaced
+        )
+        if not stop_is_current:
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="No active task to stop.",
+                metadata=metadata,
+            )
+    if stop_admission is None:
+        await project("interrupted")
+    else:
+        live_owner_check = getattr(type(loop), "_original_chat_stop_has_live_owner", None)
+        if callable(live_owner_check) and not live_owner_check(loop, ctx.key, stop_admission):
+            await project("interrupted")
     # Also drain pending queue to prevent mid-turn injection deadlock
-    pending = loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+    pending = (
+        loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+        if stop_admission is None
+        else (
+            loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
+            if loop._pending_queues.get(ctx.key) is pending_at_admission  # pyright: ignore[reportPrivateUsage]
+            else None
+        )
+    )
     if pending is not None:
         while not pending.empty():
             try:
@@ -236,9 +393,35 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             except Exception:
                 break
     content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    publish_target = getattr(type(loop), "_publish_stop_target_for_key", None)
+    if callable(publish_target):
+        with suppress(Exception):
+            publication = publish_target(loop, ctx.key)
+            if inspect.isawaitable(publication):
+                await publication
     return OutboundMessage(
         channel=msg.channel, chat_id=msg.chat_id, content=content,
-        metadata=dict(msg.metadata or {})
+        metadata=metadata
+    )
+
+
+def _stop_admission_rejection(
+    msg: InboundMessage,
+    metadata: dict[str, Any],
+    reason: str,
+) -> OutboundMessage:
+    """Return the existing typed WebUI refusal envelope before Stop mutation."""
+    turn_id = metadata.get("webui_turn_id")
+    return OutboundMessage(
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+        content="",
+        metadata=metadata,
+        event=WebUIAdmissionRejectedEvent(
+            detail="not_admitted",
+            reason=reason,
+            turn_id=turn_id if isinstance(turn_id, str) and turn_id else None,
+        ),
     )
 
 
@@ -503,55 +686,95 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
         content = ""
         resp = None
         diff_body = ""
+        operation_id: str | None = None
+        finalization_started = False
+        settled = False
         t0 = time.monotonic()
         try:
+            store.reconcile_dream_operation()
+            cursor_before = store.get_last_dream_cursor()
             result = store.build_dream_prompt()
             if result is None:
-                await loop.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content=_format_dream_no_input_message(),
-                    metadata={"render_as": "text"},
-                ))
-                return
-            prompt, last_cursor = result
-            key = dream_session_key()
-            dream_runtime = loop.dream_runtime()
-            resp = await loop.process_direct(
-                prompt,
-                session_key=key,
-                ephemeral=True,
-                tools=store.build_dream_tools(),
-                on_progress=_silent,
-                runtime=dream_runtime,
-            )
-            elapsed = time.monotonic() - t0
-            # The real file delta grounds the audit record; normal completion
-            # decides whether this history batch has finished processing.
-            diff_body = store.dream_content_diff()
-            completed = MemoryStore.dream_run_completed(resp)
-            if completed:
-                store.set_last_dream_cursor(last_cursor)
-                if diff_body:
-                    content = f"Dream completed in {elapsed:.1f}s."
-                else:
-                    content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                content = _format_dream_no_input_message()
             else:
-                reason = MemoryStore.dream_incompletion_reason(resp)
-                content = (
-                    f"Dream did not complete after {elapsed:.1f}s ({reason}); "
-                    "memory cursor was not advanced."
+                prompt, last_cursor = result
+                operation_id = store.reserve_dream_run(cursor_before, last_cursor)
+                key = dream_session_key()
+                dream_runtime = loop.dream_runtime()
+                resp = await loop.process_direct(
+                    prompt,
+                    session_key=key,
+                    ephemeral=True,
+                    tools=store.build_dream_tools(operation_id=operation_id),
+                    on_progress=_silent,
+                    runtime=dream_runtime,
                 )
-        except Exception as e:
-            elapsed = time.monotonic() - t0
-            content = f"Dream failed after {elapsed:.1f}s: {e}"
-        finally:
-            if store.git.is_initialized():
+                elapsed = time.monotonic() - t0
+                # The real file delta grounds the audit record; normal completion
+                # decides whether this history batch has finished processing.
+                diff_body = store.dream_content_diff()
+                completed = MemoryStore.dream_run_completed(resp)
+                reason = MemoryStore.dream_incompletion_reason(resp)
                 commit_msg = build_dream_commit_message("dream: manual run", diff_body)
-                sha = store.git.auto_commit(commit_msg)
-                if sha:
-                    content += f" (commit {sha})"
-            store.compact_history()
-            prune_dream_sessions(loop.sessions)
+                finalization_started = True
+                sha = store.finish_dream_run(
+                    operation_id,
+                    completed=completed,
+                    commit_message=commit_msg,
+                )
+                settled = True
+                if completed:
+                    if diff_body:
+                        content = f"Dream completed in {elapsed:.1f}s."
+                    else:
+                        content = f"Dream completed in {elapsed:.1f}s; no memory changes."
+                    if sha:
+                        content += f" (commit {sha})"
+                    try:
+                        store.compact_history()
+                        prune_dream_sessions(loop.sessions)
+                    except Exception:
+                        content += " History maintenance could not be completed."
+                else:
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s ({reason}); "
+                        "memory cursor was not advanced."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+        except Exception:
+            elapsed = time.monotonic() - t0
+            if operation_id is not None and not finalization_started:
+                try:
+                    diff_body = store.dream_content_diff()
+                    commit_msg = build_dream_commit_message("dream: manual run", diff_body)
+                    sha = store.finish_dream_run(
+                        operation_id,
+                        completed=False,
+                        commit_message=commit_msg,
+                    )
+                    settled = True
+                    content = (
+                        f"Dream did not complete after {elapsed:.1f}s; "
+                        "the history cursor was kept for review."
+                    )
+                    if sha:
+                        content += f" (partial changes recorded in commit {sha})"
+                except Exception:
+                    content = (
+                        "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                        "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                    )
+            elif operation_id is not None and not settled:
+                content = (
+                    "Dream outcome could not be safely settled. Its workspace remains fenced; "
+                    "use `/dream-restore <sha>` to recover a saved Dream snapshot."
+                )
+            else:
+                content = (
+                    f"Dream could not start after {elapsed:.1f}s. "
+                    "Memory was not changed; confirm that memory versioning is available."
+                )
         await loop.bus.publish_outbound(OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=content,
         ))
@@ -570,7 +793,11 @@ async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip().lower()
 
     if args == "init":
-        if not initialize_workspace_prompt(path, store.default_dream_prompt()):
+        if not initialize_workspace_prompt(
+            path,
+            store.default_dream_prompt(),
+            workspace=store.workspace,
+        ):
             content = (
                 f"Dream memory instructions already exist at `{display_path}`.\n\n"
                 "Edit that file, or delete/empty it to return to nanobot's default."
@@ -619,7 +846,11 @@ async def cmd_evaluator_prompt(ctx: CommandContext) -> OutboundMessage:
     args = ctx.args.strip().lower()
 
     if args == "init":
-        if not initialize_workspace_prompt(path, default_evaluator_prompt()):
+        if not initialize_workspace_prompt(
+            path,
+            default_evaluator_prompt(),
+            workspace=workspace,
+        ):
             content = (
                 f"Heartbeat evaluator prompt already exists at `{display_path}`.\n\n"
                 "Edit that file, or delete/empty it to return to nanobot's default."

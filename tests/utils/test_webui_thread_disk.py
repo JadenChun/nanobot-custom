@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from nanobot.webui.thread_disk import delete_webui_thread, webui_thread_file_path
 from nanobot.webui.transcript import (
+    active_transcript_path,
     append_transcript_object,
     webui_transcript_path,
     webui_transcript_segments_dir,
@@ -18,7 +19,7 @@ def test_delete_webui_thread_removes_legacy_json_and_transcript(tmp_path, monkey
     key = "websocket:k1"
     json_path = webui_thread_file_path(key)
     json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text('{"x":1}', encoding="utf-8")
+    json_path.write_text('{"chat_id":"k1","x":1}', encoding="utf-8")
     for idx in range(1, 5):
         append_transcript_object(
             key,
@@ -29,10 +30,11 @@ def test_delete_webui_thread_removes_legacy_json_and_transcript(tmp_path, monkey
             {"event": "message", "chat_id": "k1", "text": f"answer {idx} " + ("y" * 24)},
         )
         append_transcript_object(key, {"event": "turn_end", "chat_id": "k1"})
-    assert webui_transcript_path(key).is_file()
+    assert active_transcript_path(key).is_file()
     assert webui_transcript_segments_dir(key).is_dir()
     assert delete_webui_thread(key) is True
     assert not json_path.is_file()
     assert not webui_transcript_path(key).is_file()
+    assert not active_transcript_path(key).is_file()
     assert not webui_transcript_segments_dir(key).exists()
     assert delete_webui_thread(key) is False

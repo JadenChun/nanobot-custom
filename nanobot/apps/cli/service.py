@@ -7,10 +7,13 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -36,6 +39,25 @@ _CATALOG_SOURCES = (
     ("public", CLI_ANYTHING_PUBLIC_REGISTRY_URL, CLI_ANYTHING_RAW_BASE, True),
     ("extensions", NANOBOT_EXTENSION_REGISTRY_URL, NANOBOT_EXTENSION_RAW_BASE, False),
 )
+_SOURCE_TRUST = {"public": 1, "harness": 2, "extensions": 3}
+# A lower-trust source may refresh display copy, but it cannot supply executable
+# or install metadata for an entry already admitted from a higher-trust source.
+_EXECUTION_FIELDS = frozenset({
+    "install_cmd",
+    "update_cmd",
+    "uninstall_cmd",
+    "entry_point",
+    "package_manager",
+    "npm_package",
+    "skill_md",
+    "requires",
+    "install",
+    "run",
+    "command",
+    "args",
+    "bin",
+    "executable",
+})
 
 _MAX_TOOL_OUTPUT_CHARS = 12_000
 _MAX_ARTIFACT_SCAN_PATHS = 4_000
@@ -582,11 +604,20 @@ class CliAppManager:
                 key = str(entry["name"]).lower()
                 previous = apps_by_name.get(key)
                 if previous:
-                    previous_source = str(previous.get("_source") or source)
-                    merged_source = (
-                        previous_source if previous_source == source else f"{previous_source}+{source}"
-                    )
-                    apps_by_name[key] = {**previous, **entry, "_source": merged_source}
+                    previous_source = str(previous.get("_source") or "harness")
+                    previous_rank = _SOURCE_TRUST.get(previous_source, 0)
+                    current_rank = _SOURCE_TRUST.get(source, 0)
+                    merged = {**previous, **entry}
+                    if current_rank > previous_rank:
+                        merged["_source"] = source
+                        merged["_raw_base"] = raw_base
+                    else:
+                        for field in _EXECUTION_FIELDS:
+                            if field in previous:
+                                merged[field] = previous[field]
+                        merged["_source"] = previous_source
+                        merged["_raw_base"] = previous.get("_raw_base") or raw_base
+                    apps_by_name[key] = merged
                 else:
                     apps_by_name[key] = entry
         return list(apps_by_name.values()), max(updated_values) if updated_values else None
@@ -1019,18 +1050,170 @@ class CliAppManager:
             "PYTHONUNBUFFERED": "1",
         }
 
+    @staticmethod
+    def _owned_group_alive(process: subprocess.Popen[str]) -> bool:
+        if os.name == "nt":
+            return process.poll() is None
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @classmethod
+    def _settle_owned_group(cls, process: subprocess.Popen[str]) -> None:
+        """Kill any descendants left after the root exits and prove quiescence."""
+        if not cls._owned_group_alive(process):
+            return
+        cls._terminate_owned_process(process)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if not cls._owned_group_alive(process):
+                return
+            time.sleep(0.01)
+        raise CliAppError("CLI app process tree did not settle")
+
+    @staticmethod
+    def _terminate_owned_process(process: subprocess.Popen[str]) -> None:
+        if os.name == "nt":
+            if process.poll() is None:
+                with suppress(OSError, subprocess.SubprocessError):
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+        else:
+            # Signal the process group even when the root has already exited.
+            # A reaped root does not imply that its adopted children are gone.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            if process.poll() is None:
+                with suppress(ProcessLookupError, PermissionError):
+                    process.kill()
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=2)
+
+    @staticmethod
+    def _read_bounded(
+        stream: Any,
+        limit_bytes: int,
+    ) -> tuple[bytes, bool]:
+        """Read one pipe with a hard buffer bound while draining the rest."""
+        kept = bytearray()
+        truncated = False
+        while True:
+            chunk = stream.read(64 * 1024)
+            if not chunk:
+                break
+            if len(kept) < limit_bytes:
+                take = chunk[: limit_bytes - len(kept)]
+                kept.extend(take)
+                if len(take) < len(chunk):
+                    truncated = True
+            else:
+                truncated = True
+        return bytes(kept), truncated
+
+    @staticmethod
+    def _decode_bounded(raw: bytes, truncated: bool) -> str:
+        text = raw.decode("utf-8", errors="replace")
+        if truncated:
+            text += "\n\n... output truncated ..."
+        return text
+
+    def _run_owned_argv(
+        self,
+        argv: list[str],
+        *,
+        timeout: int,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run one CLI app in its own process group and reap the group on timeout."""
+        kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
+            )
+        else:
+            kwargs["start_new_session"] = True
+        process = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self._subprocess_env(),
+            cwd=str(cwd) if cwd is not None else None,
+            **kwargs,
+        )
+        if getattr(process, "stdout", None) is None or getattr(process, "stderr", None) is None:
+            # Injected process doubles may expose only communicate(); the
+            # production path always supplies both pipes.
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._terminate_owned_process(process)
+                stdout, stderr = process.communicate()
+                raise subprocess.TimeoutExpired(
+                    process.args, timeout, output=stdout, stderr=stderr,
+                ) from None
+            return subprocess.CompletedProcess(
+                process.args, process.returncode, stdout, stderr,
+            )
+        limit_bytes = _MAX_TOOL_OUTPUT_CHARS * 4
+        outputs: dict[str, tuple[bytes, bool]] = {}
+        readers = {
+            "stdout": threading.Thread(
+                target=lambda: outputs.__setitem__(
+                    "stdout", self._read_bounded(process.stdout, limit_bytes),
+                ),
+                daemon=True,
+            ),
+            "stderr": threading.Thread(
+                target=lambda: outputs.__setitem__(
+                    "stderr", self._read_bounded(process.stderr, limit_bytes),
+                ),
+                daemon=True,
+            ),
+        }
+        for reader in readers.values():
+            reader.start()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._terminate_owned_process(process)
+            for reader in readers.values():
+                reader.join(timeout=2)
+            stdout_raw, stdout_truncated = outputs.get("stdout", (b"", False))
+            stderr_raw, stderr_truncated = outputs.get("stderr", (b"", False))
+            raise subprocess.TimeoutExpired(
+                process.args,
+                timeout,
+                output=self._decode_bounded(stdout_raw, stdout_truncated),
+                stderr=self._decode_bounded(stderr_raw, stderr_truncated),
+            ) from None
+        try:
+            self._settle_owned_group(process)
+        finally:
+            for reader in readers.values():
+                reader.join(timeout=2)
+        stdout_raw, stdout_truncated = outputs.get("stdout", (b"", False))
+        stderr_raw, stderr_truncated = outputs.get("stderr", (b"", False))
+        return subprocess.CompletedProcess(
+            process.args,
+            process.returncode,
+            self._decode_bounded(stdout_raw, stdout_truncated),
+            self._decode_bounded(stderr_raw, stderr_truncated),
+        )
+
     def _run_argv(self, argv: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
         command = subprocess.list2cmdline(argv)
         logger.info("CLI Apps: running {}", command)
-        result = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            env=self._subprocess_env(),
-        )
+        result = self._run_owned_argv(argv, timeout=timeout)
         logger.info("CLI Apps: command exited with code {}: {}", result.returncode, command)
         output = (result.stderr or result.stdout or "").strip()
         if output:
@@ -1453,15 +1636,10 @@ Use the `run_cli_app` tool with `name="{name}"` for command execution. Do not in
         effective_timeout = max(1, min(timeout or self.runtime.run_timeout, 600))
         artifact_snapshot = self._artifact_snapshot(cwd)
         try:
-            result = subprocess.run(
+            result = self._run_owned_argv(
                 [resolved, *clean_args],
-                cwd=str(cwd),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=effective_timeout,
-                env=self._subprocess_env(),
+                cwd=cwd,
             )
         except subprocess.TimeoutExpired:
             return f"CLI app '{name}' timed out after {effective_timeout}s"

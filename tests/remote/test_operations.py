@@ -27,8 +27,12 @@ def test_registry_matches_m36_inventory() -> None:
     }
     registry = load_registry()
     assert set(registry.operations) == expected
-    assert len(registry.operations) == 111
-    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 111
+    assert len(registry.operations) == 112
+    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 112
+    delegated_children = registry.by_id("sessions.delegated_children")
+    assert delegated_children is not None
+    assert delegated_children.scope == "chat.read"
+    assert delegated_children.path == "/api/sessions/{key}/delegated-children"
 
 
 def test_enabled_mutations_match_websocket_source_routes() -> None:
@@ -97,6 +101,10 @@ def test_read_matching_is_allowlisted_and_rejects_traversal() -> None:
     registry = load_registry()
     assert registry.match_read("/api/sessions") is not None
     assert registry.match_read("/api/sessions/websocket%3Aabc/webui-thread?limit=2") is not None
+    delegated = registry.match_read(
+        "/api/sessions/websocket%3Aabc/delegated-children?limit=2&before=cursor"
+    )
+    assert delegated is not None and delegated.id == "sessions.delegated_children"
     assert registry.match_read("/api/media/abc/payload") is not None
     assert registry.match_read("/api/settings") is not None
     assert registry.match_read("/api/unknown") is None
@@ -111,7 +119,9 @@ def test_every_enabled_operation_has_bounds_and_replay_policy() -> None:
     for spec in registry.operations.values():
         if not spec.enabled:
             continue
-        assert spec.scope == "owner"
+        assert spec.scope == (
+            "chat.read" if spec.id == "sessions.delegated_children" else "owner"
+        )
         assert spec.timeout_s is not None and spec.timeout_s > 0
         if spec.kind in {"mutation", "attachment"}:
             assert spec.max_request_bytes is not None and spec.max_request_bytes > 0

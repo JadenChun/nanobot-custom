@@ -11,6 +11,18 @@ uv_bin=${P0_UV:-uv}
 repo_root=$(git rev-parse --show-toplevel)
 freeze_file="$repo_root/docs/migration/p0-baseline-requirements.txt"
 verify_helper="$repo_root/docs/migration/verify-p0-archive.py"
+# Historical verifier inputs. A changed local helper cannot silently reuse an
+# older evidence run; update both the file and this pin in one reviewed change.
+freeze_sha256=78cfe2c0f7a2dbd56fdd66664a6441f9a15046ea1550dc46d2212b60b2a16549
+verify_helper_sha256=ebb0cd5e5b0234b61381f4d4b7670b2734befb806723deda102f69e758458f4f
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 
 command -v git >/dev/null
 command -v "$python_bin" >/dev/null
@@ -18,6 +30,16 @@ command -v "$uv_bin" >/dev/null
 command -v sandbox-exec >/dev/null
 test -f "$freeze_file"
 test -f "$verify_helper"
+test "$(sha256_of "$freeze_file")" = "$freeze_sha256" || {
+  printf '%s
+' "historical freeze input changed without a new evidence pin" >&2
+  exit 1
+}
+test "$(sha256_of "$verify_helper")" = "$verify_helper_sha256" || {
+  printf '%s
+' "historical verifier changed without a new evidence pin" >&2
+  exit 1
+}
 
 "$python_bin" - <<'PY'
 import sys

@@ -6,6 +6,7 @@ import json
 from contextlib import contextmanager
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from nanobot.agent.tools.web import WebFetchTool, _validate_url
@@ -26,10 +27,13 @@ class FakeResponse:
 
 
 class FakeStreamResponse:
+    status_code = 200
     headers = {"content-type": "text/html"}
     url = "https://example.com/page"
+    request = httpx.Request("GET", "https://example.com/page")
     async def __aenter__(self): return self
     async def __aexit__(self, *a): return False
+    async def aiter_bytes(self): yield FakeResponse.text.encode()
 
 
 class FakeClient:

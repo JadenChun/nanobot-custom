@@ -1,8 +1,9 @@
 """Tests for structured tool-event progress metadata emitted by AgentLoop."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from nanobot.agent.context import TranscriptInput
 from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.filesystem import WriteFileTool
 from nanobot.agent.turn import RunPolicyContext, ToolOutcome
@@ -89,6 +91,34 @@ def _attach_webui_runtime_events(loop: AgentLoop, bus: MessageBus) -> Callable[[
     return coordinator.subscribe()
 
 
+class _ProgressTool(Tool):
+    description = "Return the test's structured progress result."
+    parameters = {"type": "object", "properties": {}}
+
+    def __init__(self, name: str, execute: Callable[..., Awaitable[Any]]) -> None:
+        self._name = name
+        self._execute = execute
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    async def execute(self, **kwargs: Any) -> Any:
+        return await self._execute(**kwargs)
+
+
+def _install_progress_tool(
+    loop: AgentLoop, name: str, execute: Callable[..., Awaitable[Any]],
+) -> None:
+    """Capture a concrete fixture tool through the production ownership API."""
+    tool = _ProgressTool(name, execute)
+    if loop.tools.has(name):
+        loop.tools.replace(tool)
+    else:
+        loop.tools.register(tool)
+    loop.tools.capture_request_tools = lambda: loop.tools.borrow_filtered([name])
+
+
 class TestToolEventProgress:
     """_run_agent_loop emits structured tool_events via on_progress."""
 
@@ -101,9 +131,7 @@ class TestToolEventProgress:
             LLMResponse(content="Done", tool_calls=[]),
         ])
         loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
-        loop.tools.get_definitions = MagicMock(return_value=[])
-        loop.tools.prepare_call = MagicMock(return_value=(None, {"path": "foo.txt"}, None))
-        loop.tools.execute = AsyncMock(return_value="ok")
+        _install_progress_tool(loop, "custom_tool", AsyncMock(return_value="ok"))
 
         progress: list[tuple[str, bool, list[dict] | None]] = []
 
@@ -170,9 +198,7 @@ class TestToolEventProgress:
             LLMResponse(content="Done", tool_calls=[]),
         ])
         loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
-        loop.tools.get_definitions = MagicMock(return_value=[])
-        loop.tools.prepare_call = MagicMock(return_value=(None, {}, None))
-        loop.tools.execute = AsyncMock(return_value=ToolOutcome(
+        _install_progress_tool(loop, "mcp_test_generate", AsyncMock(return_value=ToolOutcome(
             content="generated",
             media_artifacts=({
                 "id": "img_1",
@@ -181,7 +207,7 @@ class TestToolEventProgress:
                 "mime": "image/png",
                 "name": "img_1.png",
             },),
-        ))
+        )))
         progress: list[dict] = []
 
         async def on_progress(
@@ -384,9 +410,7 @@ class TestToolEventProgress:
             LLMResponse(content="Done", tool_calls=[]),
         ])
         loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
-        loop.tools.get_definitions = MagicMock(return_value=[])
-        loop.tools.prepare_call = MagicMock(return_value=(None, {"command": "ls"}, None))
-        loop.tools.execute = AsyncMock(return_value="file.txt")
+        _install_progress_tool(loop, "exec", AsyncMock(return_value="file.txt"))
 
         msg = InboundMessage(
             channel="telegram",
@@ -922,14 +946,11 @@ class TestToolEventProgress:
                 clear_websocket_turn_if_current("chat-a", owner)
 
         request.addfinalizer(cleanup_test_turns)
-        loop.tools.get_definitions = MagicMock(return_value=[])
-        loop.tools.prepare_call = MagicMock(return_value=(None, {}, None))
-
         async def execute_tool(*args, **kwargs):
             request_contexts.append(current_request_context())
             return "ok"
 
-        loop.tools.execute = execute_tool
+        _install_progress_tool(loop, "custom_tool", execute_tool)
 
         session_key = "websocket:chat-a"
         session = loop.sessions.get_or_create(session_key)
@@ -1132,9 +1153,7 @@ class TestToolEventProgress:
 
         loop.provider.chat_stream_with_retry = chat_stream_with_retry
         loop.provider.chat_with_retry = AsyncMock()
-        loop.tools.get_definitions = MagicMock(return_value=[])
-        loop.tools.prepare_call = MagicMock(return_value=(None, {"path": "foo.txt"}, None))
-        loop.tools.execute = AsyncMock(return_value="ok")
+        _install_progress_tool(loop, "custom_tool", AsyncMock(return_value="ok"))
 
         streamed: list[str] = []
         progress: list[tuple[str, bool, list[dict] | None]] = []

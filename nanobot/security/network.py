@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import ipaddress
 import re
 import socket
 from contextlib import contextmanager, suppress
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Any, Generator, cast
 from urllib.parse import urlparse
 from urllib.request import getproxies, proxy_bypass
 
@@ -28,7 +30,31 @@ _BLOCKED_NETWORKS = [
 ]
 
 _URL_RE = re.compile(r"https?://[^\s\"'`;|<>]+", re.IGNORECASE)
-_allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+@dataclass(frozen=True, slots=True)
+class NetworkPolicy:
+    """One immutable SSRF allowlist bound to an instance or turn."""
+
+    allowed_networks: tuple[
+        ipaddress.IPv4Network | ipaddress.IPv6Network, ...
+    ] = ()
+
+    @classmethod
+    def from_cidrs(cls, cidrs: list[str] | tuple[str, ...]) -> "NetworkPolicy":
+        nets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for cidr in cidrs:
+            with suppress(ValueError):
+                nets.append(ipaddress.ip_network(cidr, strict=False))
+        return cls(tuple(nets))
+
+
+_DEFAULT_NETWORK_POLICY = NetworkPolicy()
+# Compatibility mirror for existing fixtures and callers.
+_allowed_networks: list[
+    ipaddress.IPv4Network | ipaddress.IPv6Network
+] = []
+_CURRENT_NETWORK_POLICY: contextvars.ContextVar[NetworkPolicy | None] = (
+    contextvars.ContextVar("nanobot_network_policy", default=None)
+)
 
 
 def is_loopback_host(host: str) -> bool:
@@ -44,13 +70,36 @@ def is_loopback_host(host: str) -> bool:
 
 
 def configure_ssrf_whitelist(cidrs: list[str]) -> None:
-    """Allow specific CIDR ranges to bypass SSRF blocking (e.g. Tailscale's 100.64.0.0/10)."""
-    global _allowed_networks
-    nets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
-    for cidr in cidrs:
-        with suppress(ValueError):
-            nets.append(ipaddress.ip_network(cidr, strict=False))
-    _allowed_networks = nets
+    """Set the process default allowlist from one loaded configuration."""
+    policy = NetworkPolicy.from_cidrs(cidrs)
+    _allowed_networks[:] = list(policy.allowed_networks)
+
+
+def current_network_policy() -> NetworkPolicy:
+    """Return the turn-bound policy, then the process default, then empty."""
+    bound = _CURRENT_NETWORK_POLICY.get()
+    if bound is not None:
+        return bound
+    if _allowed_networks:
+        return NetworkPolicy(tuple(_allowed_networks))
+    return _DEFAULT_NETWORK_POLICY
+
+
+@contextmanager
+def bind_network_policy(policy: NetworkPolicy | None) -> Generator[None, None, None]:
+    """Bind one immutable policy for the current turn."""
+    token = _CURRENT_NETWORK_POLICY.set(policy)
+    try:
+        yield
+    finally:
+        _CURRENT_NETWORK_POLICY.reset(token)
+
+
+def bind_network_policy_for_cidrs(
+    cidrs: list[str] | tuple[str, ...],
+) -> Any:
+    """Context manager binding a policy built from configured CIDRs."""
+    return bind_network_policy(NetworkPolicy.from_cidrs(cidrs))
 
 
 def _normalize_addr(
@@ -68,9 +117,15 @@ def _normalize_addr(
     return addr
 
 
-def _is_private(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+def _is_private(
+    addr: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    policy: NetworkPolicy | None = None,
+) -> bool:
     normalized = _normalize_addr(addr)
-    if _allowed_networks and any(normalized in net for net in _allowed_networks):
+    active = policy or current_network_policy()
+    if active.allowed_networks and any(
+        normalized in net for net in active.allowed_networks
+    ):
         return False
     return any(normalized in net for net in _BLOCKED_NETWORKS)
 
@@ -80,6 +135,7 @@ def resolve_url_target(
     *,
     allow_loopback: bool = False,
     trust_remote_dns: bool = False,
+    policy: NetworkPolicy | None = None,
 ) -> tuple[bool, str, tuple[str, ...]]:
     """Validate a URL is safe to fetch: scheme, hostname, and resolved IPs.
 
@@ -125,7 +181,7 @@ def resolve_url_target(
             literal_addr = ipaddress.ip_address(normalized_hostname)
         except ValueError:
             return True, "", ()
-        if _is_private(literal_addr):
+        if _is_private(literal_addr, policy):
             return False, f"Blocked private/internal address: {literal_addr}", ()
         return True, "", (str(_normalize_addr(literal_addr)),)
 
@@ -139,15 +195,24 @@ def resolve_url_target(
     if allow_loopback and _is_allowed_loopback_target(hostname, addrs):
         return True, "", tuple(dict.fromkeys(str(_normalize_addr(addr)) for addr in addrs))
     for addr in addrs:
-        if _is_private(addr):
+        if _is_private(addr, policy):
             return False, f"Blocked: {hostname} resolves to private/internal address {addr}", ()
 
     return True, "", tuple(dict.fromkeys(str(_normalize_addr(addr)) for addr in addrs))
 
 
-def validate_url_target(url: str, *, allow_loopback: bool = False) -> tuple[bool, str]:
+def validate_url_target(
+    url: str,
+    *,
+    allow_loopback: bool = False,
+    policy: NetworkPolicy | None = None,
+) -> tuple[bool, str]:
     """Validate a URL is safe to fetch: scheme, hostname, and resolved IPs."""
-    ok, error, _ = resolve_url_target(url, allow_loopback=allow_loopback)
+    ok, error, _ = resolve_url_target(
+        url,
+        allow_loopback=allow_loopback,
+        policy=policy,
+    )
     return ok, error
 
 
@@ -288,7 +353,11 @@ class PinnedDNSAsyncTransport(httpx.AsyncBaseTransport):
         await self._inner.aclose()
 
 
-def validate_resolved_url(url: str) -> tuple[bool, str]:
+def validate_resolved_url(
+    url: str,
+    *,
+    policy: NetworkPolicy | None = None,
+) -> tuple[bool, str]:
     """Validate an already-fetched URL (e.g. after redirect). Only checks the IP, skips DNS."""
     try:
         p = urlparse(url)
@@ -301,7 +370,7 @@ def validate_resolved_url(url: str) -> tuple[bool, str]:
 
     try:
         addr = ipaddress.ip_address(hostname)
-        if _is_private(addr):
+        if _is_private(addr, policy):
             return False, f"Redirect target is a private address: {addr}"
     except ValueError:
         # hostname is a domain name, resolve it
@@ -314,17 +383,26 @@ def validate_resolved_url(url: str) -> tuple[bool, str]:
                 addr = ipaddress.ip_address(info[4][0])
             except ValueError:
                 continue
-            if _is_private(addr):
+            if _is_private(addr, policy):
                 return False, f"Redirect target {hostname} resolves to private address {addr}"
 
     return True, ""
 
 
-def contains_internal_url(command: str, *, allow_loopback: bool = False) -> bool:
+def contains_internal_url(
+    command: str,
+    *,
+    allow_loopback: bool = False,
+    policy: NetworkPolicy | None = None,
+) -> bool:
     """Return True if the command string contains a URL targeting an internal/private address."""
     for m in _URL_RE.finditer(command):
         url = m.group(0)
-        ok, _ = validate_url_target(url, allow_loopback=allow_loopback)
+        ok, _ = validate_url_target(
+            url,
+            allow_loopback=allow_loopback,
+            policy=policy,
+        )
         if not ok:
             return True
     return False

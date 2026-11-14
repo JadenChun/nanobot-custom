@@ -25,7 +25,7 @@ function installBackListeners(): void {
     runBackHandlers();
   });
   window.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
+    if (event.defaultPrevented || event.key !== "Escape") return;
     if (runBackHandlers()) event.preventDefault();
   });
   (window as Window & { __nanobotHandleBack?: () => boolean }).__nanobotHandleBack =

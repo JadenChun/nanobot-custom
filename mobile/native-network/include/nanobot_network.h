@@ -68,10 +68,12 @@ int32_t nanobot_network_ws_ping(int64_t handle, uint64_t ws_id);
 /*
  * Copies one JSON event into out. Returns 0 when empty, the event length when
  * copied, -7 when the buffer is too small (the event is retained), or another
- * negative error. A 512 KiB buffer handles ordinary events; the JNI bridge
- * retries with 12 MiB when a media response event is larger.
+ * negative error. After -7, query the retained size and retry the poll.
  */
 int32_t nanobot_network_poll_event(int64_t handle, char *out, int32_t capacity);
+
+/* Returns the retained event size, 0 if none, or -4 for an unknown handle. */
+int32_t nanobot_network_pending_event_size(int64_t handle);
 
 int32_t nanobot_network_stop(int64_t handle);
 

@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { MessageBubble } from "@/components/MessageBubble";
@@ -1052,6 +1053,70 @@ describe("MessageBubble", () => {
     expect(screen.getByRole("button", { name: /view image: growth.svg/i })).toBeInTheDocument();
     expect(container.querySelector('img[src="/api/media/sig/svg"]')).toBeInTheDocument();
     expect(screen.queryByLabelText("File attachment")).not.toBeInTheDocument();
+  });
+
+  it("renders a labeled delegated task row and opens its read-only history", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const child = {
+      child_session_key: "delegated:child-a",
+      child_id: "child-a",
+      profile: "delegated",
+      state: "active",
+      task_label: "Inspect the API contract",
+      runtime_generation: 0,
+      turn_id: "turn-a",
+      result_summary: "Two compatible routes were found.",
+    };
+    const message: UIMessage = {
+      id: "delegated-child-a",
+      role: "assistant",
+      content: "",
+      createdAt: Date.now(),
+      kind: "delegated_child",
+      delegatedChild: child,
+    };
+
+    render(<MessageBubble message={message} onOpenChildHistory={onOpen} />);
+
+    const row = screen.getByRole("region", { name: "Inspect the API contract" });
+    expect(within(row).getByText("Working")).toBeInTheDocument();
+    expect(within(row).getByText("Two compatible routes were found.")).toBeInTheDocument();
+    const inspect = within(row).getByRole("button", {
+      name: "Inspect Inspect the API contract activity",
+    });
+
+    await user.click(inspect);
+
+    expect(onOpen).toHaveBeenCalledWith(child, inspect);
+  });
+
+  it("keeps delegated rows read-only and marks stale status unavailable", () => {
+    const message: UIMessage = {
+      id: "delegated-child-controls",
+      role: "assistant",
+      content: "",
+      createdAt: Date.now(),
+      kind: "delegated_child",
+      delegatedChild: {
+        child_session_key: "delegated:child-a",
+        child_id: "child-a",
+        profile: "delegated",
+        state: "active",
+        task_label: "Review test coverage",
+        runtime_generation: 0,
+        turn_id: "turn-a",
+      },
+    };
+
+    render(<MessageBubble message={message} delegatedStatusAvailable={false} />);
+
+    expect(screen.getByRole("region", { name: "Review test coverage" })).toBeInTheDocument();
+    expect(screen.getByText("Status unavailable (last known Working)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Inspect Review test coverage activity" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Wait" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Steer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
   });
 
 });

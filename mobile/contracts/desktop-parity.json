@@ -75,7 +75,7 @@
       "id": "chat",
       "label": "Chat, history, sessions, temporary chats, media",
       "required": true,
-      "row_count": 21,
+      "row_count": 24,
       "rows": [
         {
           "id": "chat.sessions.list",
@@ -203,6 +203,76 @@
             "mobile_implementation": "present",
             "evidence": [
               "mobile edge thread handler"
+            ]
+          },
+          "exception": null,
+          "notes": ""
+        },
+        {
+          "id": "chat.delegated_children.read",
+          "category": "chat",
+          "feature": "Delegated child history",
+          "action": "Read authorized delegated children",
+          "desktop": {
+            "source": [
+              "nanobot/webui/ws_http.py:_handle_delegated_children_get",
+              "nanobot/webui/ws_http.py:_load_child_ancestry"
+            ],
+            "tests": [
+              "tests/webui/test_child_thread_route.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/sessions/{key}/delegated-children",
+            "query": [
+              "limit",
+              "before"
+            ]
+          },
+          "ui": {
+            "entry": "Delegated child cards and thread hydration"
+          },
+          "auth": {
+            "owner": "read",
+            "legacy": "chat.read",
+            "local_only": false,
+            "current_local_only": false
+          },
+          "native": {
+            "operation": "sessions.delegated_children",
+            "scope": "chat.read",
+            "bounds": {
+              "max_response_bytes": 1572864,
+              "timeout_s": 30,
+              "range_requests": false
+            },
+            "replay": "none"
+          },
+          "dependency": [
+            "M11",
+            "M31"
+          ],
+          "checks": {
+            "positive": [
+              "chat.read pages current root descendants including nested children",
+              "child history pages complete canonical messages and tool activity"
+            ],
+            "negative": [
+              "unknown pagination query is denied",
+              "replaced child, parent, or root ancestry is denied",
+              "chat.read cannot Stop a child"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "present",
+            "evidence": [
+              "nanobot/webui/ws_http.py:_handle_delegated_children_get",
+              "nanobot/remote/edge.py",
+              "mobile/native-network/internal/broker/policy.go"
             ]
           },
           "exception": null,
@@ -7314,7 +7384,7 @@
       "id": "lifecycle",
       "label": "Restart, start, service install, diagnostics",
       "required": true,
-      "row_count": 4,
+      "row_count": 5,
       "rows": [
         {
           "id": "lifecycle.restart",
@@ -7518,6 +7588,58 @@
             ]
           },
           "exception": "Desktop host-only capability; mobile reports can_open_logs=false.",
+          "notes": ""
+        },
+        {
+          "id": "lifecycle.desktop_notify",
+          "category": "lifecycle",
+          "feature": "Desktop notifications",
+          "action": "Send a local desktop notification",
+          "desktop": {
+            "source": [
+              "nanobot/webui/ws_http.py:_handle_desktop_notify"
+            ],
+            "tests": [
+              "webui/src/tests/task-notifications.test.ts"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/desktop/notify"
+          },
+          "ui": {
+            "entry": "Task completion notification"
+          },
+          "auth": {
+            "owner": "local_only",
+            "legacy": "none",
+            "local_only": true,
+            "current_local_only": true
+          },
+          "native": null,
+          "dependency": [
+            "M36"
+          ],
+          "checks": {
+            "positive": [
+              "loopback browser sends a bounded title/body notification"
+            ],
+            "negative": [
+              "non-loopback request denied",
+              "non-local browser origin denied",
+              "missing body rejected"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "absent",
+            "evidence": [
+              "mobile has no desktop notification surface"
+            ]
+          },
+          "exception": "desktop-host-capabilities",
           "notes": ""
         }
       ]
@@ -7761,7 +7883,8 @@
       "id": "desktop-host-capabilities",
       "kind": "adaptation",
       "rows": [
-        "lifecycle.diagnostics"
+        "lifecycle.diagnostics",
+        "lifecycle.desktop_notify"
       ],
       "statement": "Logs/export diagnostics and native folder picking are desktop-host capabilities."
     }

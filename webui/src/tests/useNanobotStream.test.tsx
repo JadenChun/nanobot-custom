@@ -7,8 +7,11 @@ import { normalizeActivityTimeline } from "@/lib/activity-timeline";
 import type { StreamError } from "@/lib/nanobot-client";
 import type {
   ConnectionStatus,
+  DelegatedChildPayload,
+  DelegatedChildSummaryPayload,
   GoalStateWsPayload,
   InboundEvent,
+  StopExpectation,
   UIMessage,
 } from "@/lib/types";
 import { ClientProvider } from "@/providers/ClientProvider";
@@ -194,6 +197,119 @@ function wrap(client: ReturnType<typeof fakeClient>["client"]) {
       </ClientProvider>
     );
   };
+}
+
+function ownedStopFixture(chatId: string) {
+  const root = {
+    store_identity: "root-store",
+    session_key: chatId,
+    incarnation: "root-incarnation",
+    generation: 0,
+  };
+  const childSources = [
+    {
+      childId: "child-alpha",
+      sessionKey: "delegated:child-alpha",
+      storeIdentity: "store-child-alpha",
+      incarnation: "incarnation-child-alpha",
+      parentSessionKey: chatId,
+      parent: root,
+      parentRunId: "parent-run",
+    },
+    {
+      childId: "child-beta",
+      sessionKey: "delegated:child-beta",
+      storeIdentity: "store-child-beta",
+      incarnation: "incarnation-child-beta",
+      parentSessionKey: chatId,
+      parent: root,
+      parentRunId: "parent-run",
+    },
+    {
+      childId: "child-nested",
+      sessionKey: "delegated:child-nested",
+      storeIdentity: "store-child-nested",
+      incarnation: "incarnation-child-nested",
+      parentSessionKey: "delegated:child-alpha",
+      parent: {
+        store_identity: "store-child-alpha",
+        session_key: "delegated:child-alpha",
+        incarnation: "incarnation-child-alpha",
+        generation: 0,
+      },
+      parentRunId: "run-child-alpha",
+    },
+  ];
+  const children = childSources.map((child) => ({
+    history_kind: "canonical",
+    parent_session_key: child.parentSessionKey,
+    child_session_key: child.sessionKey,
+    child_id: child.childId,
+    profile: "delegated",
+    state: "active",
+    task_label: child.childId,
+    task_label_truncated: false,
+    result_summary: null,
+    result_summary_truncated: false,
+    outcome: null,
+    runtime_generation: 0,
+    turn_id: null,
+    parent_run_id: child.parentRunId,
+    child_run_id: `run-${child.childId}`,
+    parent_store_identity: child.parent.store_identity,
+    parent_incarnation: child.parent.incarnation,
+    parent_generation: child.parent.generation,
+    root_key: chatId,
+    root_store_identity: root.store_identity,
+    root_incarnation: root.incarnation,
+    root_generation: root.generation,
+    child_store_identity: child.storeIdentity,
+    child_incarnation: child.incarnation,
+    child_generation: 0,
+    run_sequence: 1,
+    state_sequence: 1,
+    control_epoch: 1,
+    holds_capacity: true,
+    can_stop: true,
+    owned_work: true,
+    pending_approval_id: null,
+    blocked_run_id: null,
+    result_disposition: "pending",
+  })) satisfies DelegatedChildPayload[];
+  const stopTarget: StopExpectation = {
+    version: 1,
+    source: root,
+    control_epoch: 1,
+    active_root_present: false,
+    active_turn_id: null,
+    active_root_run_ids: [],
+    children: childSources.map((child) => ({
+      child_id: child.childId,
+      source: {
+        store_identity: child.storeIdentity,
+        session_key: child.sessionKey,
+        incarnation: child.incarnation,
+        generation: 0,
+      },
+      child_run_id: `run-${child.childId}`,
+      run_sequence: 1,
+      control_epoch: 1,
+    })),
+    pending_work_digest: "a".repeat(64),
+  };
+  const events: Array<Extract<InboundEvent, { event: "delegated_child" }>> = children.map(
+    (child) => ({ event: "delegated_child", chat_id: chatId, ...child }),
+  );
+  const messages: UIMessage[] = children.map((delegatedChild) => ({
+    id: `delegated-child-${delegatedChild.child_id}`,
+    role: "assistant",
+    kind: "delegated_child",
+    content: "",
+    createdAt: 0,
+    delegatedChild,
+  }));
+
+  return { children, events, messages, stopTarget };
 }
 
 async function flushStreamFrame() {
@@ -2829,18 +2945,512 @@ describe("useNanobotStream", () => {
     act(() => {
       result.current.send("long task");
     });
+    const activeTurnId = fake.client.sendMessage.mock.calls.at(-1)![3]?.turnId;
+    expect(activeTurnId).toBeTruthy();
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.isStreaming).toBe(true);
+    expect(result.current.stopCanBeSent).toBe(true);
 
     act(() => {
       result.current.stop();
     });
 
-    expect(fake.client.sendMessage).toHaveBeenLastCalledWith("chat-stop", "/stop");
+    expect(fake.client.sendMessage).toHaveBeenLastCalledWith(
+      "chat-stop",
+      "/stop",
+      undefined,
+      { targetTurnId: activeTurnId },
+    );
     expect(fake.client.finishRunLocally).toHaveBeenCalledWith("chat-stop");
     expect(result.current.isStreaming).toBe(false);
     expect(result.current.messages).toHaveLength(1);
     expect(result.current.messages[0].content).toBe("long task");
+  });
+
+  it.each(["attached", "stop_target"] as const)(
+    "does not downgrade explicit modern %s null to legacy Stop",
+    (eventName) => {
+      const fake = fakeClient();
+      const chatId = `chat-modern-null-${eventName}`;
+      const { result } = renderHook(
+        () => useNanobotStream(chatId, EMPTY_MESSAGES, false, undefined, chatId),
+        { wrapper: wrap(fake.client) },
+      );
+
+      act(() => result.current.send("long task"));
+      expect(result.current.isStreaming).toBe(true);
+      expect(result.current.stopCanBeSent).toBe(true);
+      const liveTurnId = fake.client.sendMessage.mock.calls.at(-1)?.[3]?.turnId;
+      expect(liveTurnId).toBeTruthy();
+
+      const event: InboundEvent = eventName === "attached"
+        ? { event: "attached", chat_id: chatId, stop_target: null }
+        : { event: "stop_target", chat_id: chatId, stop_target: null };
+      act(() => fake.emit(chatId, event));
+
+      expect(result.current.stopCanBeSent).toBe(false);
+      expect(result.current.stopNotice).toBeNull();
+      act(() => result.current.stop());
+      expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+      expect(fake.client.finishRunLocally).not.toHaveBeenCalled();
+      expect(result.current.stopPending).toBe(false);
+      expect(result.current.stopNotice).toBe("unavailable");
+    },
+  );
+
+  it("does not downgrade an explicit modern null from authenticated history", () => {
+    const fake = fakeClient();
+    const chatId = "chat-history-modern-null";
+    const { result } = renderHook(
+      () => useNanobotStream(
+        chatId,
+        EMPTY_MESSAGES,
+        false,
+        undefined,
+        chatId,
+        null,
+        undefined,
+        true,
+      ),
+      { wrapper: wrap(fake.client) },
+    );
+
+    act(() => result.current.send("long task"));
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.stopCanBeSent).toBe(false);
+
+    act(() => result.current.stop());
+
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(fake.client.finishRunLocally).not.toHaveBeenCalled();
+    expect(result.current.stopNotice).toBe("unavailable");
+  });
+
+  it("does not show an unavailable notice for an idle attach or normal null settlement", () => {
+    const fake = fakeClient();
+    const chatId = "chat-idle-null-target";
+    const { result } = renderHook(
+      () => useNanobotStream(chatId, EMPTY_MESSAGES, false, undefined, chatId),
+      { wrapper: wrap(fake.client) },
+    );
+
+    act(() => fake.emit(chatId, {
+      event: "attached",
+      chat_id: chatId,
+      stop_target: null,
+    }));
+    expect(result.current.stopNotice).toBeNull();
+
+    act(() => fake.emit(chatId, {
+      event: "turn_end",
+      chat_id: chatId,
+      turn_id: "finished-turn",
+    }));
+    act(() => fake.emit(chatId, {
+      event: "stop_target",
+      chat_id: chatId,
+      stop_target: null,
+    }));
+    expect(result.current.stopNotice).toBeNull();
+  });
+
+  it.each([
+    { name: "null before terminal events in separate batches", batching: "separate" as const, nullFirst: true },
+    { name: "terminal events before null in one batch", batching: "together" as const, nullFirst: false },
+    { name: "null before terminal events in one batch", batching: "together" as const, nullFirst: true },
+  ])("passively settles an accepted null after $name", ({ batching, nullFirst }) => {
+    const fake = fakeClient();
+    const chatId = `chat-passive-null-${batching}-${nullFirst}`;
+    const fixture = ownedStopFixture(chatId);
+    const refresh = vi.fn();
+    const { result } = renderHook(() => useNanobotStream(
+      chatId,
+      fixture.messages,
+      false,
+      undefined,
+      chatId,
+      fixture.stopTarget,
+      refresh,
+    ), {
+      wrapper: wrap(fake.client),
+    });
+    const terminalEvents = fixture.events.map((event) => ({
+      ...event,
+      state: "stopped",
+      outcome: "stopped",
+      state_sequence: 2,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      result_disposition: "cancelled",
+    }));
+    const emitNull = () => fake.emit(chatId, {
+      event: "stop_target",
+      chat_id: chatId,
+      stop_target: null,
+    });
+    const emitTerminalEvents = () => terminalEvents.forEach((event) => (
+      fake.emit(chatId, event)
+    ));
+
+    expect(result.current.messages).toHaveLength(3);
+    expect(result.current.hasOwnedWork).toBe(true);
+    expect(result.current.stopCanBeSent).toBe(true);
+    act(() => result.current.stop());
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(fake.client.sendMessage).toHaveBeenCalledWith(
+      chatId,
+      "/stop",
+      undefined,
+      { stopExpectation: fixture.stopTarget },
+    );
+
+    if (batching === "separate") {
+      act(emitNull);
+      for (const event of terminalEvents) {
+        act(() => fake.emit(chatId, event));
+      }
+    } else {
+      act(() => {
+        if (nullFirst) emitNull();
+        emitTerminalEvents();
+        if (!nullFirst) emitNull();
+      });
+    }
+
+    expect(result.current.messages).toHaveLength(3);
+    expect(result.current.messages.map((message) => message.delegatedChild?.state)).toEqual([
+      "stopped",
+      "stopped",
+      "stopped",
+    ]);
+    expect(result.current.hasOwnedWork).toBe(false);
+    expect(result.current.stopPending).toBe(false);
+    expect(result.current.stopCanBeSent).toBe(false);
+    expect(result.current.stopNotice).toBeNull();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps stale Stop refusal through late settlement and recovers from a fresh history target", () => {
+    const fake = fakeClient();
+    const chatId = "chat-stale-null-recovery";
+    const fixture = ownedStopFixture(chatId);
+    const refresh = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ target }: { target: StopExpectation | null }) => useNanobotStream(
+        chatId,
+        fixture.messages,
+        false,
+        undefined,
+        chatId,
+        target,
+        refresh,
+      ),
+      {
+        initialProps: { target: fixture.stopTarget },
+        wrapper: wrap(fake.client),
+      },
+    );
+    const terminalEvents = fixture.events.map((event) => ({
+      ...event,
+      state: "stopped",
+      outcome: "stopped",
+      state_sequence: 2,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      result_disposition: "cancelled",
+    }));
+
+    act(() => result.current.stop());
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+    act(() => fake.emit(chatId, {
+      event: "error",
+      chat_id: chatId,
+      detail: "not_admitted",
+      reason: "stale_stop_target",
+    }));
+    expect(result.current.stopNotice).toBe("stale_target");
+    expect(result.current.stopTarget).toBeNull();
+    expect(result.current.stopCanBeSent).toBe(false);
+
+    act(() => {
+      fake.emit(chatId, {
+        event: "stop_target",
+        chat_id: chatId,
+        stop_target: null,
+      });
+      terminalEvents.forEach((event) => fake.emit(chatId, event));
+    });
+    expect(result.current.messages.map((message) => message.delegatedChild?.state)).toEqual([
+      "stopped",
+      "stopped",
+      "stopped",
+    ]);
+    expect(result.current.hasOwnedWork).toBe(false);
+    expect(result.current.stopPending).toBe(false);
+    expect(result.current.stopCanBeSent).toBe(false);
+    expect(result.current.stopNotice).toBe("stale_target");
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.dismissStopNotice());
+    expect(result.current.stopNotice).toBeNull();
+    expect(result.current.stopCanBeSent).toBe(false);
+
+    rerender({ target: fixture.stopTarget });
+    expect(result.current.stopTarget).toBeNull();
+    expect(result.current.stopCanBeSent).toBe(false);
+    act(() => result.current.stop());
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(result.current.stopNotice).toBe("unavailable");
+
+    const refreshedTarget = { ...fixture.stopTarget };
+    rerender({ target: refreshedTarget });
+    expect(result.current.stopTarget).toBe(refreshedTarget);
+    expect(result.current.stopNotice).toBeNull();
+    expect(result.current.stopCanBeSent).toBe(true);
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.stop());
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(2);
+    expect(fake.client.sendMessage).toHaveBeenLastCalledWith(
+      chatId,
+      "/stop",
+      undefined,
+      { stopExpectation: refreshedTarget },
+    );
+  });
+
+  it("keeps an explicit unavailable Stop attempt visible through passive null and settlement", () => {
+    const fake = fakeClient();
+    const chatId = "chat-explicit-unavailable-null";
+    const fixture = ownedStopFixture(chatId);
+    const { result } = renderHook(
+      () => useNanobotStream(
+        chatId,
+        fixture.messages,
+        false,
+        undefined,
+        chatId,
+        null,
+        undefined,
+        true,
+      ),
+      { wrapper: wrap(fake.client) },
+    );
+    const terminalEvents = fixture.events.map((event) => ({
+      ...event,
+      state: "stopped",
+      outcome: "stopped",
+      state_sequence: 2,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      result_disposition: "cancelled",
+    }));
+
+    expect(result.current.hasOwnedWork).toBe(true);
+    expect(result.current.stopCanBeSent).toBe(false);
+    act(() => result.current.stop());
+    expect(result.current.stopNotice).toBe("unavailable");
+    expect(fake.client.sendMessage).not.toHaveBeenCalled();
+
+    act(() => {
+      fake.emit(chatId, {
+        event: "stop_target",
+        chat_id: chatId,
+        stop_target: null,
+      });
+      terminalEvents.forEach((event) => fake.emit(chatId, event));
+    });
+
+    expect(result.current.messages.map((message) => message.delegatedChild?.state)).toEqual([
+      "stopped",
+      "stopped",
+      "stopped",
+    ]);
+    expect(result.current.hasOwnedWork).toBe(false);
+    expect(result.current.stopCanBeSent).toBe(false);
+    expect(result.current.stopNotice).toBe("unavailable");
+    expect(fake.client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a dismissed Stop notice hidden while passive null leaves the target fenced", () => {
+    const fake = fakeClient();
+    const chatId = "chat-dismissed-null-stop";
+    const fixture = ownedStopFixture(chatId);
+    const { result } = renderHook(
+      () => useNanobotStream(
+        chatId,
+        fixture.messages,
+        false,
+        undefined,
+        chatId,
+        null,
+        undefined,
+        true,
+      ),
+      { wrapper: wrap(fake.client) },
+    );
+
+    act(() => result.current.stop());
+    expect(result.current.stopNotice).toBe("unavailable");
+    act(() => result.current.dismissStopNotice());
+    expect(result.current.stopNotice).toBeNull();
+
+    act(() => fake.emit(chatId, {
+      event: "stop_target",
+      chat_id: chatId,
+      stop_target: null,
+    }));
+
+    expect(result.current.stopNotice).toBeNull();
+    expect(result.current.stopCanBeSent).toBe(false);
+    expect(result.current.stopTarget).toBeNull();
+    expect(fake.client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("refuses legacy Stop without a live turn ID and does not finish locally", () => {
+    const fake = fakeClient();
+    const chatId = "chat-no-live-turn-id";
+    const { result } = renderHook(() => useNanobotStream(chatId, EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => fake.emit(chatId, {
+      event: "goal_status",
+      chat_id: chatId,
+      status: "running",
+      started_at: 1_700_000_000,
+    }));
+
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.stopCanBeSent).toBe(false);
+    act(() => result.current.stop());
+
+    expect(fake.client.sendMessage).not.toHaveBeenCalled();
+    expect(fake.client.finishRunLocally).not.toHaveBeenCalled();
+    expect(result.current.stopNotice).toBe("unavailable");
+  });
+
+  it("requires refreshed Stop identity after a source change or stale refusal", () => {
+    const fake = fakeClient();
+    const refresh = vi.fn();
+    const makeTarget = (incarnation: string): StopExpectation => ({
+      version: 1,
+      source: {
+        store_identity: "root-store",
+        session_key: "root-chat",
+        incarnation,
+        generation: 0,
+      },
+      control_epoch: 1,
+      active_root_present: false,
+      active_turn_id: null,
+      active_root_run_ids: [],
+      children: [],
+      pending_work_digest: "a".repeat(64),
+    });
+    const { result, rerender } = renderHook(({ target }) => useNanobotStream(
+      "root-chat",
+      EMPTY_MESSAGES,
+      false,
+      undefined,
+      "root-chat",
+      target,
+      refresh,
+    ), {
+      initialProps: { target: makeTarget("incarnation-a") },
+      wrapper: wrap(fake.client),
+    });
+    act(() => fake.emit("root-chat", {
+      event: "goal_status",
+      chat_id: "root-chat",
+      status: "running",
+      started_at: 1_700_000_000,
+    }));
+
+    act(() => fake.emit("root-chat", {
+      event: "stop_target",
+      chat_id: "root-chat",
+      stop_target: makeTarget("incarnation-b"),
+    }));
+    expect(result.current.stopTarget).toBeNull();
+    expect(result.current.stopCanBeSent).toBe(false);
+    expect(refresh).toHaveBeenCalled();
+    act(() => result.current.stop());
+    expect(fake.client.sendMessage).not.toHaveBeenCalled();
+
+    rerender({ target: makeTarget("incarnation-b") });
+    expect(result.current.stopTarget?.source.incarnation).toBe("incarnation-b");
+    expect(result.current.stopNotice).toBeNull();
+    act(() => result.current.stop());
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(fake.client.sendMessage.mock.calls[0]?.[3]).toEqual({
+      stopExpectation: makeTarget("incarnation-b"),
+    });
+
+    act(() => fake.emit("root-chat", {
+      event: "error",
+      chat_id: "root-chat",
+      detail: "not_admitted",
+      reason: "stale_stop_target",
+    }));
+    expect(result.current.stopTarget).toBeNull();
+    expect(result.current.stopCanBeSent).toBe(false);
+    act(() => result.current.stop());
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+
+    rerender({ target: makeTarget("incarnation-c") });
+    expect(result.current.stopTarget?.source.incarnation).toBe("incarnation-c");
+    expect(result.current.stopNotice).toBeNull();
+    expect(fake.client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an unaddressed stop command when no owned work is present", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-stop", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      result.current.stop();
+    });
+
+    expect(fake.client.sendMessage).not.toHaveBeenCalled();
+    expect(result.current.stopNotice).toBe("unavailable");
+  });
+
+  it("keeps streaming while a stop is in progress", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-stopping", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      result.current.send("long task");
+    });
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      fake.emit("chat-stopping", {
+        event: "goal_status",
+        chat_id: "chat-stopping",
+        status: "stopping",
+        started_at: 1_700,
+      });
+    });
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      fake.emit("chat-stopping", {
+        event: "goal_status",
+        chat_id: "chat-stopping",
+        status: "interrupted",
+      });
+    });
+    expect(result.current.isStreaming).toBe(false);
   });
 
   it("does not mark side-channel slash commands as streaming", () => {
@@ -3509,6 +4119,161 @@ describe("useNanobotStream", () => {
       });
     });
     expect(result.current.goalState).toEqual({ active: false });
+  });
+
+  it("projects and updates a typed delegated child row", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream(
+      "chat-child",
+      EMPTY_MESSAGES,
+      false,
+      undefined,
+      "chat-child",
+    ), {
+      wrapper: wrap(fake.client),
+    });
+
+    const activeEvent: Extract<InboundEvent, { event: "delegated_child" }> = {
+      event: "delegated_child",
+      chat_id: "chat-child",
+      parent_session_key: "chat-child",
+      child_session_key: "delegated:child-a",
+      child_id: "child-a",
+      profile: "delegated",
+      state: "active",
+      task_label: "Inspect task",
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      outcome: null,
+      runtime_generation: 0,
+      turn_id: "turn-a",
+      parent_run_id: "parent-run",
+      child_run_id: "child-run",
+      parent_incarnation: "root-inc",
+      parent_store_identity: "root-store",
+      parent_generation: 0,
+      root_key: "chat-child",
+      root_store_identity: "root-store",
+      root_incarnation: "root-inc",
+      root_generation: 0,
+      child_incarnation: "child-inc",
+      child_store_identity: "child-store",
+      child_generation: 0,
+      run_sequence: 2,
+      state_sequence: 5,
+      control_epoch: 1,
+      holds_capacity: true,
+      can_stop: true,
+      owned_work: true,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: "pending",
+    };
+
+    act(() => {
+      fake.emit("chat-child", activeEvent);
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.hasOwnedWork).toBe(true);
+    expect(result.current.stopCanBeSent).toBe(false);
+    expect(result.current.messages[0]).toMatchObject({
+      kind: "delegated_child",
+      role: "assistant",
+      delegatedChild: {
+        child_id: "child-a",
+        state: "active",
+        parent_run_id: "parent-run",
+        child_run_id: "child-run",
+        parent_incarnation: "root-inc",
+        child_incarnation: "child-inc",
+        run_sequence: 2,
+        state_sequence: 5,
+        control_epoch: 1,
+        holds_capacity: true,
+        can_stop: true,
+        owned_work: true,
+        result_disposition: "pending",
+      },
+      turnId: "turn-a",
+    });
+
+    const completedEvent: Extract<InboundEvent, { event: "delegated_child" }> = {
+      ...activeEvent,
+      state: "completed",
+      outcome: "completed",
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      state_sequence: 6,
+    };
+    act(() => fake.emit("chat-child", completedEvent));
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      kind: "delegated_child",
+      role: "assistant",
+      delegatedChild: {
+        child_id: "child-a",
+        state: "completed",
+        outcome: "completed",
+        can_stop: false,
+        holds_capacity: false,
+        owned_work: false,
+      },
+      turnId: "turn-a",
+    });
+  });
+
+  it("does not treat source-less child summaries as owned Stop work", () => {
+    const fake = fakeClient();
+    const chatId = "chat-summary-stop";
+    const summary: DelegatedChildSummaryPayload = {
+      history_kind: "summary",
+      parent_session_key: chatId,
+      child_session_key: "delegated:legacy-child",
+      child_id: "legacy-child",
+      profile: "delegated",
+      state: "completed",
+      task_label: null,
+      task_label_truncated: false,
+      result_summary: "Retained source-less result.",
+      result_summary_truncated: false,
+      outcome: null,
+      runtime_generation: null,
+      parent_run_id: null,
+      child_run_id: null,
+      parent_store_identity: null,
+      parent_incarnation: null,
+      parent_generation: null,
+      root_key: chatId,
+      root_store_identity: null,
+      root_incarnation: null,
+      root_generation: null,
+      child_store_identity: null,
+      child_incarnation: null,
+      child_generation: null,
+      run_sequence: null,
+      state_sequence: null,
+      control_epoch: null,
+      can_stop: false,
+    };
+    const initial: UIMessage[] = [{
+      id: "legacy-child-summary",
+      role: "assistant",
+      kind: "delegated_child",
+      content: "",
+      createdAt: 0,
+      delegatedChild: summary,
+    }];
+    const { result } = renderHook(
+      () => useNanobotStream(chatId, initial, false, undefined, chatId),
+      { wrapper: wrap(fake.client) },
+    );
+
+    expect(result.current.hasOwnedWork).toBe(false);
+    expect(result.current.stopCanBeSent).toBe(false);
   });
 
 });

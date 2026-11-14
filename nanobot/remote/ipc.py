@@ -9,21 +9,24 @@ import struct
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-from nanobot.remote.auth import AuthRejectedError, TokenService
+from nanobot.remote.auth import AuthRejectedError, AuthUpgradeRequiredError, TokenService
 from nanobot.remote.delegation import (
     DelegatedAdminOperation,
     DelegationError,
     OwnerDelegationService,
     current_digest,
 )
+from nanobot.remote.device_proof import DeviceProofError, decode_proof_base64url
 from nanobot.remote.pairing import (
     PairingBusyError,
     PairingCodeInvalidError,
     PairingConsumedError,
     PairingDeniedError,
+    PairingDeviceRevokedError,
     PairingDisabledError,
     PairingError,
     PairingExpiredError,
@@ -34,6 +37,7 @@ from nanobot.remote.pairing import (
     PairingRejectedError,
     PairingResult,
     PairingService,
+    PairingUpgradeRequiredError,
 )
 from nanobot.remote.store import RemoteAccessStore, StoreError
 
@@ -55,11 +59,13 @@ class OwnerIPCServer:
         pairing: PairingService | None = None,
         tokens: TokenService | None = None,
         delegation: OwnerDelegationService | None = None,
+        serve_verifier: Callable[[str], bool] | None = None,
     ) -> None:
         self.store = store
         self.pairing = pairing
         self.tokens = tokens
         self.delegation = delegation
+        self.serve_verifier = serve_verifier
         self.socket_path = Path(socket_path) if socket_path else store.root / IPC_SOCKET_NAME
         self._socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -248,6 +254,7 @@ class OwnerIPCServer:
                     label=cast(str, label),
                     platform=_string_param(params, "platform"),
                     model=_string_param(params, "model"),
+                    device_public_key_der=_base64_param(params, "device_public_key"),
                 )
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
@@ -271,6 +278,7 @@ class OwnerIPCServer:
                     label=cast(str, label),
                     platform=_string_param(params, "platform"),
                     model=_string_param(params, "model"),
+                    device_public_key_der=_base64_param(params, "device_public_key"),
                 )
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
@@ -307,6 +315,111 @@ class OwnerIPCServer:
                 }
             assert isinstance(result, PairingPending)
             return {"ok": True, "result": _pending_payload(result)}
+        if method == "pair_recover_begin":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            installation_id = _string_param(params, "installation_id")
+            device_key = _base64_param(params, "device_public_key")
+            if installation_id is None or device_key is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "recovery fields are required"}}
+            try:
+                claims = self.pairing.begin_device_recovery(
+                    installation_id=installation_id,
+                    device_public_key_der=device_key,
+                    pairing_id=_string_param(params, "pairing_id"),
+                )
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {"ok": True, "result": {"proof_challenge": claims}}
+        if method == "pair_recover_complete":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            installation_id = _string_param(params, "installation_id")
+            raw_claims = params.get("claims")
+            signature = _base64_param(params, "signature")
+            if installation_id is None or not isinstance(raw_claims, dict) or signature is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "proof fields are required"}}
+            from nanobot.remote.device_proof import DeviceProofClaims, DeviceProofError
+
+            try:
+                claims = DeviceProofClaims.from_payload(cast(dict[str, object], raw_claims))
+                pair = self.pairing.complete_device_recovery(
+                    installation_id=installation_id,
+                    claims=claims,
+                    signature_der=signature,
+                )
+            except DeviceProofError as exc:
+                return {"ok": False, "error": {"code": "pairing_rejected", "message": exc.reason}}
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {
+                "ok": True,
+                "result": {
+                    "status": "approved",
+                    "installation_id": installation_id,
+                    "access_token": pair.access_token,
+                    "refresh_token": pair.refresh_token,
+                    "expires_in": pair.expires_in,
+                    "refresh_expires_in": pair.refresh_expires_in,
+                    "scopes": list(pair.scopes),
+                },
+            }
+        if method == "pair_cancel_attempt":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            nonce = _string_param(params, "nonce")
+            collector_secret = _string_param(params, "collector_secret")
+            origin = _string_param(params, "origin")
+            if not pairing_id or not nonce or not collector_secret or not origin:
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing fields are required"}}
+            try:
+                cancelled = self.pairing.cancel_attempt(
+                    pairing_id=pairing_id,
+                    nonce=nonce,
+                    collector_secret=collector_secret,
+                    origin=origin,
+                    installation_id=_string_param(params, "installation_id"),
+                )
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            except AuthRejectedError as exc:
+                return {"ok": False, "error": {"code": "unavailable", "message": str(exc)}}
+            return {"ok": True, "result": {"cancelled": cancelled}}
+        if method == "pair_prove":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            raw_claims = params.get("claims")
+            signature = _base64_param(params, "signature")
+            if pairing_id is None or not isinstance(raw_claims, dict) or signature is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "proof fields are required"}}
+            from nanobot.remote.device_proof import DeviceProofClaims, DeviceProofError
+
+            try:
+                claims = DeviceProofClaims.from_payload(cast(dict[str, object], raw_claims))
+                pair = self.pairing.complete_device_proof(
+                    pairing_id=pairing_id,
+                    claims=claims,
+                    signature_der=signature,
+                )
+            except DeviceProofError as exc:
+                return {"ok": False, "error": {"code": "pairing_rejected", "message": exc.reason}}
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {
+                "ok": True,
+                "result": {
+                    "status": "approved",
+                    "pairing_id": pairing_id,
+                    "installation_id": claims.installation_id,
+                    "access_token": pair.access_token,
+                    "refresh_token": pair.refresh_token,
+                    "expires_in": pair.expires_in,
+                    "refresh_expires_in": pair.refresh_expires_in,
+                    "scopes": list(pair.scopes),
+                },
+            }
         if method == "ping":
             return {"ok": True, "result": {"version": 1, "started_at": self._started_at}}
         if method == "status":
@@ -320,6 +433,8 @@ class OwnerIPCServer:
                 return {"ok": False, "error": {"code": "bad_request", "message": "installation_id and refresh_token are required"}}
             try:
                 pair = self.tokens.refresh(installation_id, refresh_token)
+            except AuthUpgradeRequiredError as exc:
+                return {"ok": False, "error": {"code": "upgrade_required", "message": str(exc)}}
             except AuthRejectedError as exc:
                 device = self.store.get_device(installation_id)
                 code = "device_revoked" if device is None or device.revoked else "invalid_refresh"
@@ -352,6 +467,7 @@ class OwnerIPCServer:
                     "installation_id": grant.installation_id,
                     "scopes": list(grant.scopes),
                     "expires_at": grant.expires_at,
+                    "origin": grant.origin,
                     "generation": revision,
                 },
             }
@@ -471,6 +587,14 @@ class OwnerIPCServer:
                         "message": "owner pairing requires full-control consent",
                     },
                 }
+            if self.serve_verifier is not None and not self.serve_verifier(origin):
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "serve_unverified",
+                        "message": "Tailscale Serve target is not verified for this origin",
+                    },
+                }
             try:
                 offer = self.pairing.create_challenge(
                     origin=origin,
@@ -575,35 +699,16 @@ class OwnerIPCServer:
             pairing_id = _string_param(params, "pairing_id")
             if pairing_id is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id is required"}}
-            return {"ok": True, "result": {"cancelled": self.pairing.cancel(pairing_id)}}
+            try:
+                cancelled = self.pairing.cancel(pairing_id)
+            except AuthRejectedError as exc:
+                return {"ok": False, "error": {"code": "unavailable", "message": str(exc)}}
+            return {"ok": True, "result": {"cancelled": cancelled}}
         if method == "set_enabled":
             enabled = _bool_param(params, "enabled")
             if enabled is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "enabled must be boolean"}}
             return {"ok": True, "result": self.store.set_enabled(enabled).enabled}
-        if method == "add_device":
-            installation_id = _string_param(params, "installation_id")
-            label = _string_param(params, "label")
-            scopes = _string_list_param(params, "scopes")
-            refresh_token = _string_param(params, "refresh_token")
-            if installation_id is None or label is None or refresh_token is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "device fields are required"}}
-            if scopes is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "scopes must be a string list"}}
-            device = self.store.add_device(
-                installation_id=installation_id,
-                label=label,
-                scopes=tuple(scopes),
-                refresh_token=refresh_token,
-            )
-            return {"ok": True, "result": {"installation_id": device.installation_id}}
-        if method == "rotate_refresh":
-            installation_id = _string_param(params, "installation_id")
-            refresh_token = _string_param(params, "refresh_token")
-            if installation_id is None or refresh_token is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "installation_id and refresh_token are required"}}
-            device = self.store.rotate_refresh(installation_id, refresh_token)
-            return {"ok": True, "result": {"installation_id": device.installation_id}}
         return {"ok": False, "error": {"code": "unknown_method", "message": "unknown owner method"}}
 
     def _dispatch_delegation(
@@ -836,6 +941,16 @@ def _string_param(params: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _base64_param(params: dict[str, Any], key: str) -> bytes | None:
+    value = params.get(key)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return decode_proof_base64url(value)
+    except (DeviceProofError, TypeError):
+        return None
+
+
 def _bool_param(params: dict[str, Any], key: str, *, default: bool | None = None) -> bool | None:
     value = params.get(key, default)
     return value if isinstance(value, bool) else None
@@ -858,6 +973,8 @@ def _pairing_code(exc: PairingError) -> str:
         return "pairing_not_found"
     if isinstance(exc, PairingExpiredError):
         return "pairing_expired"
+    if isinstance(exc, PairingUpgradeRequiredError):
+        return "upgrade_required"
     if isinstance(exc, PairingConsumedError):
         return "pairing_consumed"
     if isinstance(exc, PairingBusyError):
@@ -870,6 +987,8 @@ def _pairing_code(exc: PairingError) -> str:
         return "pairing_code_invalid"
     if isinstance(exc, PairingDeniedError):
         return "pairing_denied"
+    if isinstance(exc, PairingDeviceRevokedError):
+        return "device_revoked"
     if isinstance(exc, PairingRejectedError):
         return "pairing_rejected"
     return "pairing_error"
@@ -902,6 +1021,9 @@ def _pending_payload(pending: PairingPending) -> dict[str, Any]:
         "comparison_code": pending.comparison_code,
         "created_at": pending.created_at,
         "renewable": pending.renewable,
+        "device_fingerprint": pending.device_fingerprint,
+        "device_generation": pending.device_generation,
+        "proof_challenge": pending.proof_challenge,
         "nonce": pending.nonce,
         "collector_secret": pending.collector_secret,
         "challenge": (

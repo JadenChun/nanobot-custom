@@ -6,6 +6,7 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -417,6 +418,44 @@ def test_wrapper_resolves_uri_encoded_json_pointer() -> None:
     assert generated_ref.startswith("#/$defs/ref_")
     generated_name = generated_ref.removeprefix("#/$defs/")
     assert wrapper.parameters["$defs"][generated_name] == {"type": "string"}
+
+
+def test_wrapper_treats_remote_read_only_annotation_as_untrusted_hint() -> None:
+    def _tool_def(read_only: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            name="read_demo",
+            description="demo",
+            inputSchema={"type": "object", "properties": {}},
+            annotations=SimpleNamespace(readOnlyHint=read_only),
+        )
+
+    remote = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=True),
+        transport_type="streamable_http",
+        server_url="https://example.com/mcp",
+    )
+    local = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=True),
+        transport_type="stdio",
+        server_url="https://example.com/mcp",
+    )
+    remote_mutating = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "remote",
+        _tool_def(read_only=False),
+        transport_type="streamable_http",
+        server_url="https://example.com/mcp",
+    )
+
+    assert remote.is_read_only is False
+    assert remote.mcp_metadata.read_only_source == "annotation_untrusted"
+    assert local.is_read_only is True
+    assert local.mcp_metadata.read_only_source == "annotation"
+    assert remote_mutating.is_read_only is False
 
 
 def test_normalize_windows_stdio_command_is_noop_off_windows(
@@ -2082,3 +2121,80 @@ def test_long_server_name_tools_are_matched_by_server_name() -> None:
     assert removed == 1
     assert wrapper.name not in registry.tool_names
     assert other_wrapper.name in registry.tool_names
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_readiness_timeout_publishes_nothing(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    session = _make_fake_session(["demo"])
+
+    async def _blocking_initialize() -> None:
+        await asyncio.Event().wait()
+
+    session.initialize = _blocking_initialize
+    fake_mcp_runtime["session"] = session
+    registry = ToolRegistry()
+
+    result = await asyncio.wait_for(
+        connect_mcp_servers(
+            {"slow": MCPServerConfig(command="fake")},
+            registry,
+            readiness_timeout=0.05,
+        ),
+        timeout=2,
+    )
+
+    assert result == {}
+    assert registry.tool_names == []
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_rejects_unsupported_schema_before_publication(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    valid_tool = SimpleNamespace(
+        name="valid",
+        description="valid tool",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    bad_tool = SimpleNamespace(
+        name="bad",
+        description="bad tool",
+        inputSchema={
+            "type": "object",
+            "properties": {"name": {"type": "string", "pattern": "^a"}},
+        },
+    )
+
+    async def initialize() -> None:
+        return None
+
+    async def list_tools() -> SimpleNamespace:
+        return SimpleNamespace(tools=[valid_tool, bad_tool])
+
+    fake_mcp_runtime["session"] = SimpleNamespace(
+        initialize=initialize,
+        list_tools=list_tools,
+    )
+    registry = ToolRegistry()
+
+    stacks = await connect_mcp_servers({"test": MCPServerConfig(command="fake")}, registry)
+    for stack in stacks.values():
+        await stack.aclose()
+
+    assert registry.tool_names == ["mcp_test_valid"]
+
+
+@pytest.mark.asyncio
+async def test_provider_concurrent_connect_shares_one_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ToolRegistry()
+    provider = MCPProvider({"test": MCPServerConfig(command="fake")}, registry)
+    connect_attempt = AsyncMock(return_value={})
+    monkeypatch.setattr(mcp_mod, "connect_mcp_servers", connect_attempt)
+
+    await asyncio.gather(provider.connect(), provider.connect())
+
+    assert connect_attempt.await_count == 1

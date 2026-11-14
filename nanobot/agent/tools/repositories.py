@@ -220,6 +220,28 @@ class SaveKnowledgeTool(Tool):
             entry = self.catalog.get(repository)
             if entry.kind != "knowledge":
                 raise ValueError("automatic knowledge writes require a designated knowledge repo")
+            from nanobot.security.workspace_access import current_workspace_scope
+
+            scope = current_workspace_scope()
+            if scope is not None:
+                project_path = Path(scope.project_path).expanduser().resolve(strict=False)
+                project_entry = next(
+                    (
+                        candidate
+                        for candidate in self.catalog.entries()
+                        if candidate.kind == "project"
+                        and Path(candidate.path).expanduser().resolve(strict=False)
+                        == project_path
+                    ),
+                    None,
+                )
+                if (
+                    project_entry is None
+                    or repository not in project_entry.knowledge_repos
+                ):
+                    raise ValueError(
+                        "knowledge repository is not associated with the selected project"
+                    )
             relative = Path(path)
             if not path or relative.is_absolute() or ".." in relative.parts or ".git" in relative.parts:
                 raise ValueError("knowledge path must stay within the selected repository")

@@ -10,6 +10,7 @@ from nanobot.attachments.models import AttachmentRecord
 if TYPE_CHECKING:
     from nanobot.events import AgentEvent
     from nanobot.security.workspace_access import WorkspaceScope
+    from nanobot.session.source_store import SourceState
 
 # Optional ``OutboundMessage.metadata`` key for structured, channel-agnostic UI
 # payloads. Value is JSON-serializable with at least ``kind``; rich clients may
@@ -20,6 +21,8 @@ OUTBOUND_META_AGENT_UI = "_agent_ui"
 # services. Never accept these keys verbatim from an untrusted client.
 INBOUND_META_RUNTIME_CONTROL = "_runtime_control"
 INBOUND_META_USER_SHELL = "_user_shell"
+INBOUND_META_STOP_CLIENT = "_stop_client"
+INBOUND_META_STOP_EXPECTATION = "_stop_expectation"
 RUNTIME_CONTROL_ACK = "_ack"
 RUNTIME_CONTROL_IMAGE_GENERATION_RELOAD = "image_generation_reload"
 RUNTIME_CONTROL_SESSION_DISCARD = "session_discard"
@@ -43,6 +46,7 @@ class InboundMessage:
     # Trusted local jobs may retain a turn scope without changing the chat's
     # selected project. This capability is never decoded from wire metadata.
     workspace_scope: "WorkspaceScope | None" = field(default=None, repr=False)
+    source_state: "SourceState | None" = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -58,6 +62,7 @@ class InboundMessage:
         input_role: Literal["user", "system"] | None = None,
         workspace_scope: "WorkspaceScope | None" = None,
         attachments: tuple[AttachmentRecord, ...] = (),
+        source_state: "SourceState | None" = None,
     ) -> None:
         self.channel = channel
         self.sender_id = sender_id
@@ -71,6 +76,12 @@ class InboundMessage:
         self.require_existing_session = require_existing_session
         self.input_role = input_role
         self.workspace_scope = workspace_scope
+        self.source_state = source_state
+        if source_state is not None:
+            from nanobot.session.source_store import SourceState
+
+            if not isinstance(cast(object, source_state), SourceState):
+                raise TypeError("source condition requires a trusted SourceState")
         if media:
             self._adopt_media(media)
         if self.workspace_scope is not None:

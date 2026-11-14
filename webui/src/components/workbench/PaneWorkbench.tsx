@@ -57,7 +57,6 @@ export interface WorkbenchPane {
 interface PaneRenderContext {
   active: boolean;
   headerPortalTarget: HTMLElement | null | undefined;
-  composerPortalTarget: HTMLElement | null | undefined;
   headerActions: ReactNode;
 }
 
@@ -216,7 +215,6 @@ export function PaneWorkbench({
   const compact = useMediaQuery("(max-width: 767px)");
   const effectiveLayout = layout;
   const [headerPortalTarget, setHeaderPortalTarget] = useState<HTMLElement | null>(null);
-  const [composerPortalTarget, setComposerPortalTarget] = useState<HTMLElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const paneRefs = useRef(new Map<string, HTMLElement>());
   const lastRectsRef = useRef(new Map<string, DOMRect>());
@@ -264,6 +262,7 @@ export function PaneWorkbench({
       ?? orderedPanes[0];
     return activePane ? [activePane] : [];
   }, [activePaneKey, compact, orderedPanes]);
+  const sharedHeader = chrome && displayedPanes.length > 1;
   const paneOrder = displayedPanes.map((pane) => pane.key).join("\u0000");
 
   useEffect(() => {
@@ -688,7 +687,7 @@ export function PaneWorkbench({
       className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
     >
       <TooltipProvider delayDuration={500} skipDelayDuration={100}>
-        {chrome ? (
+        {sharedHeader ? (
           <header className="shrink-0 bg-background">
             <div
               ref={setHeaderPortalTarget}
@@ -728,8 +727,7 @@ export function PaneWorkbench({
                 >
                   {renderPane(pane, {
                     active,
-                    headerPortalTarget: chrome ? headerPortalTarget : undefined,
-                    composerPortalTarget: chrome ? composerPortalTarget : undefined,
+                    headerPortalTarget: sharedHeader ? headerPortalTarget : undefined,
                     headerActions,
                   })}
                   {chrome && panes.length > 1 && !compact ? (
@@ -830,15 +828,6 @@ export function PaneWorkbench({
           ) : null}
         </div>
 
-        {chrome ? (
-          <footer className="shrink-0 bg-background px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-4">
-            <div
-              ref={setComposerPortalTarget}
-              data-testid="workbench-composer-host"
-              className="mx-auto w-full max-w-[58rem]"
-            />
-          </footer>
-        ) : null}
       </TooltipProvider>
     </section>
   );

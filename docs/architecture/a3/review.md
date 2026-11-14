@@ -19,6 +19,104 @@ and session-based SuperAgent compatibility. Future coordination must preserve or
 subagent behavior. Its task-routing/direct-session UI features remain later work;
 only the mapped foundation contracts belong to current A3 implementation review.
 
+## Current candidate dispositions
+
+The Linux and Android checks below include the earlier `f40c229c` and
+`5e3c51d6` checkpoints. The pairing lifetime and WebSocket checks use
+`484a1476`. The [verification record](implementation-handoff.md#pairing-cancellation-and-linux-verification)
+identifies the tested artifacts and the release work that remains.
+
+| Review finding | Current evidence |
+| --- | --- |
+| AR1 | The exact-effect approval suite checks racing decisions, repeated dispatch, and one file replacement per consent. |
+| AR2 | The installed WebUI held two worker actions under the same parent. Approval changed one file. Denial left the other file intact. |
+| AR3 | The browser and emulator read canonical child tool and result rows. The child-source and recovery suites cover terminal and uncertain outcomes. |
+| AR4 | The MCP request-binding suite checks captured definitions, replacement, revocation, and release after the old request settles. |
+| AR5 | The owner revokes only the device issued for the cancelled attempt. The Android bridge waits for UI acceptance before it saves access. The emulator verified the race across owner restart. A fresh attempt recovered from a dropped proof response. |
+| AR6 | The installed mobile WebSocket accepted an authorized attachment. It rejected another attachment after a scope reduction. The stored bytes stayed the same. |
+| RR1 | The media retention tests preserve bytes and sidecars across corrupt, missing, and unreadable source evidence, including quota pressure. |
+| RR2 | The process completion test rejects an old result after reuse of its session key. |
+| RR3 | The retired attachment migration route and CLI preview tests leave the whole tree intact. |
+
+### Pairing lifetime and live WebSocket checks
+
+The Linux regressions reproduced two defects at `6a3334c6`. Cancel for an
+old attempt revoked the newer pairing on the same installation. An owner
+restart lost the record needed to cancel an issued device. Both regressions
+passed at `484a1476`. The owner now writes the device proof and cancel
+digest in one transaction. It rejects access grants from earlier generations.
+
+The Android 16 emulator held the native approval while the app still showed
+the waiting screen. Cancel revoked the device after the owner restarted.
+The late response and app restart left chat closed. A fresh attempt reused
+the installation. A dropped initial response recovered with fresh proof after
+both sides restarted. The independent review accepted this initial-delivery
+evidence for R01-F01 under the v2 contract.
+
+The fixture also dropped a renewal response after the owner issued access.
+After both sides restarted, fresh proof reopened chat. The owner refused the
+superseded credentials. The emulator then collected a manual pairing code
+and resumed the same pending approval after both sides restarted. The user
+could complete pairing without re-entering the code.
+
+The installed wheel exercised the production WebSocket route. It stored one
+authorized attachment. After a scope reduction, the same connection returned
+`scope_denied` and the stored bytes matched. The 131-row parity check passed.
+The [handoff](implementation-handoff.md#pairing-cancellation-and-linux-verification)
+records build hashes and the Android transport used for each check.
+
+### Android event delivery at the frame limit
+
+The emulator received no binary messages with the old JNI poll buffer.
+The test sent one 36 MiB message and one 11-byte message on an authorized
+WebSocket. At `6faec577`, the bridge read both in order on the same
+connection. Both payload hashes matched. The JNI bridge now asks the broker
+for the retained event size before it retries. This closes R01-F10 in the
+loopback TLS fixture.
+
+### AR5 server-authority probe (2026-11-14)
+
+Before the repair, a Linux owner-boundary probe completed an approved,
+proof-bound device pairing and then cancelled the pairing challenge. The issued
+access token still validated. The device stayed unrevoked. A new attempt for the
+same installation returned `PairingBusyError`. The probe calls `PairingService`
+directly. It does not exercise the Android UI.
+
+The repair adds `PairingService.cancel_attempt` with the attempt nonce and
+collector secret. It revokes any device and access grant that an overlapping
+proof created before it removes the challenge. The edge forwards
+`/mobile/v1/pair/cancel` to the owner through the `pair_cancel_attempt` IPC
+method. The native broker policy admits that route. The Android cancel now
+persists the local fence, sends the cancel, and fails visibly when the owner
+does not confirm it. A revoked device no longer blocks a new pairing for the
+same installation.
+
+After the repair, the probe reports a rejected token, a revoked device, and an
+accepted new attempt. A native emulator run overlapped owner approval with the
+app Cancel tap. The owner recorded the approval but created no device and no
+proof. A fresh offer then paired, reached the chat UI, and returned to pairing
+after owner revoke, including after an app restart. Nine requirements-only tests
+cover the cancel contract. The probe, captures, owner state, and logs are in
+`a3-evidence/linux-android-2026-11-13/ar5-cancel-authority/` and
+`a3-evidence/linux-android-2026-11-13/ar5-native-race/`.
+
+The six staging repairs are present through `685bee92`. The source comparison
+and passing checks give these dispositions.
+
+| Staging repair | Current disposition |
+| --- | --- |
+| `2d9da620f` | Preserved. The shared WebUI pager continues across retained sessions. The server tests cover continuation and invalid cursors through the current asset owner. |
+| `184f22683` | Preserved. The catalog hook, skill update events, and mixed clipboard behavior keep their staging contracts. The settings detail view also checks its selected skill before it applies a delayed result. |
+| `5d95a1069` | Preserved. The cron runtime and local trigger owners retain their gateway paths and focused tests. Those tests cover scheduled jobs, manual jobs, and local trigger delivery. |
+| `d5576f1d2` | The Darwin peer credential path is present in source. Platform verification in this pass used Linux. |
+| `b45519af2` | The Linux test isolation checks pass in the full suite. The current fixtures cover optional installer isolation, native availability, and the later WebSocket scope contract. |
+| `d3380eb69` | The feature-repair audit remains in the archive. |
+
+Staging's later `ab959821` cancellation check remains in the runner before tool
+error recovery. The integrated agent tests and the full Linux suite passed.
+
+## Original candidate review
+
 Two independent reviews judge the small-core, edge-owned direction viable, but require
 corrections before the candidate can meet its own authority, canonical-history and
 durability contracts. This is not an all-architecture PASS. The nine findings below

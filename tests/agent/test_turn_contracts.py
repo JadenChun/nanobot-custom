@@ -179,3 +179,48 @@ def test_scheduled_link_and_turn_result_retain_sequence_normalization() -> None:
     assert result.status is RunStatus.COMPLETED
     assert result.tools_used == ["read_file"]
     assert result.messages == [{"role": "assistant", "content": "done"}]
+
+
+def test_turn_request_equal_aliases_adopt_shared_media_marker_once(tmp_path) -> None:
+    image = tmp_path / "sample.png"
+    image.write_bytes(b"offline png fixture")
+    marker = f"look at this [image: {image.name}]"
+
+    request = TurnRequest(prompt=marker, message=marker, media=[str(image)])
+
+    assert request.prompt == request.content == request.message
+    assert len(request.attachments) == 1
+    assert request.media == (str(image),)
+
+
+def test_turn_request_conflicting_aliases_reject_before_media_adoption(
+    tmp_path, monkeypatch
+) -> None:
+    image = tmp_path / "sample.png"
+    image.write_bytes(b"offline png fixture")
+    marker = f"look at this [image: {image.name}]"
+    adoption_calls: list[tuple[Any, ...]] = []
+
+    def fail_adoption(*args: Any, **kwargs: Any) -> Any:
+        adoption_calls.append(args)
+        raise AssertionError("media adoption must not run for conflicting aliases")
+
+    monkeypatch.setattr("nanobot.attachments.adoption.adopt_media_paths", fail_adoption)
+
+    with pytest.raises(ValueError):
+        TurnRequest(prompt=marker, message="different", media=[str(image)])
+
+    assert adoption_calls == []
+
+
+def test_turn_request_marker_only_text_normalizes_to_empty_aliases(tmp_path) -> None:
+    image = tmp_path / "sample.png"
+    image.write_bytes(b"offline png fixture")
+    marker = f"[image: {image.name}]"
+
+    request = TurnRequest(prompt=marker, media=[str(image)])
+
+    assert request.prompt == request.content == request.message == ""
+    assert marker not in request.prompt
+    assert marker not in request.content
+    assert marker not in request.message

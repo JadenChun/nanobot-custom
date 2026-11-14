@@ -55,6 +55,10 @@ def test_nanobot_update_script_skips_unchanged_running_service() -> None:
     assert 'after_head="$(run_as_deploy_user git -C "${NANOBOT_DIR}" rev-parse HEAD)"' in script
     assert "systemctl is-active --quiet nanobot-gateway" in script
     assert "skipping Nanobot redeploy" in script
+    assert 'switch --detach "${before_head}"' in script
+    assert "Rolling back Nanobot" in script
+    assert "Rollback restored" in script
+    assert "ROLLBACK FAILED" in script
 
 
 def test_crawl4ai_worker_is_isolated_and_memory_bounded() -> None:

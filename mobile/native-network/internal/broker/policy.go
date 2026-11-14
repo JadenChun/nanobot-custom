@@ -9,11 +9,12 @@ import (
 )
 
 type route struct {
-	method   string
-	pattern  *regexp.Regexp
-	queries  map[string]bool
-	ws       bool
-	testOnly bool
+	method     string
+	pattern    *regexp.Regexp
+	queries    map[string]bool
+	ws         bool
+	testOnly   bool
+	nativeOnly bool
 }
 
 var routes = map[string]route{
@@ -30,8 +31,9 @@ var routes = map[string]route{
 		pattern: regexp.MustCompile(`^/remote/v1/status$`),
 	},
 	"remote_refresh": {
-		method:  http.MethodPost,
-		pattern: regexp.MustCompile(`^/remote/v1/refresh$`),
+		method:     http.MethodPost,
+		pattern:    regexp.MustCompile(`^/remote/v1/refresh$`),
+		nativeOnly: true,
 	},
 	"remote_devices": {
 		method:  http.MethodGet,
@@ -42,12 +44,14 @@ var routes = map[string]route{
 		pattern: regexp.MustCompile(`^/remote/v1/devices/[A-Za-z0-9._-]{1,128}/revoke$`),
 	},
 	"remote_pair_collect": {
-		method:  http.MethodPost,
-		pattern: regexp.MustCompile(`^/remote/v1/pair/collect$`),
+		method:     http.MethodPost,
+		pattern:    regexp.MustCompile(`^/remote/v1/pair/collect$`),
+		nativeOnly: true,
 	},
 	"remote_pair_poll": {
-		method:  http.MethodPost,
-		pattern: regexp.MustCompile(`^/remote/v1/pair/poll$`),
+		method:     http.MethodPost,
+		pattern:    regexp.MustCompile(`^/remote/v1/pair/poll$`),
+		nativeOnly: true,
 	},
 	"mobile_handshake": {
 		method:  http.MethodGet,
@@ -89,6 +93,14 @@ var routes = map[string]route{
 			"before":    true,
 		},
 	},
+	"mobile_delegated_children": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/sessions/[^/]+/delegated-children$`),
+		queries: map[string]bool{
+			"limit":  true,
+			"before": true,
+		},
+	},
 	"mobile_media": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/media/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$`),
@@ -99,24 +111,49 @@ var routes = map[string]route{
 		ws:      true,
 	},
 	"mobile_pair_collect": {
-		method:  http.MethodGet,
-		pattern: regexp.MustCompile(`^/mobile/v1/pair/collect$`),
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/collect$`),
+		nativeOnly: true,
 	},
 	"mobile_pair_poll": {
-		method:  http.MethodGet,
-		pattern: regexp.MustCompile(`^/mobile/v1/pair/poll$`),
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/poll$`),
+		nativeOnly: true,
+	},
+	"mobile_pair_cancel": {
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/cancel$`),
+		nativeOnly: true,
 	},
 	"mobile_pair_code": {
-		method:  http.MethodGet,
-		pattern: regexp.MustCompile(`^/mobile/v1/pair/code$`),
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/code$`),
+		nativeOnly: true,
+	},
+	"mobile_pair_prove": {
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/prove$`),
+		nativeOnly: true,
+	},
+	"mobile_pair_recover": {
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/recover$`),
+		nativeOnly: true,
+	},
+	"mobile_pair_recover_complete": {
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/pair/recover/complete$`),
+		nativeOnly: true,
 	},
 	"mobile_refresh_get": {
-		method:  http.MethodGet,
-		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
+		method:     http.MethodGet,
+		pattern:    regexp.MustCompile(`^/mobile/v1/refresh$`),
+		nativeOnly: true,
 	},
 	"mobile_refresh": {
-		method:  http.MethodPost,
-		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
+		method:     http.MethodPost,
+		pattern:    regexp.MustCompile(`^/mobile/v1/refresh$`),
+		nativeOnly: true,
 	},
 	"mobile_mutation": {
 		method:  http.MethodPost,
@@ -166,23 +203,26 @@ var routes = map[string]route{
 }
 
 var allowedHeaders = map[string]bool{
-	"authorization":            true,
-	"content-type":             true,
-	"accept":                   true,
-	"range":                    true,
-	"if-none-match":            true,
-	"x-fixture-bootstrap":      true,
-	"x-nanobot-pairing-id":     true,
-	"x-nanobot-pairing-nonce":  true,
-	"x-nanobot-pairing-secret": true,
-	"x-nanobot-pairing-code":   true,
-	"x-nanobot-code":           true,
-	"x-nanobot-installation":   true,
-	"x-nanobot-label":          true,
-	"x-nanobot-refresh-token":  true,
+	"authorization":              true,
+	"content-type":               true,
+	"accept":                     true,
+	"range":                      true,
+	"if-none-match":              true,
+	"x-fixture-bootstrap":        true,
+	"x-nanobot-pairing-id":       true,
+	"x-nanobot-pairing-nonce":    true,
+	"x-nanobot-pairing-secret":   true,
+	"x-nanobot-pairing-code":     true,
+	"x-nanobot-code":             true,
+	"x-nanobot-installation":     true,
+	"x-nanobot-label":            true,
+	"x-nanobot-refresh-token":    true,
+	"x-nanobot-device-key":       true,
+	"x-nanobot-device-signature": true,
+	"x-nanobot-proof-claims":     true,
 }
 
-func resolveRoute(cfg *Config, origin *url.URL, operation, method, rawPath string) (*url.URL, route, error) {
+func resolveRoute(cfg *Config, origin *url.URL, operation, method, rawPath string, trustedNative bool) (*url.URL, route, error) {
 	selected, ok := routes[operation]
 	if !ok {
 		return nil, route{}, fmt.Errorf("%w: unknown operation", ErrInvalid)
@@ -199,6 +239,9 @@ func resolveRoute(cfg *Config, origin *url.URL, operation, method, rawPath strin
 	}
 	if !selected.pattern.MatchString(parsed.Path) {
 		return nil, route{}, fmt.Errorf("%w: path is not allowlisted", ErrDenied)
+	}
+	if selected.nativeOnly && !trustedNative {
+		return nil, route{}, fmt.Errorf("%w: operation is native-only", ErrDenied)
 	}
 	if len(parsed.RawQuery) > 2048 {
 		return nil, route{}, fmt.Errorf("%w: query is too large", ErrInvalid)
@@ -248,16 +291,16 @@ func redirectTarget(cfg *Config, origin *url.URL, current *url.URL, location str
 	if strings.TrimSpace(next.Path) == "" {
 		return nil, fmt.Errorf("%w: redirect path is empty", ErrDenied)
 	}
-	resolved, _, err := resolveRoute(cfg, origin, "fixture_read", http.MethodGet, next.RequestURI())
+	resolved, _, err := resolveRoute(cfg, origin, "fixture_read", http.MethodGet, next.RequestURI(), false)
 	if err != nil {
 		// A redirect to a non-read route is still safe if the exact GET route is
 		// otherwise allowlisted. Probe the route table directly.
 		for operation, candidate := range routes {
-			if candidate.method != http.MethodGet || candidate.ws || (candidate.testOnly && !cfg.AllowTestRoutes) {
+			if candidate.method != http.MethodGet || candidate.ws || candidate.nativeOnly || (candidate.testOnly && !cfg.AllowTestRoutes) {
 				continue
 			}
 			if candidate.pattern.MatchString(next.Path) {
-				resolved, _, err = resolveRoute(cfg, origin, operation, http.MethodGet, next.RequestURI())
+				resolved, _, err = resolveRoute(cfg, origin, operation, http.MethodGet, next.RequestURI(), false)
 				break
 			}
 		}

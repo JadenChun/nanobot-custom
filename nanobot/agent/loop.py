@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
+import json
 import re
 import time
 import uuid
@@ -34,6 +35,13 @@ from nanobot.agent import context as agent_context
 from nanobot.agent import model_presets as preset_helpers
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
+from nanobot.agent.child_backend import ChildApprovalResume, ChildTurnRequest
+from nanobot.agent.child_sessions import (
+    STOP_SETTLE_TIMEOUT,
+    ChildAdmission,
+    ChildControlState,
+    OriginalChatStopAdmission,
+)
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
@@ -44,7 +52,7 @@ from nanobot.agent.idle_lifecycle import IdleLifecycleIntegration
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.memory_recovery_startup_admission import require_startup_receipt_admission
 from nanobot.agent.model_runtime import ModelRuntimeResolver
-from nanobot.agent.policy import RiskyActionPolicy
+from nanobot.agent.policy import CompositeToolPolicy, RiskyActionPolicy, ToolPolicy
 from nanobot.agent.run_store import RunStore
 from nanobot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
@@ -52,11 +60,24 @@ from nanobot.agent.runner import (
     AgentRunResult,
     AgentRunSpec,
 )
-from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.stop_target import (
+    MAX_STOP_TARGET_CHILDREN,
+    MAX_STOP_TARGET_PENDING_RECORDS,
+    MAX_STOP_TARGET_SOURCE_EVENTS,
+    StopChildExpectation,
+    StopExpectation,
+    StopSourceOrigin,
+    StopTargetUnavailableError,
+    parse_stop_expectation,
+    pending_work_digest,
+)
+from nanobot.agent.subagent import RetiredSubagentAuthority, SubagentManager
 from nanobot.agent.tools.context import (
     ForkToolDependencies,
     RequestContext,
     bind_request_context,
+    current_request_context,
+    request_context,
     reset_request_context,
 )
 from nanobot.agent.tools.exec_session import ExecCompletionSink, ExecSessionManager
@@ -70,6 +91,7 @@ from nanobot.agent.tools.registry import (
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.trace import sanitize_trace
 from nanobot.agent.turn import (
+    ApprovalDecision,
     DeliveryState,
     DeliveryTarget,
     HistoryMode,
@@ -84,16 +106,23 @@ from nanobot.agent.turn import (
     TurnSource,
 )
 from nanobot.agent.turn import TurnContext as RunTurnContext
-from nanobot.agent.turn_admission import ApprovalAdmission
+from nanobot.agent.turn_admission import ApprovalAdmission, ApprovalSnapshot
 from nanobot.agent.turn_delivery import (
     TurnDelivery,
     TurnDeliveryFactory,
 )
 from nanobot.agent.turn_delivery import TurnRoute as TurnRoute
 from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
-from nanobot.bus.events import INBOUND_META_USER_SHELL, InboundMessage, OutboundMessage
+from nanobot.bus.events import (
+    INBOUND_META_STOP_CLIENT,
+    INBOUND_META_USER_SHELL,
+    InboundMessage,
+    OutboundMessage,
+)
 from nanobot.bus.outbound_events import (
+    DelegatedChildEvent,
     SessionUpdatedEvent,
+    StopTargetEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
@@ -128,6 +157,7 @@ from nanobot.security.desktop_permissions import (
     copy_full_permission_message_reference,
     full_permission_from_message,
 )
+from nanobot.security.network import bind_network_policy_for_cidrs
 from nanobot.security.workspace_access import (
     WorkspaceScopeError,
     WorkspaceScopeResolver,
@@ -149,14 +179,20 @@ from nanobot.session.model_selection import (
     model_preset_from_metadata,
 )
 from nanobot.session.pending_followups import (
+    PendingFollowupRecord,
     PendingFollowupStopError,
     copy_pending_followup_proof,
     mint_pending_followup_id,
+    parse_pending_followup_records,
+    pending_background_result,
+    pending_child_followup,
     pending_followup_id,
+    restore_pending_child_followup,
 )
 from nanobot.session.pending_followups import (
     record_pending_followup as source_pending_followup_record,
 )
+from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
 from nanobot.session.recovery import (
     PENDING_FOLLOWUP_ID_KEY,
     RECOVERY_INBOUND_METADATA_KEY,
@@ -167,8 +203,9 @@ from nanobot.session.recovery import (
     restore_runtime_checkpoint,
 )
 from nanobot.session.source import validate_execution_links
-from nanobot.session.source_projection import SourceNode, source_nodes
+from nanobot.session.source_projection import RuntimeNode, SourceNode, source_nodes
 from nanobot.session.source_request import SourceTranscript
+from nanobot.session.source_store import SourceOriginMismatchError, SourceSnapshot, SourceState
 from nanobot.session.summary import (
     SessionSummary,
     SessionSummaryCheckpoint,
@@ -197,6 +234,7 @@ from nanobot.webui.metadata import (
     WEBUI_TARGET_TURN_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
+from nanobot.webui.session_identity import is_webui_session_key, webui_chat_id
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.filesystem import ReadFileTool
@@ -207,7 +245,11 @@ if TYPE_CHECKING:
         ToolsConfig,
     )
     from nanobot.cron.service import CronService
-    from nanobot.security.desktop_permissions import WorkspaceFullAccessReference
+    from nanobot.security.desktop_permissions import (
+        WorkspaceFullAccessReference,
+        WorkspaceTaskAccessReference,
+    )
+    from nanobot.session.artifact_grants import CanonicalChildArtifactInput
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.manager import JsonlSessionStore
     from nanobot.session.source_store import SourceSnapshot
@@ -335,6 +377,7 @@ class _ActivityAdmissionRequest:
     result: asyncio.Future[_ForegroundActivityResult]
     followup_id: str | None = None
     discard_followups: bool = False
+    expected_followup_records: tuple[PendingFollowupRecord, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -343,6 +386,7 @@ class _ForegroundActivityResult:
     callback_succeeded: bool = False
     callback_error: BaseException | None = None
     followup_pending: bool | None = None
+    followup_duplicate: bool = False
     discarded_followup_ids: tuple[str, ...] = ()
 
 
@@ -355,11 +399,77 @@ class _AdmittedActivityMessage:
     source_binding: tuple[str, str, str, int] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _ActiveRootBinding:
+    """Private proof joining one live canonical run to its executing task."""
+
+    session_key: str
+    task: asyncio.Task[Any]
+    run_id: str
+    stream_id: str
+    source_state: SourceState
+    unique_run_id: bool
+
+
 @dataclass
 class _SourceActivityAdmission:
     queue: asyncio.Queue[_ActivityAdmissionRequest | None]
     task: asyncio.Task[None]
+    session_key: str
+    source_state: SourceState
+    root_task: asyncio.Task[Any]
+    run_id: str
+    root_queue: asyncio.Queue[InboundMessage] | None = None
     closed: bool = False
+    followup_stop_admission: OriginalChatStopAdmission | None = None
+    followup_records: dict[str, PendingFollowupRecord] = field(default_factory=dict)
+    followup_status: dict[str, str] = field(default_factory=dict)
+    followup_submissions: dict[
+        str, tuple[PendingFollowupRecord, asyncio.Future[_ForegroundActivityResult]]
+    ] = field(default_factory=dict)
+    followup_queued: set[str] = field(default_factory=set)
+
+    def bind_root_queue(
+        self,
+        queue: asyncio.Queue[InboundMessage],
+        *,
+        root_task: asyncio.Task[Any],
+        run_id: str,
+        source_state: SourceState,
+    ) -> bool:
+        """Bind the exact bus queue after the root has established its source owner."""
+        if (
+            self.root_task is not root_task
+            or self.run_id != run_id
+            or not self.source_state.same_origin(source_state)
+            or self.source_state.session_key != source_state.session_key
+        ):
+            return False
+        if self.root_queue is not None and self.root_queue is not queue:
+            return False
+        self.root_queue = queue
+        return True
+
+    def can_fence_followups(
+        self,
+        *,
+        parent_key: str,
+        parent_incarnation: str | None,
+        parent_source_state: SourceState | None,
+        pending_queue: asyncio.Queue[InboundMessage] | None,
+        control_epoch: int,
+    ) -> bool:
+        """Check the source and queue bindings without installing a Stop fence."""
+        current = self.followup_stop_admission
+        return (
+            not self.closed
+            and self.session_key == parent_key
+            and self.root_queue is pending_queue
+            and parent_source_state is not None
+            and self.source_state.same_origin(parent_source_state)
+            and self.source_state.incarnation == parent_incarnation
+            and (current is None or current.control_epoch < control_epoch)
+        )
 
     async def submit(
         self,
@@ -371,7 +481,30 @@ class _SourceActivityAdmission:
 
         if self.closed:
             raise RuntimeError("Source activity admission is closed")
+        record: PendingFollowupRecord | None = None
+        if followup_id is not None:
+            record = source_pending_followup_record(message)
+            if record.identifier != followup_id:
+                raise RuntimeError("Source follow-up identity changed before submission")
+            known = self.followup_records.get(followup_id)
+            if known is not None:
+                if known != record:
+                    raise RuntimeError("Conflicting pending follow-up retry")
+                existing = self.followup_submissions.get(followup_id)
+                if existing is not None and not existing[1].done():
+                    outcome = await asyncio.shield(existing[1])
+                    return dataclasses.replace(outcome, followup_duplicate=True)
+                pending = self.followup_status.get(followup_id) == "queued"
+                return _ForegroundActivityResult(
+                    followup_pending=pending,
+                    followup_duplicate=True,
+                )
+        if followup_id is not None and self.followup_stop_admission is not None:
+            return _ForegroundActivityResult(followup_pending=False)
         result = asyncio.get_running_loop().create_future()
+        if followup_id is not None and record is not None:
+            self.followup_records[followup_id] = record
+            self.followup_submissions[followup_id] = (record, result)
         self.queue.put_nowait(_ActivityAdmissionRequest(
             message=message,
             result=result,
@@ -389,20 +522,64 @@ class _SourceActivityAdmission:
                     pass
             raise
 
-    async def discard_pending_followups(self) -> tuple[str, ...]:
+    def mark_followup_consumed(self, followup_id: str) -> None:
+        """Record durable source input without claiming model application."""
+        if followup_id in self.followup_records:
+            self.followup_status[followup_id] = "recorded"
+
+    def acknowledge_followup_request(self, identifiers: tuple[str, ...]) -> None:
+        """Mark only inputs included in a successful model request as applied."""
+        for identifier in identifiers:
+            if identifier in self.followup_records:
+                self.followup_status[identifier] = "applied"
+
+    def mark_followup_enqueued(self, followup_id: str) -> None:
+        """Record one queue insertion for this owner and follow-up identity."""
+        self.followup_queued.add(followup_id)
+
+    async def discard_pending_followups(
+        self,
+        stop_admission: OriginalChatStopAdmission | None = None,
+        *,
+        expected_records: tuple[PendingFollowupRecord, ...] | None = None,
+    ) -> tuple[str, ...]:
         """Fence stop disposition through the existing owner-registered worker."""
         if self.closed:
             raise RuntimeError("Source activity admission is closed")
+        if stop_admission is not None and not self.fence_followups(stop_admission):
+            raise RuntimeError("Stop does not match the active source follow-up owner")
         result = asyncio.get_running_loop().create_future()
         self.queue.put_nowait(_ActivityAdmissionRequest(
             message=None,
             result=result,
             discard_followups=True,
+            expected_followup_records=expected_records,
         ))
         outcome = await asyncio.shield(result)
         if outcome.callback_error is not None:
             raise outcome.callback_error
         return outcome.discarded_followup_ids
+
+    def fence_followups(self, stop_admission: OriginalChatStopAdmission) -> bool:
+        """Reject new follow-ups for the exact source lifetime and Stop epoch."""
+        if (
+            stop_admission.parent_key != self.session_key
+            or stop_admission.pending_queue is not self.root_queue
+            or stop_admission.parent_source_state is None
+            or not self.source_state.same_origin(stop_admission.parent_source_state)
+            or self.source_state.incarnation != stop_admission.parent_incarnation
+        ):
+            return False
+        current = self.followup_stop_admission
+        if current is not None and current.control_epoch > stop_admission.control_epoch:
+            return False
+        self.followup_stop_admission = stop_admission
+        return True
+
+    def release_followup_fence(self, stop_admission: OriginalChatStopAdmission) -> None:
+        """Release only the fence installed by this rejected Stop admission."""
+        if self.followup_stop_admission is stop_admission:
+            self.followup_stop_admission = None
 
     async def close(self) -> None:
         """Drain admitted work and stop the owner-registered worker."""
@@ -440,12 +617,41 @@ class _TurnExecutionOptions:
     activity_already_recorded: bool = False
     retry_activity_notification: bool = False
     admitted_activity_marker: _AdmittedActivityMessage | None = None
+    pending_followup_record: PendingFollowupRecord | None = None
+    pending_followup_records: tuple[PendingFollowupRecord, ...] = ()
+    pending_followup_records_to_admit: tuple[PendingFollowupRecord, ...] = ()
+    pending_followup_records_to_discard: tuple[PendingFollowupRecord, ...] = ()
+    request_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
+    followup_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
+    followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = field(
+        default=None, repr=False,
+    )
     silent_output: bool = False
+    suppress_channel_output: bool = False
     persist_approval_request: bool = True
+    approval_target: DeliveryTarget | None = None
+    internal_system_instructions: str | None = None
+    internal_system_prompt: str | None = None
+    internal_include_skill_context: bool = True
+    internal_tool_policy: ToolPolicy | None = None
+    internal_max_iterations: int | None = None
+    approval_authority_check: Callable[[RunTurnContext], bool] | None = field(
+        default=None, repr=False,
+    )
+    on_approval_consumed: Callable[[RunTurnContext, str], Awaitable[bool]] | None = field(
+        default=None, repr=False,
+    )
+    preserve_workspace_task_reference_on_approval: bool = False
     workspace_access_continuation: WorkspaceAccessContinuationReference | None = field(
         default=None, repr=False,
     )
+    workspace_task_reference: WorkspaceTaskAccessReference | None = field(
+        default=None, repr=False,
+    )
     workspace_full_reference: WorkspaceFullAccessReference | None = field(
+        default=None, repr=False,
+    )
+    canonical_child_artifact_input: CanonicalChildArtifactInput | None = field(
         default=None, repr=False,
     )
 
@@ -579,6 +785,8 @@ class AgentLoop:
         ] | None = None,
         idle_integration: ForegroundIdleIntegration | None = None,
         enable_legacy_auto_compact: bool = True,
+        media_root: Path | None = None,
+        config_path: Path | None = None,
     ):
         from nanobot.config.paths import get_default_sessions_root
 
@@ -667,11 +875,15 @@ class AgentLoop:
                 workspace=workspace, runtime=self.runtime_resolver.runtime,
                 tools_config=_tc, restrict_to_workspace=restrict_to_workspace,
                 sessions_root=effective_root,
+                disabled_skills=disabled_skills,
                 refresh_web_fetch_config=provider_snapshot_loader is not None)
             _owns_fork_dependencies = True
         validate_foreground_dependencies(fork_dependencies, workspace=workspace,
                                          restrict_to_workspace=restrict_to_workspace)
         self._fork_dependencies = fork_dependencies
+        fork_dependencies.foreground_manager.set_child_event_sink(
+            self._publish_delegated_child,
+        )
         folder_grants = fork_dependencies.resource_policy.folder_grants
         self.workspace_scopes = WorkspaceScopeResolver(
             default_workspace=workspace,
@@ -689,7 +901,15 @@ class AgentLoop:
             folder_grants=fork_dependencies.resource_policy.folder_grants,
         )
         self.sessions = session_manager or SessionManager(workspace, sessions_root=effective_root)
+        fork_dependencies.foreground_manager.bind_session_owner(self.sessions)
+        fork_dependencies.foreground_manager.bind_child_turn_executor(self)
+        fork_dependencies.foreground_manager.set_background_result_sink(
+            self.bus.publish_inbound,
+        )
         self.approval_admission = ApprovalAdmission()
+        fork_dependencies.foreground_manager.set_child_approval_revoker(
+            self.approval_admission.revoke,
+        )
         self.run_store = RunStore(workspace, self.sessions)
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
@@ -700,18 +920,22 @@ class AgentLoop:
         self.sessions.set_delete_observer(self._file_state_store.discard)
         self.tools = tool_registry if tool_registry is not None else ToolRegistry()
         self._exec_session_manager = ExecSessionManager()
+        self.media_root = (
+            Path(media_root).expanduser().resolve(strict=False)
+            if media_root is not None else None
+        )
+        self._config_path = (
+            Path(config_path).expanduser().resolve(strict=False)
+            if config_path is not None else None
+        )
         self._artifact_reader_factory = artifact_reader_factory
         self.runner = AgentRunner(artifact_reader_factory=artifact_reader_factory)
-        self.subagents = SubagentManager(
-            workspace=workspace,
-            bus=bus,
-            tools_config=_tc,
-            max_tool_result_chars=self.max_tool_result_chars,
-            restrict_to_workspace=restrict_to_workspace,
-            disabled_skills=disabled_skills,
+        # Background subagents are retired. The durable delegated child owner
+        # (A3-5) is the only live child authority. Keep one inert compatibility
+        # surface for status, cancellation and shutdown callers.
+        self.subagents: SubagentManager | RetiredSubagentAuthority = RetiredSubagentAuthority(
             max_iterations=self.max_iterations,
-            max_concurrent_subagents=max_concurrent_subagents,
-            llm_wall_timeout_for_session=lambda sk: runner_wall_llm_timeout_s(self.sessions, sk),
+            disabled_skills=set(disabled_skills or ()),
         )
         self._unified_session = unified_session
         self._running = False
@@ -723,9 +947,12 @@ class AgentLoop:
         self._close_draining_tasks: set[asyncio.Task[Any]] = set()
         self._runtime_context_providers: list[RuntimeContextProvider] = []
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
+        self._active_root_bindings: dict[asyncio.Task[Any], _ActiveRootBinding] = {}
         self._compact_dispatches: dict[asyncio.Task[None], _CompactDispatchSettlement] = {}
         self._discarding_sessions: set[str] = set()
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._background_results_reconciled = False
+        self._uncertain_children_reconciled = False
         self._close_lock = asyncio.Lock()
         self._session_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
@@ -843,12 +1070,13 @@ class AgentLoop:
         allowing callers to override or extend the standard config-derived
         parameters (e.g. ``cron_service``, ``session_manager``).
         """
-        from nanobot.config.paths import get_default_sessions_root
+        from nanobot.config.paths import get_default_sessions_root, get_media_dir
         from nanobot.providers.factory import make_provider
         from nanobot.runtime_composition import runtime_preflight
 
         canonical_workspace = config.workspace_path.expanduser().resolve(strict=False)
         data_dir = config.runtime_data_dir
+        media_root = data_dir / "media" if data_dir is not None else get_media_dir()
         effective_root = ((data_dir / "sessions").expanduser().resolve(strict=False)
                           if data_dir is not None else get_default_sessions_root())
         manager = extra.get("session_manager")
@@ -884,17 +1112,22 @@ class AgentLoop:
             provider_snapshot_loader,
         )
         if extra.get("fork_dependencies") is None:
+            session_owner = extra.get("session_manager")
             extra["fork_dependencies"] = build_foreground_dependencies(
                 workspace=config.workspace_path,
                 runtime=LLMRuntime.capture(provider, model, context_window_tokens=context_window_tokens),
                 tools_config=config.tools, restrict_to_workspace=config.tools.restrict_to_workspace,
                 config=config,
                 sessions_root=effective_root,
+                sessions=(
+                    session_owner
+                    if isinstance(session_owner, SessionManager) else None
+                ),
+                disabled_skills=defaults.disabled_skills,
                 refresh_web_fetch_config=provider_snapshot_loader is not None,
             )
             extra["_owns_fork_dependencies"] = True
         if config.artifacts.enabled and extra.get("artifact_reader_factory") is None:
-            from nanobot.config.paths import get_media_dir
             from nanobot.session.artifact_factory import ConfiguredArtifactReaderFactory
 
             root = config.artifacts.root
@@ -922,7 +1155,7 @@ class AgentLoop:
                 max_blob_bytes=config.artifacts.max_blob_bytes,
                 max_namespace_bytes=config.artifacts.max_namespace_bytes,
                 static_roots=static_roots,
-                media_root=data_dir / "media" if data_dir is not None else get_media_dir(),
+                media_root=media_root,
             )
         return cls(
             bus=bus,
@@ -963,6 +1196,8 @@ class AgentLoop:
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
+            media_root=media_root,
+            config_path=getattr(config, "_source_path", None),
             **extra,
         )
 
@@ -1086,6 +1321,7 @@ class AgentLoop:
             sessions=self.sessions,
             provider_snapshot_loader=provider_snapshot_loader,
             image_generation_provider_configs=self._image_generation_provider_configs,
+            media_root=self.media_root,
             timezone=self.context.timezone or "UTC",
             workspace_sandbox=self.workspace_scopes.sandbox_status,
             runtime_control=AgentRuntimeControl(self),
@@ -1096,6 +1332,669 @@ class AgentLoop:
         registered = loader.load(ctx, self.tools)
 
         logger.info("Registered {} tools: {}", len(registered), registered)
+
+    async def control_delegated_child(
+        self,
+        parent_key: str,
+        child_id: str,
+        action: str,
+        content: str | None = None,
+        runtime_generation: int | None = None,
+        expected_state: ChildControlState | None = None,
+    ) -> dict[str, Any]:
+        """Route one authenticated child control to the delegation owner."""
+        return await self._fork_dependencies.foreground_manager.control_child(
+            parent_key=parent_key,
+            child_id=child_id,
+            action=action,
+            content=content,
+            runtime_generation=runtime_generation,
+            expected_state=expected_state,
+        )
+
+    async def execute_child_turn(
+        self,
+        request: ChildTurnRequest,
+        *,
+        approval_resume: ChildApprovalResume | None = None,
+    ) -> TurnResult:
+        """Admit one trusted child through the normal canonical turn pipeline."""
+        admission = request.admission
+        source_state = admission.source_state
+        if (
+            source_state is None
+            or source_state.session_key != admission.session_key
+            or request.run_id != admission.current_run_id
+        ):
+            raise RuntimeError("canonical child source or run admission is unavailable")
+        followup_records = request.followup_records
+        if not followup_records and request.followup_record is not None:
+            followup_records = (request.followup_record,)
+        initial_record = followup_records[0] if followup_records else None
+        assignment = initial_record.content if initial_record is not None else request.assignment
+        inbound = InboundMessage(
+            channel="system",
+            sender_id="subagent",
+            chat_id=admission.session_key,
+            content=assignment,
+            media=list(initial_record.media) if initial_record is not None else None,
+            metadata=dict(initial_record.metadata) if initial_record is not None else {},
+            session_key_override=admission.session_key,
+            input_role="user",
+        )
+        if initial_record is not None:
+            child_followup = initial_record.child_followup
+            if child_followup is None:
+                raise RuntimeError("canonical child follow-up record is missing its intent")
+            restore_pending_child_followup(
+                inbound,
+                initial_record.identifier,
+                child_followup,
+            )
+
+        def child_admission_scope(key: str) -> AbstractAsyncContextManager[_AdmittedTurnIO]:
+            return self._bus_turn_scope(
+                inbound,
+                key,
+                suppress_channel_output=True,
+            )
+
+        turn_request = TurnRequest(
+            content=assignment,
+            session_key=admission.session_key,
+            source=TurnSource.SYSTEM_COMPAT,
+            route=DeliveryTarget(channel="system", chat_id=admission.session_key),
+            sender_id="subagent",
+            hooks=(request.hook,),
+            run_id=request.run_id,
+            expected_source_state=source_state,
+            approval_decision=(
+                approval_resume.decision
+                if approval_resume is not None
+                else request.approval_decision
+            ),
+        )
+        approval_authority_check: Callable[[RunTurnContext], bool] | None = None
+        on_approval_consumed: Callable[[RunTurnContext, str], Awaitable[bool]] | None = None
+        if approval_resume is not None:
+            manager = self._fork_dependencies.foreground_manager
+            approval_authority_check = partial(
+                manager.child_approval_authority_is_current,
+                approval_resume,
+            )
+
+            approval_route = current_request_context()
+
+            async def activate_resume(context: RunTurnContext, action: str) -> bool:
+                # The approval hook runs inside the child's turn context.
+                with request_context(approval_route) if approval_route else nullcontext():
+                    return await manager.activate_child_approval_resume(
+                        approval_resume, context, action,
+                    )
+
+            on_approval_consumed = activate_resume
+        if request.artifact_input is not None and approval_resume is not None:
+            raise RuntimeError(
+                "Artifact input cannot survive child approval resume; delegate again"
+            )
+        try:
+            result = await self.execute_turn(
+                turn_request,
+                _tools=request.tools,
+                _options=_TurnExecutionOptions(
+                    runtime=request.runtime,
+                    suppress_channel_output=True,
+                    admission_scope=child_admission_scope,
+                    inbound=inbound,
+                    pending_followup_records=followup_records,
+                    pending_followup_records_to_admit=request.followup_records_to_admit,
+                    pending_followup_records_to_discard=request.followup_records_to_discard,
+                    request_boundary_validator=request.request_boundary_validator,
+                    followup_boundary_validator=request.followup_boundary_validator,
+                    followup_request_acknowledged=request.followup_request_acknowledged,
+                    approval_target=request.approval_target,
+                    workspace_task_reference=request.workspace_task_reference,
+                    internal_system_instructions=request.instructions,
+                    internal_system_prompt=request.system_prompt,
+                    internal_include_skill_context=request.include_skill_context,
+                    internal_tool_policy=request.policy,
+                    internal_max_iterations=request.max_iterations,
+                    approval_authority_check=approval_authority_check,
+                    on_approval_consumed=on_approval_consumed,
+                    preserve_workspace_task_reference_on_approval=(
+                        request.workspace_task_reference is not None
+                    ),
+                    canonical_child_artifact_input=(
+                        request.artifact_input if approval_resume is None else None
+                    ),
+                ),
+            )
+        except asyncio.CancelledError:
+            if self._cancelled_child_run_is_settled(request):
+                return TurnResult(
+                    run_id=request.run_id,
+                    status=RunStatus.CANCELLED,
+                    stop_reason="cancelled",
+                )
+            raise
+        self._seal_child_artifact_handoff(request, result)
+        if (
+            request.background_delivery is not None
+            and result.status is not RunStatus.APPROVAL_REQUIRED
+        ):
+            recorded = await self._fork_dependencies.foreground_manager.record_background_result(
+                child_id=request.admission.child_id,
+                run_id=request.run_id,
+                result=result,
+                delivery=request.background_delivery,
+            )
+            if not recorded:
+                raise RuntimeError("Background child result could not be persisted")
+            self._background_results_reconciled = False
+            self.schedule_background(
+                self._fork_dependencies.foreground_manager.reconcile_background_results()
+            )
+        return result
+
+    async def submit_child_followup(
+        self,
+        admission: Any,
+        record: PendingFollowupRecord,
+        message: InboundMessage,
+    ) -> str:
+        """Commit one busy-child follow-up through its registered source owner."""
+        intent = record.child_followup
+        if (
+            intent is None
+            or intent.child_id != admission.child_id
+            or intent.child_key != admission.session_key
+            or pending_followup_id(message) != record.identifier
+            or pending_child_followup(message) != intent
+        ):
+            logger.debug("Busy child follow-up admission reference is stale")
+            return "refused"
+        tree = self._fork_dependencies.foreground_manager._delegation_tree
+        if tree is None:
+            return "refused"
+        current = tree.child(admission.child_id)
+        if (
+            current is None
+            or current.state != "active"
+            or not current.holds_capacity
+            or current.current_run_id != intent.child_run_id
+            or current.state_sequence != intent.child_state_sequence
+            or current.control_epoch != intent.child_control_epoch
+            or tree.is_stopping(admission.child_id)
+        ):
+            logger.debug("Busy child follow-up source lifetime changed")
+            return "refused"
+        backend = self.sessions.source_backend(admission.session_key)
+        if backend is None or current.source_state is None:
+            return "refused"
+        try:
+            snapshot = backend.source.load_source_snapshot(admission.session_key)
+        except Exception:
+            return "refused"
+        if (
+            not snapshot.state.same_origin(current.source_state)
+            or snapshot.state.store_identity != intent.child_store_identity
+            or snapshot.state.incarnation != intent.child_incarnation
+            or snapshot.state.generation != intent.child_generation
+        ):
+            return "refused"
+        source_admission = self._source_activity_admissions.get(admission.session_key)
+        queue = self._pending_queues.get(admission.session_key)
+        if source_admission is None:
+            # The runner may have closed its source owner while the exact
+            # backend handle is still finalizing. The caller can serialize a
+            # new same-source run after that handle settles.
+            logger.debug("Child follow-up arrived during backend settlement")
+            return "settling"
+        outcome = await source_admission.submit(message, followup_id=record.identifier)
+        if outcome.callback_error is not None and outcome.followup_pending is not True:
+            logger.debug("Busy child follow-up owner admission failed: {}", outcome.callback_error)
+            return "refused"
+        if outcome.followup_pending is False:
+            return (
+                "applied"
+                if source_admission.followup_status.get(record.identifier) == "applied"
+                else "recorded"
+            )
+        if outcome.followup_duplicate and record.identifier in source_admission.followup_queued:
+            return "queued"
+        if queue is not None:
+            latest = tree.child(admission.child_id)
+            if (
+                latest is not None
+                and latest.state == "active"
+                and latest.current_run_id == intent.child_run_id
+                and latest.state_sequence == intent.child_state_sequence
+                and latest.control_epoch == intent.child_control_epoch
+                and not tree.is_stopping(admission.child_id)
+            ):
+                try:
+                    queue.put_nowait(message)
+                except asyncio.QueueFull:
+                    pass
+                else:
+                    source_admission.mark_followup_enqueued(record.identifier)
+        return "queued"
+
+    def _pending_child_followup_admission_is_current(
+        self,
+        key: str,
+        record: PendingFollowupRecord,
+    ) -> bool:
+        """Recheck source and Stop authority immediately before the journal write."""
+        intent = record.child_followup
+        if intent is None or intent.child_key != key:
+            return False
+        tree = self._fork_dependencies.foreground_manager._delegation_tree
+        current = tree.child(intent.child_id) if tree is not None else None
+        if (
+            tree is None
+            or current is None
+            or current.parent_key != intent.parent_key
+            or current.parent_incarnation != intent.parent_incarnation
+            or current.state != "active"
+            or not current.holds_capacity
+            or current.current_run_id != intent.child_run_id
+            or current.state_sequence != intent.child_state_sequence
+            or current.control_epoch != intent.child_control_epoch
+            or tree.is_stopping(intent.child_id)
+        ):
+            logger.debug("Child follow-up intent no longer matches the live run")
+            return False
+
+        def current_source(
+            source_key: str,
+            store_identity: str,
+            incarnation: str,
+            generation: int,
+        ) -> SourceSnapshot | None:
+            backend = self.sessions.source_backend(source_key)
+            if backend is None:
+                return None
+            snapshot = backend.source.load_source_snapshot(source_key)
+            state = snapshot.state
+            if (
+                state.store_identity != store_identity
+                or state.incarnation != incarnation
+                or state.generation != generation
+            ):
+                return None
+            return snapshot
+
+        try:
+            child_snapshot = current_source(
+                key,
+                intent.child_store_identity,
+                intent.child_incarnation,
+                intent.child_generation,
+            )
+            parent_snapshot = current_source(
+                intent.parent_key,
+                intent.parent_store_identity,
+                intent.parent_incarnation,
+                intent.parent_generation,
+            )
+            if child_snapshot is None or parent_snapshot is None:
+                logger.debug("Child follow-up parent or child source lifetime changed")
+                return False
+            parent_child = tree.child_for_session(intent.parent_key)
+            if parent_child is not None and (
+                parent_child.state != "active"
+                or not parent_child.holds_capacity
+                or tree.is_stopping(parent_child.child_id)
+            ):
+                return False
+            root_state = current.root_source_state
+            if root_state is None:
+                return False
+            root_snapshot = current_source(
+                current.root_key,
+                root_state.store_identity,
+                root_state.incarnation,
+                root_state.generation,
+            )
+            if root_snapshot is None:
+                logger.debug("Child follow-up root source lifetime changed")
+                return False
+            parent_events = [
+                event for event in parent_snapshot.events
+                if event.get("_event_id") == intent.parent_tool_event_id
+            ]
+            if len(parent_events) != 1:
+                logger.debug("Child follow-up parent tool intent event is missing")
+                return False
+            parent_event = parent_events[0]
+            execution_ids_value: object = parent_event.get("_execution_ids")
+            calls_value: object = parent_event.get("tool_calls")
+            if (
+                parent_event.get("role") != "assistant"
+                or parent_event.get("_run_id") != intent.parent_run_id
+                or not isinstance(execution_ids_value, list)
+                or not isinstance(calls_value, list)
+            ):
+                logger.debug("Child follow-up parent tool intent execution changed")
+                return False
+            execution_ids = cast(list[object], execution_ids_value)
+            calls = cast(list[object], calls_value)
+            if (
+                intent.parent_dispatch_ordinal >= len(execution_ids)
+                or execution_ids[intent.parent_dispatch_ordinal] != intent.parent_execution_id
+                or intent.parent_dispatch_ordinal >= len(calls)
+            ):
+                return False
+            call_value = calls[intent.parent_dispatch_ordinal]
+            if not isinstance(call_value, dict):
+                return False
+            call = cast(dict[str, object], call_value)
+            function_value = call.get("function")
+            if not isinstance(function_value, dict):
+                logger.debug("Child follow-up parent tool call is malformed")
+                return False
+            function = cast(dict[str, object], function_value)
+            arguments: object = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = cast(object, json.loads(arguments))
+                except (TypeError, ValueError):
+                    logger.debug("Child follow-up parent tool arguments are malformed")
+                    return False
+            if not isinstance(arguments, dict):
+                return False
+            arguments_dict = cast(dict[str, object], arguments)
+            matches = (
+                function.get("name") == "followup_child"
+                and arguments_dict.get("child_id") == intent.child_id
+                and arguments_dict.get("content") == record.content
+            )
+            if not matches:
+                logger.debug("Child follow-up parent tool arguments changed")
+            return matches
+        except Exception:
+            logger.debug("Child follow-up owner validation failed")
+            return False
+
+    def _child_followup_is_current_for_consumption(
+        self,
+        key: str,
+        record: PendingFollowupRecord,
+    ) -> bool:
+        """Reject stored child input after Stop or any source replacement."""
+        intent = record.child_followup
+        tree = self._fork_dependencies.foreground_manager._delegation_tree
+        child = tree.child(intent.child_id) if tree is not None and intent is not None else None
+        if (
+            intent is None
+            or tree is None
+            or child is None
+            or intent.child_key != key
+            or child.child_id != intent.child_id
+            or child.session_key != intent.child_key
+            or child.parent_key != intent.parent_key
+            or child.parent_incarnation != intent.parent_incarnation
+            or child.state != "active"
+            or not child.holds_capacity
+            or child.control_epoch != intent.child_control_epoch
+            or tree.is_stopping(intent.child_id)
+        ):
+            return False
+
+        def source_is_current(
+            source_key: str,
+            store_identity: str,
+            incarnation: str,
+            generation: int,
+        ) -> bool:
+            backend = self.sessions.source_backend(source_key)
+            if backend is None:
+                return False
+            state = backend.source.load_source_snapshot(source_key).state
+            return (
+                state.store_identity == store_identity
+                and state.incarnation == incarnation
+                and state.generation == generation
+            )
+
+        try:
+            root_state = child.root_source_state
+            return (
+                source_is_current(
+                    key,
+                    intent.child_store_identity,
+                    intent.child_incarnation,
+                    intent.child_generation,
+                )
+                and source_is_current(
+                    intent.parent_key,
+                    intent.parent_store_identity,
+                    intent.parent_incarnation,
+                    intent.parent_generation,
+                )
+                and root_state is not None
+                and source_is_current(
+                    child.root_key,
+                    root_state.store_identity,
+                    root_state.incarnation,
+                    root_state.generation,
+                )
+            )
+        except Exception:
+            return False
+
+    def _seal_child_artifact_handoff(
+        self,
+        request: ChildTurnRequest,
+        result: TurnResult,
+    ) -> None:
+        """Seal one prepared child receipt only on exact completed settlement."""
+        receipt = result.artifact_handoff_receipt
+        if receipt is None:
+            return
+        from nanobot.session.artifact import ArtifactValidationError
+
+        if result.status is not RunStatus.COMPLETED or result.stop_reason != "completed":
+            raise ArtifactValidationError(
+                "Artifact handoff requires a completed child run"
+            )
+        backend = self.sessions.source_backend(request.admission.session_key)
+        if backend is None:
+            raise ArtifactValidationError("Artifact handoff child source is unavailable")
+        receipt.seal_after_settlement(
+            run_store=self.run_store,
+            source_store=backend.source,
+        )
+
+    async def _reconcile_background_results_once(self) -> None:
+        """Retry durable child result delivery after tree restore or a new turn."""
+        if self._background_results_reconciled and self._uncertain_children_reconciled:
+            return
+        manager = self._fork_dependencies.foreground_manager
+        if not self._uncertain_children_reconciled:
+            try:
+                _settled, remaining = await manager.reconcile_uncertain_children(
+                    self.run_store,
+                )
+            except Exception:
+                logger.exception("Uncertain child reconciliation failed")
+            else:
+                self._uncertain_children_reconciled = remaining == 0
+        if self._background_results_reconciled:
+            return
+        try:
+            await manager.recover_missing_background_results(self.run_store)
+            _delivered, _stale, pending = await manager.reconcile_background_results()
+        except Exception:
+            logger.exception("Background child result reconciliation failed")
+            return
+        self._background_results_reconciled = pending == 0
+
+    def _cancelled_child_run_is_settled(self, request: ChildTurnRequest) -> bool:
+        """Require a terminal run and a healthy closed source before releasing capacity."""
+        admission = request.admission
+        if admission.source_state is None or request.run_id != admission.current_run_id:
+            return False
+        record = self.run_store.load(request.run_id)
+        if (
+            record is None
+            or record.status is not RunStatus.CANCELLED
+            or record.session_ref is None
+            or record.session_ref.session_key != admission.session_key
+            or record.session_ref.run_id != request.run_id
+        ):
+            return False
+        stream_id = record.metadata.get("source_stream_id")
+        if not isinstance(stream_id, str) or not stream_id:
+            return False
+        backend = self.sessions.source_backend(admission.session_key)
+        if backend is None:
+            return False
+        try:
+            snapshot = backend.source.load_source_snapshot(admission.session_key)
+            checkpoint = backend.get_runtime_checkpoint_path(admission.session_key)
+            metadata = snapshot.header["metadata"]
+            return (
+                snapshot.state.same_origin(admission.source_state)
+                and "execution_lease" not in metadata
+                and "execution_recovery_required" not in metadata
+                and not checkpoint.exists()
+                and not checkpoint.is_symlink()
+                and not validate_execution_links(snapshot.events)
+                and any(
+                    event.get("_stream_id") == stream_id
+                    and event.get("_run_id") == request.run_id
+                    for event in snapshot.events
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Cancelled child run {} did not retain healthy owner evidence",
+                request.run_id,
+            )
+            return False
+
+    async def _publish_delegated_child(self, child: Any) -> None:
+        """Project one typed child reference into the parent chat activity."""
+        request = current_request_context()
+        if request is None or not request.chat_id:
+            return
+        parent_source = child.parent_source_state
+        root_source = child.root_source_state
+        child_source = child.source_state
+        dependencies = getattr(self, "_fork_dependencies", None)
+        tree = (
+            dependencies.foreground_manager._delegation_tree
+            if dependencies is not None else None
+        )
+        can_stop = False
+        if child.live and tree is not None and not tree.is_stopping(child.child_id):
+            try:
+                current_parent = tree.source_state(child.parent_key)
+                current_root = tree.source_state(child.root_key)
+                can_stop = bool(
+                    parent_source is not None
+                    and current_parent is not None
+                    and current_parent.same_origin(parent_source)
+                    and root_source is not None
+                    and current_root is not None
+                    and current_root.same_origin(root_source)
+                )
+            except Exception:
+                can_stop = False
+        route_channel = request.channel
+        route_chat_id = request.chat_id
+        if child.parent_key != child.root_key or request.channel == "delegated":
+            root_key = child.root_key or child.parent_key
+            if isinstance(root_key, str) and ":" in root_key:
+                route_channel, route_chat_id = root_key.split(":", 1)
+        await self.bus.publish_outbound(OutboundMessage(
+            channel=route_channel,
+            chat_id=route_chat_id,
+            content="",
+            event=DelegatedChildEvent(
+                parent_session_key=child.parent_key,
+                child_session_key=child.session_key,
+                child_id=child.child_id,
+                profile=child.profile,
+                state=child.state,
+                outcome=child.outcome,
+                runtime_generation=child.runtime_generation,
+                turn_id=(
+                    str(request.metadata.get(WEBUI_TURN_METADATA_KEY))
+                    if isinstance(request.metadata.get(WEBUI_TURN_METADATA_KEY), str)
+                    else None
+                ),
+                task_label=child.task_label,
+                task_label_truncated=child.task_label_truncated,
+                result_summary=child.result_summary,
+                result_summary_truncated=child.result_summary_truncated,
+                parent_run_id=child.attempt_id,
+                child_run_id=child.current_run_id,
+                parent_store_identity=(
+                    parent_source.store_identity if parent_source is not None else None
+                ),
+                parent_incarnation=(
+                    parent_source.incarnation if parent_source is not None else None
+                ),
+                parent_generation=(
+                    parent_source.generation if parent_source is not None else 0
+                ),
+                root_key=child.root_key,
+                root_store_identity=(
+                    root_source.store_identity if root_source is not None else None
+                ),
+                root_incarnation=(
+                    root_source.incarnation if root_source is not None else None
+                ),
+                root_generation=(
+                    root_source.generation if root_source is not None else 0
+                ),
+                child_store_identity=(
+                    child_source.store_identity if child_source is not None else None
+                ),
+                child_incarnation=(
+                    child_source.incarnation if child_source is not None else None
+                ),
+                child_generation=(
+                    child_source.generation if child_source is not None else 0
+                ),
+                run_sequence=child.run_sequence,
+                state_sequence=child.state_sequence,
+                control_epoch=child.control_epoch,
+                holds_capacity=child.holds_capacity,
+                can_stop=can_stop,
+                owned_work=child.holds_capacity,
+                pending_approval_id=child.pending_approval_id,
+                blocked_run_id=child.blocked_run_id,
+                result_disposition=(
+                    child.background_result.state
+                    if child.background_result is not None
+                    else None
+                ),
+            ),
+            metadata=dict(request.metadata or {}),
+        ))
+        await self._publish_stop_target_for_key(child.root_key)
+
+    def _resolve_policy_write_target(
+        self,
+        tool_name: str,
+        raw_path: str,
+        *,
+        tools: ToolRegistry | None = None,
+    ) -> Path | None:
+        """Resolve risk assessment through the same tool boundary as dispatch."""
+        tool = (tools or self.tools).get(tool_name)
+        resolver = getattr(tool, "resolve_write_path", None)
+        if not callable(resolver):
+            return None
+        try:
+            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
+            return Path(resolved).expanduser().resolve(strict=False)
+        except (OSError, PermissionError, ValueError):
+            return None
 
     def _workspace_focus_owner(self) -> WorkspaceFocusOwner | None:
         from nanobot.context_repo.catalog import RepositoryCatalog
@@ -1226,6 +2125,19 @@ class AgentLoop:
                     # Normalize the original input, not its approval/runtime expansion.
                     original, retained_media = reference_non_image_attachments(original, retained_media)
                 if pending_followup_id(msg) is not None and request is not None:
+                    child_followup = pending_child_followup(msg)
+                    if (
+                        child_followup is not None
+                        and not self._child_followup_is_current_for_consumption(
+                            session.key,
+                            source_pending_followup_record(msg),
+                        )
+                    ):
+                        raise RuntimeError(
+                            "Canonical child follow-up was fenced before source consumption"
+                        )
+                    if child_followup is not None:
+                        run_context.child_followup_continuation = True
                     original_message = dataclasses.replace(
                         msg, content=request.content,
                         attachments=getattr(msg, "attachments", ()),
@@ -1236,6 +2148,9 @@ class AgentLoop:
                         source_pending_followup_record(original_message),
                         {"role": "user", "content": original},
                     )
+                    activity_admission = self._source_activity_admissions.get(session.key)
+                    if activity_admission is not None and binding.followup_id is not None:
+                        activity_admission.mark_followup_consumed(binding.followup_id)
                     entry = next(event for event in writer.committed_events
                                  if event["_event_id"] == binding.event_id)
                 else:
@@ -1288,6 +2203,9 @@ class AgentLoop:
             workspace=scope.project_path,
             workspace_scope=scope,
             persistent_session=ctx.session.policy.persist and not ctx.ephemeral,
+            source_state=(ctx.run_context.execution_owner.read_snapshot().state
+                          if ctx.run_context is not None and ctx.run_context.execution_owner is not None
+                          else None),
         )
 
     async def _resolve_runtime_context_for_turn(
@@ -1295,6 +2213,11 @@ class AgentLoop:
         ctx: TurnContext,
     ) -> list[RuntimeContextBlock]:
         assert ctx.request_context is not None
+        if (
+            ctx.run_context is not None
+            and ctx.run_context.internal_system_prompt is not None
+        ):
+            return []
         return await self._resolve_runtime_context_for_request(
             ctx.request_context,
             ctx.tools if ctx.tools is not None else self.tools,
@@ -1457,39 +2380,474 @@ class AgentLoop:
         if cancelled:
             raise asyncio.CancelledError
 
-    async def _cancel_active_tasks(self, key: str) -> int:
+    def _active_root_task_identity(self, key: str) -> tuple[asyncio.Task[Any], ...]:
+        """Return current root tasks and exact unsettled compact receipts."""
+        current = asyncio.current_task()
+        tasks = {
+            task for task in self._active_tasks.get(key, set())
+            if task is not current and not task.done()
+        }
+        for task, settlement in getattr(self, "_compact_dispatches", {}).items():
+            if (
+                settlement.key == key
+                and not settlement.claimed
+                and task.cancelled()
+            ):
+                tasks.add(task)
+        tasks.update(
+            task for task, binding in self._active_root_bindings.items()
+            if binding.session_key == key and not task.done()
+        )
+        return tuple(sorted(
+            tasks,
+            key=id,
+        ))
+
+    @staticmethod
+    def _stop_target_matches(
+        expected: StopExpectation,
+        current: StopExpectation | None,
+    ) -> bool:
+        """Require every typed snapshot fact to match the current owner view."""
+        return current is not None and current == expected
+
+    def _stop_pending_inventory(
+        self,
+        key: str,
+        root_source: SourceState,
+        descendants: tuple[ChildAdmission, ...],
+        *,
+        include_fenced_evidence: bool = False,
+    ) -> tuple[tuple[SourceState, tuple[PendingFollowupRecord, ...]], ...]:
+        """Read a bounded, complete inventory under the existing source owners."""
+        sources = [(key, root_source)]
+        for child in descendants:
+            if child.source_state is None:
+                raise StopTargetUnavailableError("child source identity is unavailable")
+            sources.append((child.session_key, child.source_state))
+        pending_sources: list[tuple[SourceState, tuple[PendingFollowupRecord, ...]]] = []
+        children = {child.session_key: child for child in descendants}
+        tree = self._fork_dependencies.foreground_manager._delegation_tree
+        total = 0
+        for session_key, expected in sources:
+            backend = self.sessions.source_backend(session_key)
+            if backend is None:
+                raise StopTargetUnavailableError("pending source owner is unavailable")
+            snapshot = backend.source.load_source_snapshot(session_key)
+            if (
+                len(snapshot.events) > MAX_STOP_TARGET_SOURCE_EVENTS
+                or not snapshot.state.same_origin(expected)
+            ):
+                raise StopTargetUnavailableError("pending source inventory changed")
+            raw_pending: object = snapshot.header["metadata"].get(
+                SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, [],
+            )
+            if not isinstance(raw_pending, list):
+                raise StopTargetUnavailableError("pending source inventory is malformed")
+            pending_values = cast(list[object], raw_pending)
+            total += len(pending_values)
+            if total > MAX_STOP_TARGET_PENDING_RECORDS:
+                raise StopTargetUnavailableError("pending source inventory exceeds its safe budget")
+            records = tuple(parse_pending_followup_records(pending_values))
+            child = children.get(session_key)
+            if child is not None:
+                if tree is None:
+                    raise StopTargetUnavailableError("pending child owner is unavailable")
+                current_records = tree.current_pending_followups_for_stop(child, snapshot.state, records)
+                if not include_fenced_evidence:
+                    records = current_records
+            pending_sources.append((snapshot.state, records))
+        return tuple(pending_sources)
+
+    def stop_target_for_key(self, key: str) -> dict[str, object] | None:
+        """Return the complete live original-chat Stop target, or unavailable."""
+        if not is_webui_session_key(key):
+            return None
+        try:
+            manager = self._fork_dependencies.foreground_manager
+            tree = manager._delegation_tree
+            if tree is None or tree.recovery_error is not None:
+                return None
+            backend = self.sessions.source_backend(key)
+            if backend is None:
+                return None
+            root_snapshot = backend.source.load_source_snapshot(key)
+            if len(root_snapshot.events) > MAX_STOP_TARGET_SOURCE_EVENTS:
+                return None
+            root_source_state = root_snapshot.state
+            root_source = StopSourceOrigin.from_source_state(root_source_state)
+            descendants = tree.original_chat_stop_descendants(
+                key,
+                root_source_state,
+                max_entries=MAX_STOP_TARGET_CHILDREN,
+            )
+
+            active_tasks = self._active_root_task_identity(key)
+            source_admission = self._source_activity_admissions.get(key)
+            current_queue = self._pending_queues.get(key)
+            if active_tasks and (
+                source_admission is None
+                or not source_admission.can_fence_followups(
+                    parent_key=key,
+                    parent_incarnation=root_source_state.incarnation,
+                    parent_source_state=root_source_state,
+                    pending_queue=current_queue,
+                    control_epoch=tree.original_chat_control_epoch(key) + 1,
+                )
+            ):
+                raise StopTargetUnavailableError("active root queue binding is unavailable")
+            bindings: list[_ActiveRootBinding] = []
+            for task in active_tasks:
+                binding = self._active_root_bindings.get(task)
+                if (
+                    binding is None
+                    or binding.task is not task
+                    or binding.session_key != key
+                    or not binding.unique_run_id
+                    or not binding.source_state.same_origin(root_source_state)
+                    or not binding.run_id
+                    or not binding.stream_id
+                    or source_admission is None
+                    or source_admission.root_task is not task
+                    or source_admission.run_id != binding.run_id
+                ):
+                    raise StopTargetUnavailableError("active root invocation is unproven")
+                bindings.append(binding)
+            run_ids = tuple(sorted(binding.run_id for binding in bindings))
+            if len(run_ids) > 64 or len(run_ids) != len(set(run_ids)):
+                raise StopTargetUnavailableError("active root run identity is ambiguous")
+
+            # A cancelled pre-admission compact dispatch may still own one
+            # unclaimed completion receipt. That receipt has no canonical run
+            # identity, so it cannot safely be represented by a typed target.
+            if any(
+                settlement.key == key
+                and not settlement.claimed
+                and task.cancelled()
+                for task, settlement in getattr(self, "_compact_dispatches", {}).items()
+            ):
+                raise StopTargetUnavailableError("compact completion receipt is unsettled")
+
+            active_turn_id: str | None = None
+            chat_id = webui_chat_id(key)
+            if chat_id is not None:
+                from nanobot.session.webui_turns import websocket_turn_id
+
+                active_turn_id = websocket_turn_id(chat_id)
+
+            children: list[StopChildExpectation] = []
+            pending_sources = self._stop_pending_inventory(key, root_source_state, descendants)
+            for child in descendants:
+                if child.source_state is None:
+                    raise StopTargetUnavailableError("child source identity is unavailable")
+                child_backend = self.sessions.source_backend(child.session_key)
+                if child_backend is None:
+                    raise StopTargetUnavailableError("child source owner is unavailable")
+                child_snapshot = child_backend.source.load_source_snapshot(child.session_key)
+                if (
+                    len(child_snapshot.events) > MAX_STOP_TARGET_SOURCE_EVENTS
+                    or not child_snapshot.state.same_origin(child.source_state)
+                ):
+                    raise StopTargetUnavailableError("child source inventory changed")
+                child_source = StopSourceOrigin.from_source_state(child_snapshot.state)
+                if child.holds_capacity:
+                    children.append(StopChildExpectation(
+                        child_id=child.child_id,
+                        source=child_source,
+                        child_run_id=child.current_run_id,
+                        run_sequence=child.run_sequence,
+                        control_epoch=child.control_epoch,
+                    ))
+
+            digest = pending_work_digest([
+                (StopSourceOrigin.from_source_state(state), records)
+                for state, records in pending_sources
+            ])
+            if not active_tasks and not children and not any(rows for _, rows in pending_sources):
+                return None
+            expectation = StopExpectation(
+                version=1,
+                source=root_source,
+                control_epoch=tree.original_chat_control_epoch(key),
+                active_root_present=bool(active_tasks),
+                active_turn_id=active_turn_id if active_tasks else None,
+                active_root_run_ids=run_ids,
+                children=tuple(sorted(children, key=lambda child: child.child_id)),
+                pending_work_digest=digest,
+            )
+            return parse_stop_expectation(expectation.to_dict()).to_dict()
+        except Exception as exc:
+            logger.debug("Original-chat Stop target unavailable for {}: {}", key, exc)
+            return None
+
+    async def _publish_stop_target_for_key(self, key: str) -> None:
+        """Send the current live target as a transient WebUI event."""
+        chat_id = webui_chat_id(key)
+        if chat_id is None:
+            return
+        try:
+            await self.bus.publish_event(
+                StopTargetEvent(stop_target=self.stop_target_for_key(key)),
+                channel="websocket",
+                chat_id=chat_id,
+            )
+        except Exception:
+            logger.debug("Original-chat Stop target event could not be queued for {}", key)
+
+    async def _publish_stop_target_for_session(self, key: str) -> None:
+        """Refresh the parent-chat target after one root or child owner changes."""
+        tree = self._fork_dependencies.foreground_manager._delegation_tree
+        child = tree.child_for_session(key) if tree is not None else None
+        root_key = child.root_key if child is not None else key
+        await self._publish_stop_target_for_key(root_key)
+
+    def _capture_original_chat_stop(
+        self,
+        key: str,
+        target_turn_id: str | None,
+        *,
+        require_root_only: bool = False,
+    ) -> OriginalChatStopAdmission | None:
+        """Capture the existing root Stop target before its first await."""
+        manager = self._fork_dependencies.foreground_manager
+        tree = manager._delegation_tree
+        if tree is None:
+            if require_root_only:
+                raise StopTargetUnavailableError("root-only Stop inventory is unavailable")
+            return None
+        try:
+            parent = self.sessions.read_session_snapshot(key)
+            parent_source_state = tree.source_state(key)
+        except Exception as exc:
+            raise RuntimeError("The original chat source is unavailable") from exc
+        current_queue = self._pending_queues.get(key)
+        if require_root_only and (
+            parent_source_state is None or (current_queue is not None and not current_queue.empty())
+        ):
+            raise StopTargetUnavailableError("root-only Stop has unproven or queued work")
+        followup_admission = getattr(self, "_source_activity_admissions", {}).get(key)
+        if followup_admission is not None and not followup_admission.can_fence_followups(
+            parent_key=key,
+            parent_incarnation=parent.incarnation if parent is not None else None,
+            parent_source_state=parent_source_state,
+            pending_queue=current_queue,
+            control_epoch=tree.original_chat_control_epoch(key) + 1,
+        ):
+            raise RuntimeError("The original chat queue or source owner changed before Stop")
+        descendants = (
+            tree.original_chat_stop_descendants(
+                key, parent_source_state, max_entries=MAX_STOP_TARGET_CHILDREN,
+            ) if parent_source_state is not None else ()
+        )
+        pending_sources = (
+            self._stop_pending_inventory(
+                key, parent_source_state, descendants,
+                include_fenced_evidence=True,
+            )
+            if parent_source_state is not None else ()
+        )
+        if require_root_only:
+            if any(child.holds_capacity for child in descendants):
+                raise StopTargetUnavailableError("root-only Stop has held descendants")
+            children = {child.session_key: child for child in descendants}
+            for state, records in pending_sources:
+                child = children.get(state.session_key)
+                current_records = (
+                    tree.current_pending_followups_for_stop(child, state, records)
+                    if child is not None else records
+                )
+                if current_records:
+                    raise StopTargetUnavailableError("root-only Stop has durable pending work")
+        admission = manager.begin_original_chat_stop(
+            key,
+            active_root_identity=self._active_root_task_identity(key),
+            target_turn_id=target_turn_id,
+            pending_queue=current_queue,
+            pending_sources=pending_sources,
+        )
+        if admission is None:
+            raise RuntimeError("The original chat source changed before Stop admission")
+        if followup_admission is not None:
+            if not followup_admission.fence_followups(admission):
+                manager.abort_original_chat_stop(admission)
+                raise RuntimeError("The original chat queue changed before Stop admission")
+        return admission
+
+    def _release_original_chat_stop_followups(
+        self,
+        key: str,
+        admission: OriginalChatStopAdmission,
+    ) -> None:
+        followup_admission = getattr(self, "_source_activity_admissions", {}).get(key)
+        if followup_admission is not None:
+            followup_admission.release_followup_fence(admission)
+
+    def _validate_original_chat_stop(
+        self,
+        key: str,
+        admission: OriginalChatStopAdmission,
+    ) -> bool:
+        """Check the captured root Stop against the current source and task set."""
+        manager = self._fork_dependencies.foreground_manager
+        current_queue = self._pending_queues.get(key)
+        if (
+            current_queue is not None
+            and current_queue is not admission.pending_queue
+        ):
+            return False
+        if (
+            current_queue is None
+            and admission.pending_queue is not None
+            and any(not task.done() for task in admission.active_root_identity)
+        ):
+            return False
+        return manager.validate_original_chat_stop(admission, self._active_root_task_identity(key))
+
+    def _original_chat_stop_has_live_owner(
+        self,
+        key: str,
+        admission: OriginalChatStopAdmission,
+    ) -> bool:
+        """Keep Stop visible while a captured root or child owner still holds work."""
+        if any(not task.done() for task in admission.active_root_identity):
+            return True
+        manager = self._fork_dependencies.foreground_manager
+        tree = manager._delegation_tree
+        if tree is not None and any(
+            (child := tree.child_for_session(session_key)) is not None
+            and child.holds_capacity
+            for session_key in manager.child_session_keys_for_stop(admission)
+        ):
+            return True
+        return self.subagents.get_running_count_by_session(key) > 0
+
+    async def _cancel_active_tasks(
+        self,
+        key: str,
+        *,
+        _stop_admission: OriginalChatStopAdmission | None = None,
+    ) -> int:
         """Cancel and await all active work for *key*.
 
         Returns the total number of cancelled tasks, subagents, and exec sessions.
         """
+        manager = self._fork_dependencies.foreground_manager
+        if _stop_admission is not None:
+            active_identity = self._active_root_task_identity(key)
+            if not self._validate_original_chat_stop(key, _stop_admission):
+                manager.abort_original_chat_stop(_stop_admission)
+                self._release_original_chat_stop_followups(key, _stop_admission)
+                return 0
+            if not await manager.fence_children_for_stop(_stop_admission, active_identity):
+                manager.abort_original_chat_stop(_stop_admission)
+                self._release_original_chat_stop_followups(key, _stop_admission)
+                return 0
+            await self.approval_admission.revoke(key)
+            await manager.revoke_child_approvals_for_stop(
+                manager.child_session_keys_for_stop(_stop_admission),
+            )
         try:
-            await self.discard_pending_followups_for_stop(key)
+            captured_pending = {
+                state.session_key: (state, records)
+                for state, records in _stop_admission.pending_sources
+            } if _stop_admission is not None else {}
+            root_pending = captured_pending.get(key)
+            await self.discard_pending_followups_for_stop(
+                key, _stop_admission,
+                expected_records=root_pending[1] if root_pending is not None else None,
+                expected_source_state=root_pending[0] if root_pending is not None else None,
+            )
+            if _stop_admission is not None:
+                # The subtree fence is already durable. Drain each exact child
+                # source owner's activity journal before the tree cancels its
+                # runner, so no queued row can be replayed after Stop.
+                for child_key in manager.child_session_keys_for_stop(_stop_admission):
+                    child_pending = captured_pending.get(child_key)
+                    await self.discard_pending_followups_for_stop(
+                        child_key,
+                        expected_records=child_pending[1] if child_pending is not None else None,
+                        expected_source_state=child_pending[0] if child_pending is not None else None,
+                    )
         except Exception as exc:
             raise PendingFollowupStopError("Could not save pending-input stop disposition") from exc
+        if _stop_admission is not None and not self._validate_original_chat_stop(
+            key,
+            _stop_admission,
+        ):
+            manager.abort_original_chat_stop(_stop_admission)
+            self._release_original_chat_stop_followups(key, _stop_admission)
+            return 0
         settlements = tuple(
             (task, state) for task, state in getattr(self, "_compact_dispatches", {}).items()
             if state.key == key
+            and (
+                _stop_admission is None
+                or task in _stop_admission.active_root_identity
+            )
         )
-        tasks = tuple(self._active_tasks.pop(key, set()) | {task for task, _ in settlements})
+        if _stop_admission is None:
+            tasks = tuple(self._active_tasks.pop(key, set()) | {task for task, _ in settlements})
+        else:
+            selected = set(_stop_admission.active_root_identity)
+            tasks = tuple(selected | {task for task, _ in settlements})
+        settle_deadline = (
+            asyncio.get_running_loop().time() + STOP_SETTLE_TIMEOUT
+            if _stop_admission is not None
+            else None
+        )
         cancelled = sum(1 for t in tasks if not t.done() and not t.cancelling() and t.cancel())
 
         async def join_and_settle() -> int:
             errors: list[BaseException] = []
-            for t in tasks:
-                with suppress(asyncio.CancelledError, Exception):
-                    await t
+            child_cancelled: int | None = None
+            settled_root_count = cancelled
+            if _stop_admission is not None:
+                child_cancelled = await manager.stop_children(
+                    key,
+                    admission=_stop_admission,
+                    active_root_identity=_stop_admission.active_root_identity,
+                    fenced=True,
+                    deadline=settle_deadline,
+                )
+                pending = {task for task in tasks if not task.done()}
+                if pending:
+                    assert settle_deadline is not None
+                    remaining = max(0.0, settle_deadline - asyncio.get_running_loop().time())
+                    done, _pending = await asyncio.wait(pending, timeout=remaining)
+                else:
+                    done = set(tasks)
+                settled_root_count = len(done)
+                for task in done:
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
+            else:
+                for task in tasks:
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
             for task, state in settlements:
+                if _stop_admission is not None and not task.done():
+                    continue
                 try:
                     await self._settle_queued_compact(task, state)
                 except BaseException as exc:
                     errors.append(exc)
-            sub_cancelled = await self.subagents.cancel_by_session(key)
-            exec_cancelled = await self._exec_session_manager.terminate_by_owner(key)
+            still_current = (
+                _stop_admission is None
+                or self._validate_original_chat_stop(key, _stop_admission)
+            )
+            sub_cancelled = await self.subagents.cancel_by_session(key) if still_current else 0
+            if child_cancelled is None:
+                child_cancelled = await manager.stop_children(key)
+            exec_cancelled = (
+                await self._exec_session_manager.terminate_by_owner(key)
+                if still_current
+                else 0
+            )
             if errors:
                 for error in errors[1:]:
                     logger.warning("Additional queued completion failed: {}", type(error).__name__)
                 raise errors[0]
-            return cancelled + sub_cancelled + exec_cancelled
+            return settled_root_count + sub_cancelled + child_cancelled + exec_cancelled
 
         cleanup = asyncio.create_task(join_and_settle())
         owner_cancelled = False
@@ -1508,6 +2866,7 @@ class AgentLoop:
         self._discarding_sessions.add(key)
         try:
             self.sessions.invalidate(key)
+            await self.approval_admission.revoke(key)
             await self._cancel_active_tasks(key)
         finally:
             self.discard_session_file_state(key)
@@ -1545,6 +2904,17 @@ class AgentLoop:
             },
             reason=reason,
             active_turn=active_turn,
+        )
+
+    def retire_workspace_task_after_stop_admission(
+        self,
+        session_key: str,
+        *,
+        active_turn: bool,
+    ) -> None:
+        """Retire Once authority after the command owner admits the exact Stop."""
+        self._retire_workspace_task_before_input(
+            session_key, reason="task_cancelled", active_turn=active_turn,
         )
 
     def _idle_events(
@@ -1833,12 +3203,75 @@ class AgentLoop:
             raise RuntimeError("Source follow-up admission is unavailable")
         return await admission.submit(msg, followup_id=followup_id)
 
-    async def discard_pending_followups_for_stop(self, key: str) -> tuple[str, ...]:
+    async def discard_pending_followups_for_stop(
+        self,
+        key: str,
+        stop_admission: OriginalChatStopAdmission | None = None,
+        *,
+        expected_records: tuple[PendingFollowupRecord, ...] | None = None,
+        expected_source_state: SourceState | None = None,
+    ) -> tuple[str, ...]:
         """Commit stop disposition under the active source owner before cancellation."""
         admission = getattr(self, "_source_activity_admissions", {}).get(key)
         if admission is None:
-            return ()
-        identifiers = await admission.discard_pending_followups()
+            if expected_source_state is None or not expected_records:
+                return ()
+            backend = self.sessions.source_backend(key)
+            if backend is None:
+                raise RuntimeError("Pending-input Stop source owner is unavailable")
+
+            def validate_pending(snapshot: SourceSnapshot) -> None:
+                if not snapshot.state.same_origin(expected_source_state):
+                    raise RuntimeError("Pending-input Stop source changed")
+                records = tuple(parse_pending_followup_records(
+                    snapshot.header["metadata"].get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, []),
+                ))
+                if records != expected_records:
+                    raise RuntimeError("Pending-input Stop inventory changed")
+                if stop_admission is not None and not self._validate_original_chat_stop(
+                    key, stop_admission,
+                ):
+                    raise RuntimeError("Pending-input Stop owner changed")
+
+            # This is an idle journal maintenance lease, not a new canonical
+            # run. It is acquired only for the exact rows captured before Stop.
+            async with acquire_execution(
+                backend, key, run_id=f"stop-input:{uuid.uuid4().hex}",
+                expected_source={
+                    "store_identity": expected_source_state.store_identity,
+                    "incarnation": expected_source_state.incarnation,
+                    "generation": expected_source_state.generation,
+                },
+                wait_for_lock=False, validate_snapshot=validate_pending,
+            ) as owner:
+                records_to_discard = expected_records
+                tree = self._fork_dependencies.foreground_manager._delegation_tree
+                child = tree.child_for_session(key) if tree is not None else None
+                if child is not None and not child.holds_capacity and tree is not None:
+                    # The child owner already fenced typed rows by advancing
+                    # its epoch. Retain that evidence until fresh admission.
+                    records_to_discard = tree.current_pending_followups_for_stop(
+                        child, owner.read_snapshot().state, expected_records,
+                    )
+                identifiers = backend.source.discard_pending_followups(
+                    key, owner, expected_records=records_to_discard,
+                )
+            self.sessions.invalidate(key)
+            await self._publish_stop_target_for_session(key)
+            return identifiers
+        if expected_source_state is not None and not admission.source_state.same_origin(
+            expected_source_state,
+        ):
+            raise RuntimeError("Pending-input Stop activity owner changed")
+        if stop_admission is None:
+            identifiers = await admission.discard_pending_followups(
+                expected_records=expected_records,
+            )
+        else:
+            identifiers = await admission.discard_pending_followups(
+                stop_admission,
+                expected_records=expected_records,
+            )
         if identifiers:
             self._stopped_pending_followup_ids.setdefault(key, set()).update(identifiers)
         return identifiers
@@ -2013,11 +3446,20 @@ class AgentLoop:
             pending_queue = None
         if fresh_history or source_writer is not None:
             provider_state = None
-        tool_policy = RiskyActionPolicy(
+        risky_policy = RiskyActionPolicy(
             workspace=run_context.policy.workspace,
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
+            effect_authority=run_context.policy.effect_authority,
+            write_target_resolver=lambda name, path: self._resolve_policy_write_target(
+                name,
+                path,
+                tools=tools if tools is not None else self.tools,
+            ),
         )
+        tool_policy: ToolPolicy = risky_policy
+        if run_context.internal_tool_policy is not None:
+            tool_policy = CompositeToolPolicy((run_context.internal_tool_policy, risky_policy))
         self._sync_subagent_runtime_limits()
 
         async def _checkpoint(payload: dict[str, Any]) -> None:
@@ -2050,7 +3492,7 @@ class AgentLoop:
 
             async def _to_user_message(
                 pending_msg: InboundMessage,
-            ) -> SourceInjectionBinding | dict[str, object]:
+            ) -> SourceInjectionBinding | dict[str, object] | None:
                 content = pending_msg.content
                 image_paths = pending_msg.media if pending_msg.media else None
                 if image_paths:
@@ -2117,9 +3559,53 @@ class AgentLoop:
                     row[PENDING_FOLLOWUP_ID_KEY] = followup_id
                 if source_writer is not None:
                     if pending_followup_id(pending_msg) is not None:
+                        child_followup = pending_child_followup(pending_msg)
+                        tree = self._fork_dependencies.foreground_manager._delegation_tree
+                        child_record = source_pending_followup_record(pending_msg)
+                        if (
+                            child_followup is not None
+                            and not self._child_followup_is_current_for_consumption(
+                                active_session_key or "",
+                                child_record,
+                            )
+                        ):
+                            current = tree.child(child_followup.child_id) if tree is not None else None
+                            if (
+                                tree is not None
+                                and (
+                                    tree.is_stopping(child_followup.child_id)
+                                    or current is None
+                                    or current.state != "active"
+                                    or current.control_epoch != child_followup.child_control_epoch
+                                )
+                            ):
+                                # The tree's durable Stop epoch fences this row
+                                # after its source owner has closed as well.
+                                identifier = pending_followup_id(pending_msg)
+                                if identifier is not None and active_session_key is not None:
+                                    self._stopped_pending_followup_ids.setdefault(
+                                        active_session_key,
+                                        set(),
+                                    ).add(identifier)
+                                self._ack_admitted_activity_message(pending_msg)
+                                return None
+                            raise RuntimeError(
+                                "Canonical child follow-up authority changed before source consumption"
+                            )
+                        if child_followup is not None:
+                            run_context.child_followup_continuation = True
                         binding = source_writer.consume_pending_followup(
                             source_pending_followup_record(pending_msg), row,
                         )
+                        activity_admission = (
+                            self._source_activity_admissions.get(active_session_key)
+                            if active_session_key is not None
+                            else None
+                        )
+                        if activity_admission is not None and binding.followup_id is not None:
+                            activity_admission.mark_followup_consumed(binding.followup_id)
+                        if active_session_key is not None:
+                            await self._publish_stop_target_for_session(active_session_key)
                     else:
                         binding = source_writer.append_injection(
                             {"role": "user", "content": pending_msg.content,
@@ -2238,6 +3724,7 @@ class AgentLoop:
             channel=request_ctx.channel,
             workspace=self.workspace if managed_prompt else effective_scope.project_path,
             include_memory=include_memory,
+            tool_names=frozenset(effective_tools.tool_names),
         )
         if request_context is None:
             request_ctx = dataclasses.replace(
@@ -2267,6 +3754,24 @@ class AgentLoop:
             )
 
         session_metadata = {} if fresh_history else (session.metadata if session is not None else None)
+
+        def validate_request_boundary() -> bool:
+            validator = run_context.request_boundary_validator
+            if validator is not None and not validator():
+                return False
+            if not run_context.child_followup_continuation:
+                return True
+            followup_validator = run_context.followup_boundary_validator
+            if followup_validator is not None and not followup_validator():
+                return False
+            owner = run_context.execution_owner
+            if owner is None:
+                return False
+            try:
+                return not validate_execution_links(owner.read_snapshot().events)
+            except Exception:
+                return False
+
         run_context_token = set_current_turn_context(run_context)
         try:
             for scope in turn_scopes or ():
@@ -2297,7 +3802,22 @@ class AgentLoop:
                     transcript_input, history=run_context.source_history,
                     input_event_id=run_context.source_input_event_id,
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
-                    include_memory=session.policy.persist if session is not None else True)
+                    include_memory=session.policy.persist if session is not None else True,
+                    tool_names=frozenset(effective_tools.tool_names),
+                    system_prompt_override=run_context.internal_system_prompt,
+                    include_skill_context=run_context.internal_include_skill_context)
+                instructions = run_context.internal_system_instructions
+                if instructions and run_context.internal_system_prompt is None:
+                    nodes = list(source_transcript.nodes)
+                    system = nodes[0] if nodes else None
+                    if not isinstance(system, RuntimeNode) or system.message.get("role") != "system":
+                        raise RuntimeError("canonical child context is missing its governing system prompt")
+                    system_message = deepcopy(system.message)
+                    system_message["content"] = (
+                        f"{system_message.get('content', '')}\n\n{instructions}"
+                    )
+                    nodes[0] = RuntimeNode(system.node_id, system_message)
+                    source_transcript = SourceTranscript(tuple(nodes))
             run_context.artifact_read_allowed = (
                 (
                     self._artifact_reader_factory is not None
@@ -2315,6 +3835,7 @@ class AgentLoop:
             )
             result = await self.runner.run(AgentRunSpec(
                 artifact_read_allowed=run_context.artifact_read_allowed,
+                canonical_child_artifact_input=run_context.canonical_child_artifact_input,
                 initial_messages=None,
                 source_transcript=source_transcript,
                 source_isolated=fresh_history,
@@ -2327,7 +3848,7 @@ class AgentLoop:
                 fail_on_tool_error=True,
                 allow_pre_dispatch_recovery=allow_pre_dispatch_recovery,
                 runtime=runtime,
-                max_iterations=self.max_iterations,
+                max_iterations=(run_context.internal_max_iterations or self.max_iterations),
                 max_tool_result_chars=self.max_tool_result_chars,
                 transcript_input=transcript_input,
                 transcript_builder=transcript_builder,
@@ -2338,6 +3859,16 @@ class AgentLoop:
                 provider_retry_mode=self.provider_retry_mode,
                 checkpoint_callback=_checkpoint,
                 source_writer=source_writer,
+                request_boundary_validator=(
+                    validate_request_boundary
+                    if run_context.request_boundary_validator is not None
+                    or run_context.child_followup_continuation
+                    else None
+                ),
+                followup_request_acknowledged=run_context.followup_request_acknowledged,
+                pending_followup_acknowledgments=list(
+                    run_context.pending_followup_acknowledgments,
+                ),
                 source_compaction_idle_timeout_seconds=(
                     getattr(self, "_source_compaction_idle_timeout_seconds", 300.0)
                 ),
@@ -2452,6 +3983,7 @@ class AgentLoop:
             return
         self._loop_task = asyncio.current_task()
         self._running = True
+        await self._reconcile_background_results_once()
         try:
             logger.info("Agent loop started")
 
@@ -2482,12 +4014,31 @@ class AgentLoop:
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
+                background_source = (
+                    msg.source_state if pending_background_result(msg) is not None else None
+                )
+                if background_source is not None:
+                    try:
+                        self._read_expected_source(effective_key, background_source)
+                    except SourceOriginMismatchError:
+                        continue
+                    except Exception:
+                        logger.exception("Could not read background result source for {}", effective_key)
+                        continue
+                if "approval_decision" in msg.metadata and await self._dispatch_bus_approval_control(
+                    msg, effective_key,
+                ):
+                    continue
                 steering_rejection = self._webui_steering_rejection(msg)
                 if steering_rejection is not None:
                     await self._reject_webui_steering(msg, *steering_rejection)
                     continue
                 continuation = workspace_access_continuation(msg, session_key=effective_key)
-                if msg.is_user_input and continuation is None:
+                protocol_stop = (
+                    msg.metadata.get(INBOUND_META_STOP_CLIENT) is True
+                    and normalize_command_text(raw).lower() == "/stop"
+                )
+                if msg.is_user_input and continuation is None and not protocol_stop:
                     if msg.sender_id != "subagent":
                         try:
                             command_name = raw.lower().split(maxsplit=1)[0] if raw else ""
@@ -2539,6 +4090,7 @@ class AgentLoop:
                 if (
                     msg.require_existing_session
                     and continuation is None
+                    and background_source is None
                     and self.sessions.get_cached(effective_key) is None
                 ):
                     continue
@@ -2706,15 +4258,39 @@ class AgentLoop:
     async def _bus_turn_scope(
         self, original: InboundMessage, key: str,
         settlement: _CompactDispatchSettlement | None = None,
+        *,
+        suppress_channel_output: bool = False,
     ) -> AsyncGenerator[_AdmittedTurnIO]:
         """Own bus delivery and the injection queue inside canonical admission."""
         msg = dataclasses.replace(original, session_key_override=key, metadata=dict(original.metadata))
         copy_pending_followup_proof(original, msg)
-        delivery = self.turn_delivery_factory.unrouted(msg, key)
+        delivery = self.turn_delivery_factory.unrouted(
+            msg,
+            key,
+            suppress_channel_output=suppress_channel_output,
+        )
         pending: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=20)
         io = _AdmittedTurnIO(pending_queue=pending, delivery=delivery)
-        self._pending_queues[key] = pending
         current = asyncio.current_task()
+        activity_admission = self._source_activity_admissions.get(key)
+        if activity_admission is not None:
+            root_binding = (
+                self._active_root_bindings.get(current)
+                if current is not None else None
+            )
+            if (
+                current is None
+                or root_binding is None
+                or root_binding.session_key != key
+                or not activity_admission.bind_root_queue(
+                    pending,
+                    root_task=current,
+                    run_id=root_binding.run_id,
+                    source_state=root_binding.source_state,
+                )
+            ):
+                raise RuntimeError("Canonical root queue could not bind to its source owner")
+        self._pending_queues[key] = pending
         if current is not None and key != original.session_key:
             self._track_active_task(key, current)
         stage_entered = False
@@ -2757,6 +4333,9 @@ class AgentLoop:
             while not pending.empty():
                 items.append(pending.get_nowait())
             for index, item in enumerate(items):
+                if pending_child_followup(item) is not None:
+                    self._ack_admitted_activity_message(item)
+                    continue
                 if pending_followup_id(item) in self._stopped_pending_followup_ids.get(key, set()):
                     self._ack_admitted_activity_message(item)
                     continue
@@ -2789,9 +4368,15 @@ class AgentLoop:
                         or settlement.key != key):
                     raise RuntimeError("compact dispatch settlement identity mismatch")
                 settlement.claimed = True
-            delivery = self.turn_delivery_factory.create(msg, key, enable_stream=True)
+            delivery = self.turn_delivery_factory.create(
+                msg,
+                key,
+                enable_stream=True,
+                suppress_channel_output=suppress_channel_output,
+            )
             io.delivery = delivery
             stage_entered = True
+            await self._publish_stop_target_for_key(key)
             yield io
         except asyncio.CancelledError:
             notify(asyncio.CancelledError())
@@ -2849,6 +4434,128 @@ class AgentLoop:
             if cancelled:
                 raise asyncio.CancelledError()
 
+    def _child_approval_control_is_current(
+        self,
+        msg: InboundMessage,
+        key: str,
+        snapshot: ApprovalSnapshot,
+        expected: ChildControlState,
+    ) -> bool:
+        """Check exact original-chat identity without admitting parent input."""
+        pending, decision = snapshot.pending, snapshot.decision
+        tree = self._fork_dependencies.foreground_manager._delegation_tree
+        if pending is None or decision is None or tree is None:
+            return False
+        child = tree.child(expected.child_id)
+        if (
+            child is None
+            or child.root_key != key
+            or child.session_key != pending.session_key
+            or child.state != "waiting_approval"
+            or not child.holds_capacity
+            or child.pending_approval_id != pending.approval_id
+            or child.blocked_run_id != pending.run_id
+            or child.current_run_id != pending.run_id
+            or not isinstance(pending.effect_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", pending.effect_id) is None
+            or child.pending_effect_id != pending.effect_id
+            or pending.source_state is None
+            or not expected.child_source_state.same_origin(pending.source_state)
+            or expected.root_source_state is None
+            or not tree._child_control_state_matches(expected)
+        ):
+            return False
+        # Public child controls require exact owner identity. Effect and inner
+        # turn echoes are optional corroboration of the canonical pending owner.
+        if any(actual is None or actual != wanted for actual, wanted in (
+            (decision.session_key, pending.session_key),
+            (decision.session_incarnation, pending.session_incarnation),
+            (decision.run_id, pending.run_id),
+            (decision.generation, pending.generation),
+        )):
+            return False
+        if any(actual is not None and actual != wanted for actual, wanted in (
+            (decision.turn_id, pending.turn_id),
+            (decision.effect_id, pending.effect_id),
+        )):
+            return False
+        if msg.channel == "websocket":
+            from nanobot.security.desktop_permissions import permission_source_token
+            from nanobot.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
+
+            state = expected.root_source_state
+            if msg.metadata.get(WEBUI_SOURCE_TOKEN_METADATA_KEY) != permission_source_token({
+                "store_identity": state.store_identity,
+                "incarnation": state.incarnation,
+                "generation": state.generation,
+            }):
+                return False
+        return True
+
+    async def _dispatch_bus_approval_control(self, msg: InboundMessage, key: str) -> bool:
+        """Resolve child decisions before parent retirement, queues or lifecycle."""
+        try:
+            decision = ApprovalDecision.from_mapping(msg.metadata["approval_decision"])
+        except (TypeError, ValueError):
+            await self._reject_webui_steering(msg, "not_admitted", "invalid_approval_decision")
+            return True
+        snapshot = await self.approval_admission.snapshot_decision(key, decision)
+        pending = snapshot.pending
+        if snapshot.action not in {"affirmative", "negative"} or pending is None:
+            await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+            return True
+        if pending.session_key == key:
+            # Root approvals retain their existing canonical admission path.
+            return False
+        manager = self._fork_dependencies.foreground_manager
+        tree = manager._delegation_tree
+        child = tree.child_for_session(pending.session_key) if tree is not None else None
+        expected = (
+            tree.capture_child_control_state(child.child_id)
+            if tree is not None and child is not None else None
+        )
+        if expected is None or not self._child_approval_control_is_current(msg, key, snapshot, expected):
+            await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+            return True
+
+        async def resume_child() -> None:
+            try:
+                current = await self.approval_admission.snapshot_decision(key, decision)
+                if (
+                    self._lifecycle_is_closing()
+                    or current.pending is not pending
+                    or current.action not in {"affirmative", "negative"}
+                    or not self._child_approval_control_is_current(msg, key, current, expected)
+                ):
+                    await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+                    return
+                # Carry the original chat route into child activity publication.
+                with request_context(RequestContext(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=key,
+                )):
+                    result = await manager.resume_child_approval_decision(
+                        child_id=expected.child_id,
+                        approval_id=pending.approval_id,
+                        blocked_run_id=pending.run_id or "",
+                        decision=decision,
+                        approval_target=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id),
+                    )
+                if result is None or result.stop_reason == "approval_stale":
+                    await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Child approval control could not be resumed for {}", key)
+                await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+
+        # The manager attaches the actual execution to the resolved child. This
+        # waiter is shutdown-tracked, never a parent _active_tasks/root wrapper,
+        # and never blocks the bus from receiving a sibling decision or Stop.
+        self.schedule_background(resume_child())
+        return True
+
     @staticmethod
     def _webui_steering_rejection(msg: InboundMessage) -> tuple[str, str] | None:
         """Reject guidance whose original turn is no longer the active target."""
@@ -2902,35 +4609,69 @@ class AgentLoop:
         recovery = self._recovery_admission
         task = asyncio.current_task()
         registered = False
+        bus_scope_created = False
+
+        def admission_scope(key: str) -> AbstractAsyncContextManager[_AdmittedTurnIO]:
+            nonlocal bus_scope_created
+            bus_scope_created = True
+            return self._bus_turn_scope(msg, key, settlement=_compact_settlement)
+
         try:
+            if msg.source_state is not None:
+                self._read_expected_source(registration_key, msg.source_state)
             recovery_id = msg.metadata.get(RECOVERY_INBOUND_METADATA_KEY)
-            if recovery is not None and continuation is None:
+            if recovery is not None and continuation is None and msg.source_state is None:
                 if isinstance(recovery_id, str) and recovery_id and task is not None:
                     recovery.register_recovery_task(registration_key, task)
                     registered = True
                 if not await recovery.admit(msg):
                     return
+            approval_payload = msg.metadata.get("approval_decision")
+            approval_decision = (
+                ApprovalDecision.from_mapping(approval_payload)
+                if approval_payload is not None
+                else None
+            )
             request = TurnRequest(content=msg.content, session_key=registration_key,
                 source=self._inbound_turn_source(msg),
                 route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id,
                                      message_id=msg.metadata.get('message_id')),
                 sender_id=msg.sender_id, media=tuple(msg.media),
                 attachments=msg.attachments,
-                metadata=dict(msg.metadata))
-            await self.execute_turn(request, _options=_TurnExecutionOptions(
-                inbound=msg, admission_scope=partial(self._bus_turn_scope, msg, settlement=_compact_settlement), raise_errors=True,
-                trusted_foreground_activity=self._trusted_foreground_inbound(msg),
-                activity_already_recorded=activity_marker is not None,
-                retry_activity_notification=(
-                    activity_marker is not None
-                    and not activity_marker.notification_succeeded
-                ),
-                admitted_activity_marker=activity_marker,
-                workspace_access_continuation=continuation,
-                workspace_full_reference=full_permission_from_message(msg),
-            ))
+                approval_decision=approval_decision,
+                metadata=dict(msg.metadata), expected_source_state=msg.source_state)
+            bound_tools = cast(Any, getattr(self, "tools_config", None))
+            bound_cidrs: list[str] = (
+                list(cast(list[str], bound_tools.ssrf_whitelist))
+                if bound_tools is not None else []
+            )
+            with bind_network_policy_for_cidrs(bound_cidrs):
+                await self.execute_turn(request, _options=_TurnExecutionOptions(
+                    inbound=msg,
+                    admission_scope=admission_scope,
+                    raise_errors=True,
+                    trusted_foreground_activity=self._trusted_foreground_inbound(msg),
+                    activity_already_recorded=activity_marker is not None,
+                    retry_activity_notification=(
+                        activity_marker is not None
+                        and not activity_marker.notification_succeeded
+                    ),
+                    admitted_activity_marker=activity_marker,
+                    workspace_access_continuation=continuation,
+                    workspace_full_reference=full_permission_from_message(msg),
+                ))
         except asyncio.CancelledError:
             raise
+        except SourceOriginMismatchError as exc:
+            # Only this typed rejection settles automation before the bus scope
+            # exists; admitted computation and delivery keep their sole notifier.
+            if not bus_scope_created:
+                for _, coordinator in self._automation_turn_coordinators:
+                    try:
+                        coordinator.complete(msg, error=exc)
+                    except Exception:
+                        logger.warning('Automation completion observer failed for {}', registration_key)
+            logger.exception('Canonical source origin was rejected for {}', registration_key)
         except WorkspaceAccessContinuationRejectedError:
             if continuation is not None:
                 owner = msg.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
@@ -3120,6 +4861,14 @@ class AgentLoop:
             raise WorkspaceAccessContinuationRejectedError()
         return existing
 
+    def _read_expected_source(
+        self, key: str, expected: SourceState,
+    ) -> tuple[JsonlSessionStore, SourceSnapshot]:
+        existing = self.sessions.read_existing_canonical_source(key)
+        if existing is None or not existing[1].state.same_origin(expected):
+            raise SourceOriginMismatchError()
+        return existing
+
     @asynccontextmanager
     async def _acquire_source_execution_owner(
         self,
@@ -3129,10 +4878,16 @@ class AgentLoop:
         run_id: str,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None,
         workspace_full_reference: WorkspaceFullAccessReference | None,
+        expected_source_state: SourceState | None = None,
     ) -> AsyncGenerator[ExecutionOwner]:
         """Classify only a provable stale continuation binding as a rejection."""
         from nanobot.session.manager import SessionWriteConflict
 
+        def validate_origin(snapshot: SourceSnapshot) -> None:
+            if expected_source_state is not None and not snapshot.state.same_origin(expected_source_state):
+                raise SourceOriginMismatchError()
+
+        owner_published = False
         try:
             async with acquire_execution(
                 backend,
@@ -3145,10 +4900,16 @@ class AgentLoop:
                     if workspace_full_reference is not None
                     else None
                 ),
+                validate_snapshot=validate_origin,
             ) as owner:
+                owner_published = True
                 yield owner
+        except FileNotFoundError:
+            if not owner_published and expected_source_state is not None:
+                raise SourceOriginMismatchError() from None
+            raise
         except SessionWriteConflict:
-            if workspace_access_continuation is not None:
+            if not owner_published and workspace_access_continuation is not None:
                 self._read_workspace_continuation_source(
                     key,
                     workspace_access_continuation,
@@ -3163,6 +4924,7 @@ class AgentLoop:
         require_existing_session: bool = False,
         ephemeral: bool = False,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
+        expected_source_state: SourceState | None = None,
     ) -> AsyncGenerator[Session | None]:
         """Wait outside admission while an earlier lifecycle operation can act.
 
@@ -3178,6 +4940,10 @@ class AgentLoop:
                            if not task.done()}
                 if not pending:
                     self._bus_cleanup_tasks.pop(key, None)
+                    if expected_source_state is not None:
+                        if ephemeral:
+                            raise SourceOriginMismatchError()
+                        self._read_expected_source(key, expected_source_state)
                     # Select the live policy only after lifecycle cleanup and
                     # under admission: queued temporary work cannot recreate
                     # a disposed session or acquire persistent source authority.
@@ -3192,6 +4958,10 @@ class AgentLoop:
                             key,
                             workspace_access_continuation,
                         )
+                        session = None
+                    elif expected_source_state is not None:
+                        # The origin precondition already proved an existing
+                        # canonical source without creating or caching a Session.
                         session = None
                     else:
                         session = (
@@ -3223,6 +4993,19 @@ class AgentLoop:
         return key, target
 
     @asynccontextmanager
+    async def _source_root_binding_scope(self, key: str) -> AsyncGenerator[None]:
+        """Retain the actual root identity through source-owner settlement."""
+        task = asyncio.current_task()
+        try:
+            yield
+        finally:
+            binding = self._active_root_bindings.get(task) if task is not None else None
+            if binding is not None and binding.session_key == key:
+                self._active_root_bindings.pop(binding.task, None)
+            self.sessions.invalidate(key)
+            await self._publish_stop_target_for_session(key)
+
+    @asynccontextmanager
     async def _source_execution(
         self,
         key: str,
@@ -3232,7 +5015,10 @@ class AgentLoop:
         admitted: Callable[[], None] | None = None,
         workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
         workspace_full_reference: WorkspaceFullAccessReference | None = None,
+        expected_source_state: SourceState | None = None,
     ) -> AsyncGenerator[None]:
+        if expected_source_state is not None and not persistent:
+            raise SourceOriginMismatchError()
         if workspace_access_continuation is not None and (
             not persistent or workspace_access_continuation.session_key != key
         ):
@@ -3303,9 +5089,12 @@ class AgentLoop:
             persistent
             and self.sessions.has_managed_authority
             and workspace_access_continuation is None
+            and expected_source_state is None
         ):
             self.sessions.admit_persistent_write(key)
-        if workspace_access_continuation is not None:
+        if expected_source_state is not None:
+            backend, _ = self._read_expected_source(key, expected_source_state)
+        elif workspace_access_continuation is not None:
             backend, _ = self._read_workspace_continuation_source(
                 key,
                 workspace_access_continuation,
@@ -3319,12 +5108,13 @@ class AgentLoop:
                 admitted()
             yield
             return
-        async with self._acquire_source_execution_owner(
+        async with self._source_root_binding_scope(key), self._acquire_source_execution_owner(
             backend,
             key,
             run_id=context.run_id,
             workspace_access_continuation=workspace_access_continuation,
             workspace_full_reference=workspace_full_reference,
+            expected_source_state=expected_source_state,
         ) as owner:
             # Recovery may only enter the explicit reset route. Never consume an
             # approval or request a model while uncertain effects remain.
@@ -3404,13 +5194,19 @@ class AgentLoop:
                         return
                     if item.discard_followups:
                         try:
-                            discarded = backend.source.discard_pending_followups(key, owner)
+                            discarded = backend.source.discard_pending_followups(
+                                key,
+                                owner,
+                                expected_records=item.expected_followup_records,
+                            )
                         except BaseException as exc:
                             outcome = _ForegroundActivityResult(callback_error=exc)
                         else:
                             outcome = _ForegroundActivityResult(
                                 discarded_followup_ids=discarded,
                             )
+                            if discarded:
+                                await self._publish_stop_target_for_session(key)
                         if not item.result.done():
                             item.result.set_result(outcome)
                         continue
@@ -3426,12 +5222,38 @@ class AgentLoop:
                             record = source_pending_followup_record(item.message)
                             if record.identifier != item.followup_id:
                                 raise RuntimeError("Source follow-up identity changed before admission")
+                            admission = self._source_activity_admissions.get(key)
+                            if admission is not None and admission.followup_stop_admission is not None:
+                                admission.followup_status[item.followup_id] = "recorded"
+                                if not item.result.done():
+                                    item.result.set_result(_ForegroundActivityResult(followup_pending=False))
+                                continue
+                            if (
+                                record.child_followup is not None
+                                and not self._pending_child_followup_admission_is_current(
+                                    key,
+                                    record,
+                                )
+                            ):
+                                raise RuntimeError(
+                                    "Canonical child follow-up authority changed before admission"
+                                )
+                            if (
+                                record.background_result is not None
+                                and not record.background_result.targets(owner.read_snapshot().state)
+                            ):
+                                if not item.result.done():
+                                    item.result.set_result(_ForegroundActivityResult(followup_pending=False))
+                                continue
                             followup_pending = source_writer.store.admit_pending_followup(
                                 key,
                                 owner,
                                 record,
                             )
                             if not followup_pending:
+                                admission = self._source_activity_admissions.get(key)
+                                if admission is not None:
+                                    admission.followup_status[item.followup_id] = "recorded"
                                 if not item.result.done():
                                     item.result.set_result(_ForegroundActivityResult(
                                         followup_pending=False,
@@ -3467,12 +5289,34 @@ class AgentLoop:
                                 source_binding=(state.store_identity, state.session_key,
                                                 state.incarnation, state.generation),
                             )
+                    if item.followup_id is not None:
+                        admission = self._source_activity_admissions.get(key)
+                        if admission is not None:
+                            if outcome.followup_pending is True:
+                                admission.followup_status[item.followup_id] = "queued"
+                            elif outcome.followup_pending is False:
+                                admission.followup_status[item.followup_id] = "recorded"
+                            else:
+                                admission.followup_records.pop(item.followup_id, None)
+                                admission.followup_submissions.pop(item.followup_id, None)
+                        await self._publish_stop_target_for_session(key)
                     if not item.result.done():
                         item.result.set_result(outcome)
 
             activity_task = asyncio.create_task(admit_pending_activity())
             owner.track_task(activity_task)
-            activity_admission = _SourceActivityAdmission(activity_queue, activity_task)
+            root_task = asyncio.current_task()
+            if root_task is None:
+                activity_task.cancel()
+                raise RuntimeError("Canonical root execution task is unavailable")
+            activity_admission = _SourceActivityAdmission(
+                activity_queue,
+                activity_task,
+                session_key=key,
+                source_state=owner.read_snapshot().state,
+                root_task=root_task,
+                run_id=context.run_id,
+            )
             self._source_activity_admissions[key] = activity_admission
             try:
                 if admitted is not None:
@@ -3482,7 +5326,6 @@ class AgentLoop:
                 if self._source_activity_admissions.get(key) is activity_admission:
                     self._source_activity_admissions.pop(key, None)
                 await activity_admission.close()
-                self.sessions.invalidate(key)
 
     async def execute_turn(self, request: TurnRequest, *, _tools: ToolRegistry | None = None,
                            _options: _TurnExecutionOptions | None = None) -> TurnResult:
@@ -3491,6 +5334,10 @@ class AgentLoop:
             raise TypeError('execute_turn expects a TurnRequest')
         if self._lifecycle_is_closing():
             raise RuntimeError("agent loop is closing")
+        deps = self._fork_dependencies
+        if cast(object, deps) is None:
+            raise ValueError('canonical admission requires foreground dependencies')
+        await self._reconcile_background_results_once()
         options = _options or _TurnExecutionOptions()
         if options.silent_output:
             if (
@@ -3505,9 +5352,6 @@ class AgentLoop:
                 ))
             ):
                 raise ValueError("silent execution requires a non-publishing fresh cron turn")
-        deps = self._fork_dependencies
-        if cast(object, deps) is None:
-            raise ValueError('canonical admission requires foreground dependencies')
         key, target = self._request_route(request)
         with self.sessions.track_unadmitted_cancellation(
             key,
@@ -3515,25 +5359,124 @@ class AgentLoop:
                 options.inbound is not None and options.inbound.require_existing_session
             )),
         ) as cancellation_receipt:
-            snapshot = await self.approval_admission.snapshot(key, request.content)
+            snapshot = await self.approval_admission.snapshot_decision(
+                key, request.approval_decision,
+            )
+            if (
+                snapshot.typed
+                and snapshot.action in {"affirmative", "negative"}
+                and snapshot.pending is not None
+                and snapshot.decision is not None
+                and options.on_approval_consumed is None
+            ):
+                manager = deps.foreground_manager
+                tree = manager._delegation_tree
+                child = (
+                    tree.child_for_session(snapshot.pending.session_key)
+                    if tree is not None
+                    else None
+                )
+                if child is not None:
+                    try:
+                        child_result = await manager.resume_child_approval_decision(
+                            child_id=child.child_id,
+                            approval_id=snapshot.pending.approval_id,
+                            blocked_run_id=snapshot.pending.run_id or "",
+                            decision=snapshot.decision,
+                            approval_target=target,
+                        )
+                    except Exception as exc:
+                        current = tree.child(child.child_id) if tree is not None else None
+                        child_result = TurnResult(
+                            run_id=current.current_run_id if current else "",
+                            status=RunStatus.ERROR,
+                            stop_reason="approval_resume_unsettled",
+                            error=str(exc),
+                            policy_metadata={
+                                "delegated_child": current.metadata() if current else {},
+                            },
+                        )
+                    if child_result is None:
+                        current = tree.child(child.child_id) if tree is not None else None
+                        child_result = TurnResult(
+                            run_id=current.current_run_id if current else "",
+                            status=RunStatus.CANCELLED,
+                            stop_reason="approval_stale",
+                            content="That child approval is no longer current.",
+                            policy_metadata={
+                                "delegated_child": current.metadata() if current else {},
+                            },
+                        )
+                    if child_result.outbound is None and target.chat_id is not None:
+                        response = child_result.content
+                        if not isinstance(response, str) or not response:
+                            current = tree.child(child.child_id) if tree is not None else None
+                            if current is not None and current.state == "waiting_approval":
+                                response = (
+                                    f"Child task {current.child_id} is waiting for another approval."
+                                )
+                            elif current is not None and current.state == "completed":
+                                response = f"Child task {current.child_id} completed."
+                            else:
+                                response = f"Child task {child.child_id} updated."
+                        child_result.outbound = OutboundMessage(
+                            channel=target.channel,
+                            chat_id=target.chat_id,
+                            content=response,
+                        )
+                    return child_result
             if options.silent_output and snapshot.pending is not None:
                 raise ValueError("silent cron turn cannot consume a pending approval")
             cancellation_key_unchanged = snapshot.effective_key == key
             key = snapshot.effective_key
-            run_id = request.run_id
-            if not run_id or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', run_id):
+            expected_source_state = request.expected_source_state
+            if (snapshot.typed and snapshot.action in {'affirmative', 'negative'}
+                    and snapshot.pending is not None and snapshot.pending.source_state is not None):
+                expected_source_state = snapshot.pending.source_state
+            requested_run_id = request.run_id
+            if (
+                isinstance(requested_run_id, str)
+                and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', requested_run_id)
+            ):
+                run_id = requested_run_id
+                generated_run_id = False
+            else:
                 run_id = uuid.uuid4().hex
+                generated_run_id = True
             grant = request.approval_grant or request.approval
             context = RunTurnContext(
                 request=request, run_id=run_id, session_key=key,
                 delegation_budget=deps.foreground_manager.new_budget(),
                 policy=RunPolicyContext(workspace=deps.resource_policy.workspace,
                     context_manager=deps.resource_policy.context_manager,
-                    approval_grant=grant, approval_granted=bool(grant.granted), source=request.source),
+                    approval_grant=grant, approval_granted=False, source=request.source),
                 delivery=DeliveryState(primary=target), lock_owner=f'main:{key}',
                 metadata=dict(request.metadata),
             )
+
+            def acknowledge_followup_request(identifiers: tuple[str, ...]) -> None:
+                activity_admission = self._source_activity_admissions.get(key)
+                if activity_admission is not None:
+                    activity_admission.acknowledge_followup_request(identifiers)
+                if options.followup_request_acknowledged is not None:
+                    options.followup_request_acknowledged(identifiers)
+
+            context.internal_system_instructions = options.internal_system_instructions
+            context.internal_system_prompt = options.internal_system_prompt
+            context.internal_include_skill_context = options.internal_include_skill_context
+            context.internal_tool_policy = options.internal_tool_policy
+            context.internal_max_iterations = options.internal_max_iterations
+            context.request_boundary_validator = options.request_boundary_validator
+            context.followup_boundary_validator = options.followup_boundary_validator
+            context.followup_request_acknowledged = acknowledge_followup_request
+            if options.pending_followup_records:
+                context.child_followup_continuation = True
+                context.pending_followup_acknowledgments.append(
+                    options.pending_followup_records[0].identifier,
+                )
             context.workspace_full_reference = options.workspace_full_reference
+            context.workspace_task_reference = options.workspace_task_reference
+            context.canonical_child_artifact_input = options.canonical_child_artifact_input
             context.trusted_foreground_activity = (
                 options.trusted_foreground_activity
                 and request.source in _FOREGROUND_IDLE_SOURCES
@@ -3551,8 +5494,44 @@ class AgentLoop:
 
             def persist_admitted_run() -> None:
                 nonlocal run_admitted
+                root_task = asyncio.current_task()
+                source_writer = context.source_writer
+                owner = context.execution_owner
+                unique_run_id = False
+                if generated_run_id and source_writer is not None and owner is not None:
+                    try:
+                        source_snapshot = owner.read_snapshot()
+                        has_source_attribution = any(
+                            event.get("_run_id") == run_id
+                            for event in source_snapshot.events
+                        )
+                    except Exception:
+                        unique_run_id = False
+                    else:
+                        if not has_source_attribution:
+                            try:
+                                self.run_store.path_for(run_id).lstat()
+                            except FileNotFoundError:
+                                unique_run_id = True
+                            except OSError:
+                                unique_run_id = False
                 self.run_store.save(record)
                 run_admitted = True
+                if root_task is not None and source_writer is not None and owner is not None:
+                    try:
+                        source_state = owner.read_snapshot().state
+                        self._active_root_bindings[root_task] = _ActiveRootBinding(
+                            session_key=key,
+                            task=root_task,
+                            run_id=run_id,
+                            stream_id=source_writer.stream_id,
+                            source_state=source_state,
+                            unique_run_id=unique_run_id,
+                        )
+                    except Exception:
+                        # Execution remains compatible; typed Stop simply cannot
+                        # claim an invocation whose source binding is unavailable.
+                        self._active_root_bindings.pop(root_task, None)
 
             result: TurnResult | None = None
             try:
@@ -3563,6 +5542,7 @@ class AgentLoop:
                     ),
                     ephemeral=options.ephemeral,
                     workspace_access_continuation=options.workspace_access_continuation,
+                    expected_source_state=expected_source_state,
                 ) as admitted_session, self._source_execution(
                     key,
                     context,
@@ -3570,13 +5550,145 @@ class AgentLoop:
                     admitted=persist_admitted_run,
                     workspace_access_continuation=options.workspace_access_continuation,
                     workspace_full_reference=options.workspace_full_reference,
+                    expected_source_state=expected_source_state,
                 ):
                     if context.source_writer is not None:
                         record.metadata["source_stream_id"] = context.source_writer.stream_id
                     try:
                         scope = options.admission_scope(key) if options.admission_scope else nullcontext(_AdmittedTurnIO())
                         async with scope as io:
-                            action = await self.approval_admission.consume(snapshot)
+                            activity = self._source_activity_admissions.get(key)
+                            if io.pending_queue is not None and activity is not None:
+                                task = asyncio.current_task()
+                                owner = context.execution_owner
+                                if (
+                                    task is None or owner is None
+                                    or io.pending_queue is not self._pending_queues.get(key)
+                                    or not activity.bind_root_queue(
+                                        io.pending_queue, root_task=task, run_id=context.run_id,
+                                        source_state=owner.read_snapshot().state,
+                                    )
+                                ):
+                                    raise RuntimeError("Canonical admission queue binding changed")
+                            if context.source_writer is not None and io.pending_queue is None:
+                                # Bus scopes publish after binding their queue;
+                                # direct SDK roots have no bus scope to do so.
+                                await self._publish_stop_target_for_session(key)
+                            if options.pending_followup_records:
+                                if context.source_writer is None or io.pending_queue is None:
+                                    raise RuntimeError(
+                                        "Canonical child follow-up requires its source owner and queue"
+                                    )
+                                if options.pending_followup_records_to_discard:
+                                    discarded = await self.discard_pending_followups_for_stop(
+                                        key,
+                                        expected_records=(
+                                            options.pending_followup_records_to_discard
+                                        ),
+                                    )
+                                    expected_discarded = {
+                                        item.identifier
+                                        for item in options.pending_followup_records_to_discard
+                                    }
+                                    if set(discarded) != expected_discarded:
+                                        raise RuntimeError(
+                                            "Fenced child follow-ups could not be discarded"
+                                        )
+                                for followup_record in options.pending_followup_records_to_admit:
+                                    pending_message = InboundMessage(
+                                        channel="system",
+                                        sender_id=followup_record.sender_id,
+                                        chat_id=followup_record.chat_id,
+                                        content=followup_record.content,
+                                        media=list(followup_record.media),
+                                        metadata=dict(followup_record.metadata),
+                                        session_key_override=key,
+                                        input_role="user",
+                                    )
+                                    child_intent = followup_record.child_followup
+                                    if child_intent is None:
+                                        raise RuntimeError(
+                                            "Canonical child follow-up record is invalid"
+                                        )
+                                    restore_pending_child_followup(
+                                        pending_message,
+                                        followup_record.identifier,
+                                        child_intent,
+                                    )
+                                    outcome = await self._admit_pending_activity(
+                                        key,
+                                        pending_message,
+                                        followup_id=followup_record.identifier,
+                                    )
+                                    if (
+                                        outcome.followup_pending is not True
+                                        or outcome.callback_error is not None
+                                    ):
+                                        raise RuntimeError(
+                                            "Canonical child follow-up could not be recorded"
+                                        )
+                                for followup_record in options.pending_followup_records[1:]:
+                                    pending_message = InboundMessage(
+                                        channel="system",
+                                        sender_id=followup_record.sender_id,
+                                        chat_id=followup_record.chat_id,
+                                        content=followup_record.content,
+                                        media=list(followup_record.media),
+                                        metadata=dict(followup_record.metadata),
+                                        session_key_override=key,
+                                        input_role="user",
+                                    )
+                                    child_intent = followup_record.child_followup
+                                    if child_intent is None:
+                                        raise RuntimeError(
+                                            "Canonical child follow-up record is invalid"
+                                        )
+                                    restore_pending_child_followup(
+                                        pending_message,
+                                        followup_record.identifier,
+                                        child_intent,
+                                    )
+                                    io.pending_queue.put_nowait(pending_message)
+                            def approval_source_is_current() -> bool:
+                                pending = snapshot.pending
+                                if pending is None:
+                                    return False
+                                if (
+                                    options.approval_authority_check is not None
+                                    and not options.approval_authority_check(context)
+                                ):
+                                    return False
+                                if pending.run_id is not None:
+                                    blocked = self.run_store.load(pending.run_id)
+                                    if (blocked is None or blocked.status is not RunStatus.APPROVAL_REQUIRED
+                                            or blocked.session_ref is None
+                                            or blocked.session_ref.session_key != key):
+                                        return False
+                                if context.execution_owner is not None:
+                                    state = context.execution_owner.read_snapshot().state
+                                    if pending.source_state is not None:
+                                        return state.same_origin(pending.source_state)
+                                    incarnation, generation = state.incarnation, state.generation
+                                else:
+                                    current = self.sessions.read_session_snapshot(key)
+                                    if current is None:
+                                        return pending.session_incarnation is None and pending.generation is None
+                                    incarnation, generation = current.incarnation, current.generation
+                                return (
+                                    (pending.session_incarnation is None or pending.session_incarnation == incarnation)
+                                    and (pending.generation is None or pending.generation == generation)
+                                )
+
+                            action = (
+                                await self.approval_admission.consume(
+                                    snapshot, context=context, source_is_current=approval_source_is_current,
+                                )
+                                if snapshot.typed else snapshot.action
+                            )
+                            if options.on_approval_consumed is not None:
+                                activated = await options.on_approval_consumed(context, action)
+                                if not activated:
+                                    action = "stale"
                             activity_marker = options.admitted_activity_marker
                             if activity_marker is not None and context.execution_owner is not None:
                                 owner = context.execution_owner
@@ -3646,10 +5758,10 @@ class AgentLoop:
                                         raise activity.callback_error
                                 content = request.content
                                 if action == 'affirmative' and snapshot.pending is not None:
-                                    context.policy.approval_granted = True
+                                    record.resumed_run_id = snapshot.pending.run_id
                                     content = ('The user approved the previously blocked risky action. '
                                         f'Resume the task that required approval: {snapshot.pending.summary}.'
-                                        f'\n\nOriginal approval reply: {request.content}')
+                                        '\n\nApproval decision: approve.')
                                 routing_metadata = dict(request.metadata)
                                 if target.message_id is not None:
                                     routing_metadata["message_id"] = target.message_id
@@ -3675,6 +5787,12 @@ class AgentLoop:
                                 copy_pending_followup_proof(envelope, msg)
                                 if options.silent_output:
                                     io.delivery = self.turn_delivery_factory.silent(msg, key)
+                                elif options.suppress_channel_output:
+                                    io.delivery = self.turn_delivery_factory.create(
+                                        msg,
+                                        key,
+                                        suppress_channel_output=True,
+                                    )
                                 effective_tools = _tools if _tools is not None else (
                                     self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
                                 io.message = msg
@@ -3695,19 +5813,64 @@ class AgentLoop:
                                     'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
                                     'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
                                 }.get(runner.stop_reason, RunStatus.ERROR)
+                                policy_metadata = dict(runner.policy_metadata) if runner else {}
+                                if (
+                                    context.forwarded_child_approval_id is not None
+                                    and context.forwarded_child_id is not None
+                                ):
+                                    policy_metadata["delegated_child_approval"] = {
+                                        "approval_id": context.forwarded_child_approval_id,
+                                        "child_id": context.forwarded_child_id,
+                                    }
                                 result = TurnResult(run_id=run_id, status=status,
                                     content=runner.final_content if runner else (stage.outbound.content if stage.outbound else None),
                                     stop_reason=runner.stop_reason if runner else 'command', outbound=stage.outbound,
                                     tools_used=list(runner.tools_used) if runner else [],
-                                    policy_metadata=dict(runner.policy_metadata) if runner else {},
+                                    policy_metadata=policy_metadata,
                                     error=runner.error if runner else None,
                                     usage={k: v for k, v in runner.usage.to_dict().items()
                                            if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
                                     sent_messages=tuple(context.delivery.sent_messages),
-                                    llm_usage=runner.usage if runner else None)
-                                if status is RunStatus.APPROVAL_REQUIRED and options.persist_approval_request:
-                                    await self.approval_admission.store(session_key=key, channel=target.channel,
-                                        chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
+                                    llm_usage=runner.usage if runner else None,
+                                    artifact_handoff_receipt=(
+                                        runner.artifact_handoff_receipt if runner else None
+                                    ))
+                                if (
+                                    status is RunStatus.APPROVAL_REQUIRED
+                                    and options.persist_approval_request
+                                    and context.forwarded_child_approval_id is None
+                                ):
+                                    owner = context.execution_owner
+                                    state = owner.read_snapshot().state if owner is not None else None
+                                    pending_session = stage.session if state is None else None
+                                    raw_turn_id = request.metadata.get(WEBUI_TURN_METADATA_KEY)
+                                    await self.approval_admission.store(
+                                        session_key=key,
+                                        channel=(options.approval_target or target).channel,
+                                        chat_id=(options.approval_target or target).chat_id or '',
+                                        summary=str(result.policy_metadata.get('summary') or 'risky action'),
+                                        approval_id=(
+                                            str(result.policy_metadata.get('approval_id'))
+                                            if result.policy_metadata.get('approval_id')
+                                            else None
+                                        ),
+                                        session_incarnation=(state.incarnation if state else
+                                            pending_session.incarnation if pending_session else None),
+                                        run_id=result.run_id,
+                                        turn_id=(
+                                            raw_turn_id
+                                            if isinstance(raw_turn_id, str) and raw_turn_id
+                                            else None
+                                        ),
+                                        effect_id=(
+                                            str(result.policy_metadata.get('effect_id'))
+                                            if result.policy_metadata.get('effect_id')
+                                            else None
+                                        ),
+                                        generation=(state.generation if state else
+                                            pending_session.generation if pending_session else None),
+                                        source_state=state,
+                                    )
                             io.result = result
                         if io.delivery_error:
                             record.metadata['delivery_error_type'] = io.delivery_error
@@ -3743,10 +5906,16 @@ class AgentLoop:
                 if options.raise_errors:
                     raise
             finally:
+                self.approval_admission.retire(context)
                 task_reference = context.workspace_task_reference
+                preserve_task_reference = (
+                    options.preserve_workspace_task_reference_on_approval
+                    and result is not None
+                    and result.status is RunStatus.APPROVAL_REQUIRED
+                )
                 if task_reference is not None and (
                     result is None or result.stop_reason != "folder_access_required"
-                ):
+                ) and not preserve_task_reference:
                     try:
                         self.sessions.desktop_permissions.retire_task_reference(
                             task_reference,
@@ -4349,6 +6518,7 @@ class AgentLoop:
                 await admission.close()
             await writer.owner.quiesce()
             self.sessions.reset_session(writer.owner.key, owner=writer.owner)
+            await self.approval_admission.revoke(writer.owner.key)
             self.discard_session_file_state(ctx.session_key)
             self.sessions.invalidate(ctx.session_key)
             text = 'New session started.'
@@ -4394,6 +6564,8 @@ class AgentLoop:
         ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         ctx.input_persisted_early = self._persist_user_message_early(
             ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
+        if pending_followup_id(ctx.msg) is not None:
+            await self._publish_stop_target_for_session(ctx.session_key)
         # Keep the full recovery history until the runner has admitted its
         # invocation-specific artifact verifier and checkpoint dependencies.
         if not ctx.fresh_history:
@@ -4765,11 +6937,15 @@ class AgentLoop:
         content: list[object],
     ) -> list[object]:
         """Strip volatile multimodal payloads before writing session history."""
-        text_blobs = "\n".join(
-            cast(str, block.get("text", ""))
+        text_blocks = (
+            cast(dict[object, object], block)
             for block in content
             if isinstance(block, dict)
-            and block.get("type") in ("text", "input_text", "output_text")
+        )
+        text_blobs = "\n".join(
+            cast(str, block.get("text", ""))
+            for block in text_blocks
+            if block.get("type") in ("text", "input_text", "output_text")
             and isinstance(block.get("text"), str)
         )
         filtered: list[object] = []

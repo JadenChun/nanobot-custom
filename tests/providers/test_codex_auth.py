@@ -101,18 +101,14 @@ def test_authority_path_rejects_final_symlink_without_touching_target(
     target = tmp_path / "target.json"
     target.write_text("sentinel", encoding="utf-8")
     before = target.read_bytes()
-    link = (
-        tmp_path / "codex.json"
-        if use_override
-        else tmp_path / ".nanobot" / "auth" / "openai-codex.json"
-    )
-    link.parent.mkdir(parents=True, exist_ok=True)
-    link.symlink_to(target)
     if use_override:
+        link = tmp_path / "codex.json"
         monkeypatch.setenv("NANOBOT_CODEX_AUTH_PATH", str(link))
     else:
         monkeypatch.delenv("NANOBOT_CODEX_AUTH_PATH", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
+        link = codex_auth._nanobot_token_path()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target)
 
     with pytest.raises(codex_auth.CredentialError, match="invalid credential store"):
         codex_auth.get_codex_authority()

@@ -62,6 +62,15 @@ _TRANSCRIPT_SEGMENTS_SUFFIX = ".segments"
 _TRANSCRIPT_NON_ANSWER_KINDS = {"progress", "reasoning", "tool_hint"}
 
 
+def _session_key_from_stem(stem: str) -> str | None:
+    decoded = SessionManager.decode_storage_key(stem)
+    if decoded is not None and is_webui_session_key(decoded):
+        return decoded
+    if stem.startswith(_WEBUI_SESSION_STEM_PREFIX):
+        return webui_session_key(stem[len(_WEBUI_SESSION_STEM_PREFIX):])
+    return None
+
+
 def list_webui_sessions(session_manager: SessionManager) -> list[dict[str, Any]]:
     """Return session rows for the WebUI sidebar, backed by a rebuildable cache."""
     with session_manager.locked_session_files():
@@ -94,9 +103,13 @@ def _reconcile_index(session_manager: SessionManager) -> tuple[list[dict[str, An
             session_paths[key] = path
 
     session_keys_by_stem = {
-        SessionManager.safe_key(key): key
+        stem: key
         for key in session_paths
         if is_webui_session_key(key)
+        for stem in (
+            SessionManager.safe_key(key),
+            SessionManager.storage_key(key),
+        )
     }
     rows: list[dict[str, Any]] = []
     changed = existing_rows is None
@@ -231,7 +244,10 @@ def _indexed_transcript_row_matches(
         return False
     if row.get(_ROW_SOURCE_FIELD) != _TRANSCRIPT_SOURCE:
         return False
-    if row.get("key") != session_key or row.get("file") != SessionManager.safe_key(session_key):
+    if row.get("key") != session_key or row.get("file") not in {
+        SessionManager.safe_key(session_key),
+        SessionManager.storage_key(session_key),
+    }:
         return False
     if not isinstance(row.get("title", ""), str) or not isinstance(row.get("preview", ""), str):
         return False
@@ -369,7 +385,7 @@ def _webui_transcript_sources(webui_dir: Path) -> dict[str, tuple[Path, ...]]:
             stem = path.name.removesuffix(_TRANSCRIPT_SEGMENTS_SUFFIX)
         else:
             continue
-        if stem.startswith(_WEBUI_SESSION_STEM_PREFIX):
+        if _session_key_from_stem(stem) is not None:
             stems.add(stem)
     return {
         stem: paths
@@ -390,28 +406,29 @@ def _valid_transcript_session_key(key: str, stem: str) -> bool:
     chat_id = webui_chat_id(key)
     if chat_id is None:
         return False
-    return _WEBUI_CHAT_ID_RE.fullmatch(chat_id) is not None and SessionManager.safe_key(key) == stem
+    return _WEBUI_CHAT_ID_RE.fullmatch(chat_id) is not None and stem in {
+        SessionManager.safe_key(key),
+        SessionManager.storage_key(key),
+    }
 
 
 def _webui_activity_paths(session_key: str, webui_dir: Path) -> list[Path]:
-    stem = SessionManager.safe_key(session_key)
-    paths = [
-        webui_dir / f"{stem}.jsonl",
-        webui_dir / f"{stem}.json",
-    ]
-    segments_dir = webui_dir / f"{stem}{_TRANSCRIPT_SEGMENTS_SUFFIX}"
-    if segments_dir.is_dir() and not segments_dir.is_symlink():
-        try:
-            paths.extend(
-                sorted(
-                    path
-                    for path in segments_dir.iterdir()
-                    if path.is_file() and not path.is_symlink()
-                )
-            )
-        except OSError:
-            pass
-    return paths
+    paths: dict[Path, None] = {}
+    for stem in (
+        SessionManager.safe_key(session_key),
+        SessionManager.storage_key(session_key),
+    ):
+        paths[webui_dir / f"{stem}.jsonl"] = None
+        paths[webui_dir / f"{stem}.json"] = None
+        segments_dir = webui_dir / f"{stem}{_TRANSCRIPT_SEGMENTS_SUFFIX}"
+        if segments_dir.is_dir() and not segments_dir.is_symlink():
+            try:
+                for path in sorted(segments_dir.iterdir()):
+                    if path.is_file() and not path.is_symlink():
+                        paths[path] = None
+            except OSError:
+                pass
+    return list(paths)
 
 
 def _webui_activity_signature(session_key: str, webui_dir: Path) -> dict[str, int]:
@@ -547,9 +564,9 @@ def _scan_transcript_row(
     paths: tuple[Path, ...],
     webui_dir: Path,
 ) -> dict[str, Any] | None:
-    path_key = session_key or webui_session_key(
-        stem.removeprefix(_WEBUI_SESSION_STEM_PREFIX)
-    )
+    path_key = session_key or _session_key_from_stem(stem)
+    if path_key is None:
+        return None
     signature = _webui_activity_signature(path_key, webui_dir)
     activity_updated_at = _webui_activity_updated_at(signature)
     if activity_updated_at is None:
@@ -600,8 +617,8 @@ def _scan_transcript_row(
     if not saw_record:
         return None
     if session_key is None:
-        fallback = webui_session_key(stem.removeprefix(_WEBUI_SESSION_STEM_PREFIX))
-        if not _valid_transcript_session_key(fallback, stem):
+        fallback = _session_key_from_stem(stem)
+        if fallback is None or not _valid_transcript_session_key(fallback, stem):
             return None
         session_key = fallback
 

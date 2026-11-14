@@ -4,7 +4,14 @@ import { MessageBubble } from "@/components/MessageBubble";
 import { AgentActivityCluster } from "@/components/thread/AgentActivityCluster";
 import { AssistantSelectionAction } from "@/components/thread/AssistantSelectionAction";
 import { projectActivityTimeline, type TurnUnit } from "@/lib/activity-timeline";
-import type { CliAppInfo, McpPresetInfo, RetryStatus, SlashCommand, UIMessage } from "@/lib/types";
+import type {
+  CliAppInfo,
+  DelegatedChildReference,
+  McpPresetInfo,
+  RetryStatus,
+  SlashCommand,
+  UIMessage,
+} from "@/lib/types";
 
 interface ThreadMessagesProps {
   messages: UIMessage[];
@@ -23,6 +30,8 @@ interface ThreadMessagesProps {
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onQuoteSelection?: (text: string) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable?: boolean;
 }
 
 export type DisplayUnit = TurnUnit;
@@ -73,6 +82,8 @@ export function ThreadMessages({
   onOpenFilePreview,
   onForkFromMessage,
   onQuoteSelection,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -171,6 +182,8 @@ export function ThreadMessages({
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
             onForkFromMessage={onForkFromMessage}
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
           />
         );
       })}
@@ -229,7 +242,8 @@ function pendingTurnProjection(
   });
 
   return {
-    ...(typeof prompt.createdAt === "number" && Number.isFinite(prompt.createdAt)
+    ...(prompt.timestampAvailable !== false
+      && typeof prompt.createdAt === "number" && Number.isFinite(prompt.createdAt)
       ? { startedAtMs: prompt.createdAt }
       : {}),
     hasVisibleOutput,
@@ -253,6 +267,8 @@ interface ThreadDisplayUnitProps {
   slashCommands: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable: boolean;
 }
 
 const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
@@ -272,6 +288,8 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   slashCommands,
   onOpenFilePreview,
   onForkFromMessage,
+  onOpenChildHistory,
+  delegatedStatusAvailable,
 }: ThreadDisplayUnitProps) {
   const onForkFromHere = useCallback(() => {
     if (forkIndex !== undefined) onForkFromMessage?.(forkIndex);
@@ -304,7 +322,11 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             mcpPresets={mcpPresets}
             slashCommands={slashCommands}
             onOpenFilePreview={onOpenFilePreview}
-            onForkFromHere={forkIndex !== undefined ? onForkFromHere : undefined}
+            onForkFromHere={
+              forkIndex !== undefined && onForkFromMessage ? onForkFromHere : undefined
+            }
+            onOpenChildHistory={onOpenChildHistory}
+            delegatedStatusAvailable={delegatedStatusAvailable}
           />
         )}
       </div>
@@ -332,6 +354,8 @@ function threadDisplayUnitPropsEqual(
     && previous.mcpPresets === next.mcpPresets
     && previous.slashCommands === next.slashCommands
     && previous.onOpenFilePreview === next.onOpenFilePreview
+    && previous.onOpenChildHistory === next.onOpenChildHistory
+    && previous.delegatedStatusAvailable === next.delegatedStatusAvailable
     && previous.onForkFromMessage === next.onForkFromMessage
   );
 }

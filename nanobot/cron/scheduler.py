@@ -15,6 +15,7 @@ from nanobot.cron.occurrence_store import (
 from nanobot.cron.schedule import ScheduleClock, is_fire, next_fire
 from nanobot.cron.scheduler_store import (
     ObservedOccurrence,
+    ReconciliationBridge,
     ScheduleCursor,
     SchedulerConflictError,
     SchedulerLease,
@@ -64,8 +65,15 @@ class Scheduler:
         return tuple(result)
 
     @staticmethod
-    def _prove_records(state: SchedulerState, records: list[OccurrenceRecord]) -> None:
-        verify_occurrence_evidence(state, records)
+    def _prove_records(
+        state: SchedulerState,
+        records: list[OccurrenceRecord],
+        *,
+        bridge_lookup: Callable[[SchedulerState, str], list[ReconciliationBridge]] | None = None,
+    ) -> None:
+        verify_occurrence_evidence(
+            state, records, bridge_lookup=bridge_lookup
+        )
 
     @staticmethod
     def _advance(state: SchedulerState, definition: CronDefinition, commit: ScheduleCommit, lower: int,
@@ -93,8 +101,11 @@ class Scheduler:
                 raise SchedulerConflictError("invalid acquisition clock")
             committed = self._committed()
             state = self.store.read_for_acquisition(self._lease)
+            state = self.store.rollover_epoch_if_needed(self._lease, state)
             records = self.occurrences.occurrence_store.inspect_records()
-            self._prove_records(state, records)
+            self._prove_records(
+                self.store.retained_evidence(state), records, bridge_lookup=self.store.bridge_records
+            )
             successor = deepcopy(state)
             for definition, commit in committed:
                 current = next((item for item in state["cursors"] if item["key"] == _key(definition)), None)
@@ -136,7 +147,9 @@ class Scheduler:
         committed = self._committed()
         state = self.store.read()
         records = self.occurrences.occurrence_store.inspect_records()
-        self._prove_records(state, records)
+        self._prove_records(
+            self.store.retained_evidence(state), records, bridge_lookup=self.store.bridge_records
+        )
         # New definitions committed while this lease is held begin at their
         # exact commit boundary. Existing cursors retain all pending due work.
         # Acquisition separately classifies downtime as missed; no old claim
@@ -171,16 +184,31 @@ class Scheduler:
         existing = next((record for record in records if not isinstance(record.identity, TriggeredOccurrenceIdentity)
             and record.identity.job_id == definition.job_id and record.identity.job_revision == definition.definition_revision
             and record.identity.scheduled_fire_time_ms == fire), None)
+        if existing is None:
+            # A new claim has a fixed-width digest. Bound its cursor record
+            # before creating the claim, then publish the real receipt below.
+            observation: ObservedOccurrence = {
+                "occurrence_id": "0" * 64,
+                "fire": fire,
+                "owner": self.occurrences.owner,
+                "generation": 1,
+                "state": "claimed",
+            }
+        else:
+            observation = _exclusion(existing)
+        successor = deepcopy(state)
+        self._advance(successor, definition, commit, cursor["boundary"], fire,
+                      "claimed" if existing is None else "observed", [observation])
+        successor["generation"] += 1
+        self.store.require_publishable(successor)
+
         claim = None
         if existing is None:
             claim = self.occurrences.claim_timer(definition.job_id, fire,
                 expected_job_instance_id=definition.job_instance_id,
                 expected_definition_revision=definition.definition_revision)
             existing = self.occurrences.occurrence_store.get(claim.occurrence_id)
-        successor = deepcopy(state)
-        self._advance(successor, definition, commit, cursor["boundary"], fire,
-                      "claimed" if claim else "observed", [_exclusion(existing)])
-        successor["generation"] += 1
+            successor["classifications"][-1]["exclusions"] = [_exclusion(existing)]
         self._lease.reprove()
         self.store.compare_and_swap(state, successor)
         if claim is not None:

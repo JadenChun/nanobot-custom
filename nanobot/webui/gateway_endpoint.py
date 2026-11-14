@@ -16,7 +16,7 @@ from nanobot.webui.http_utils import (
     parse_request_path,
     query_first,
 )
-from nanobot.webui.ws_http import GatewayHTTPHandler
+from nanobot.webui.ws_http import GatewayHTTPHandler, attached_mobile_identity
 
 if TYPE_CHECKING:
     from nanobot.channels.websocket.runtime import WebSocketConfig
@@ -50,6 +50,7 @@ class WebUIGatewayEndpoint:
         self._http = http
         self._tokens = tokens
         self._mobile_edge = mobile_edge
+        http.mobile_revalidator = self.revalidate_mobile_connection
         self.webui_connections: set[ServerConnection] = set()
         # Every accepted WebUI-protocol socket, desktop and mobile. Kept apart
         # from ``webui_connections`` (a trust/local-authority set) so broadcasts
@@ -136,15 +137,26 @@ class WebUIGatewayEndpoint:
 
     async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
         """Revalidate current owner authority for one established mobile socket."""
-        identity = getattr(connection, "mobile_identity", None)
+        identity = attached_mobile_identity(connection)
         if identity is None:
             return True
+        from nanobot.remote.edge import AccessIdentity
+
+        if not isinstance(identity, AccessIdentity):
+            return False
         token = getattr(connection, "mobile_access_token", None)
         if self._mobile_edge is None or not isinstance(token, str) or not token:
             return False
         try:
+            request = getattr(connection, "request", None)
+            if not isinstance(request, WsRequest):
+                return False
+            self._mobile_edge.authorize_target(request, identity.origin)
             fresh = await self._mobile_edge.revalidate_mobile_access(identity, token)
         except Exception:
+            from dataclasses import replace
+
+            setattr(connection, "mobile_identity", replace(identity, scopes=()))
             return False
         setattr(connection, "mobile_identity", fresh)
         return True

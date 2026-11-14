@@ -1020,6 +1020,12 @@ class JsonlSessionStore:
                     require_memory_receipt_recovery(receipt_path)
                     if _managed_access is None:
                         self._migrate_from_workspace(canonical_workspace)
+                    from nanobot.attachments._media import configured_custody
+
+                    configured_custody().declare(
+                        "sessions", self.sessions_dir, sessions_root=root,
+                        workspace=canonical_workspace,
+                    )
 
     @property
     def source(self) -> "SourceSessionStore":
@@ -1153,19 +1159,27 @@ class JsonlSessionStore:
         from nanobot.session.source_store import SourceSessionStore
 
         prepared = SourceSessionStore.prepare_source_persistence(source, header, events)
-        if root_authority is None:
-            observe_backend()._write_text_atomic(
-                observe_backend().get_session_path(prepared.read_key()), prepared.text,
-            )
-        else:
-            from nanobot.session.mode_storage import require_namespace_write_access
+        from nanobot.attachments._media import configured_custody
+        from nanobot.attachments.store import AttachmentStore
 
-            require_namespace_write_access(observe_backend())
-            root_authority.require_current(observe_backend())
-            root_authority.write_text_atomic(
-                f"{observe_backend().storage_key(prepared.read_key())}.jsonl",
-                prepared.text,
-            )
+        custody = configured_custody()
+        media_store = AttachmentStore(custody.root / "attachments", media_root=custody.root)
+        # The source owner already holds its existing namespace/execution locks.
+        # Both durable branches participate, including header-only followups.
+        with media_store.publication([prepared.snapshot.header, *prepared.snapshot.events]):
+            if root_authority is None:
+                observe_backend()._write_text_atomic(
+                    observe_backend().get_session_path(prepared.read_key()), prepared.text,
+                )
+            else:
+                from nanobot.session.mode_storage import require_namespace_write_access
+
+                require_namespace_write_access(observe_backend())
+                root_authority.require_current(observe_backend())
+                root_authority.write_text_atomic(
+                    f"{observe_backend().storage_key(prepared.read_key())}.jsonl",
+                    prepared.text,
+                )
         return prepared.snapshot
 
     @staticmethod
@@ -2538,6 +2552,13 @@ class SessionManager:
             sessions_root=self.sessions_root,
             _managed_access=_managed_access,
         )
+        if store is not None:
+            from nanobot.attachments._media import configured_custody
+
+            # A prior healthy JSONL declaration cannot certify references kept
+            # by a selected custom backend. Retain that unsupported coverage
+            # even after restart; its historical publications may still exist.
+            configured_custody().declare("unsupported_sessions", self.workspace)
         self._cache: OrderedDict[str, Session] = OrderedDict()
         # Gateway controllers and loop wrappers share this one volatile owner.
         self.desktop_permissions = DesktopPermissionOwner()
@@ -2692,6 +2713,12 @@ class SessionManager:
         result = self._mode_resolver.recover(key)
         self.invalidate(key)
         return result
+
+    def prepare_session_rollback(self) -> int:
+        """Prepare a stopped copy for a reader with live-only mode journals."""
+        if self._mode_resolver is None or not self._mode_operator:
+            raise RuntimeError("offline session operator authority is required")
+        return self._mode_resolver.prepare_rollback()
 
     def peek_cron_interruption_reset_occurrence(self, key: str) -> tuple[str, str] | None:
         """Read the claimed occurrence and run bound to a pending cron reset."""
@@ -2909,6 +2936,11 @@ class SessionManager:
     def safe_key(key: str) -> str:
         """Public helper used by HTTP handlers to map an arbitrary key to a stable filename stem."""
         return JsonlSessionStore.safe_key(key)
+
+    @staticmethod
+    def storage_key(key: str) -> str:
+        """Public collision-resistant stem for display-storage owners."""
+        return JsonlSessionStore.storage_key(key)
 
     @staticmethod
     def _storage_key(key: str) -> str:

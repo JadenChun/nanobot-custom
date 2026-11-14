@@ -1,9 +1,10 @@
 """Compose owned foreground capabilities without activating external resources."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from nanobot.agent.child_sessions import DelegationTree, DelegationTreePolicy
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.tools.context import ForkToolDependencies
 from nanobot.agent.tools.web import WebFetchConfig, load_web_fetch_state
@@ -12,6 +13,7 @@ from nanobot.config.schema import Config, ToolsConfig
 from nanobot.context_repo import ContextRepoManager
 from nanobot.extensions.crawler import crawler_settings
 from nanobot.security.folder_grants import FolderGrantStore
+from nanobot.session.manager import SessionManager
 from nanobot.utils.llm_runtime import LLMRuntime
 
 
@@ -35,6 +37,8 @@ def build_foreground_dependencies(
     *, workspace: Path, runtime: LLMRuntime, tools_config: ToolsConfig,
     restrict_to_workspace: bool, config: Config | None = None,
     sessions_root: Path | None = None,
+    sessions: SessionManager | None = None,
+    disabled_skills: Iterable[str] | None = None,
     refresh_web_fetch_config: bool = False,
 ) -> ForkToolDependencies:
     """Build one shared context/policy/lock graph; never connect or run tools."""
@@ -46,6 +50,20 @@ def build_foreground_dependencies(
     optional = crawler_settings(config)
     grants = FolderGrantStore.for_workspace(workspace, sessions_root=sessions_root).view
     locks = FileLockRegistry()
+    child_tree = None
+    if sessions is not None:
+        limits = config.agents.defaults.delegation_tree if config is not None else None
+        policy = (
+            DelegationTreePolicy(
+                max_depth=limits.max_depth,
+                max_live_children_per_parent=limits.max_live_children_per_parent,
+                max_live_descendants=limits.max_live_descendants,
+                max_live_children_per_gateway=limits.max_live_children_per_gateway,
+            )
+            if limits is not None
+            else DelegationTreePolicy()
+        )
+        child_tree = DelegationTree.shared(sessions, policy=policy)
     web_fetch_config_loader: Callable[[], tuple[WebFetchConfig, str]] | None = (
         load_web_fetch_state if refresh_web_fetch_config else None
     )
@@ -65,5 +83,8 @@ def build_foreground_dependencies(
         crawler_max_output_tokens=optional.max_output_tokens,
         crawler_reasoning_effort=optional.reasoning_effort,
         folder_grants=grants,
+        sessions=sessions,
+        delegation_tree=child_tree,
+        disabled_skills=set(disabled_skills or ()),
     )
     return ForkToolDependencies(manager, manager.resource_policy, locks, crawler_enabled=optional.enabled)

@@ -18,10 +18,11 @@ from nanobot.webui.gateway_services import build_gateway_services
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+ORIGIN = "https://fixture.example:8443"
 
 
 def headers(token: str, extra: list[tuple[str, str]] | None = None) -> Headers:
-    values = Headers(extra or [])
+    values = Headers([("Host", "fixture.example:8443"), ("Origin", ORIGIN), *(extra or [])])
     values["Authorization"] = f"Bearer {token}"
     return values
 
@@ -31,9 +32,12 @@ async def test_real_gateway_edge_read_media_attachment_logout(tmp_path: Path) ->
     owner = RemoteAccessOwner(tmp_path / "remote-access")
     owner.start()
     owner.store.set_enabled(True)
-    pair = owner.tokens.issue(
+    pair = owner.tokens.issue_device(
         "install-edge-1",
         ("chat.read", "chat.write", "media.read", "attachment.write", "device.self.logout"),
+        device_fingerprint="a" * 64,
+        device_generation=1,
+        origin=ORIGIN,
     )
     services = build_gateway_services(
         config=WebSocketConfig(host="127.0.0.1", port=29999, path="/"),

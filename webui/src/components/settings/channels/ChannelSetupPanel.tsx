@@ -2,6 +2,7 @@ import {
   Suspense,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ComponentType,
 } from "react";
@@ -348,13 +349,18 @@ function ChannelSetupSurface({
     });
   };
 
+  const featureNameRef = useRef(feature.name);
+  featureNameRef.current = feature.name;
+
   const saveCredentialSettings = async () => {
+    const targetFeature = feature.name;
     setSaving(true);
     setValidating(true);
     setNotice(null);
     const values = channelValuesForSubmit(fields, fieldValues, touchedFields);
     try {
-      const validationPayload = await validateChannel(client, feature.name, values);
+      const validationPayload = await validateChannel(client, targetFeature, values);
+      if (featureNameRef.current !== targetFeature) return;
       setValidation(validationPayload);
       if (!validationPayload.can_enable) {
         setNotice(
@@ -365,37 +371,48 @@ function ChannelSetupSurface({
       }
       const payload = await configureChannel(
         client,
-        feature.name,
+        targetFeature,
         values,
         { enable: true },
       );
+      if (featureNameRef.current !== targetFeature) return;
       if (payload.nanobot_features) {
         onFeaturesUpdate(payload.nanobot_features);
       }
       setNotice(tx("settings.channels.checkedAndEnabled", "Checked and enabled."));
     } catch (err) {
-      setNotice((err as Error).message);
+      if (featureNameRef.current === targetFeature) {
+        setNotice((err as Error).message);
+      }
     } finally {
-      setSaving(false);
-      setValidating(false);
+      if (featureNameRef.current === targetFeature) {
+        setSaving(false);
+        setValidating(false);
+      }
     }
   };
 
   const checkCurrentSettings = async () => {
+    const targetFeature = feature.name;
     setValidating(true);
     setNotice(null);
     try {
       const payload = await validateChannel(
         client,
-        feature.name,
+        targetFeature,
         channelValuesForSubmit(fields, fieldValues, touchedFields),
       );
+      if (featureNameRef.current !== targetFeature) return;
       setValidation(payload);
       if (payload.message) setNotice(payload.message);
     } catch (err) {
-      setNotice((err as Error).message);
+      if (featureNameRef.current === targetFeature) {
+        setNotice((err as Error).message);
+      }
     } finally {
-      setValidating(false);
+      if (featureNameRef.current === targetFeature) {
+        setValidating(false);
+      }
     }
   };
 

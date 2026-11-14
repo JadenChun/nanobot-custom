@@ -18,6 +18,8 @@ export type FooterMode =
   | "skill"
   | "runtime"
   | "active"
+  | "owned_work"
+  | "child_detail"
   | "branch"
   | "command"
   | "session"
@@ -78,6 +80,10 @@ function hintsFor(
     ? [hint("↑↓", "choose"), hint("tab/enter", "insert"), hint("esc", "close")]
     : [hint("enter", "insert"), hint("esc", "close")]
   if (mode === "active") return []
+  if (mode === "owned_work") return [{ key: "ctrl+c", label: "stop owned work", tone: "danger" }]
+  if (mode === "child_detail") return width >= 48
+    ? [hint("esc", "return to chat"), hint("pgup/pgdn", "scroll")]
+    : [hint("esc", "return")]
   if (mode === "branch") return width >= 64
     ? [hint("type", "filter"), hint("↑↓", "choose"), hint("enter", "branch"), hint("esc", "close")]
     : [hint("enter", "branch"), hint("esc", "close")]

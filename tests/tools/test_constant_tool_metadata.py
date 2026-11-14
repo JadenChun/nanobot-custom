@@ -67,7 +67,22 @@ async def test_constant_metadata_is_not_a_runtime_property(tmp_path, name):
         registry.register(tool)
         definition, = registry.get_definitions()
         assert definition == tool.to_schema()
-        assert definition["function"]["parameters"] is cls.parameters
+        assert tool.to_schema()["function"]["parameters"] is cls.parameters
+        assert definition["function"]["parameters"] == cls.parameters
+        assert definition["function"]["parameters"] is not cls.parameters
+        capture = registry.capture_request_tools()
+        try:
+            assert capture.get(name) is tool
+            captured_definition, = capture.get_definitions()
+            assert captured_definition == definition
+            assert captured_definition["function"]["parameters"] is not cls.parameters
+            definition["function"]["parameters"]["properties"]["registry_copy_probe"] = {}
+            captured_definition["function"]["parameters"]["properties"]["capture_copy_probe"] = {}
+            assert "registry_copy_probe" not in cls.parameters["properties"]
+            assert "capture_copy_probe" not in cls.parameters["properties"]
+            assert registry.get_definitions() == capture.get_definitions() == [tool.to_schema()]
+        finally:
+            capture.release()
 
 
 @pytest.mark.parametrize("name", NAMES)

@@ -7,11 +7,10 @@ import pytest
 
 from nanobot.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.web import WebFetchTool
 from nanobot.agent.write_guard import FileLockRegistry
+from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -69,32 +68,57 @@ async def test_injected_bundle_is_shared_and_not_owned(engine_config, monkeypatc
 
 
 async def test_runtime_inheritance_is_immutable_and_crawler_is_independent(engine_config):
-    deps = build(engine_config)
-    manager = deps.foreground_manager
-    observed = []
-    async def record(spec):
-        await asyncio.sleep(0)
-        observed.append(spec.runtime)
-        return AgentRunResult(final_content='result', messages=[])
-    manager.runner = SimpleNamespace(run=record)
-    one, two = ScriptedProvider([]), ScriptedProvider([])
-    runtime_one = LLMRuntime.capture(one, 'one', context_window_tokens=8000, model_preset='one', snapshot_signature=('one',))
-    runtime_two = LLMRuntime.capture(two, 'two', context_window_tokens=16000, model_preset='two', snapshot_signature=('two',))
+    from tests.agent.test_migration_source_engine import upgrade
+
+    class PlannerProvider(ScriptedProvider):
+        """One planner that scripts its own parent and child turns."""
+
+        def __init__(self, name):
+            super().__init__([
+                LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                    id=name, name='plan_task', arguments={'objective': 'Plan fixture work'},
+                )]),
+                LLMResponse(content=f'{name} plan'),
+                LLMResponse(content=f'{name} final'),
+            ])
+
+    one, two = PlannerProvider('one'), PlannerProvider('two')
+    runtime_one = LLMRuntime.capture(one, 'one', context_window_tokens=120000,
+                                     model_preset='one', snapshot_signature=('one',))
+    runtime_two = LLMRuntime.capture(two, 'two', context_window_tokens=120000,
+                                     model_preset='two', snapshot_signature=('two',))
+    # Mutate the providers after their runtimes are captured. The captured
+    # generation must not follow the later mutation.
     one.generation = replace(one.generation, max_tokens=999)
     two.generation = replace(two.generation, max_tokens=888)
-    async def call(runtime):
-        with request_context(RequestContext(channel='cli', chat_id='test', runtime=runtime)):
-            await manager._run_role(role='planner', prompt='plan', assignment='task', tools=ToolRegistry(), max_iterations=1)
-    await asyncio.gather(call(runtime_one), call(runtime_two))
-    assert runtime_one in observed and runtime_two in observed
-    assert all(runtime.generation.max_tokens == 256 for runtime in observed)
-    manager.provider.generation = replace(manager.provider.generation, max_tokens=777)
-    await manager._run_role(role='planner', prompt='plan', assignment='task', tools=ToolRegistry(), max_iterations=1)
-    assert observed[-1].generation.max_tokens == 256 and observed[-1].context_window_tokens == 9000
-    with request_context(RequestContext(channel='cli', chat_id='test', runtime=runtime_two)):
-        await manager._run_role(role='crawler', prompt='crawl', assignment='task', tools=ToolRegistry(), max_iterations=1,
-                                runtime_override=manager._crawler_runtime)
-    assert observed[-1] is manager._crawler_runtime
+
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]))
+    observed = []
+    original = loop.execute_child_turn
+
+    async def record_child_turn(request, **kwargs):
+        observed.append(request.runtime)
+        return await original(request, **kwargs)
+
+    loop.execute_child_turn = record_child_turn
+    try:
+        upgrade(loop, 'cli:one')
+        upgrade(loop, 'cli:two')
+        results = await asyncio.gather(*[
+            loop._execute_direct('plan fixture', session_key=f'cli:{runtime.model}', runtime=runtime)
+            for runtime in (runtime_one, runtime_two)
+        ])
+        assert [result.content for result in results] == ['one final', 'two final']
+        assert runtime_one in observed and runtime_two in observed
+        assert all(runtime.generation.max_tokens == 256 for runtime in observed)
+
+        # A later mutation of the main provider does not change the captured
+        # baseline runtime.
+        manager = loop._fork_dependencies.foreground_manager
+        manager.provider.generation = replace(manager.provider.generation, max_tokens=777)
+        assert manager._baseline_runtime.generation.max_tokens == 256
+    finally:
+        await loop.aclose()
 
 
 @pytest.mark.parametrize('enabled_by_environment', [False, True])

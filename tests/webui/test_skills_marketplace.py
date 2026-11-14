@@ -561,7 +561,7 @@ async def test_install_marketplace_skill_uses_official_cli_and_workspace(
         def kill(self) -> None:
             raise AssertionError("successful install must not be killed")
 
-    async def create_subprocess_exec(*command: str, **kwargs: object) -> FakeProcess:
+    async def create_owned_process(command: tuple[str, ...], **kwargs: object) -> FakeProcess:
         seen.update(command=command, **kwargs)
         return FakeProcess()
 
@@ -570,8 +570,8 @@ async def test_install_marketplace_skill_uses_official_cli_and_workspace(
         lambda executable: "/usr/local/bin/npx" if executable == "npx" else None,
     )
     monkeypatch.setattr(
-        "nanobot.webui.skills_marketplace.asyncio.create_subprocess_exec",
-        create_subprocess_exec,
+        "nanobot.agent.tools.process.create_owned_process",
+        create_owned_process,
     )
 
     result = await install_marketplace_skill(

@@ -321,3 +321,56 @@ describe("mobile socket lifecycle", () => {
     );
   });
 });
+
+describe("native completion admission", () => {
+  const input = { operation: "mobile_read", method: "GET" as const, path: "/mobile/v1/read" };
+  it("joins a completion emitted before http returns its ID", async () => {
+    const fixture = transportFixture();
+    fixture.http.mockImplementation(async () => {
+      fixture.emit({ type: "http_response", request_id: 41, status: 200, body_base64: "" });
+      return 41;
+    });
+    const runtime = createMobileRuntime(fixture.transport);
+    await expect(runtime.request(input, 40)).resolves.toMatchObject({ requestId: 41, status: 200 });
+  });
+  it("joins concurrent early results without crossing request identities", async () => {
+    const fixture = transportFixture();
+    let nextId = 0;
+    fixture.http.mockImplementation(async () => {
+      const id = ++nextId;
+      fixture.emit({ type: "http_response", request_id: id, status: 200 + id, body_base64: "" });
+      await Promise.resolve();
+      return id;
+    });
+    const runtime = createMobileRuntime(fixture.transport);
+    const results = await Promise.all(Array.from({ length: 64 }, () => runtime.request(input, 100)));
+    expect(new Set(results.map((result) => result.requestId)).size).toBe(64);
+    for (const result of results) expect(result.status).toBe(200 + result.requestId);
+  });
+  it("reserves finite capacity before launch and cancels/disposes each request once", async () => {
+    const fixture = transportFixture();
+    const runtime = createMobileRuntime(fixture.transport);
+    const requests = Array.from({ length: 64 }, () => runtime.request(input, 1000).catch((error: Error) => error.message));
+    await vi.waitFor(() => expect(fixture.http).toHaveBeenCalledTimes(64));
+    await expect(runtime.request(input, 1000)).rejects.toThrow("queue is full");
+    runtime.dispose(); runtime.dispose();
+    await Promise.all(requests);
+    expect(fixture.cancel).toHaveBeenCalledTimes(64);
+    fixture.emit({ type: "http_response", request_id: 1, status: 200 });
+    await expect(runtime.request(input)).rejects.toThrow("disposed");
+  });
+  it("cancels an ID returned after timeout once and ignores late results", async () => {
+    const fixture = transportFixture();
+    let release: ((id: number) => void) | undefined;
+    fixture.http.mockImplementation(() => new Promise<number>((resolve) => { release = resolve; }));
+    const runtime = createMobileRuntime(fixture.transport);
+    const request = runtime.request(input, 30);
+    const expectation = expect(request).rejects.toThrow("timed out");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    await expectation; release!(99);
+    await vi.waitFor(() => expect(fixture.cancel).toHaveBeenCalledWith(99));
+    fixture.emit({ type: "http_response", request_id: 99, status: 200 });
+    runtime.dispose();
+    expect(fixture.cancel).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import {
   Check,
@@ -360,6 +360,8 @@ function SkillDetailSheet({
 }) {
   const { client, getToken } = useClient();
   const { t } = useTranslation();
+  const skillNameRef = useRef(skill?.name ?? null);
+  skillNameRef.current = skill?.name ?? null;
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -410,48 +412,60 @@ function SkillDetailSheet({
   const descriptionExpandable = activeSkill.description.length > 240;
 
   const toggleEnabled = async () => {
+    const targetName = activeSkill.name;
     setActionBusy(true);
     setActionError("");
     const scope = getToken();
     try {
-      const payload = await updateSkillEnabled(client, activeSkill.name, !enabled);
+      const payload = await updateSkillEnabled(client, targetName, !enabled);
+      if (skillNameRef.current !== targetName) return;
       notifySkillsChanged(payload, scope);
-      const updated = payload.skills.find((item) => item.name === activeSkill.name);
+      const updated = payload.skills.find((item) => item.name === targetName);
       if (updated) {
         setDetail((current) => current ? { ...current, ...updated } : current);
       }
     } catch (reason) {
-      setActionError(
-        reason instanceof Error
-          ? reason.message
-          : t("settings.skills.updateFailed", {
-              defaultValue: "Could not update this skill.",
-            }),
-      );
+      if (skillNameRef.current === targetName) {
+        setActionError(
+          reason instanceof Error
+            ? reason.message
+            : t("settings.skills.updateFailed", {
+                defaultValue: "Could not update this skill.",
+              }),
+        );
+      }
     } finally {
-      setActionBusy(false);
+      if (skillNameRef.current === targetName) {
+        setActionBusy(false);
+      }
     }
   };
 
   const removeSkill = async () => {
+    const targetName = activeSkill.name;
     setDeleteOpen(false);
     setActionBusy(true);
     setActionError("");
     const scope = getToken();
     try {
-      const payload = await deleteSkill(client, activeSkill.name);
+      const payload = await deleteSkill(client, targetName);
+      if (skillNameRef.current !== targetName) return;
       notifySkillsChanged(payload, scope);
       onOpenChange(false);
     } catch (reason) {
-      setActionError(
-        reason instanceof Error
-          ? reason.message
-          : t("settings.skills.deleteFailed", {
-              defaultValue: "Could not delete this skill.",
-            }),
-      );
+      if (skillNameRef.current === targetName) {
+        setActionError(
+          reason instanceof Error
+            ? reason.message
+            : t("settings.skills.deleteFailed", {
+                defaultValue: "Could not delete this skill.",
+              }),
+        );
+      }
     } finally {
-      setActionBusy(false);
+      if (skillNameRef.current === targetName) {
+        setActionBusy(false);
+      }
     }
   };
 

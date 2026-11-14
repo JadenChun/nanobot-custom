@@ -132,7 +132,12 @@ export function stampLastAssistantCompletion(
     if (
       m.role === "assistant"
       && m.kind !== "trace"
-      && (!turnId || !m.turnId || m.turnId === turnId)
+      && (
+        !turnId
+        // Completion metadata applies only within the originating turn. An
+        // empty turn must not restamp the previous assistant row.
+        || m.turnId === turnId
+      )
     ) {
       const merged: UIMessage = { ...m, ...completion, isStreaming: false };
       return [...prev.slice(0, i), merged, ...prev.slice(i + 1)];

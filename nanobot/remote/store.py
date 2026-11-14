@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -77,6 +77,15 @@ class RemoteDevice:
         return OWNER_SCOPE in self.scopes
 
 
+@dataclass(frozen=True)
+class DeviceProofRecord:
+    fingerprint: str
+    generation: int
+    origin: str = ""
+    pairing_id: str = ""
+    cancel_digest: str = ""
+
+
 @dataclass
 class RemoteAccessState:
     version: int = STATE_VERSION
@@ -84,6 +93,7 @@ class RemoteAccessState:
     revision: int = 1
     enabled: bool = False
     devices: dict[str, RemoteDevice] = field(default_factory=dict)
+    device_proofs: dict[str, DeviceProofRecord] = field(default_factory=dict)
     owned_entries: list[dict[str, Any]] = field(default_factory=list)
     audit: list[dict[str, Any]] = field(default_factory=list)
     updated_at: float = field(default_factory=time.time)
@@ -199,12 +209,19 @@ class RemoteAccessStore:
         scopes: tuple[str, ...],
         refresh_token: str,
         refresh_expires_at: float | None = None,
+        proof: DeviceProofRecord | None = None,
     ) -> RemoteDevice:
         with self._locked():
             state = self._require_state()
-            if installation_id in state.devices:
+            existing = state.devices.get(installation_id)
+            if existing is not None and (not existing.revoked or proof is None):
                 raise StoreError("installation already exists")
-            if len(state.devices) >= MAX_DEVICES:
+            if proof is not None:
+                previous = state.device_proofs.get(installation_id)
+                if previous is not None and proof.generation <= previous.generation:
+                    raise StoreError("device proof generation is not current")
+                state.device_proofs[installation_id] = proof
+            if existing is None and len(state.devices) >= MAX_DEVICES:
                 raise StoreError("device limit reached")
             try:
                 validate_scopes(scopes)
@@ -221,7 +238,9 @@ class RemoteAccessStore:
                 scopes=tuple(scopes),
                 created_at=now,
                 last_seen_at=now,
-                refresh_hash=hash_refresh_token(refresh_token),
+                refresh_hash=(
+                    hash_refresh_token(refresh_token) if refresh_token else ""
+                ),
                 refresh_expires_at=refresh_expires_at,
             )
             state.devices[installation_id] = device
@@ -232,6 +251,16 @@ class RemoteAccessStore:
     def get_device(self, installation_id: str) -> RemoteDevice | None:
         state = self.load()
         return state.devices.get(installation_id) if state else None
+
+    def get_device_proof(self, installation_id: str) -> tuple[str, int, str] | None:
+        state = self.load()
+        if state is None:
+            return None
+        record = state.device_proofs.get(installation_id)
+        return (
+            (record.fingerprint, record.generation, record.origin)
+            if record is not None else None
+        )
 
     def update_scopes(self, installation_id: str, scopes: tuple[str, ...]) -> RemoteDevice:
         with self._locked():
@@ -314,26 +343,34 @@ class RemoteAccessStore:
             device = state.devices.get(installation_id)
             if device is None:
                 raise StoreError("device is unknown")
-            updated = RemoteDevice(
-                installation_id=device.installation_id,
-                label=device.label,
-                scopes=device.scopes,
-                created_at=device.created_at,
-                last_seen_at=device.last_seen_at,
-                refresh_hash=device.refresh_hash,
-                revoked_at=device.revoked_at or self.clock(),
-                refresh_expires_at=device.refresh_expires_at,
-            )
-            state.devices[installation_id] = updated
-            state.revision += 1
-            self._save_locked(state)
-            return updated
+            return self._revoke_device_locked(state, device)
 
-    def revoke_legacy_chat_only_devices(self) -> list[str]:
-        """Revoke active devices that predate owner-only pairing.
+    def revoke_pairing_device(self, installation_id: str, pairing_id: str) -> bool:
+        with self._locked():
+            state = self._require_state()
+            device = state.devices.get(installation_id)
+            proof = state.device_proofs.get(installation_id)
+            if device is None or proof is None or proof.pairing_id != pairing_id:
+                return False
+            self._revoke_device_locked(state, device)
+            return True
 
-        Owner-scoped devices are left untouched. This is an explicit migration
-        helper; it is not run implicitly so legacy internal flows keep working.
+    def _revoke_device_locked(
+        self, state: RemoteAccessState, device: RemoteDevice
+    ) -> RemoteDevice:
+        if device.revoked:
+            return device
+        updated = replace(device, revoked_at=self.clock())
+        state.devices[device.installation_id] = updated
+        state.revision += 1
+        self._save_locked(state)
+        return updated
+
+    def revoke_legacy_bearer_devices(self) -> list[str]:
+        """Revoke every active device that has no device-proof binding.
+
+        This includes legacy owner-scoped bearer devices. The v2 device-key
+        contract is the only supported credential path after cutover.
         """
 
         with self._locked():
@@ -341,7 +378,7 @@ class RemoteAccessStore:
             revoked: list[str] = []
             now = self.clock()
             for installation_id, device in list(state.devices.items()):
-                if device.revoked or OWNER_SCOPE in device.scopes:
+                if device.revoked or installation_id in state.device_proofs:
                     continue
                 state.devices[installation_id] = RemoteDevice(
                     installation_id=device.installation_id,
@@ -359,17 +396,22 @@ class RemoteAccessStore:
                 self._save_locked(state)
             return revoked
 
-    def migrate_legacy_chat_only_devices(self) -> list[str]:
-        """Alias for the explicit owner-only pairing migration."""
+    def revoke_legacy_chat_only_devices(self) -> list[str]:
+        """Compatibility alias for the v1 bearer revocation migration."""
 
-        return self.revoke_legacy_chat_only_devices()
+        return self.revoke_legacy_bearer_devices()
+
+    def migrate_legacy_chat_only_devices(self) -> list[str]:
+        """Alias for the explicit v1 bearer revocation migration."""
+
+        return self.revoke_legacy_bearer_devices()
 
     def validate_refresh(self, installation_id: str, refresh_token: str) -> RemoteDevice | None:
         state = self.load()
         if state is None or not state.enabled:
             return None
         device = state.devices.get(installation_id)
-        if device is None or device.revoked:
+        if device is None or device.revoked or not device.refresh_hash:
             return None
         now = self.clock()
         if device.refresh_expires_at and now >= device.refresh_expires_at:
@@ -498,6 +540,10 @@ class RemoteAccessStore:
                 }
                 for installation_id, device in state.devices.items()
             },
+            "device_proofs": {
+                installation_id: asdict(record)
+                for installation_id, record in state.device_proofs.items()
+            },
             "owned_entries": list(state.owned_entries),
             "audit": list(state.audit[-500:]),
         }
@@ -556,6 +602,38 @@ class RemoteAccessStore:
             if device.installation_id != key:
                 raise StoreCorruptError("device key does not match its record")
             devices[key] = device
+        raw_proofs = raw.get("device_proofs", {})
+        if not isinstance(raw_proofs, dict):
+            raise StoreCorruptError("device proofs are invalid")
+        proofs: dict[str, DeviceProofRecord] = {}
+        for key, raw_proof in cast(dict[str, Any], raw_proofs).items():
+            if not isinstance(raw_proof, dict):
+                raise StoreCorruptError("device proof record is invalid")
+            proof = cast(dict[str, Any], raw_proof)
+            fingerprint = proof.get("fingerprint")
+            generation = proof.get("generation")
+            pairing_id = proof.get("pairing_id", "")
+            cancel_digest = proof.get("cancel_digest", "")
+            if (
+                not isinstance(fingerprint, str)
+                or not fingerprint
+                or len(fingerprint) > 128
+                or not isinstance(generation, int)
+                or generation < 1
+                or not isinstance(pairing_id, str)
+                or len(pairing_id) > 128
+                or not isinstance(cancel_digest, str)
+                or bool(pairing_id) != bool(cancel_digest)
+                or (cancel_digest and len(cancel_digest) != 64)
+            ):
+                raise StoreCorruptError("device proof record is invalid")
+            proofs[key] = DeviceProofRecord(
+                fingerprint=fingerprint,
+                generation=generation,
+                origin=str(proof.get("origin") or ""),
+                pairing_id=pairing_id,
+                cancel_digest=cancel_digest,
+            )
         raw_entries = raw.get("owned_entries", [])
         if not isinstance(raw_entries, list):
             raise StoreCorruptError("owned entries are invalid")
@@ -613,6 +691,7 @@ class RemoteAccessStore:
             owned_entries=entries,
             audit=audit,
             updated_at=float(updated_at) if isinstance(updated_at, (int, float)) else time.time(),
+            device_proofs=proofs,
         )
 
 

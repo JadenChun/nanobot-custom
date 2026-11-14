@@ -90,6 +90,53 @@ class _SubagentHook(AgentHook):
             self._status.error = str(context.error)
 
 
+class RetiredSubagentAuthority:
+    """No-live-owner compatibility surface for retired background subagents.
+
+    The normal runtime keeps this object so status snapshots, cancellation hooks
+    and shutdown code retain one shape. It owns no tasks, no provider, and no
+    launch path. A caller that still imports SpawnTool must migrate to the
+    durable delegated child owner (``delegate_task``).
+    """
+
+    def __init__(
+        self,
+        *,
+        max_iterations: int = 0,
+        disabled_skills: set[str] | None = None,
+    ) -> None:
+        self.max_iterations = max_iterations
+        self.disabled_skills = set(disabled_skills or ())
+
+    async def spawn(self, *args: object, **kwargs: object) -> str:
+        raise RuntimeError(
+            "legacy background subagents are retired; use delegate_task"
+        )
+
+    async def run_inline(self, *args: object, **kwargs: object) -> str:
+        raise RuntimeError(
+            "legacy inline subagents are retired; use delegate_task"
+        )
+
+    def runtime_statuses(self) -> Mapping[str, SubagentStatus]:
+        return {}
+
+    def set_provider(self, provider: object, model: str) -> None:
+        return None
+
+    async def cancel_by_session(self, session_key: str) -> int:
+        return 0
+
+    async def close(self) -> None:
+        return None
+
+    def get_running_count(self) -> int:
+        return 0
+
+    def get_running_count_by_session(self, session_key: str) -> int:
+        return 0
+
+
 class SubagentManager:
     """Manages background subagent execution."""
 

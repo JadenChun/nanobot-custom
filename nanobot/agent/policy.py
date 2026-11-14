@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 import re
 import shlex
+import uuid
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
 from nanobot.agent.tools.filesystem import find_edit_match as _find_match
+from nanobot.agent.turn import ToolOutcome, TurnContext
+from nanobot.agent.turn_admission import EffectApprovalAuthority
 from nanobot.context_repo import ContextRepoManager
 from nanobot.providers.base import ToolCallRequest
 
@@ -25,7 +30,7 @@ class ToolPolicyDecision:
     stop_reason: str | None = None
     response: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    # ``True`` is reserved for the main agent's run-wide approval flow.  A
+    # ``True`` is reserved for the main agent's exact-effect approval flow. A
     # delegated read-only policy explicitly returns ``False`` so the caller
     # cannot accidentally create a pending approval or ask the user to elevate
     # an immutable role.
@@ -43,6 +48,44 @@ class ToolPolicy:
     ) -> ToolPolicyDecision:
         return ToolPolicyDecision()
 
+    def authorize_dispatch(
+        self,
+        tool_call: ToolCallRequest,
+        arguments: dict[str, Any],
+        turn_context: TurnContext | None,
+    ) -> ToolPolicyDecision:
+        return ToolPolicyDecision()
+
+
+@dataclass(slots=True)
+class CompositeToolPolicy(ToolPolicy):
+    """Apply trusted child role policy before canonical risky-action policy."""
+
+    policies: tuple[ToolPolicy, ...]
+
+    async def evaluate(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tool_calls: list[ToolCallRequest],
+    ) -> ToolPolicyDecision:
+        for policy in self.policies:
+            decision = await policy.evaluate(messages=messages, tool_calls=tool_calls)
+            if decision.action != "allow":
+                return decision
+        return ToolPolicyDecision()
+
+    def authorize_dispatch(
+        self,
+        tool_call: ToolCallRequest,
+        arguments: dict[str, Any],
+        turn_context: TurnContext | None,
+    ) -> ToolPolicyDecision:
+        for policy in self.policies:
+            decision = policy.authorize_dispatch(tool_call, arguments, turn_context)
+            if decision.action != "allow":
+                return decision
+        return ToolPolicyDecision()
 
 @dataclass(slots=True)
 class DelegatedReadOnlyPolicy(ToolPolicy):
@@ -178,8 +221,28 @@ class RiskyActionPolicy(ToolPolicy):
     """Require approval for risky or hard-to-undo tool batches."""
 
     workspace: Path
+    # Retained descriptive inputs for internal compatibility. Neither public
+    # booleans nor fingerprint sets authorize dispatch.
     approval_granted: bool = False
     context_manager: ContextRepoManager = field(default_factory=ContextRepoManager)
+    approved_effect_ids: frozenset[str] = field(default_factory=frozenset)
+    # init=True deliberately preserves this SAME sealed owner through the
+    # occurrence-local dataclasses.replace used by captured MCP registries.
+    effect_authority: EffectApprovalAuthority | None = field(
+        default=None, repr=False, compare=False,
+    )
+    write_target_resolver: Callable[[str, str], Path | None] | None = field(
+        default=None, repr=False, compare=False,
+    )
+    _assessed_write_targets: dict[str, Path] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
+    _denied_write_targets: set[str] = field(
+        default_factory=set, init=False, repr=False, compare=False,
+    )
+    _risky_calls: dict[str, tuple[str, str]] = field(
+        default_factory=dict, init=False, repr=False, compare=False,
+    )
 
     _RISKY_EXEC_PATTERNS = (
         (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
@@ -207,30 +270,69 @@ class RiskyActionPolicy(ToolPolicy):
         messages: list[dict[str, Any]],
         tool_calls: list[ToolCallRequest],
     ) -> ToolPolicyDecision:
-        if self.approval_granted or not tool_calls:
+        if not tool_calls:
             return ToolPolicyDecision()
 
-        reasons: list[str] = []
+        self._assessed_write_targets.clear()
+        self._denied_write_targets.clear()
+        self._risky_calls.clear()
+        blocked: list[tuple[ToolCallRequest, str]] = []
         for tool_call in tool_calls:
             reason = self._risky_reason(tool_call)
+            effect_id = self._effect_fingerprint(tool_call)
+            if self.effect_authority is not None and effect_id == self.effect_authority.effect_id:
+                reason = reason or "repeat the previously approved risky action"
             if reason:
-                reasons.append(reason)
+                self._risky_calls[tool_call.id] = (effect_id, reason)
+                if self.effect_authority is None or not self.effect_authority.permits(effect_id):
+                    blocked.append((tool_call, reason))
+        if blocked:
+            return self._request_approval(*blocked[0])
+        return ToolPolicyDecision()
 
-        if not reasons:
-            return ToolPolicyDecision()
-
-        summary = "; ".join(dict.fromkeys(reasons))
+    def _request_approval(self, tool_call: ToolCallRequest, summary: str) -> ToolPolicyDecision:
+        """One decision identifies one concrete effect, never an entire batch."""
+        approval_id = uuid.uuid4().hex
+        effect_id = self._effect_fingerprint(tool_call)
         response = (
             "I'm about to take a risky action and want your approval first. "
-            f"Planned action: {summary}. Reply `yes` to continue or `no` to cancel."
+            f"Planned action: {summary}. Approval ID: {approval_id}. "
+            "Reply with the approval control to continue or deny."
         )
         return ToolPolicyDecision(
             action="respond",
             stop_reason=_APPROVAL_REQUIRED,
             response=response,
-            metadata={"reasons": reasons, "summary": summary, "requires_approval": True},
+            metadata={
+                "reasons": [summary],
+                "summary": summary,
+                "requires_approval": True,
+                "approval_id": approval_id,
+                "effect_id": effect_id or None,
+            },
             requires_approval=True,
         )
+
+    def authorize_dispatch(
+        self, tool_call: ToolCallRequest, arguments: dict[str, Any],
+        turn_context: TurnContext | None,
+    ) -> ToolPolicyDecision:
+        """Recheck prepared arguments and consume only at actual dispatch."""
+        prepared = ToolCallRequest(id=tool_call.id, name=tool_call.name, arguments=arguments)
+        effect_id = self._effect_fingerprint(prepared)
+        assessed = self._risky_calls.get(tool_call.id)
+        reason = assessed[1] if assessed is not None else self._risky_reason(prepared)
+        if self.effect_authority is not None and effect_id == self.effect_authority.effect_id:
+            reason = reason or "repeat the previously approved risky action"
+        if reason is None:
+            return ToolPolicyDecision()
+        if (
+            (assessed is None or effect_id == assessed[0])
+            and self.effect_authority is not None
+            and self.effect_authority.consume(effect_id, turn_context)
+        ):
+            return ToolPolicyDecision()
+        return self._request_approval(prepared, reason)
 
     def batch_has_mutation(self, tool_calls: list[ToolCallRequest]) -> bool:
         return any(tc.name in self.mutating_tool_names() for tc in tool_calls)
@@ -241,17 +343,27 @@ class RiskyActionPolicy(ToolPolicy):
                 str(tool_call.arguments.get("command") or ""),
                 str(tool_call.arguments.get("working_dir") or ""),
             )
-        if tool_call.name == "write_file":
-            return self._risky_write_reason(
-                str(tool_call.arguments.get("path") or ""),
-                str(tool_call.arguments.get("content") or ""),
-            )
-        if tool_call.name == "edit_file":
+        if tool_call.name in {"write_file", "edit_file"}:
+            raw_path = str(tool_call.arguments.get("path") or "")
+            resolved = self._resolve_write_target(tool_call.name, raw_path)
+            if resolved is None:
+                # The target could not be assessed. Never let a later hook
+                # change it into an unbound write.
+                self._denied_write_targets.add(tool_call.id)
+                return None
+            self._assessed_write_targets[tool_call.id] = resolved
+            if tool_call.name == "write_file":
+                return self._risky_write_reason(
+                    raw_path,
+                    str(tool_call.arguments.get("content") or ""),
+                    resolved,
+                )
             return self._risky_edit_reason(
-                str(tool_call.arguments.get("path") or ""),
+                raw_path,
                 str(tool_call.arguments.get("old_text") or ""),
                 str(tool_call.arguments.get("new_text") or ""),
                 bool(tool_call.arguments.get("replace_all")),
+                resolved,
             )
         if tool_call.name == "cron":
             return "schedule a recurring automation"
@@ -259,7 +371,7 @@ class RiskyActionPolicy(ToolPolicy):
             # Browser classification is deliberately conservative: only the
             # WP2 read/navigation primitives are autonomous.  Unknown and
             # generic actions (click/type/submit/evaluate/etc.) require the
-            # same run-wide approval as other side effects.
+            # same exact-effect approval as other side effects.
             from nanobot.agent.tools.agent_browser import classify_browser_action
 
             args: object = tool_call.arguments.get("args") or []
@@ -267,7 +379,7 @@ class RiskyActionPolicy(ToolPolicy):
                 return "perform a state-changing browser action"
         if tool_call.name == "agent_device":
             # Device inspection is safe; interaction, app/system controls, and
-            # unknown commands require the main run-wide approval.
+            # unknown commands require exact-effect approval.
             from nanobot.agent.tools.agent_device import classify_device_action
 
             args = tool_call.arguments.get("args") or []
@@ -338,6 +450,95 @@ class RiskyActionPolicy(ToolPolicy):
             candidate = self.workspace / candidate
         return candidate.resolve()
 
+    def _effect_fingerprint(self, tool_call: ToolCallRequest) -> str:
+        arguments = (
+            cast(dict[str, Any], tool_call.arguments)
+            if isinstance(tool_call.arguments, dict) else {}
+        )
+        payload: dict[str, Any] = {
+            "name": tool_call.name,
+            "arguments": arguments,
+        }
+        if tool_call.name in {"write_file", "edit_file"}:
+            raw_path = str(arguments.get("path") or "")
+            target = self._resolve_write_target(tool_call.name, raw_path)
+            if target is not None:
+                payload["target"] = str(target)
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            default=str,
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _resolve_write_target(self, tool_name: str, raw_path: str) -> Path | None:
+        if not raw_path:
+            return None
+        if self.write_target_resolver is not None:
+            try:
+                return self.write_target_resolver(tool_name, raw_path)
+            except (OSError, PermissionError, ValueError):
+                return None
+        return self._resolve_workspace_path(raw_path)
+
+    def validate_write_target(self, tool_call: ToolCallRequest, tool: Any) -> str | None:
+        """Recheck the assessed target through the tool immediately before dispatch."""
+        error, _target = self.validate_write_target_binding(tool_call, tool)
+        return str(error.content) if isinstance(error, ToolOutcome) else error
+
+    def validate_write_target_binding(
+        self,
+        tool_call: ToolCallRequest,
+        tool: Any,
+        params: Any = None,
+    ) -> tuple[str | ToolOutcome | None, Path | None]:
+        """Recheck and return the assessed target for the mutation boundary."""
+        if tool_call.id in self._denied_write_targets:
+            self._denied_write_targets.discard(tool_call.id)
+            raw_path = ""
+            if isinstance(params, dict):
+                raw_path = str(cast(dict[object, object], params).get("path") or "")
+            if not raw_path and isinstance(tool_call.arguments, dict):
+                raw_path = str(
+                    cast(dict[object, object], tool_call.arguments).get("path") or ""
+                )
+            explain = getattr(tool, "write_refusal", None)
+            if raw_path and callable(explain):
+                refusal = cast(Callable[[str], str | ToolOutcome | None], explain)(raw_path)
+                if refusal is not None:
+                    return refusal, None
+            return "write target was not assessable and remains unauthorized", None
+        assessed = self._assessed_write_targets.pop(tool_call.id, None)
+        if assessed is None:
+            if tool_call.name in {"write_file", "edit_file"}:
+                return "write target was not assessed", None
+            return None, None
+        raw_path = ""
+        if isinstance(params, dict):
+            raw_path = str(cast(dict[object, object], params).get("path") or "")
+        if not raw_path:
+            arguments = tool_call.arguments
+            if isinstance(arguments, dict):
+                raw_path = str(cast(dict[object, object], arguments).get("path") or "")
+        if not raw_path:
+            return None, None
+        resolver = getattr(tool, "resolve_write_path", None)
+        if not callable(resolver):
+            return None, None
+        try:
+            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
+            current = Path(resolved).expanduser().resolve(strict=False)
+        except (OSError, PermissionError, ValueError):
+            return f"Error: write target is no longer accessible: {raw_path}", None
+        if current != assessed:
+            return (
+                f"Error: write target changed before dispatch: {raw_path}. "
+                "Retry the request so the new target can be assessed."
+            ), None
+        return None, assessed
+
     def _changed_line_count(self, before: str, after: str) -> tuple[int, int]:
         before_lines = before.splitlines()
         after_lines = after.splitlines()
@@ -354,17 +555,12 @@ class RiskyActionPolicy(ToolPolicy):
     # The absolute ``changed > 200`` guard still catches genuinely large edits.
     _SMALL_FILE_LINE_THRESHOLD = 10
 
-    def _is_agent_state_file(self, raw_path: str) -> bool:
+    def _is_agent_state_file(self, path: Path) -> bool:
         """Memory files the agent manages freely — no size checks."""
-        p = Path(raw_path)
-        return "memory" in p.parts
+        return "memory" in path.parts
 
-    def _is_autonomous_managed_path(self, raw_path: str) -> bool:
+    def _is_autonomous_managed_path(self, path: Path) -> bool:
         """Writable managed paths already have finer-grained repo policy checks."""
-        if not raw_path:
-            return False
-        path = self._resolve_workspace_path(raw_path)
-
         target = self.context_manager.find_target_repo_for_path(path)
         repo = self.context_manager.find_repo_for_path(path)
         if target and (repo is None or len(str(target.path or "")) >= len(str(repo.path))):
@@ -389,12 +585,17 @@ class RiskyActionPolicy(ToolPolicy):
 
         return False
 
-    def _risky_write_reason(self, raw_path: str, new_content: str) -> str | None:
+    def _risky_write_reason(
+        self,
+        raw_path: str,
+        new_content: str,
+        resolved_path: Path | None = None,
+    ) -> str | None:
         if not raw_path:
             return None
-        if self._is_agent_state_file(raw_path) or self._is_autonomous_managed_path(raw_path):
+        path = resolved_path or self._resolve_workspace_path(raw_path)
+        if self._is_agent_state_file(path) or self._is_autonomous_managed_path(path):
             return None
-        path = self._resolve_workspace_path(raw_path)
         if not path.exists() or not path.is_file():
             return None
         try:
@@ -416,19 +617,20 @@ class RiskyActionPolicy(ToolPolicy):
         old_text: str,
         new_text: str,
         replace_all: bool,
+        resolved_path: Path | None = None,
     ) -> str | None:
         if not raw_path:
             return None
-        if self._is_agent_state_file(raw_path) or self._is_autonomous_managed_path(raw_path):
+        path = resolved_path or self._resolve_workspace_path(raw_path)
+        if self._is_agent_state_file(path) or self._is_autonomous_managed_path(path):
             return None
         if replace_all:
-            return f"apply a bulk replace in {Path(raw_path).name}"
+            return f"apply a bulk replace in {path.name}"
 
         touched_lines = max(len(old_text.splitlines()), len(new_text.splitlines()))
         if touched_lines > 200:
-            return f"edit more than 200 lines in {Path(raw_path).name}"
+            return f"edit more than 200 lines in {path.name}"
 
-        path = self._resolve_workspace_path(raw_path)
         if not path.exists() or not path.is_file():
             return None
 

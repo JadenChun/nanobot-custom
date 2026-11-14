@@ -29,7 +29,7 @@ INDEX_VERSION = 1
 
 
 def generated_asset_index_path(session_key: str) -> Path:
-    return get_webui_dir() / f"{SessionManager.safe_key(session_key)}.generated-assets.json"
+    return get_webui_dir() / f"{SessionManager.storage_key(session_key)}.generated-assets.json"
 
 
 def read_generated_asset_index(session_key: str) -> dict[str, Any] | None:
@@ -57,8 +57,16 @@ def write_generated_asset_index(
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        from nanobot.attachments._media import fsync_directory
+        from nanobot.webui.transcript import media_publication
+
+        with media_publication(payload):
+            with tmp.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False))
+                handle.flush()
+                os.fsync(handle.fileno())
+            tmp.replace(path)
+            fsync_directory(path.parent)
     except OSError:
         logger.warning("failed to persist generated asset index for {}", session_key)
         tmp.unlink(missing_ok=True)
@@ -114,7 +122,13 @@ def webui_session_keys(webui_dir: Path) -> list[str]:
             stem = path.stem
         elif path.is_dir() and path.name.endswith(".segments"):
             stem = path.name.removesuffix(".segments")
-        if stem is None or not stem.startswith(persisted_prefix):
+        if stem is None:
+            continue
+        decoded = SessionManager.decode_storage_key(stem)
+        if decoded is not None and decoded.startswith(WEBUI_SESSION_STORAGE_PREFIX):
+            keys.add(decoded)
+            continue
+        if not stem.startswith(persisted_prefix):
             continue
         chat_id = stem[len(persisted_prefix):]
         if chat_id:

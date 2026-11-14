@@ -320,6 +320,7 @@
     var identityPromise = null;
     var generation = 0;
     var state = "idle";
+    var cancellationPending = false;
 
     function hostLabel(origin) {
       try {
@@ -388,7 +389,7 @@
       ui.panel.dataset.state = next;
       ui.login.hidden = next !== "login";
       ui.retry.hidden = next !== "error" && next !== "login";
-      ui.cancel.hidden = next === "idle";
+      ui.cancel.hidden = next === "idle" || next === "accepting" || next === "cancelling";
       ui.cancel.textContent = next === "waiting" ? "Cancel" : "Use a different link";
       ui.form.hidden = next !== "idle";
       ui.linkDetails.hidden = next !== "idle";
@@ -453,6 +454,9 @@
         var result = await plugin.pairPoll({ pairingId: pairingId });
         if (stopped || run !== generation || state !== "waiting") return;
         if (result && result.status === "approved") {
+          setState("accepting");
+          await plugin.pairAccept({ pairingId: pairingId });
+          if (stopped || run !== generation || state !== "accepting") return;
           setPill(ui.node, "Connected", "is-ok");
           ui.status.textContent = "Paired. Loading Nanobot...";
           finish();
@@ -463,7 +467,7 @@
         ui.status.classList.remove("is-error");
         pollTimer = setTimeout(function () { void poll(pairingId, run); }, 2000);
       } catch (error) {
-        if (stopped || run !== generation || state !== "waiting") return;
+        if (stopped || run !== generation || (state !== "waiting" && state !== "accepting")) return;
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
           needLogin(run);
@@ -675,6 +679,10 @@
         return false;
       }
       if (stopped || run !== generation || state !== "idle") return false;
+      if (pending && pending.cancellationPending === true) {
+        void cancelPairing();
+        return true;
+      }
       if (!pending || pending.pending !== true || !pending.pairingId) return false;
       pendingSetup = {
         kind: "link",
@@ -691,7 +699,9 @@
     }
 
     function retryPending() {
-      if (pendingSetup) {
+      if (cancellationPending) {
+        void cancelPairing();
+      } else if (pendingSetup) {
         var run = ++generation;
         stopTimers();
         setState("waiting");
@@ -703,21 +713,45 @@
         void beginCode(lastManual.origin, lastManual.code);
       } else {
         setState("idle");
-        watchForLink();
+        void restorePendingPairing(generation).then(function (restored) {
+          if (!restored && state === "idle") watchForLink();
+        });
       }
     }
 
     ui.retry.addEventListener("click", retryPending);
 
-    ui.cancel.addEventListener("click", function () {
-      generation += 1;
+    async function cancelPairing() {
+      if (stopped || state === "accepting" || state === "cancelling") return;
+      var run = ++generation;
+      cancellationPending = true;
       stopTimers();
-      lastLink = null;
-      lastManual = null;
-      pendingSetup = null;
-      setState("idle");
-      watchForLink();
-    });
+      setState("cancelling");
+      ui.status.textContent = "Cancelling pairing...";
+      try {
+        if (typeof plugin.pairCancel !== "function") {
+          throw new Error("native pairing cancellation is unavailable");
+        }
+        await plugin.pairCancel();
+        if (stopped || run !== generation) return;
+        cancellationPending = false;
+        lastLink = null;
+        lastManual = null;
+        pendingSetup = null;
+        setState("idle");
+        watchForLink();
+      } catch (error) {
+        if (stopped || run !== generation) return;
+        var message = String(error && error.message ? error.message : error);
+        if (message.indexOf("tailnet login required") >= 0) {
+          needLogin(run);
+          return;
+        }
+        fail("Pairing cancellation failed: " + message);
+      }
+    }
+
+    ui.cancel.addEventListener("click", cancelPairing);
 
     setState("idle");
     void (async function () {
@@ -795,67 +829,132 @@
       throw new Error("native transport readiness timeout");
     }
 
+    var activeHandshakeProbe = null;
+
     function probeHandshake() {
-      return new Promise(async function (resolve) {
-        var requestId = 0;
-        var done = false;
-        var unsubscribe = null;
-        var timer = setTimeout(function () { finish({ error: "timeout" }); }, 8000);
-        function finish(result) {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          if (unsubscribe) unsubscribe();
-          resolve(result);
+      if (activeHandshakeProbe) return activeHandshakeProbe.promise;
+      var probe = {
+        id: 0,
+        done: false,
+        launchSettled: false,
+        cancelRequested: false,
+        unsubscribe: null,
+        early: new Map(),
+        promise: null,
+        resolve: null,
+        timer: null
+      };
+      activeHandshakeProbe = probe;
+      probe.promise = new Promise(function (resolve) { probe.resolve = resolve; });
+
+      var maxEarlyEvents = 64;
+      function releaseIfSettled() {
+        if (probe.done && probe.launchSettled && activeHandshakeProbe === probe) {
+          activeHandshakeProbe = null;
         }
+      }
+      function clearEarly() {
+        probe.early.clear();
+      }
+      function cancel(id) {
+        if (!id || probe.cancelRequested) return;
+        probe.cancelRequested = true;
         try {
-          unsubscribe = await transport.onEvent(function (event) {
-            if (requestId === 0 || event.request_id !== requestId) return;
-            if (event.type === "http_response") {
-              finish({ status: event.status, body: event.body_base64 });
-            } else if (event.type === "http_error") {
-              finish({ error: event.code });
-            }
-          });
-          requestId = await transport.http({
+          void Promise.resolve(transport.cancel(id)).catch(function () {});
+        } catch (_) {}
+      }
+      function unsubscribe() {
+        if (!probe.unsubscribe) return;
+        var remove = probe.unsubscribe;
+        probe.unsubscribe = null;
+        try { remove(); } catch (_) {}
+      }
+      function finish(result, terminal) {
+        if (probe.done) return;
+        probe.done = true;
+        clearTimeout(probe.timer);
+        unsubscribe();
+        clearEarly();
+        if (!terminal && probe.id) cancel(probe.id);
+        probe.resolve(result);
+        releaseIfSettled();
+      }
+      function terminalResult(event) {
+        return event.type === "http_response"
+          ? { status: typeof event.status === "number" && Number.isFinite(event.status) ? event.status : 0 }
+          : { error: String(event.code || "native_request_failed").slice(0, 128) };
+      }
+      function handleEvent(event) {
+        if (probe.done || (event.type !== "http_response" && event.type !== "http_error")) return;
+        if (typeof event.request_id !== "number" || !Number.isSafeInteger(event.request_id) || event.request_id <= 0) return;
+        if (probe.id) {
+          if (event.request_id !== probe.id) return;
+          finish(terminalResult(event), true);
+          return;
+        }
+        if (probe.early.has(event.request_id)) return;
+        if (probe.early.size >= maxEarlyEvents) {
+          finish({ error: "handshake completion queue is full" }, false);
+          return;
+        }
+        probe.early.set(event.request_id, terminalResult(event));
+      }
+
+      probe.timer = setTimeout(function () { finish({ error: "timeout" }, false); }, 8000);
+      void (async function () {
+        try {
+          var remove = await transport.onEvent(handleEvent);
+          if (probe.done) {
+            try { remove(); } catch (_) {}
+            probe.launchSettled = true;
+            releaseIfSettled();
+            return;
+          }
+          probe.unsubscribe = remove;
+          var id = await transport.http({
             operation: "mobile_handshake",
             method: "GET",
             path: "/mobile/v1/handshake"
           });
+          probe.launchSettled = true;
+          if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
+            finish({ error: "handshake request was not admitted" }, false);
+            releaseIfSettled();
+            return;
+          }
+          probe.id = id;
+          if (probe.done) {
+            cancel(id);
+            releaseIfSettled();
+            return;
+          }
+          var early = probe.early.get(id);
+          clearEarly();
+          if (early) finish(early, true);
+          releaseIfSettled();
         } catch (error) {
-          finish({ error: String(error && error.message ? error.message : error) });
+          probe.launchSettled = true;
+          finish({ error: String(error && error.message ? error.message : error) }, false);
+          releaseIfSettled();
         }
-      });
+      })();
+      return probe.promise;
     }
 
     async function requireValidAccess() {
       var probe = await probeHandshake();
       if (probe.error) return "unreachable";
       if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
-      var refreshed = false;
       try {
-        refreshed = await plugin.refresh();
+        await plugin.refresh();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
-        if (
-          message.indexOf("pairing was revoked") < 0 &&
-          message.indexOf("no refresh credential") < 0
-        ) {
-          return "unreachable";
-        }
+        return message === "pairing was revoked" || message === "pairing upgrade required"
+          ? "revoked"
+          : "unreachable";
       }
-      if (refreshed) {
-        probe = await probeHandshake();
-        if (probe.error) return "unreachable";
-        if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
-      }
-      try {
-        await plugin.logout({ serverReachable: true });
-      } catch (_) {
-        /* The next launch still starts from the stored pairing state. */
-      }
-      window.location.reload();
-      return "revoked";
+      probe = await probeHandshake();
+      return probe.status === 200 ? "ok" : "unreachable";
     }
 
     function presentReauth(link, initialMessage) {

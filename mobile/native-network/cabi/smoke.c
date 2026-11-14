@@ -23,6 +23,7 @@ int main(void) {
     expect(nanobot_network_status(999, buffer, sizeof(buffer)) == -4, "unknown status handle");
     expect(nanobot_network_login_url(999, buffer, sizeof(buffer)) == -4, "unknown login handle");
     expect(nanobot_network_poll_event(999, buffer, sizeof(buffer)) == -4, "unknown poll handle");
+    expect(nanobot_network_pending_event_size(999) == -4, "unknown event-size handle");
     expect(nanobot_network_stop(999) == -4, "unknown stop handle");
     expect(nanobot_network_cancel(999, 1) == -4, "unknown cancel handle");
     uint64_t request_id = 0;

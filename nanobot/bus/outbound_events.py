@@ -86,6 +86,57 @@ class GoalStateSyncEvent(AgentEvent):
 
 
 @dataclass(frozen=True)
+class MessageAdmittedEvent(AgentEvent):
+    """The session owner committed one submitted input attempt."""
+
+    turn_id: str | None = None
+    attempt_id: str | None = None
+    session_key: str | None = None
+    session_incarnation: str | None = None
+    active_turn_id: str | None = None
+    starts_turn: bool = True
+
+
+@dataclass(frozen=True)
+class DelegatedChildEvent(AgentEvent):
+    """Typed, durable reference from a parent activity row to one child."""
+
+    parent_session_key: str = ""
+    child_session_key: str = ""
+    child_id: str = ""
+    profile: str = "delegated"
+    state: str = ""
+    outcome: str | None = None
+    runtime_generation: int = 0
+    turn_id: str | None = None
+    task_label: str = ""
+    task_label_truncated: bool = False
+    result_summary: str | None = None
+    result_summary_truncated: bool = False
+    parent_run_id: str | None = None
+    child_run_id: str | None = None
+    parent_store_identity: str | None = None
+    parent_incarnation: str | None = None
+    parent_generation: int = 0
+    root_key: str | None = None
+    root_store_identity: str | None = None
+    root_incarnation: str | None = None
+    root_generation: int = 0
+    child_store_identity: str | None = None
+    child_incarnation: str | None = None
+    child_generation: int = 0
+    run_sequence: int = 0
+    state_sequence: int = 0
+    control_epoch: int = 0
+    holds_capacity: bool = False
+    can_stop: bool = False
+    owned_work: bool = False
+    pending_approval_id: str | None = None
+    blocked_run_id: str | None = None
+    result_disposition: str | None = None
+
+
+@dataclass(frozen=True)
 class SessionUpdatedEvent(AgentEvent):
     scope: str | None = None
     workspace_scope: WorkspaceScopePayload | None = None
@@ -109,6 +160,13 @@ class WebUIAdmissionRejectedEvent(AgentEvent):
     detail: str
     reason: str
     turn_id: str | None = None
+
+
+@dataclass(frozen=True)
+class StopTargetEvent(AgentEvent):
+    """Transient server-derived original-chat Stop target for current views."""
+
+    stop_target: dict[str, object] | None
 
 
 @dataclass(frozen=True)

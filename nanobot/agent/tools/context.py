@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nanobot.agent.delegation import ForegroundAgentManager
-    from nanobot.agent.subagent import SubagentManager
+    from nanobot.agent.subagent import RetiredSubagentAuthority, SubagentManager
     from nanobot.agent.tools.exec_session import ExecSessionManager
     from nanobot.agent.tools.file_state import FileStates
     from nanobot.agent.tools.runtime_control import RuntimeControl
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from nanobot.providers.factory import ProviderSnapshot
     from nanobot.security.workspace_access import WorkspaceSandboxStatus, WorkspaceScope
     from nanobot.session.manager import SessionManager
+    from nanobot.session.source_store import SourceState
     from nanobot.session.workspace_focus import WorkspaceFocusOwner
     from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -46,6 +47,7 @@ class RequestContext:
     attributes: dict[str, Any] = field(default_factory=dict)
     workspace_scope: WorkspaceScope | None = None
     persistent_session: bool = True
+    source_state: SourceState | None = None
 
 
 @runtime_checkable
@@ -97,13 +99,14 @@ class ToolContext:
     config: ToolsConfig
     workspace: str
     bus: MessageBus | None = None
-    subagent_manager: SubagentManager | None = None
+    subagent_manager: SubagentManager | RetiredSubagentAuthority | None = None
     cron_service: CronService | None = None
     exec_session_manager: ExecSessionManager | None = None
     sessions: SessionManager | None = None
     file_state_store: FileStates | None = None
     provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None
     image_generation_provider_configs: dict[str, ProviderConfig] | None = None
+    media_root: Path | None = None
     timezone: str = "UTC"
     workspace_sandbox: WorkspaceSandboxStatus | None = None
     runtime_control: RuntimeControl | None = None

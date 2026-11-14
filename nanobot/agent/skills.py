@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import yaml
+from loguru import logger
 
 from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.runtime_context import RuntimeContextBlock
@@ -82,16 +83,83 @@ class SkillsLoader:
         except OSError:
             return {}
 
+    def _skill_candidate_valid(self, skill_file: Path, name: str) -> bool:
+        """Validate one candidate before it enters precedence/shadowing.
+
+        Legacy skills without frontmatter remain readable. A declared identity
+        must match the directory, and malformed YAML must not hide a valid
+        lower-precedence candidate.
+        """
+        try:
+            content = skill_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return False
+        if not content.startswith("---"):
+            return True
+        match = _STRIP_SKILL_FRONTMATTER.match(content)
+        if match is None:
+            if re.match(r"^---\s*\r?\n---\s*(?:\r?\n|$)", content):
+                return True
+            logger.warning("Ignoring skill '{}': malformed frontmatter", name)
+            return False
+        try:
+            parsed = yaml.safe_load(match.group(1))
+        except yaml.YAMLError:
+            logger.warning("Ignoring skill '{}': malformed frontmatter", name)
+            return False
+        if parsed is None:
+            return True
+        if not isinstance(parsed, dict):
+            logger.warning("Ignoring skill '{}': malformed frontmatter", name)
+            return False
+        metadata = {str(key): value for key, value in cast(dict[object, object], parsed).items()}
+        declared_name = metadata.get("name")
+        if declared_name is not None and declared_name != name:
+            logger.warning(
+                "Ignoring skill '{}': declared name '{}' does not match its directory",
+                name,
+                declared_name,
+            )
+            return False
+        description = metadata.get("description")
+        if description is not None and (
+            not isinstance(description, str) or not description.strip()
+        ):
+            logger.warning("Ignoring skill '{}': invalid description", name)
+            return False
+        return True
+
     def _skill_entries_from_dir(self, base: Path, source: str, *, skip_names: set[str] | None = None) -> list[dict[str, str]]:
         if not base.exists():
+            return []
+        try:
+            base_resolved = base.resolve(strict=True)
+        except OSError:
             return []
         entries: list[dict[str, str]] = []
         for skill_dir in base.iterdir():
             if not skill_dir.is_dir():
                 continue
+            resolved_dir = skill_dir
+            if skill_dir.is_symlink():
+                try:
+                    resolved_dir = skill_dir.resolve(strict=True)
+                except OSError:
+                    continue
+                if not resolved_dir.is_relative_to(base_resolved):
+                    logger.warning("Ignoring skill '{}': directory escapes its source root", skill_dir.name)
+                    continue
             skill_file = skill_dir / "SKILL.md"
             if not skill_file.exists():
                 continue
+            if skill_file.is_symlink():
+                try:
+                    resolved_file = skill_file.resolve(strict=True)
+                except OSError:
+                    continue
+                if not resolved_file.is_relative_to(resolved_dir):
+                    logger.warning("Ignoring skill '{}': SKILL.md escapes its skill directory", skill_dir.name)
+                    continue
             name = skill_dir.name
             if skip_names is not None and name in skip_names:
                 continue
@@ -111,27 +179,49 @@ class SkillsLoader:
         from nanobot.agent.plugins import enabled_agent_plugin_skills
 
         plugin_skills = enabled_agent_plugin_skills(self.workspace)
-        skills = self._skill_entries_from_dir(self.workspace_skills, "workspace")
-        seen_names = {entry["name"] for entry in skills}
-        for root in self.extra_paths:
-            entries = self._skill_entries_from_dir(root, "library", skip_names=seen_names)
-            skills.extend(entries)
-            seen_names.update(entry["name"] for entry in entries)
-        for name, path in plugin_skills:
-            if name in seen_names:
-                continue
-            skills.append(
-                {
-                    "name": name,
-                    "path": str(path),
-                    "source": "plugin",
-                }
-            )
-            seen_names.add(name)
+        groups: list[list[dict[str, str]]] = [
+            self._skill_entries_from_dir(self.workspace_skills, "workspace"),
+        ]
+        groups.extend(
+            self._skill_entries_from_dir(root, "library")
+            for root in self.extra_paths
+        )
+        groups.append([
+            {"name": name, "path": str(path), "source": "plugin"}
+            for name, path in plugin_skills
+        ])
         if self.builtin_skills and self.builtin_skills.exists():
-            skills.extend(
-                self._skill_entries_from_dir(self.builtin_skills, "builtin", skip_names=seen_names)
+            groups.append(
+                self._skill_entries_from_dir(self.builtin_skills, "builtin")
             )
+
+        names_by_group = [
+            {entry["name"] for entry in group}
+            for group in groups
+        ]
+        lower_names: set[str] = set()
+        shadowed_by_lower: list[set[str]] = []
+        for names in reversed(names_by_group):
+            shadowed_by_lower.append(set(lower_names))
+            lower_names.update(names)
+        shadowed_by_lower.reverse()
+
+        # Validate only a candidate that would shadow a lower-precedence skill.
+        # Unique skills keep the legacy compatibility tier without extra reads.
+        skills: list[dict[str, str]] = []
+        seen_names: set[str] = set()
+        for index, group in enumerate(groups):
+            for entry in group:
+                name = entry["name"]
+                if name in seen_names:
+                    continue
+                if (
+                    name in shadowed_by_lower[index]
+                    and not self._skill_candidate_valid(Path(entry["path"]), name)
+                ):
+                    continue
+                skills.append(entry)
+                seen_names.add(name)
 
         if self.disabled_skills:
             disabled = set(self.disabled_skills)

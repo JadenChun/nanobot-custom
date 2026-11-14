@@ -6,7 +6,11 @@ from nanobot.attachments.ingress import (
     extract_data_url_mime,
     ingress_for_limits,
 )
-from nanobot.attachments.lifecycle import prune_unreferenced, referenced_hashes
+from nanobot.attachments.lifecycle import (
+    prune_unreferenced,
+    reference_evidence,
+    referenced_hashes,
+)
 from nanobot.attachments.models import (
     ATTACHMENT_SCHEMA_VERSION,
     AttachmentBatchResult,
@@ -42,5 +46,6 @@ __all__ = [
     "extract_data_url_mime",
     "ingress_for_limits",
     "prune_unreferenced",
+    "reference_evidence",
     "referenced_hashes",
 ]

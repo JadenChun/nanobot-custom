@@ -284,10 +284,17 @@ def isolate_webui_workspace_state(tmp_path, monkeypatch) -> None:
     wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
     wth._WEBSOCKET_TURN_IDS.clear()
     wth._WEBSOCKET_TURN_OWNERS.clear()
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", tmp_path / "config.json")
     monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+
+    def isolated_webui_dir() -> Path:
+        path = tmp_path / "webui"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     monkeypatch.setattr(
         "nanobot.webui.workspaces.get_webui_dir",
-        lambda: tmp_path / "webui",
+        isolated_webui_dir,
     )
     yield
     wth._WEBSOCKET_ACTIVE_TURNS.clear()
@@ -337,6 +344,7 @@ async def test_attach_exposes_the_session_canonical_model_preset(bus, tmp_path) 
         "event": "attached",
         "chat_id": "pinned-model",
         "model_preset": "Deep Research",
+        "stop_target": None,
     }
 
 
@@ -1139,6 +1147,7 @@ async def test_authenticated_webui_request_returns_correlated_success(bus: Magic
         "request_id": "request-1",
         "ok": True,
         "result": {"saved": True},
+        "outcome": "applied",
     }
 
 
@@ -1307,6 +1316,7 @@ async def test_webui_request_replays_completed_result_after_reconnect(bus: Magic
         "request_id": "request-completed",
         "ok": True,
         "result": {"installed": True},
+        "outcome": "applied",
     }
 
 
@@ -1354,6 +1364,7 @@ async def test_webui_request_rejects_request_id_reuse_with_different_payload(
         "error": {
             "status": 409,
             "message": "request_id was already used for a different WebUI mutation",
+            "outcome": "not_applied",
         },
     }
 
@@ -1432,7 +1443,11 @@ async def test_webui_request_returns_correlated_route_error(bus: MagicMock) -> N
         "event": "webui_response",
         "request_id": "request-2",
         "ok": False,
-        "error": {"status": 400, "message": "invalid settings payload"},
+        "error": {
+            "status": 400,
+            "message": "invalid settings payload",
+            "outcome": "not_applied",
+        },
     }
 
 
@@ -1460,7 +1475,11 @@ async def test_webui_request_requires_bootstrap_authenticated_connection(
         "event": "webui_response",
         "request_id": "request-3",
         "ok": False,
-        "error": {"status": 403, "message": "access_denied"},
+        "error": {
+            "status": 403,
+            "message": "access_denied",
+            "outcome": "not_applied",
+        },
     }
 
 
@@ -1499,6 +1518,7 @@ async def test_webui_persists_sidebar_state_larger_than_http_request_line(
         "request_id": request_id,
         "ok": True,
         "result": saved,
+        "outcome": "applied",
     }
 
 
@@ -6099,36 +6119,17 @@ def test_handle_file_preview_returns_workspace_file(tmp_path) -> None:
     assert body["truncated"] is False
 
 
-def test_handle_file_preview_probe_checks_availability_without_content(tmp_path) -> None:
-    from urllib.parse import quote
-
-    from websockets.datastructures import Headers
-    from websockets.http11 import Request
-
-    workspace = tmp_path / "workspace"
-    source = workspace / "notes" / "ready.md"
-    source.parent.mkdir(parents=True)
-    source.write_text("ready\n", encoding="utf-8")
-
-    gateway = _basic_handler(MagicMock(), workspace_path=workspace)
-    gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
-    key = "websocket:file-preview"
-    enc = quote(key, safe="")
-    path = quote("notes/ready.md", safe="")
-    req = Request(
-        f"/api/sessions/{enc}/file-preview?path={path}&probe=1",
-        Headers([("Authorization", "Bearer tok")]),
-    )
-
-    resp = gateway.http._handle_file_preview(
-        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
-    )
-
-    assert resp.status_code == 200
-    assert json.loads(resp.body.decode()) == {"available": True}
-
-
-def test_handle_file_preview_probe_reports_missing_file_as_unavailable(tmp_path) -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("relative_path", "data", "available"),
+    [
+        ("notes/ready.md", b"ready\n", True),
+        ("notes/missing.md", None, False),
+        ("firmware.bin", b"\x00\x01\x02\xff", False),
+    ],
+    ids=["text", "missing", "unsupported-binary"],
+)
+async def test_file_preview_probe_reports_availability(tmp_path, relative_path, data, available):
     from urllib.parse import quote
 
     from websockets.datastructures import Headers
@@ -6136,21 +6137,26 @@ def test_handle_file_preview_probe_reports_missing_file_as_unavailable(tmp_path)
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    if data is not None:
+        source = workspace / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(data)
+
     gateway = _basic_handler(MagicMock(), workspace_path=workspace)
-    gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
-    key = "websocket:file-preview"
-    enc = quote(key, safe="")
-    req = Request(
-        f"/api/sessions/{enc}/file-preview?path=notes%2Fmissing.md&probe=1",
-        Headers([("Authorization", "Bearer tok")]),
+    token = gateway.tokens.issue_api_token(60)
+    key = quote("websocket:file-preview", safe="")
+    path = quote(relative_path, safe="")
+    request = Request(
+        f"/api/sessions/{key}/file-preview?path={path}&probe=1",
+        Headers([("Authorization", f"Bearer {token}")]),
     )
 
-    resp = gateway.http._handle_file_preview(
-        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    response = await gateway.http.dispatch(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), request,
     )
 
-    assert resp.status_code == 200
-    assert json.loads(resp.body.decode()) == {"available": False}
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"available": available}
 
 
 def test_handle_file_preview_probe_reports_binary_file_as_unavailable(tmp_path) -> None:
@@ -6537,10 +6543,11 @@ async def test_raw_mobile_frames_revalidate_before_plain_text() -> None:
         SimpleNamespace(mobile_identity=identity)
     ) is False
     assert calls == ["checked"]
-    # Loose mocks are not mobile identities and do not trigger owner IPC.
+    # Explicit malformed mobile identity evidence must fail closed.
     assert await channel._revalidate_raw_mobile_frame(
         SimpleNamespace(mobile_identity=object())
-    ) is True
+    ) is False
+    assert calls == ["checked", "checked"]
 
 
 @pytest.mark.asyncio

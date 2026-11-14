@@ -25,7 +25,7 @@ from nanobot.session.artifact_store import (
 )
 
 if TYPE_CHECKING:
-    from nanobot.session.source_store import SourceSnapshot
+    from nanobot.session.source_store import SourceSnapshot, SourceState
     from nanobot.session.turn_writer import SourceTurnWriter
 
 
@@ -162,6 +162,55 @@ class ArtifactReader:
                           blobs: ArtifactBlobTransaction) -> None:
         self._verify_descriptor(descriptor, snapshot, blobs, require_native=True)
 
+    def origin_view(self, origin: ArtifactReader) -> ArtifactReader:
+        """Apply this invocation's current read policy to one sealed origin namespace."""
+        return ArtifactReader(
+            origin.writer,
+            origin.mode,
+            origin.store,
+            self.read_file,
+            location_validator=origin.location_validator,
+        )
+
+    def verify_settled_published(
+        self,
+        descriptor: ArtifactDescriptor,
+        snapshot: SourceSnapshot,
+        blobs: ArtifactBlobTransaction,
+        *,
+        expected_state: SourceState,
+        expected_run_id: str,
+        expected_stream_id: str,
+    ) -> None:
+        """Verify retained canonical child evidence without requiring its closed owner live."""
+        self._validate_private_root()
+        if (
+            not snapshot.state.same_origin(expected_state)
+            or descriptor.session_key != expected_state.session_key
+            or descriptor.incarnation != expected_state.incarnation
+            or descriptor.generation != expected_state.generation
+            or descriptor.run_id != expected_run_id
+            or descriptor.stream_id != expected_stream_id
+            or not self._native_permitted(descriptor, snapshot)
+        ):
+            raise ArtifactValidationError('Artifact child source admission changed')
+        event = next(
+            (row for row in snapshot.events if row.get('_event_id') == descriptor.event_id),
+            None,
+        )
+        if (
+            event is None
+            or event.get('_stream_id') != expected_stream_id
+            or event.get('_run_id') != expected_run_id
+        ):
+            raise ArtifactValidationError('Artifact is outside the admitted child run')
+        self.read_file.verify_artifact_evidence(
+            descriptor,
+            snapshot,
+            blobs,
+            store=self.store,
+        )
+
     def verify_received_descriptor(
         self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot,
         blobs: ArtifactBlobTransaction,
@@ -184,6 +233,17 @@ class ArtifactReader:
             raise ArtifactValidationError('Invalid artifact text range')
         writer, owner = self.writer, self.writer.owner
         owner.validate_dispatch()
+        if self.grants is not None:
+            grant = self.grants.find_separate_owner_grant(self, identity)
+            if grant is not None:
+                descriptor, raw = self.grants.read_separate_owner_grant(
+                    self,
+                    grant,
+                    reference=reference,
+                    offset=offset,
+                    max_bytes=max_bytes,
+                )
+                return self._read_result(reference, descriptor, raw, offset)
         with self.store.transaction() as blobs:
             with writer.store.execution_transaction(owner.key, owner):
                 owner.validate_dispatch()
@@ -196,16 +256,25 @@ class ArtifactReader:
                 else:
                     raise ArtifactValidationError('Artifact is outside the admitted stream')
                 raw = blobs.read_range(descriptor, offset=offset, limit=max_bytes)
-                # Skip an initial partial character, retain the trailing partial
-                # character for the next page. A four-byte minimum ensures progress.
-                leading = 0
-                while leading < len(raw) and raw[leading] & 0xC0 == 0x80:
-                    leading += 1
-                decoder = codecs.getincrementaldecoder('utf-8')()
-                text = decoder.decode(raw[leading:], final=False)
-                trailing = len(decoder.getstate()[0])
-                start = min(offset + leading, descriptor.byte_length)
-                end = min(offset + len(raw) - trailing, descriptor.byte_length)
                 blobs.assert_reachable()
                 owner.validate_dispatch()
-                return ArtifactReadResult(reference, text, start, end, end == descriptor.byte_length)
+                return self._read_result(reference, descriptor, raw, offset)
+
+    @staticmethod
+    def _read_result(
+        reference: str,
+        descriptor: ArtifactDescriptor,
+        raw: bytes,
+        offset: int,
+    ) -> ArtifactReadResult:
+        # Skip an initial partial character, retain the trailing partial
+        # character for the next page. A four-byte minimum ensures progress.
+        leading = 0
+        while leading < len(raw) and raw[leading] & 0xC0 == 0x80:
+            leading += 1
+        decoder = codecs.getincrementaldecoder('utf-8')()
+        text = decoder.decode(raw[leading:], final=False)
+        trailing = len(decoder.getstate()[0])
+        start = min(offset + leading, descriptor.byte_length)
+        end = min(offset + len(raw) - trailing, descriptor.byte_length)
+        return ArtifactReadResult(reference, text, start, end, end == descriptor.byte_length)

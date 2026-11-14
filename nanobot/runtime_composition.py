@@ -335,15 +335,22 @@ CloseCallback = Callable[[], Awaitable[None] | None]
 
 async def _close_reverse(callbacks: list[CloseCallback]) -> list[BaseException]:
     errors: list[BaseException] = []
-    for close in reversed(callbacks):
+    unsettled: set[int] = set()
+    for index in range(len(callbacks) - 1, -1, -1):
+        close = callbacks[index]
         try:
             result = close()
             if inspect.isawaitable(result):
                 await result
         except BaseException as exc:
             errors.append(exc)
+            unsettled.add(index)
             if isinstance(exc, RuntimeOwnedWorkError):
-                break  # Resistant effects still own shared channels/sessions.
+                # Resistant effects still own shared channels/sessions. Keep
+                # this callback and every earlier dependency for the retry.
+                unsettled.update(range(index))
+                break
+    callbacks[:] = [callback for index, callback in enumerate(callbacks) if index in unsettled]
     return errors
 
 
@@ -464,7 +471,7 @@ class RuntimeComposition:
         if not leader:
             return await asyncio.shield(waiter)
         try:
-            handle, closers = await self._acquire_graph(channel_options or self._channel_options)
+            handle = await self._acquire_graph(channel_options or self._channel_options)
         except BaseException as exc:
             with self._state_lock:
                 self._state = RuntimeState.FAILED
@@ -474,7 +481,6 @@ class RuntimeComposition:
             raise
         with self._state_lock:
             self._handle = handle
-            self._closers = closers
             self._state = RuntimeState.READY
             waiter.set_result(handle)
         return handle
@@ -482,22 +488,21 @@ class RuntimeComposition:
     async def _acquire_graph(
         self,
         channel_options: ChannelBuildOptions | None,
-    ) -> tuple[RuntimeHandle, list[CloseCallback]]:
+    ) -> RuntimeHandle:
         from nanobot.agent.turn_delivery import TurnDeliveryFactory
         from nanobot.channels.manager import ChannelManager
 
-        closers: list[CloseCallback] = []
         try:
             lease = await self._authority.acquire()
             if not isinstance(cast(object, lease), SessionAuthorityLease):
                 raise TypeError("session authority must return SessionAuthorityLease")
             sessions = lease.manager
             if lease.close is not None:
-                closers.append(lease.close)
+                self._closers.append(lease.close)
             bus = self._factories.bus()
             tools = self._factories.tools()
             mcp = self._factories.mcp(self.config, tools)
-            closers.append(mcp.aclose)
+            self._closers.append(mcp.aclose)
             cron = self._factories.cron(self.preflight)
             route_policy = (
                 self._factories.route_policy(sessions)
@@ -508,7 +513,7 @@ class RuntimeComposition:
             agent = self._factories.agent(
                 self.config, bus, sessions, tools, mcp, cron, delivery,
             )
-            closers.append(agent.aclose)
+            self._closers.append(agent.aclose)
             if agent.bus is not bus or agent.sessions is not sessions:
                 raise ValueError("agent must share composition bus and sessions")
             if agent.turn_delivery_factory is not delivery:
@@ -522,8 +527,8 @@ class RuntimeComposition:
                     session_manager=sessions,
                     cron_service=cron,
                 )
+                self._closers.append(channels.stop_all)
                 await channels.acquire()
-                closers.append(channels.stop_all)
             cron_runtime = None
             if self._cron_injection is not None:
                 import hashlib
@@ -540,11 +545,11 @@ class RuntimeComposition:
                     root / "cron-runtime" / identity, identity, self._cron_injection)
                 # Register before lease acquisition so all partial ownership is
                 # unwound in reverse, without an unowned background task.
-                closers.append(cron_runtime.aclose)
+                self._closers.append(cron_runtime.aclose)
                 cron_runtime.acquire()
-            return RuntimeHandle(bus, sessions, tools, mcp, cron, delivery, agent, channels, cron_runtime), closers
+            return RuntimeHandle(bus, sessions, tools, mcp, cron, delivery, agent, channels, cron_runtime)
         except BaseException as exc:
-            cleanup = await _close_reverse(closers)
+            cleanup = await _close_reverse(self._closers)
             if cleanup:
                 raise _combined_error("runtime acquisition and rollback failed", exc, cleanup)
             raise
@@ -563,11 +568,29 @@ class RuntimeComposition:
                 )
             raise RuntimeNotReadyError(f"runtime is not ready ({self._state.name})")
 
+    def close_if_idle(self) -> bool:
+        """Close without scheduling cleanup if the composition holds no work."""
+        loop = asyncio.get_running_loop()
+        with self._state_lock:
+            return self._close_if_idle_locked(loop)
+
+    def _close_if_idle_locked(self, loop: asyncio.AbstractEventLoop) -> bool:
+        if self._state not in {RuntimeState.NEW, RuntimeState.CLOSED} and (
+            self._state is not RuntimeState.FAILED or self._closers
+        ):
+            return False
+        if self._owner_loop is not None:
+            self._require_owner(loop)
+        self._state = RuntimeState.CLOSED
+        return True
+
     async def aclose(self) -> None:
         loop = asyncio.get_running_loop()
         leader = False
         with self._state_lock:
-            if self._state is RuntimeState.READY:
+            if self._close_if_idle_locked(loop):
+                return
+            if self._state in {RuntimeState.READY, RuntimeState.FAILED}:
                 self._require_owner(loop)
                 self._state = RuntimeState.CLOSING
                 self._close_waiter = loop.create_future()
@@ -580,30 +603,6 @@ class RuntimeComposition:
                 self._require_owner(loop)
                 assert self._close_waiter is not None
                 waiter = self._close_waiter
-            elif self._state is RuntimeState.CLOSED:
-                if self._owner_loop is not None:
-                    self._require_owner(loop)
-                return
-            elif self._state is RuntimeState.NEW:
-                self._state = RuntimeState.CLOSED
-                return
-            elif self._state is RuntimeState.FAILED:
-                self._require_owner(loop)
-                if self._closers and self._failure is not None:
-                    def owned_failure(error: BaseException) -> bool:
-                        return isinstance(error, RuntimeOwnedWorkError) or (
-                            isinstance(error, BaseExceptionGroup)
-                            and any(owned_failure(item) for item in cast(BaseExceptionGroup[BaseException], error).exceptions)
-                        )
-
-                    if not owned_failure(self._failure):
-                        raise self._failure
-                    self._state = RuntimeState.CLOSING
-                    self._close_waiter = loop.create_future()
-                    self._close_waiter.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
-                    waiter, leader = self._close_waiter, True
-                else:
-                    return
             else:
                 raise RuntimeLifecycleError("cannot close runtime while acquisition is building")
         if not leader:
@@ -622,19 +621,19 @@ class RuntimeComposition:
 
     async def _finish_close(self, waiter: asyncio.Future[None]) -> None:
         errors = await _close_reverse(self._closers)
+        failure: BaseException | None = None
         with self._state_lock:
-            self._state = (
-                RuntimeState.FAILED if any(isinstance(error, RuntimeOwnedWorkError) for error in errors)
-                else RuntimeState.CLOSED
-            )
             if errors:
                 failure = _combined_error("runtime composition close failed", errors[0], errors[1:])
-                self._failure = failure
+                self._state = RuntimeState.FAILED
+                if self._failure is None:
+                    self._failure = failure
                 waiter.set_exception(failure)
             else:
+                self._state = RuntimeState.CLOSED
                 waiter.set_result(None)
-        if errors:
-            raise _combined_error("runtime composition close failed", errors[0], errors[1:])
+        if failure is not None:
+            raise failure
 
 
 __all__ = [

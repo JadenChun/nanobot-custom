@@ -141,6 +141,32 @@ describe("mobile HTTP bridge", () => {
     const missing = await fetchWithTimeout("/api/sessions/websocket%3Amissing/webui-thread");
     expect(missing.status).toBe(404);
   });
+
+  it("maps delegated-child pages through their chat.read operation", async () => {
+    const path = "/mobile/v1/sessions/websocket%3Achat-1/delegated-children?limit=120&before=cursor%2B1";
+    const { runtime, request } = runtimeWith({
+      [path]: {
+        requestId: 1,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ children: [], page: { has_more_before: false } }),
+      },
+    });
+    installMobileRuntime(runtime);
+
+    const response = await fetchWithTimeout(
+      "/api/sessions/websocket%3Achat-1/delegated-children?limit=120&before=cursor%2B1",
+    );
+    await expect(response.json()).resolves.toEqual({
+      children: [],
+      page: { has_more_before: false },
+    });
+    expect(request).toHaveBeenCalledWith({
+      operation: "mobile_delegated_children",
+      method: "GET",
+      path,
+    });
+  });
 });
 
 describe("owner mobile feature bridge", () => {

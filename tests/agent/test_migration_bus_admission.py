@@ -35,6 +35,16 @@ def message(content='task'):
     return InboundMessage(channel='telegram', chat_id='42', sender_id='user', content=content)
 
 
+def approval_message(pending, decision='approve'):
+    msg = message('approval_decision')
+    msg.metadata['approval_decision'] = {
+        'approval_id': pending.approval_id,
+        'decision': decision,
+        'session_key': pending.session_key,
+    }
+    return msg
+
+
 async def test_bus_scope_is_locked_preserves_envelope_and_drains_once(tmp_path):
     loop, delivery, coordinator = bus_host(tmp_path)
     loop.sessions.get_or_create('telegram:42')
@@ -249,7 +259,9 @@ async def test_hung_cleanup_is_bounded_retains_input_and_releases_lock(tmp_path,
 async def test_redirected_cancel_uses_effective_key_and_compact_completes(tmp_path, monkeypatch):
     import nanobot.agent.loop as module
     loop, delivery, _ = bus_host(tmp_path)
-    await loop.approval_admission.store(session_key='cron:job', channel='telegram', chat_id='42', summary='task')
+    pending = await loop.approval_admission.store(
+        session_key='cron:job', channel='telegram', chat_id='42', summary='task',
+    )
     loop._preserve_inflight_turns_on_shutdown = False
     keys = []
     get_or_create = loop.sessions.get_or_create
@@ -263,7 +275,7 @@ async def test_redirected_cancel_uses_effective_key_and_compact_completes(tmp_pa
     monkeypatch.setattr(module, 'restore_runtime_checkpoint', lambda session: True)
     loop._process_turn.side_effect = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
-        await loop._dispatch(message('yes'))
+        await loop._dispatch(approval_message(pending))
     assert keys == ['cron:job']
     assert loop.turn_delivery_factory.create.call_args.args[1] == 'cron:job'
     assert not loop._pending_queues
@@ -328,11 +340,18 @@ async def test_held_input_wakes_when_late_idle_finishes_without_another_turn(tmp
 async def test_fenced_approval_retains_original_snapshot(tmp_path, original_pending):
     loop, _, _ = bus_host(tmp_path)
     key = 'telegram:42'
+    pending = None
     if original_pending:
-        await loop.approval_admission.store(session_key=key, channel='telegram', chat_id='42', summary='old')
+        pending = await loop.approval_admission.store(
+            session_key=key, channel='telegram', chat_id='42', summary='old',
+        )
     fence = asyncio.get_running_loop().create_future()
     loop._bus_cleanup_tasks[key] = {fence}
-    waiting = asyncio.create_task(loop._dispatch(message('yes')))
+    waiting = asyncio.create_task(
+        loop._dispatch(
+            approval_message(pending) if pending is not None else message('yes')
+        )
+    )
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert not loop._get_session_lock(key).locked()

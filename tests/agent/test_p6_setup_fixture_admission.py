@@ -12,7 +12,7 @@ import pytest
 from nanobot import migration_guard
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.memory import Consolidator
-from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.subagent import RetiredSubagentAuthority
 from nanobot.config import loader
 from nanobot.providers.base import GenerationSettings, LLMResponse
 from nanobot.runtime_composition import RuntimeState
@@ -45,7 +45,7 @@ def _build(inputs: AgentInputs) -> AgentLoop:
     assert loop.cron_service is inputs.cron
     assert loop.turn_delivery_factory is inputs.delivery
     assert isinstance(loop.sessions, SessionManager)
-    assert isinstance(loop.subagents, SubagentManager)
+    assert isinstance(loop.subagents, RetiredSubagentAuthority)
     assert isinstance(loop.consolidator, Consolidator)
     assert loop.consolidator.store is loop.context.memory
     assert loop.context.memory.workspace == inputs.config.workspace_path

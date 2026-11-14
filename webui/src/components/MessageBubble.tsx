@@ -27,6 +27,7 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { SlashCommandText } from "@/components/SlashCommandText";
 import { ReasoningRow } from "@/components/thread/activity/ReasoningRow";
 import { ContextCompactionNotice } from "@/components/thread/ContextCompactionNotice";
+import { SubagentStatus } from "@/components/thread/SubagentStatus";
 import { UserMessageText } from "@/components/UserMessageText";
 import {
   Tooltip,
@@ -53,6 +54,7 @@ import type {
   UIImage,
   UIMediaAttachment,
   UIMessage,
+  DelegatedChildReference,
   MessageDeliveryErrorKind,
   MessageDeliveryStatus,
 } from "@/lib/types";
@@ -70,6 +72,50 @@ interface MessageBubbleProps {
   slashCommands?: SlashCommand[];
   onOpenFilePreview?: (path: string) => void;
   onForkFromHere?: () => void;
+  onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  delegatedStatusAvailable?: boolean;
+}
+
+function DelegatedChildRow({
+  child,
+  onOpen,
+  statusAvailable,
+}: {
+  child: DelegatedChildReference;
+  onOpen?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
+  statusAvailable: boolean;
+}) {
+  const { t } = useTranslation();
+  const taskLabel = child.task_label?.trim() || child.profile || "Delegated task";
+  return (
+    <section
+      className="my-1 max-w-[49.5rem]"
+      data-delegated-child={child.child_id}
+      aria-label={taskLabel}
+    >
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center gap-3 rounded-control px-2.5 py-2 text-start text-[13px] transition-colors enabled:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+        onClick={(event) => onOpen?.(child, event.currentTarget)}
+        disabled={!onOpen}
+        aria-label={t("thread.delegatedChild.inspectTask", {
+          task: taskLabel,
+          defaultValue: "Inspect {{task}} activity",
+        })}
+      >
+        <span className="min-w-0 flex-1 space-y-0.5">
+          <span className="block break-words font-medium leading-snug text-foreground">{taskLabel}</span>
+          <SubagentStatus child={child} available={statusAvailable} />
+          {child.result_summary ? (
+            <span className="line-clamp-2 whitespace-pre-wrap break-words leading-snug text-muted-foreground">
+              {child.result_summary}
+            </span>
+          ) : null}
+        </span>
+        {onOpen ? <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground rtl:rotate-180" /> : null}
+      </button>
+    </section>
+  );
 }
 
 function ForkArrowIcon({ className }: { className?: string }) {
@@ -282,7 +328,9 @@ function IncomingSessionMessage({
 }) {
   const handle = message.sessionMessage!.session;
   const color = sessionHandleColor(handle.id);
-  const createdAtLabel = formatMessageEndTime(message.createdAt);
+  const createdAtLabel = message.timestampAvailable === false
+    ? ""
+    : formatMessageEndTime(message.createdAt);
   const handleName = `@${handle.name}`;
 
   return (
@@ -339,6 +387,8 @@ export function MessageBubble({
   slashCommands = [],
   onOpenFilePreview,
   onForkFromHere,
+  onOpenChildHistory,
+  delegatedStatusAvailable = true,
 }: MessageBubbleProps) {
   const { t } = useTranslation();
   const mentionCliApps = useMemo(
@@ -349,6 +399,16 @@ export function MessageBubble({
     () => mergeMcpMentionPresets(mcpPresets, message.mcpPresets),
     [mcpPresets, message.mcpPresets],
   );
+
+  if (message.kind === "delegated_child" && message.delegatedChild) {
+    return (
+      <DelegatedChildRow
+        child={message.delegatedChild}
+        onOpen={onOpenChildHistory}
+        statusAvailable={delegatedStatusAvailable}
+      />
+    );
+  }
 
   if (message.kind === "compaction" && message.compaction) {
     return <ContextCompactionNotice compaction={message.compaction} />;
@@ -378,7 +438,9 @@ export function MessageBubble({
     const hasText = userContent.trim().length > 0;
     const showDeliveryStatus =
       message.deliveryStatus === "sending" || message.deliveryStatus === "failed";
-    const createdAtLabel = formatMessageEndTime(message.createdAt);
+    const createdAtLabel = message.timestampAvailable === false
+      ? ""
+      : formatMessageEndTime(message.createdAt);
     const showCreatedAt = createdAtLabel.length > 0;
     const createdAtTitle = showCreatedAt ? fmtDateTime(message.createdAt) : "";
     const quotedContext = parsedMessage.quotedContext;
@@ -479,15 +541,16 @@ export function MessageBubble({
   const forkLabel = t("message.forkFromHere");
   const completedAt = message.completedAt;
   const completedAtLabel =
-    message.role === "assistant" && !message.isStreaming
+    message.role === "assistant" && !message.isStreaming && message.timestampAvailable !== false
       ? formatMessageEndTime(completedAt)
       : "";
   const assistantTimestamp =
-    typeof completedAt === "number" && Number.isFinite(completedAt)
+    message.timestampAvailable !== false
+    && typeof completedAt === "number" && Number.isFinite(completedAt)
       ? completedAt
       : message.createdAt;
   const assistantTimestampLabel =
-    message.role === "assistant" && !message.isStreaming
+    message.role === "assistant" && !message.isStreaming && message.timestampAvailable !== false
       ? formatMessageEndTime(assistantTimestamp)
       : "";
   const showCompletedAt =

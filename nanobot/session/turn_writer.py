@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
@@ -11,11 +13,40 @@ from typing import Any, cast
 from loguru import logger
 
 from nanobot.agent.tools.execution import KnownToolResult
+from nanobot.agent.tools.filesystem_effect import FilesystemEffectFact
 from nanobot.agent.turn import ToolOutcome
 from nanobot.session.execution_owner import ExecutionOwner
 from nanobot.session.pending_followups import PendingFollowupRecord
-from nanobot.session.source import SourceValidationError, canonical_events, new_source_event
+from nanobot.session.source import (
+    SourceValidationError,
+    canonical_events,
+    new_source_event,
+)
 from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+
+
+def _intent_arguments_digest(value: object) -> str:
+    """Hash normalized JSON arguments without using provider call IDs as authority."""
+    try:
+        payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        payload = repr(value)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _source_tool_result_identity(value: object) -> tuple[object, object]:
+    """Return the legacy result identity for a source-validated tool call."""
+    if not isinstance(value, dict):
+        raise AttributeError(f"'{type(value).__name__}' object has no attribute 'get'")
+    # The source event was canonically validated before the writer called this helper.
+    call = cast(dict[str, object], value)
+    function_value = call.get("function", {})
+    if not isinstance(function_value, dict):
+        raise AttributeError(
+            f"'{type(function_value).__name__}' object has no attribute 'get'"
+        )
+    function = cast(dict[str, object], function_value)
+    return call.get("id"), function.get("name")
 
 
 def _persisted_content(value: Any) -> Any:
@@ -54,6 +85,20 @@ class SourceInjectionBinding:
     message: dict[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class SourceToolIntentBinding:
+    """Writer-minted proof for one ordinal in a durable assistant tool batch."""
+
+    event_id: str
+    execution_id: str
+    ordinal: int
+    run_id: str
+    stream_id: str
+    tool_name: str
+    tool_call_id: str
+    arguments_digest: str
+
+
 class SourceTurnWriter:
     """Allocate identities before writes; never replay a failed write or effect."""
 
@@ -64,6 +109,12 @@ class SourceTurnWriter:
         self.parent_stream_id = parent_stream_id
         self._writes = writes or _Writes(owner.read_snapshot())
         self._injection_bindings: dict[int, tuple[SourceInjectionBinding, bytes, bytes]] = {}
+        self._tool_intent_bindings: dict[
+            int, tuple[SourceToolIntentBinding, bytes]
+        ] = {}
+        self._tool_intents_by_event: dict[
+            str, tuple[SourceToolIntentBinding | None, ...]
+        ] = {}
         self._batch_callback: Callable[[KnownToolResult], Awaitable[str]] | None = None
 
     def fail(self) -> None:
@@ -92,15 +143,16 @@ class SourceTurnWriter:
     def committed_events(self) -> list[dict[str, Any]]:
         return deepcopy([e for e in self._writes.committed if e.get('_stream_id') == self.stream_id])
 
-    def _append(self, payload: dict[str, Any], *, execution_ids: list[str] | None = None,
+    def _append(self, payload: dict[str, object], *, execution_ids: list[str] | None = None,
                 execution_id: str | None = None, source_origin: dict[str, Any] | None = None,
-                 artifact_read: dict[str, Any] | None = None) -> dict[str, Any]:
+                 artifact_read: dict[str, Any] | None = None,
+                 filesystem_effects: tuple[FilesystemEffectFact, ...] | None = None) -> dict[str, Any]:
         if self._writes.failed:
             raise SourceValidationError('Source turn recording failed')
         try:
             self.owner.validate_dispatch()
             clean = deepcopy(payload)
-            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin', '_artifact_read', '_busy_input_id', '_pending_followup_id'):
+            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin', '_artifact_read', '_busy_input_id', '_pending_followup_id', '_child_followup', '_background_result', '_filesystem_effects'):
                 clean.pop(key, None)
             if 'content' in clean:
                 clean['content'] = _persisted_content(clean['content'])
@@ -116,6 +168,8 @@ class SourceTurnWriter:
                 event['_execution_ids'] = execution_ids
             if execution_id is not None:
                 event['_execution_id'] = execution_id
+                if filesystem_effects is not None:
+                    event['_filesystem_effects'] = [fact.to_dict(execution_id) for fact in filesystem_effects]
             self._writes.pending = event
             current = self.owner.read_snapshot()
             # Metadata may advance independently. Source changes must belong to
@@ -156,6 +210,10 @@ class SourceTurnWriter:
                 payload["media"] = list(record.media)
             event = new_source_event(payload, run_id=self.run_id)
             event["_pending_followup_id"] = record.identifier
+            if record.child_followup is not None:
+                event["_child_followup"] = record.child_followup.to_dict()
+            if record.background_result is not None:
+                event["_background_result"] = record.background_result.to_dict()
             event["_stream_id"] = self.stream_id
             self._writes.pending = event
             committed_snapshot, committed_event = self.store.consume_pending_followup(
@@ -218,22 +276,73 @@ class SourceTurnWriter:
             raise SourceValidationError("Source user injection binding changed")
         return binding
 
-    def begin_tool_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
-        calls = payload.get('tool_calls')
-        if payload.get('role') != 'assistant' or not isinstance(calls, list) or not calls:
+    def begin_tool_batch(self, payload: dict[str, object]) -> dict[str, Any]:
+        calls_value = payload.get('tool_calls')
+        if (payload.get('role') != 'assistant' or not isinstance(calls_value, list)
+                or not calls_value):
             self._writes.failed = True
             raise SourceValidationError('Invalid source tool batch')
-        ids = [uuid.uuid4().hex for _ in cast(list[Any], calls)]
+        calls: list[object] = cast(list[object], calls_value)
+        ids = [uuid.uuid4().hex for _ in calls]
         event = self._append(payload, execution_ids=ids)
-        declared = deepcopy(cast(list[Any], calls))
+        declared: list[object] = deepcopy(calls)
+        bindings: list[SourceToolIntentBinding | None] = []
+        for ordinal, (call_value, execution_id) in enumerate(zip(declared, ids)):
+            if not isinstance(call_value, dict):
+                bindings.append(None)
+                continue
+            # _append validated the full payload as canonical JSON before this view.
+            call = cast(dict[str, object], call_value)
+            function_value = call.get("function")
+            if not isinstance(function_value, dict):
+                bindings.append(None)
+                continue
+            function = cast(dict[str, object], function_value)
+            tool_name = function.get("name")
+            tool_call_id = call.get("id")
+            if not isinstance(tool_name, str) or not tool_name or not isinstance(tool_call_id, str):
+                bindings.append(None)
+                continue
+            if (
+                tool_name not in {"followup_child", "delegate_task"}
+                or self.parent_stream_id is not None
+            ):
+                bindings.append(None)
+                continue
+            arguments: object = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (TypeError, ValueError):
+                    pass
+            digest = _intent_arguments_digest(arguments)
+            binding = SourceToolIntentBinding(
+                event_id=str(event["_event_id"]),
+                execution_id=execution_id,
+                ordinal=ordinal,
+                run_id=self.run_id,
+                stream_id=self.stream_id,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                arguments_digest=digest,
+            )
+            bindings.append(binding)
+        if any(binding is not None for binding in bindings):
+            durable_event = canonical_events([event])
+            for binding in bindings:
+                if binding is not None:
+                    self._tool_intent_bindings[id(binding)] = (binding, durable_event)
+        self._tool_intents_by_event[str(event["_event_id"])] = tuple(bindings)
         completed: set[int] = set()
 
         async def record(value: KnownToolResult) -> str:
             try:
                 index = value.ordinal
-                if (type(index) is not int or not 0 <= index < len(declared) or index in completed
-                        or value.tool_call_id != declared[index].get('id')
-                        or value.name != declared[index].get('function', {}).get('name')):
+                if type(index) is not int or not 0 <= index < len(declared) or index in completed:
+                    self._writes.failed = True
+                    raise SourceValidationError('Invalid source result binding')
+                tool_call_id, tool_name = _source_tool_result_identity(declared[index])
+                if value.tool_call_id != tool_call_id or value.name != tool_name:
                     self._writes.failed = True
                     raise SourceValidationError('Invalid source result binding')
                 raw = value.raw_result.content if isinstance(value.raw_result, ToolOutcome) else value.raw_result
@@ -283,8 +392,12 @@ class SourceTurnWriter:
                 if not value.dispatched and preparation_error_kind in {'unknown_tool', 'withheld_tool'}:
                     tool_event['_prepare_error_kind'] = preparation_error_kind
                 committed = self._append(tool_event, execution_id=ids[index],
-                                         source_origin=origin, artifact_read=retrieval)
+                                         source_origin=origin, artifact_read=retrieval,
+                                         filesystem_effects=value.filesystem_effects)
                 completed.add(index)
+                if any(fact.reconciliation_required for fact in value.filesystem_effects or ()):
+                    self.owner.recovery_required = True
+                    self._writes.failed = True
                 return committed['_event_id']
             except BaseException:
                 self._writes.failed = True
@@ -292,6 +405,98 @@ class SourceTurnWriter:
 
         self._batch_callback = record
         return event
+
+    def bind_tool_intents(
+        self,
+        event_id: str,
+    ) -> tuple[SourceToolIntentBinding | None, ...] | None:
+        """Return writer-minted identities for child dispatch tool calls."""
+        if self.failed:
+            raise SourceValidationError("Tool intent is unavailable after source failure")
+        bindings = self._tool_intents_by_event.get(event_id)
+        if bindings is None or not any(binding is not None for binding in bindings):
+            return None
+        return bindings
+
+    def owns_tool_intent(self, binding: object) -> bool:
+        """Confirm this writer minted the exact binding for the current stream."""
+        saved = self._tool_intent_bindings.get(id(binding))
+        if (
+            type(binding) is not SourceToolIntentBinding
+            or saved is None
+            or saved[0] is not binding
+            or binding.run_id != self.run_id
+            or binding.stream_id != self.stream_id
+        ):
+            return False
+        self.owner.validate_dispatch()
+        return True
+
+    def validate_tool_intent_binding(
+        self,
+        binding: object,
+        *,
+        arguments: object,
+    ) -> SourceToolIntentBinding:
+        """Reject copied, stale, unrelated, or changed tool intent evidence."""
+        saved = self._tool_intent_bindings.get(id(binding))
+        if (
+            type(binding) is not SourceToolIntentBinding
+            or saved is None
+            or saved[0] is not binding
+            or binding.run_id != self.run_id
+            or binding.stream_id != self.stream_id
+            or _intent_arguments_digest(arguments) != binding.arguments_digest
+        ):
+            raise SourceValidationError("Invalid source tool intent binding")
+        self.owner.validate_dispatch()
+        snapshot = self.owner.read_snapshot()
+        events = [event for event in snapshot.events if event.get("_event_id") == binding.event_id]
+        if len(events) != 1:
+            raise SourceValidationError("Source tool intent is no longer current")
+        event = events[0]
+        event_bytes = canonical_events([event])
+        calls_value = event.get("tool_calls")
+        identities_value = event.get("_execution_ids")
+        if (
+            event.get("role") != "assistant"
+            or event.get("_run_id") != binding.run_id
+            or event.get("_stream_id") != binding.stream_id
+            or not isinstance(calls_value, list)
+            or not isinstance(identities_value, list)
+            or event_bytes != saved[1]
+        ):
+            raise SourceValidationError("Source tool intent binding changed")
+        calls: list[object] = cast(list[object], calls_value)
+        identities: list[object] = cast(list[object], identities_value)
+        if (
+            binding.ordinal >= len(calls)
+            or binding.ordinal >= len(identities)
+            or identities[binding.ordinal] != binding.execution_id
+        ):
+            raise SourceValidationError("Source tool intent binding changed")
+        call_value = calls[binding.ordinal]
+        if not isinstance(call_value, dict):
+            raise SourceValidationError("Source tool intent call is invalid")
+        # event_bytes validated the recursive JSON object-key invariant above.
+        call = cast(dict[str, object], call_value)
+        function_value = call.get("function")
+        if not isinstance(function_value, dict):
+            raise SourceValidationError("Source tool intent function is invalid")
+        function = cast(dict[str, object], function_value)
+        stored_arguments: object = function.get("arguments")
+        if isinstance(stored_arguments, str):
+            try:
+                stored_arguments = json.loads(stored_arguments)
+            except (TypeError, ValueError):
+                pass
+        if (
+            call.get("id") != binding.tool_call_id
+            or function.get("name") != binding.tool_name
+            or _intent_arguments_digest(stored_arguments) != binding.arguments_digest
+        ):
+            raise SourceValidationError("Source tool intent identity changed")
+        return binding
 
     async def record_tool_result(self, value: KnownToolResult) -> None:
         await self.record_tool_result_event(value)

@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -16,8 +17,14 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from loguru import logger
 from websockets.asyncio.server import ServerConnection
 
+from nanobot.agent.stop_target import StopExpectation, parse_stop_expectation
+from nanobot.agent.turn import ApprovalDecision
 from nanobot.attachments.models import AttachmentRecord
-from nanobot.bus.events import INBOUND_META_USER_SHELL
+from nanobot.bus.events import (
+    INBOUND_META_STOP_CLIENT,
+    INBOUND_META_STOP_EXPECTATION,
+    INBOUND_META_USER_SHELL,
+)
 from nanobot.command.builtin import USER_SHELL_COMMAND, builtin_command_starts_agent_turn
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_INPUT_META,
@@ -59,7 +66,11 @@ from nanobot.webui.session_access import (
     WebuiSessionAccess,
     session_mentions_runtime_context,
 )
-from nanobot.webui.session_identity import is_valid_webui_chat_id, webui_session_key
+from nanobot.webui.session_identity import (
+    WEBUI_SESSION_STORAGE_PREFIX,
+    is_valid_webui_chat_id,
+    webui_session_key,
+)
 from nanobot.webui.sidebar_state import write_webui_sidebar_state
 from nanobot.webui.temporary_chats import TemporaryChatError
 from nanobot.webui.transcription_ws import webui_transcription_event
@@ -102,6 +113,20 @@ _MESSAGE_LEVEL_CONTROL_FIELDS = frozenset({
 })
 
 
+def _is_stop_control(envelope: dict[str, Any]) -> bool:
+    """Return whether the envelope is the exact Stop control command."""
+    content = envelope.get("content")
+    return isinstance(content, str) and content.strip().lower() == "/stop"
+
+
+def _is_targeted_stop(envelope: dict[str, Any]) -> bool:
+    """Return whether the envelope addresses Stop to one admitted turn."""
+    if not _is_stop_control(envelope):
+        return False
+    target = envelope.get("target_turn_id")
+    return isinstance(target, str) and bool(target)
+
+
 def request_settings_error(
     envelope: dict[str, Any],
     *,
@@ -127,7 +152,12 @@ def request_settings_error(
         return "invalid_request_settings", "request_intent"
     target = envelope.get("target_turn_id")
     if intent == "new":
-        if target is not None:
+        # Stop is a turn control, not a new workspace request. Its target is
+        # the admitted turn that the owner must verify before settling.
+        if _is_stop_control(envelope):
+            if target is not None and (not isinstance(target, str) or not target):
+                return "invalid_request_settings", "target_turn_id"
+        elif target is not None:
             return "invalid_request_settings", "target_turn_id"
     else:
         if (
@@ -166,6 +196,10 @@ class WebUIRequestResult:
     message: str | None = None
     workspace_scope: Any = None
     workspace_permissions: Any = None
+    # Authoritative effect disposition, distinct from response acknowledgement.
+    # ``applied``/``partial`` mean the effect may exist even if the reply is lost.
+    # ``not_applied`` is a pre-effect refusal. ``uncertain`` requires readback.
+    outcome: str | None = None
 
 
 @dataclass
@@ -286,18 +320,12 @@ def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
     identity = _typed_mobile_identity(connection)
     if identity is None:
         return False
-    scopes = identity.scopes
-    if action in _MOBILE_MUTATION_ACTIONS:
-        return True
-    if "owner" not in scopes:
-        return False
     try:
-        from nanobot.remote.operations import load_registry
+        from nanobot.remote.operations import mobile_mutation_allowed
 
-        spec = load_registry().mutations.get(action)
+        return mobile_mutation_allowed(identity.scopes, action)
     except Exception:
         return False
-    return spec is not None and spec.enabled
 
 
 class WebUICommandRouter:
@@ -331,6 +359,10 @@ class WebUICommandRouter:
         ] = {}
         self.request_operations: dict[str, WebUIRequestOperation] = {}
         self.request_locks: dict[ServerConnection, asyncio.Lock] = {}
+        # A WebUI attempt ID is bound to its submitted payload. A repeated ID
+        # with different input must fail; the same input may be recovered.
+        self._message_attempts: dict[tuple[str, str], str] = {}
+        self._message_attempt_limit = 4096
         if replay_store is None:
             settings = getattr(gateway, "settings", None)
             config = getattr(settings, "config", None)
@@ -607,6 +639,12 @@ class WebUICommandRouter:
                 except Exception:
                     pass
                 return
+            from nanobot.remote.operations import mobile_frame_allowed
+
+            identity = _typed_mobile_identity(connection)
+            if identity is None or not mobile_frame_allowed(identity.scopes, envelope):
+                await self._transport.webui_send_event(connection, "error", detail="scope_denied")
+                return
         command_type = envelope.get("type")
         if command_type == "attachment":
             await self._handle_attachment_upload(connection, envelope)
@@ -796,6 +834,62 @@ class WebUICommandRouter:
             detail=f"unknown type: {command_type!r}",
         )
 
+    def _bind_message_attempt(
+        self,
+        chat_id: str,
+        turn_id: str | None,
+        envelope: dict[str, Any],
+        *,
+        stop_expectation: StopExpectation | None = None,
+    ) -> tuple[str, str] | None:
+        """Bind one attempt ID to its payload; reject changed repeated input."""
+        if not turn_id:
+            return None
+        payload = {
+            key: envelope.get(key)
+            for key in (
+                "content",
+                "media",
+                "attachments",
+                "cli_apps",
+                "mcp_presets",
+                "session_mentions",
+                "quoted_context",
+                "request_intent",
+                "target_turn_id",
+                "approval_decision",
+                "stop_expectation",
+                "user_shell",
+                "webui",
+            )
+        }
+        payload["stop_expectation"] = (
+            stop_expectation.to_dict() if stop_expectation is not None else None
+        )
+        digest = hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+        key = (chat_id, turn_id)
+        current = self._message_attempts.get(key)
+        if current is None:
+            if len(self._message_attempts) >= self._message_attempt_limit:
+                # Bound the ledger without dropping a fresh in-flight attempt.
+                for stale_key in list(self._message_attempts)[
+                    : max(1, len(self._message_attempts) - self._message_attempt_limit + 1)
+                ]:
+                    self._message_attempts.pop(stale_key, None)
+            self._message_attempts[key] = digest
+            return None
+        if current != digest:
+            return ("not_admitted", "attempt_payload_changed")
+        return None
+
     async def _dispatch_message(
         self,
         connection: ServerConnection,
@@ -813,6 +907,48 @@ class WebUICommandRouter:
             "chat_id": chat_id,
             **({"turn_id": turn_id} if turn_id else {}),
         }
+        is_stop = _is_stop_control(envelope)
+        raw_stop_expectation = envelope.get("stop_expectation")
+        has_stop_expectation = "stop_expectation" in envelope
+        duplicate_keys = getattr(envelope, "duplicate_keys", ())
+        stop_expectation: StopExpectation | None = None
+        if has_stop_expectation or "stop_expectation" in duplicate_keys:
+            if not is_stop or "stop_expectation" in duplicate_keys:
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="not_admitted",
+                    reason="invalid_stop_expectation",
+                    **rejection_fields,
+                )
+                return
+            try:
+                stop_expectation = parse_stop_expectation(raw_stop_expectation)
+            except (TypeError, ValueError):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="not_admitted",
+                    reason="invalid_stop_expectation",
+                    **rejection_fields,
+                )
+                return
+        attempt_error = self._bind_message_attempt(
+            str(chat_id),
+            turn_id,
+            envelope,
+            stop_expectation=stop_expectation,
+        )
+        if attempt_error is not None:
+            detail, reason = attempt_error
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail=detail,
+                reason=reason,
+                **rejection_fields,
+            )
+            return
         if not self._transport.is_allowed(client_id):
             await self._transport.webui_send_event(
                 connection,
@@ -840,9 +976,46 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
-        if request_intent == "new" and (
-            websocket_turn_wall_started_at(chat_id) is not None
-            or websocket_turn_reserved(chat_id)
+        approval_control = "approval_decision" in envelope or "approval_decision" in duplicate_keys
+        if approval_control:
+            raw_decision: object = envelope.get("approval_decision")
+            try:
+                if (
+                    "approval_decision" in duplicate_keys
+                    or not isinstance(raw_decision, dict)
+                    or getattr(cast(dict[object, object], raw_decision), "duplicate_keys", ())
+                    or set(cast(dict[object, object], raw_decision)) - {
+                        "approval_id", "decision", "session_key", "session_incarnation",
+                        "run_id", "turn_id", "effect_id", "generation",
+                    }
+                ):
+                    raise ValueError("invalid approval control")
+                ApprovalDecision.from_mapping(raw_decision)
+                if (
+                    is_stop
+                    or envelope.get("webui") is not True
+                    or connection not in self._webui_connections
+                    or not turn_id
+                    or turn_id == websocket_turn_id(chat_id)
+                    or request_intent == "steer"
+                    or temporary_owned
+                ):
+                    raise ValueError("invalid approval control context")
+            except (TypeError, ValueError):
+                await self._transport.webui_send_event(
+                    connection, "error", detail="not_admitted",
+                    reason="invalid_approval_decision", **rejection_fields,
+                )
+                return
+        if (
+            request_intent == "new"
+            and not approval_control
+            and not _is_targeted_stop(envelope)
+            and stop_expectation is None
+            and (
+                websocket_turn_wall_started_at(chat_id) is not None
+                or websocket_turn_reserved(chat_id)
+            )
         ):
             await self._transport.webui_send_event(
                 connection,
@@ -868,6 +1041,45 @@ class WebUICommandRouter:
                 detail="message_rejected",
                 reason=message_rejection,
                 **rejection_fields,
+            )
+            return
+
+        if approval_control:
+            # Decisions carry no new parent input or workspace authority. Read
+            # only the current scope; the canonical approval owner resolves the
+            # exact child and revalidates its source after independent scheduling.
+            try:
+                scope = self._workspaces.scope_for_session_key(webui_session_key(chat_id))
+                if (
+                    current_source_token is None
+                    or self._workspaces.source_token(chat_id) != current_source_token
+                    or not self._transport.is_allowed(client_id)
+                ):
+                    raise ValueError("approval source changed")
+            except Exception:
+                await self._transport.webui_send_event(
+                    connection, "error", detail="not_admitted",
+                    reason="approval_source_unavailable", **rejection_fields,
+                )
+                return
+            metadata = {
+                "remote": getattr(connection, "remote_address", None),
+                "webui": True,
+                **self._transcripts.client_turn_metadata(turn_id),
+                WEBUI_SOURCE_TOKEN_METADATA_KEY: current_source_token,
+                "approval_decision": dict(cast(dict[str, Any], envelope["approval_decision"])),
+            }
+            self._transport.webui_attach(connection, chat_id)
+            await self._transport.webui_dispatch_message(
+                sender_id=client_id, chat_id=chat_id, content=content,
+                media=None, attachments=None, metadata=metadata, is_dm=False,
+                # Exact pending ownership is resolved before ordinary dispatch.
+                # A valid settled root need not remain in the ephemeral cache.
+                session_key=None, require_existing_session=False, workspace_scope=scope,
+            )
+            await self._transport.webui_send_event(
+                connection, "message_accepted", chat_id=chat_id, turn_id=turn_id,
+                starts_turn=False,
             )
             return
 
@@ -957,7 +1169,10 @@ class WebUICommandRouter:
                 id_items: list[dict[str, Any]] = []
                 data_items: list[Any] = []
                 for item in cast(list[Any], raw_media):
-                    if isinstance(item, dict) and isinstance(item.get("id"), str):
+                    if (
+                        isinstance(item, dict)
+                        and isinstance(cast(dict[str, Any], item).get("id"), str)
+                    ):
                         id_items.append(cast(dict[str, Any], item))
                     else:
                         data_items.append(item)
@@ -1119,9 +1334,18 @@ class WebUICommandRouter:
                 metadata.update(self._transcripts.client_turn_metadata(envelope.get("turn_id")))
             if isinstance(request_intent, str):
                 metadata[WEBUI_REQUEST_INTENT_METADATA_KEY] = request_intent
+            if is_stop:
+                metadata[INBOUND_META_STOP_CLIENT] = True
+                if stop_expectation is not None:
+                    metadata[INBOUND_META_STOP_EXPECTATION] = stop_expectation
             target_turn_id = envelope.get("target_turn_id")
             if isinstance(target_turn_id, str):
                 metadata[WEBUI_TARGET_TURN_METADATA_KEY] = target_turn_id
+            approval_decision = envelope.get("approval_decision")
+            if isinstance(approval_decision, dict):
+                metadata["approval_decision"] = dict(
+                    cast(dict[str, Any], approval_decision),
+                )
             if is_user_shell:
                 metadata[INBOUND_META_USER_SHELL] = True
             dispatch_content = (
@@ -1199,7 +1423,7 @@ class WebUICommandRouter:
             else:
                 media_records = tuple(bound_records)
             if temporary_policy is not None and media_paths:
-                self._temporary_chats.register_media(connection, chat_id, media_paths)
+                self._temporary_chats.register_media(connection, chat_id, media_paths, records=media_records)
 
             try:
                 if is_webui and (
@@ -1321,6 +1545,7 @@ class WebUICommandRouter:
                 request_id,
                 status=400,
                 message="invalid WebUI mutation action",
+                outcome="not_applied",
             )
             return
         if not isinstance(payload, dict):
@@ -1329,6 +1554,7 @@ class WebUICommandRouter:
                 request_id,
                 status=400,
                 message="WebUI mutation payload must be an object",
+                outcome="not_applied",
             )
             return
         if (
@@ -1340,6 +1566,7 @@ class WebUICommandRouter:
                 request_id,
                 status=403,
                 message=_mobile_denial_message(connection, action),
+                outcome="not_applied",
             )
             return
 
@@ -1354,6 +1581,7 @@ class WebUICommandRouter:
                 request_id,
                 status=authorization.status,
                 message=authorization.message,
+                outcome="not_applied",
             )
             return
 
@@ -1373,6 +1601,7 @@ class WebUICommandRouter:
                     request_id,
                     status=409,
                     message="source_changed",
+                    outcome="not_applied",
                 )
                 return
         else:
@@ -1382,7 +1611,13 @@ class WebUICommandRouter:
             and self.gateway.session_manager is not None
             and source_binding is None
         ):
-            await self.send_webui_response(connection, request_id, status=409, message="source_changed")
+            await self.send_webui_response(
+                connection,
+                request_id,
+                status=409,
+                message="source_changed",
+                outcome="not_applied",
+            )
             return
 
         payload_digest = hashlib.sha256(
@@ -1404,6 +1639,7 @@ class WebUICommandRouter:
                 request_id,
                 status=409,
                 message="request_id was already used for a different WebUI mutation",
+                outcome="not_applied",
             )
             return
         if (
@@ -1428,6 +1664,7 @@ class WebUICommandRouter:
                     request_id,
                     status=503,
                     message="replay_store_unavailable",
+                    outcome="uncertain",
                 )
                 return
             if durable_state == "mismatch":
@@ -1436,6 +1673,7 @@ class WebUICommandRouter:
                     request_id,
                     status=409,
                     message="request_id was already used for a different WebUI mutation",
+                    outcome="not_applied",
                 )
                 return
             if durable_state == "uncertain":
@@ -1444,6 +1682,7 @@ class WebUICommandRouter:
                     request_id,
                     status=409,
                     message="replay_uncertain",
+                    outcome="uncertain",
                 )
                 return
             if durable_state == "completed":
@@ -1459,6 +1698,13 @@ class WebUICommandRouter:
                     result=stored.get("result"),
                     workspace_scope=stored.get("workspace_scope"),
                     workspace_permissions=stored.get("workspace_permissions"),
+                    outcome=(
+                        cast(str, stored["outcome"])
+                        if stored.get("outcome") in {
+                            "applied", "not_applied", "uncertain", "partial",
+                        }
+                        else None
+                    ),
                 )
 
                 async def _cached_result() -> WebUIRequestResult:
@@ -1497,6 +1743,7 @@ class WebUICommandRouter:
                         request_id,
                         status=503,
                         message="replay_store_unavailable",
+                        outcome="uncertain",
                     )
                     return
                 if not started:
@@ -1505,6 +1752,7 @@ class WebUICommandRouter:
                         request_id,
                         status=409,
                         message="replay_uncertain",
+                        outcome="uncertain",
                     )
                     return
 
@@ -1648,6 +1896,44 @@ class WebUICommandRouter:
             return
         self.request_locks.pop(connection, None)
 
+    @staticmethod
+    def _result_has_effect(result: WebUIRequestResult) -> bool:
+        """Whether the owner may already have committed the mutation."""
+        if result.outcome in {"applied", "partial"}:
+            return True
+        return (
+            result.outcome is None
+            and (result.status is None or 200 <= result.status < 300)
+        )
+
+    async def _invalidate_after_mutation(
+        self,
+        result: WebUIRequestResult,
+        action: str,
+        payload: dict[str, Any],
+        *,
+        origin: ServerConnection,
+        request_id: str,
+    ) -> None:
+        """Invalidate projections for known effects even if the reply was lost."""
+        if not self._result_has_effect(result):
+            return
+        try:
+            await self.notify_state_changed(action, payload, origin=origin)
+        except Exception:
+            logger.exception(
+                "WebUI mutation '{}' applied but projection refresh failed",
+                action,
+            )
+            with suppress(Exception):
+                await self._transport.webui_send_event(
+                    origin,
+                    "projection_error",
+                    request_id=request_id,
+                    action=action,
+                    reason="projection_refresh_failed",
+                )
+
     async def deliver_webui_request(
         self,
         connection: ServerConnection,
@@ -1660,22 +1946,37 @@ class WebUICommandRouter:
         source_binding: dict[str, object] | None = None,
     ) -> None:
         try:
+            delivery_error: BaseException | None = None
             if sequence:
                 lock = self.request_locks.setdefault(connection, asyncio.Lock())
                 async with lock:
                     result = await asyncio.shield(operation_task)
-                    await self._deliver_authorized_webui_result(
-                        connection, request_id, action, payload, result, source_binding,
+                    try:
+                        await self._deliver_authorized_webui_result(
+                            connection, request_id, action, payload, result, source_binding,
+                        )
+                    except BaseException as exc:
+                        delivery_error = exc
+                    await self._invalidate_after_mutation(
+                        result, action, payload, origin=connection, request_id=request_id,
                     )
+                    if delivery_error is not None:
+                        raise delivery_error
                 return
             result = await asyncio.shield(operation_task)
-            await self._deliver_authorized_webui_result(
-                connection, request_id, action, payload, result, source_binding,
+            try:
+                await self._deliver_authorized_webui_result(
+                    connection, request_id, action, payload, result, source_binding,
+                )
+            except BaseException as exc:
+                delivery_error = exc
+            # A known applied or partial effect invalidates the affected
+            # projection even when the actor's response fails.
+            await self._invalidate_after_mutation(
+                result, action, payload, origin=connection, request_id=request_id,
             )
-            if result.status is None or 200 <= result.status < 300:
-                # After the actor's response, invalidate the caches this
-                # mutation changed on every other client.
-                await self.notify_state_changed(action, payload, origin=connection)
+            if delivery_error is not None:
+                raise delivery_error
         finally:
             self.request_tasks.pop((connection, request_id), None)
             self.discard_request_lock_if_idle(connection)
@@ -1689,6 +1990,9 @@ class WebUICommandRouter:
         result: WebUIRequestResult,
         source_binding: dict[str, object] | None,
     ) -> None:
+        if _typed_mobile_identity(connection) is not None:
+            if not await self._transport.revalidate_mobile_connection(connection):
+                return
         if connection not in self._webui_connections and not _mobile_mutation_allowed(
             connection, action
         ):
@@ -1745,6 +2049,7 @@ class WebUICommandRouter:
             message=result.message,
             workspace_scope=result.workspace_scope,
             workspace_permissions=result.workspace_permissions,
+            outcome=result.outcome,
         )
 
     def _record_replay_result(
@@ -1756,7 +2061,7 @@ class WebUICommandRouter:
         if self._durable_replay is None:
             return
         try:
-            if result.status == 504 or result.message == "timeout":
+            if result.outcome == "uncertain":
                 self._durable_replay.uncertain(request_id)
             else:
                 self._durable_replay.complete(request_id, result)
@@ -1772,6 +2077,8 @@ class WebUICommandRouter:
         source_binding: dict[str, object] | None = None,
         source_binding_captured: bool = False,
     ) -> WebUIRequestResult:
+        if action == "delegation.child.control":
+            return await self._control_delegated_child(connection, payload)
         timeout_s = 30.0
         try:
             from nanobot.remote.operations import load_registry
@@ -1782,7 +2089,11 @@ class WebUICommandRouter:
                 if spec.max_request_bytes is not None:
                     encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                     if len(encoded) > spec.max_request_bytes:
-                        return WebUIRequestResult(status=413, message="request_too_large")
+                        return WebUIRequestResult(
+                            status=413,
+                            message="request_too_large",
+                            outcome="not_applied",
+                        )
         except Exception:
             pass
         try:
@@ -1813,7 +2124,11 @@ class WebUICommandRouter:
                 try:
                     response = await asyncio.wait_for(dispatch(), timeout=timeout_s)
                 except TimeoutError:
-                    return WebUIRequestResult(status=504, message="timeout")
+                    return WebUIRequestResult(
+                        status=504,
+                        message="timeout",
+                        outcome="uncertain",
+                    )
                 status = response.status_code
                 body = bytes(response.body).decode("utf-8", errors="replace").strip()
                 if 200 <= status < 300:
@@ -1823,13 +2138,19 @@ class WebUICommandRouter:
                         return WebUIRequestResult(
                             status=502,
                             message="WebUI mutation returned an invalid response",
+                            outcome="uncertain",
                         )
+                    outcome = "applied"
+                    if isinstance(result, dict):
+                        declared = cast(dict[str, Any], result).get("outcome")
+                        if declared in {"applied", "not_applied", "uncertain", "partial"}:
+                            outcome = cast(str, declared)
                     if action == "sidebar.update" and isinstance(result, dict):
                         await self.broadcast_webui_event(
                             "sidebar_state_updated",
                             state=result,
                         )
-                    return WebUIRequestResult(result=result)
+                    return WebUIRequestResult(result=result, outcome=outcome)
                 if action == "workspace.access.mode.set":
                     try:
                         decoded_value: object = json.loads(body)
@@ -1841,6 +2162,7 @@ class WebUICommandRouter:
                         if isinstance(error_value, dict):
                             error = cast(dict[str, object], error_value)
                             error_message = error.get("message")
+                            declared = decoded.get("outcome")
                             return WebUIRequestResult(
                                 status=status,
                                 message=(
@@ -1850,8 +2172,19 @@ class WebUICommandRouter:
                                 ),
                                 workspace_scope=decoded.get("workspace_scope"),
                                 workspace_permissions=decoded.get("workspace_permissions"),
+                                outcome=(
+                                    cast(str, declared)
+                                    if declared in {
+                                        "applied", "not_applied", "uncertain", "partial",
+                                    }
+                                    else "not_applied"
+                                ),
                             )
-                return WebUIRequestResult(status=status, message=body or response.reason_phrase)
+                return WebUIRequestResult(
+                    status=status,
+                    message=body or response.reason_phrase,
+                    outcome="not_applied",
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1859,7 +2192,81 @@ class WebUICommandRouter:
             return WebUIRequestResult(
                 status=500,
                 message="WebUI mutation failed",
+                outcome="uncertain",
             )
+
+    async def _control_delegated_child(
+        self,
+        connection: ServerConnection,
+        payload: dict[str, Any],
+    ) -> WebUIRequestResult:
+        """Authorize and route one child control from an attached parent chat."""
+        parent_key = payload.get("parent_key")
+        child_id = payload.get("child_id")
+        control = payload.get("action")
+        content = payload.get("content")
+        runtime_generation = payload.get("runtime_generation")
+        if not (
+            isinstance(parent_key, str)
+            and (
+                parent_key.startswith(WEBUI_SESSION_STORAGE_PREFIX)
+                or parent_key.startswith("delegated:")
+            )
+            and isinstance(child_id, str) and child_id
+            and control in {"wait", "steer", "stop"}
+            and (content is None or isinstance(content, str))
+            and type(runtime_generation) is int
+            and runtime_generation >= 0
+        ):
+            return WebUIRequestResult(
+                status=400,
+                message="invalid child control",
+                outcome="not_applied",
+            )
+        sessions = self.gateway.session_manager
+        if sessions is None:
+            return WebUIRequestResult(
+                status=503,
+                message="delegation_control_unavailable",
+                outcome="not_applied",
+            )
+        from nanobot.webui.ws_http import resolve_child_root_key
+
+        root_key = resolve_child_root_key(sessions, parent_key)
+        if root_key is None:
+            return WebUIRequestResult(
+                status=409,
+                message="child_parent_stale",
+                outcome="not_applied",
+            )
+        chat_id = root_key.split(":", 1)[1]
+        if chat_id not in self._transport.webui_connection_chats(connection):
+            return WebUIRequestResult(
+                status=403,
+                message="child_parent_not_attached",
+                outcome="not_applied",
+            )
+        callback = getattr(self.gateway, "child_control", None)
+        if callback is None:
+            return WebUIRequestResult(
+                status=503,
+                message="delegation_control_unavailable",
+                outcome="not_applied",
+            )
+        result = await callback(
+            parent_key,
+            child_id,
+            str(control),
+            content,
+            runtime_generation,
+        )
+        if not result.get("ok"):
+            return WebUIRequestResult(
+                status=409,
+                message=str(result.get("reason") or "child_control_failed"),
+                outcome="not_applied",
+            )
+        return WebUIRequestResult(result=result, outcome="applied")
 
     async def send_webui_response(
         self,
@@ -1871,6 +2278,7 @@ class WebUICommandRouter:
         message: str | None = None,
         workspace_scope: Any = None,
         workspace_permissions: Any = None,
+        outcome: str | None = None,
     ) -> None:
         if status is None:
             await self._transport.webui_send_event(
@@ -1879,6 +2287,7 @@ class WebUICommandRouter:
                 request_id=request_id,
                 ok=True,
                 result=result,
+                **({"outcome": outcome} if outcome is not None else {}),
             )
             return
         error: dict[str, Any] = {
@@ -1889,6 +2298,8 @@ class WebUICommandRouter:
             error["workspace_scope"] = workspace_scope
         if workspace_permissions is not None:
             error["workspace_permissions"] = workspace_permissions
+        if outcome is not None:
+            error["outcome"] = outcome
         await self._transport.webui_send_event(
             connection,
             "webui_response",

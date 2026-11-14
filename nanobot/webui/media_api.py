@@ -9,7 +9,6 @@ import hmac
 import mimetypes
 import os
 import re
-import shutil
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -124,42 +123,73 @@ def sign_or_stage_media_path(
     authorize_source: Callable[[Path], bool] | None = None,
 ) -> dict[str, str] | None:
     """Sign an existing media-root path, or stage an arbitrary file before signing."""
-    signed = sign_media_path(path, secret=secret, media_dir=media_dir)
-    if signed is not None:
-        return {"url": signed, "name": path.name}
-    staged_tmp: Path | None = None
+    from nanobot.attachments._media import atomic_write_bytes
+    from nanobot.attachments.store import AttachmentStore
+
+    base = media_dir(None).resolve(strict=True)
+    store = AttachmentStore(base / "attachments", media_root=base)
+    staged_input = None
     try:
         resolved = path.resolve(strict=True)
         if not resolved.is_file():
             return None
-        if authorize_source is not None and not authorize_source(resolved):
+        managed = resolved.is_relative_to(base)
+        if not managed and authorize_source is not None and not authorize_source(resolved):
             return None
-        source_stat = resolved.stat()
-        target_dir = media_dir("websocket")
-        safe_name = safe_filename(path.name) or "attachment"
-        source_version = "\0".join((
-            os.path.normcase(str(resolved)),
-            str(source_stat.st_size),
-            str(source_stat.st_mtime_ns),
-            str(source_stat.st_ctime_ns),
-        ))
-        source_digest = hashlib.sha256(source_version.encode("utf-8")).hexdigest()[:20]
-        staged = target_dir / f"{source_digest}-{safe_name}"
-        if not staged.is_file() or staged.stat().st_size != source_stat.st_size:
-            staged_tmp = target_dir / f".{source_digest}-{uuid.uuid4().hex}.tmp"
-            shutil.copyfile(resolved, staged_tmp)
-            staged_tmp.replace(staged)
+        publication_id = f"media_{uuid.uuid4().hex}"
+        if managed:
+            target = resolved
+        else:
+            source_stat = resolved.stat()
+            target_dir = media_dir("websocket")
+            safe_name = safe_filename(path.name) or "attachment"
+            source_version = "\0".join((os.path.normcase(str(resolved)), str(source_stat.st_size),
+                                         str(source_stat.st_mtime_ns), str(source_stat.st_ctime_ns)))
+            source_digest = hashlib.sha256(source_version.encode("utf-8")).hexdigest()[:20]
+            target = target_dir / f"{source_digest}-{safe_name}"
+            staged_input = store.stage_path(resolved, source="websocket-outbound")
+        with store.custody.fence(create=True) as gate:
+            if managed:
+                record = store.record_for_existing_path(target, source="websocket-outbound")
+                if record is None:
+                    return None
+                digest = record.sha256
+            else:
+                if staged_input is None:
+                    return None
+                digest = staged_input.sha256
+            store.custody.pin(gate, publication_id=publication_id, path=target, sha256=digest)
+            if staged_input is not None:
+                atomic_write_bytes(target, staged_input.temp_path.read_bytes())
+            signed = sign_media_path(target, secret=secret, media_dir=media_dir)
+            if signed is None:
+                return None
+            # This public publication ID is not the private custody token and
+            # cannot authorize cleanup. It survives markdown-only projection.
+            return {"url": f"{signed}?publication={publication_id}", "name": path.name,
+                    "id": publication_id}
     except OSError as exc:
         if logger is not None:
             logger.warning("failed to stage outbound media {}: {}", path, exc)
         return None
     finally:
-        if staged_tmp is not None:
-            staged_tmp.unlink(missing_ok=True)
-    signed = sign_media_path(staged, secret=secret, media_dir=media_dir)
-    if signed is None:
+        if staged_input is not None:
+            store.discard(staged_input)
+
+
+def sign_existing_media_path(
+    path: Path, *, secret: bytes, media_dir: MediaDirProvider = _default_media_dir,
+) -> dict[str, str] | None:
+    """Project an already managed asset without creating publication custody."""
+    try:
+        resolved = path.resolve(strict=True)
+        root = media_dir(None).resolve(strict=True)
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            return None
+        signed = sign_media_path(resolved, secret=secret, media_dir=media_dir)
+        return {"url": signed, "name": path.name} if signed is not None else None
+    except (OSError, ValueError):
         return None
-    return {"url": signed, "name": path.name}
 
 
 def media_attachment_kind(name: str) -> str:
@@ -188,7 +218,10 @@ def signed_media_attachments(
         if not url:
             continue
         name = att.get("name") or path.name
-        out.append({"kind": media_attachment_kind(name), "url": url, "name": name})
+        item = {"kind": media_attachment_kind(name), "url": url, "name": name}
+        if att.get("id"):
+            item["id"] = att["id"]
+        out.append(item)
     return out
 
 

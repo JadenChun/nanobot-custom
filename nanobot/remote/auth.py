@@ -16,7 +16,7 @@ from nanobot.remote.protocol import (
     REFRESH_IDLE_SECONDS,
     validate_scopes,
 )
-from nanobot.remote.store import RemoteAccessStore, RemoteDevice, StoreError
+from nanobot.remote.store import DeviceProofRecord, RemoteAccessStore, RemoteDevice, StoreError
 
 
 class AuthError(RuntimeError):
@@ -31,11 +31,17 @@ class AuthConflictError(AuthError):
     """A device already exists or the owner refused a duplicate operation."""
 
 
+class AuthUpgradeRequiredError(AuthRejectedError):
+    """A legacy v1 bearer device must re-pair with the device-key contract."""
+
+
 @dataclass(frozen=True)
 class AccessGrant:
     installation_id: str
     scopes: tuple[str, ...]
     expires_at: float
+    origin: str = ""
+    device_generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -91,6 +97,93 @@ class TokenService:
                 scopes=tuple(scopes),
             )
 
+    def issue_device(
+        self,
+        installation_id: str,
+        scopes: tuple[str, ...],
+        *,
+        device_fingerprint: str,
+        device_generation: int,
+        origin: str = "",
+        label: str = "mobile",
+        pairing_id: str = "",
+        cancel_digest: str = "",
+    ) -> IssuedPair:
+        """Issue one proof-bound access grant without a bearer refresh authority."""
+        validate_scopes(scopes)
+        if not device_fingerprint or device_generation < 1:
+            raise AuthRejectedError("device proof binding is invalid")
+        with self._lock:
+            state = self.store.load()
+            if state is None or not state.enabled:
+                raise AuthRejectedError("remote access is disabled")
+            existing = self.store.get_device(installation_id)
+            if existing is not None and existing.revoked_at is None:
+                raise AuthConflictError("installation already has a device record")
+            access_token = f"nbm_at_{secrets.token_urlsafe(32)}"
+            try:
+                self.store.add_device(
+                    installation_id=installation_id,
+                    label=label,
+                    scopes=scopes,
+                    refresh_token="",
+                    refresh_expires_at=0.0,
+                    proof=DeviceProofRecord(
+                        fingerprint=device_fingerprint,
+                        generation=device_generation,
+                        origin=origin,
+                        pairing_id=pairing_id,
+                        cancel_digest=cancel_digest,
+                    ),
+                )
+            except StoreError as exc:
+                raise AuthConflictError(str(exc)) from exc
+            expires_at = self.clock() + ACCESS_TTL_SECONDS
+            self._access[_token_hash(access_token)] = AccessGrant(
+                installation_id=installation_id,
+                scopes=tuple(scopes),
+                expires_at=expires_at,
+                device_generation=device_generation,
+            )
+            return IssuedPair(
+                access_token=access_token,
+                refresh_token="",
+                expires_in=ACCESS_TTL_SECONDS,
+                refresh_expires_in=0,
+                scopes=tuple(scopes),
+            )
+
+    def reissue_device(
+        self, installation_id: str, *, expected_proof: DeviceProofRecord
+    ) -> IssuedPair:
+        """Issue a fresh access token for an already proof-bound device."""
+        with self._lock:
+            state = self.store.load()
+            if state is None or not state.enabled:
+                raise AuthRejectedError("remote access is disabled")
+            device = state.devices.get(installation_id)
+            if device is None or device.revoked:
+                raise AuthRejectedError("installation is revoked")
+            binding = state.device_proofs.get(installation_id)
+            if binding is None or binding != expected_proof:
+                raise AuthRejectedError("device proof is not current")
+            access_token = f"nbm_at_{secrets.token_urlsafe(32)}"
+            expires_at = self.clock() + ACCESS_TTL_SECONDS
+            self._remove_installation_grants(installation_id)
+            self._access[_token_hash(access_token)] = AccessGrant(
+                installation_id=installation_id,
+                scopes=tuple(device.scopes),
+                expires_at=expires_at,
+                device_generation=binding.generation,
+            )
+            return IssuedPair(
+                access_token=access_token,
+                refresh_token="",
+                expires_in=ACCESS_TTL_SECONDS,
+                refresh_expires_in=0,
+                scopes=tuple(device.scopes),
+            )
+
     def validate_access(self, access_token: str) -> AccessGrant:
         with self._lock:
             self._purge_expired()
@@ -104,6 +197,10 @@ class TokenService:
             if device is None or device.revoked:
                 self._access.pop(_token_hash(access_token), None)
                 raise AuthRejectedError("installation is revoked")
+            binding = state.device_proofs.get(grant.installation_id)
+            if grant.device_generation != (binding.generation if binding is not None else 0):
+                self._access.pop(_token_hash(access_token), None)
+                raise AuthRejectedError("access credential is not current")
             if self.clock() >= grant.expires_at:
                 self._access.pop(_token_hash(access_token), None)
                 raise AuthRejectedError("access credential has expired")
@@ -113,10 +210,21 @@ class TokenService:
                 installation_id=grant.installation_id,
                 scopes=tuple(device.scopes),
                 expires_at=grant.expires_at,
+                origin=binding.origin if binding is not None else "",
+                device_generation=grant.device_generation,
             )
 
     def refresh(self, installation_id: str, refresh_token: str) -> IssuedPair:
         with self._lock:
+            existing = self.store.get_device(installation_id)
+            if (
+                existing is not None
+                and existing.revoked
+                and self.store.get_device_proof(installation_id) is None
+            ):
+                raise AuthUpgradeRequiredError(
+                    "v1 bearer authority is revoked; re-pair with the device-key app"
+                )
             device = self.store.validate_refresh(installation_id, refresh_token)
             if device is None:
                 raise AuthRejectedError("refresh credential is not current")
@@ -151,9 +259,7 @@ class TokenService:
 
     def logout(self, access_token: str) -> bool:
         with self._lock:
-            grant = self._access.get(_token_hash(access_token))
-            if grant is None:
-                raise AuthRejectedError("access credential is not current")
+            grant = self.validate_access(access_token)
             return self.revoke(grant.installation_id)
 
     def _remove_installation_grants(self, installation_id: str) -> None:

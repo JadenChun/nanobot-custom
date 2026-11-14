@@ -1736,6 +1736,7 @@ function Shell({
     [navigate, sessions],
   );
 
+
   const onCloseTemporaryChat = useCallback((key: string) => {
     const session = temporarySessionsRef.current[key];
     if (!session) return;
@@ -2360,7 +2361,10 @@ function Shell({
       .filter((session): session is ChatSummary => session !== undefined);
   }, [activeTabKey, activeTabState, orderedWorkbenchTabsByKey, sessions]);
   const paneChromeEnabled = Boolean(
-    activeKey && activeSession && !temporaryChatActive && activeTabState,
+    activeKey
+      && activeSession
+      && !temporaryChatActive
+      && activeTabState,
   );
   const activeTabVisible = Boolean(
     activeTabState
@@ -2769,6 +2773,7 @@ function Shell({
                         onToggleTheme={toggle}
                         hideSidebarToggleForHostChrome
                         hideHeader={false}
+                        composerActive={view === "chat"}
                         workspaceScope={activeWorkspaceScope}
                         workspaceDefaultScope={workspaces?.default_scope ?? null}
                         workspaceControls={workspaces?.controls ?? null}
@@ -2810,13 +2815,12 @@ function Shell({
                       hideSidebarToggle={!context.active}
                       hideSidebarToggleForHostChrome={context.active}
                       hideThemeButton={!context.active}
-                      hideHeaderTitle
+                      hideHeaderTitle={workbenchPaneSessions.length > 1}
                       inlineHandle={workbenchPaneSessions.length > 1}
                       headerActions={context.headerActions}
                       headerPortalTarget={context.headerPortalTarget}
                       headerActive={context.active}
-                      composerPortalTarget={context.composerPortalTarget}
-                      composerActive={context.active}
+                      composerActive={context.active && view === "chat"}
                       composerInputAriaLabel={t("workbench.composerAria", {
                         title: pane.title,
                       })}

@@ -186,7 +186,9 @@ class ContextCompactionState:
         messages = list(transcript_builder(transcript_input))
         if consolidate_history is None:
             return messages, None
-        accepted_history_boundary = 1 + len(transcript_input.history)
+        accepted_history_boundary = len(messages) - (
+            1 if transcript_input.current_message is not None else 0
+        )
         return messages, cls(
             raw_messages=messages,
             accepted_messages=deepcopy(messages[:accepted_history_boundary]),
@@ -316,6 +318,8 @@ class ModelRequestState:
     artifact_projector: ArtifactProjector | None = None
     provider_compaction_applied: bool = False
     events: EventSink = NO_EVENTS
+    prepared_stream: bool = False
+    prepared_tool_choice: str | dict[str, Any] | None = None
     # The loop creates this from its admitted session, policy, and execution
     # fence.  Request preparation fills in the effective tool policy for each
     # dispatch; callers without that authority intentionally stay stateless.
@@ -2249,6 +2253,8 @@ class ContextGovernor:
             state.source_view = deepcopy(source_view)
             state.messages = deepcopy(prepared)
             state.tool_definitions = deepcopy(tool_definitions)
+            state.prepared_stream = stream
+            state.prepared_tool_choice = tool_choice
             # Source checkpoints remain portable: never resume opaque provider
             # state, but preserve the same hard final-transport limits as a
             # normal runtime request.
@@ -2388,7 +2394,40 @@ class ContextGovernor:
         )
         state.messages = deepcopy(prepared)
         state.tool_definitions = deepcopy(tool_definitions)
+        state.prepared_stream = stream
+        state.prepared_tool_choice = tool_choice
         return prepared, provider_context
+
+    def reprepare_route(
+        self,
+        state: ModelRequestState,
+        messages: list[dict[str, Any]],
+        *,
+        tool_definitions: list[dict[str, Any]] | None,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None,
+        provider_context: ProviderCallContext,
+    ) -> tuple[list[dict[str, Any]], ProviderCallContext]:
+        """Reprepare one logical request for the next unconsumed route leaf."""
+        prepared = self.ensure_request_fits(
+            state.config,
+            deepcopy(messages),
+            tool_definitions=tool_definitions,
+            stream=stream,
+            tool_choice=tool_choice,
+            provider_context=provider_context,
+        )
+        next_context = self._attach_route_selection(
+            state.config,
+            prepared,
+            tool_definitions=tool_definitions,
+            stream=stream,
+            tool_choice=tool_choice,
+            provider_context=replace(provider_context, selected_route=None),
+        )
+        state.messages = deepcopy(prepared)
+        state.tool_definitions = deepcopy(tool_definitions)
+        return prepared, next_context
 
     @staticmethod
     def _binding_for_request(

@@ -1,10 +1,11 @@
 """Document text extraction utilities for nanobot."""
 
 import mimetypes
+import zlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zipfile import BadZipFile, ZipFile
 
 from loguru import logger
@@ -172,6 +173,54 @@ def _check_office_archive(path: Path) -> None:
         raise DocumentExtractionError(_clean_extraction_error(error))
 
 
+def _check_pdf_stream_bound(contents: Any, page_number: int) -> None:
+    """Bound a page content stream before full decoded materialization."""
+    raw = getattr(contents, "_data", None)
+    if isinstance(raw, (bytes, bytearray)) and len(raw) > _MAX_PDF_CONTENT_STREAM_SIZE:
+        raise PdfSafetyError(
+            f"page {page_number} compressed content stream exceeds "
+            f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
+        )
+    getter = getattr(contents, "get", None)
+    raw_filters: object = getter("/Filter") if callable(getter) else None
+    if isinstance(raw_filters, str):
+        filter_names: list[str] = [raw_filters]
+    elif isinstance(raw_filters, (list, tuple)):
+        filter_names = [
+            str(name)
+            for name in cast("list[object] | tuple[object, ...]", raw_filters)
+        ]
+    else:
+        filter_names = []
+    if any(name == "/FlateDecode" for name in filter_names) and isinstance(
+        raw, (bytes, bytearray)
+    ):
+        exceeded = False
+        try:
+            decoder = zlib.decompressobj()
+            decoded = decoder.decompress(
+                bytes(raw),
+                _MAX_PDF_CONTENT_STREAM_SIZE + 1,
+            )
+            exceeded = (
+                len(decoded) > _MAX_PDF_CONTENT_STREAM_SIZE
+                or bool(decoder.unconsumed_tail)
+            )
+        except zlib.error:
+            exceeded = False
+        if exceeded:
+            raise PdfSafetyError(
+                f"page {page_number} decoded content stream exceeds "
+                f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
+            )
+    decoded = contents.get_data()
+    if len(decoded) > _MAX_PDF_CONTENT_STREAM_SIZE:
+        raise PdfSafetyError(
+            f"page {page_number} content stream exceeds "
+            f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
+        )
+
+
 def _open_pdf_line_source(path: Path, pages: str | None) -> DocumentLineSource:
     try:
         from pypdf import PdfReader
@@ -200,12 +249,7 @@ def _open_pdf_line_source(path: Path, pages: str | None) -> DocumentLineSource:
             page = reader.pages[index]
             contents = page.get_contents()
             if contents is not None:
-                stream_size = len(contents.get_data())
-                if stream_size > _MAX_PDF_CONTENT_STREAM_SIZE:
-                    raise PdfSafetyError(
-                        f"page {index + 1} content stream exceeds "
-                        f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
-                    )
+                _check_pdf_stream_bound(contents, index + 1)
             text = (page.extract_text() or "").strip()
             if not text:
                 continue
@@ -469,12 +513,7 @@ def extract_pdf_pages(
         page = reader.pages[index]
         contents = page.get_contents()
         if contents is not None:
-            stream_size = len(contents.get_data())
-            if stream_size > _MAX_PDF_CONTENT_STREAM_SIZE:
-                raise PdfSafetyError(
-                    f"page {index + 1} content stream exceeds "
-                    f"{_MAX_PDF_CONTENT_STREAM_SIZE // (1024 * 1024)} MB limit"
-                )
+            _check_pdf_stream_bound(contents, index + 1)
         text = (page.extract_text() or "").strip()
         if text and not collector.add(f"--- Page {index + 1} ---\n{text}", separator="\n\n"):
             end = index

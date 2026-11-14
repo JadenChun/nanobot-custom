@@ -5,7 +5,7 @@ type Role = "user" | "assistant" | "tool" | "system";
 
 /** "trace" rows are intermediate agent breadcrumbs (tool-call hints,
  * progress pings) that should not be rendered as conversational replies. */
-type MessageKind = "message" | "trace" | "compaction";
+type MessageKind = "message" | "trace" | "compaction" | "delegated_child";
 
 export interface UIContextCompaction extends ContextCompaction {
   /** Live wire transitions announce; hydrated transcript rows stay silent. */
@@ -71,6 +71,106 @@ export interface RetryStatus extends WireRetryStatus {
   next_retry_at?: number;
   turn_id?: string;
 }
+
+export interface SourceOrigin {
+  store_identity: string;
+  session_key: string;
+  incarnation: string;
+  generation: number;
+}
+
+export interface StopExpectationChild {
+  child_id: string;
+  source: SourceOrigin;
+  child_run_id: string | null;
+  run_sequence: number;
+  control_epoch: number;
+}
+
+/** Live, server-derived snapshot echoed unchanged with an original-chat Stop. */
+export interface StopExpectation {
+  version: 1;
+  source: SourceOrigin;
+  control_epoch: number;
+  active_root_present: boolean;
+  active_turn_id: string | null;
+  active_root_run_ids: string[];
+  children: StopExpectationChild[];
+  pending_work_digest: string;
+}
+
+export interface DelegatedChildPayload {
+  history_kind?: "canonical";
+  parent_session_key?: string;
+  child_session_key: string;
+  child_id: string;
+  profile: string;
+  state: string;
+  task_label?: string;
+  task_label_truncated?: boolean;
+  result_summary?: string | null;
+  result_summary_truncated?: boolean;
+  outcome?: string | null;
+  runtime_generation: number;
+  turn_id?: string | null;
+  parent_run_id?: string | null;
+  child_run_id?: string | null;
+  parent_store_identity?: string;
+  parent_incarnation?: string;
+  parent_generation?: number;
+  root_key?: string;
+  root_store_identity?: string;
+  root_incarnation?: string;
+  root_generation?: number;
+  child_store_identity?: string;
+  child_incarnation?: string;
+  child_generation?: number;
+  run_sequence?: number;
+  state_sequence?: number;
+  control_epoch?: number;
+  holds_capacity?: boolean;
+  can_stop?: boolean;
+  owned_work?: boolean;
+  pending_approval_id?: string | null;
+  blocked_run_id?: string | null;
+  result_disposition?: string | null;
+}
+
+/** Explicit source-less history projection; it never carries client control authority. */
+export interface DelegatedChildSummaryPayload {
+  history_kind: "summary";
+  parent_session_key: string;
+  child_session_key: string;
+  child_id: string;
+  profile: string;
+  state: string;
+  task_label: string | null;
+  task_label_truncated: boolean;
+  result_summary: string | null;
+  result_summary_truncated: boolean;
+  outcome: string | null;
+  runtime_generation: number | null;
+  turn_id?: string | null;
+  parent_run_id: string | null;
+  child_run_id: string | null;
+  parent_store_identity: string | null;
+  parent_incarnation: string | null;
+  parent_generation: number | null;
+  root_key: string;
+  root_store_identity: string | null;
+  root_incarnation: string | null;
+  root_generation: number | null;
+  child_store_identity: string | null;
+  child_incarnation: string | null;
+  child_generation: number | null;
+  run_sequence: number | null;
+  state_sequence: number | null;
+  control_epoch: number | null;
+  can_stop: false;
+}
+
+export type DelegatedChildReference = DelegatedChildPayload | DelegatedChildSummaryPayload;
+
 export interface UIMessage {
   id: string;
   role: Role;
@@ -78,6 +178,8 @@ export interface UIMessage {
   kind?: MessageKind;
   isStreaming?: boolean;
   createdAt: number;
+  /** Explicit server timestamp availability for read-only delegated history. */
+  timestampAvailable?: boolean;
   /** For trace rows: each individual hint line, so consecutive hints can
    * render as a single collapsible group. */
   traces?: string[];
@@ -93,6 +195,8 @@ export interface UIMessage {
   activityKind?: "model";
   /** Context-compaction lifecycle rendered as a standalone channel notice. */
   compaction?: UIContextCompaction;
+  /** Typed delegated-child reference projected from the parent activity owner. */
+  delegatedChild?: DelegatedChildReference;
   /** Display-only localization marker for fixed /compact command replies. */
   compactReply?: "empty" | "failed";
   /** User turn: optimistic blob URLs for preview. Replay: placeholder chips. */
@@ -270,6 +374,8 @@ export interface SessionGeneratedAssetsPayload {
   sessionsScanned?: number;
   groups: GeneratedAssetGroup[];
   next?: string | null;
+  nextSessionCursor?: string | null;
+  truncated?: boolean;
 }
 export interface AutomationUpdatePayload {
   name?: string;
@@ -1690,6 +1796,7 @@ export type InboundEvent =
       temporary?: boolean;
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
+      stop_target?: StopExpectation | null;
     }
   | {
       event: "message_accepted";
@@ -1698,6 +1805,59 @@ export type InboundEvent =
       starts_turn?: boolean;
       active_turn_id?: string;
       started_at?: number;
+    }
+  | {
+      event: "message_admitted";
+      chat_id: string;
+      turn_id?: string;
+      attempt_id?: string;
+      session_key?: string;
+      session_incarnation?: string;
+      active_turn_id?: string;
+      starts_turn?: boolean;
+      started_at?: number;
+    }
+  | {
+      event: "delegated_child";
+      chat_id: string;
+      parent_session_key: string;
+      child_session_key: string;
+      child_id: string;
+      profile: string;
+      state: string;
+      task_label: string;
+      task_label_truncated: boolean;
+      result_summary: string | null;
+      result_summary_truncated: boolean;
+      outcome?: string | null;
+      runtime_generation: number;
+      turn_id?: string | null;
+      parent_run_id?: string | null;
+      child_run_id?: string | null;
+      parent_store_identity?: string;
+      parent_incarnation?: string;
+      parent_generation?: number;
+      root_key?: string;
+      root_store_identity?: string;
+      root_incarnation?: string;
+      root_generation?: number;
+      child_store_identity?: string;
+      child_incarnation?: string;
+      child_generation?: number;
+      run_sequence?: number;
+      state_sequence?: number;
+      control_epoch?: number;
+      holds_capacity?: boolean;
+      can_stop?: boolean;
+      owned_work?: boolean;
+      pending_approval_id?: string | null;
+      blocked_run_id?: string | null;
+      result_disposition?: string | null;
+    }
+  | {
+      event: "stop_target";
+      chat_id: string;
+      stop_target: StopExpectation | null;
     }
   | {
       event: "user_message";
@@ -1720,7 +1880,7 @@ export type InboundEvent =
       text: string;
       reply_to?: string;
       media?: string[];
-      media_urls?: Array<{ url: string; name?: string }>;
+      media_urls?: Array<{ url: string; name?: string; kind?: UIMediaKind }>;
       tool_events?: ToolProgressEvent[];
       /** Present when the frame is an agent breadcrumb (e.g. tool hint,
        * generic progress line) rather than a conversational reply. */
@@ -1800,7 +1960,7 @@ export type InboundEvent =
       event: "goal_status";
       chat_id: string;
       /** Turn executing (user message through agent loop). */
-      status: "running" | "idle";
+      status: "running" | "stopping" | "interrupted" | "idle";
       /** Server ``time.time()`` when ``status`` is ``running``. */
       started_at?: number;
     } & InboundTurnMetadata)
@@ -1844,6 +2004,7 @@ export type InboundEvent =
       request_id: string;
       ok: true;
       result: unknown;
+      outcome?: WebUIMutationOutcome;
     }
   | {
       event: "webui_response";
@@ -1854,7 +2015,14 @@ export type InboundEvent =
         message: string;
         workspace_scope?: WorkspaceScopePayload;
         workspace_permissions?: WorkspacePermissionProjection;
+        outcome?: WebUIMutationOutcome;
       };
+    }
+  | {
+      event: "projection_error";
+      request_id?: string;
+      action?: string;
+      reason?: string;
     }
   | {
       event: "error";
@@ -1911,6 +2079,16 @@ interface WebuiThreadPagePayload {
   user_message_offset?: number;
 }
 
+export type WebuiThreadSourcePayload = SourceOrigin;
+
+export interface WebuiDelegatedChildrenPayload {
+  schemaVersion: number;
+  parentSessionKey?: string;
+  children: DelegatedChildReference[];
+  page?: WebuiThreadPagePayload;
+  stop_target?: StopExpectation | null;
+}
+
 export interface WebuiThreadPersistedPayload {
   schemaVersion: number;
   sessionKey?: string;
@@ -1922,6 +2100,12 @@ export interface WebuiThreadPersistedPayload {
   has_pending_tool_calls?: boolean;
   /** Exact active turn when supplied by a current gateway. */
   active_turn_id?: string | null;
+  stop_target?: StopExpectation | null;
+  read_only?: boolean;
+  history_kind?: "canonical" | "summary";
+  parent_session_key?: string;
+  root_key?: string;
+  source?: WebuiThreadSourcePayload | null;
   page?: WebuiThreadPagePayload;
   workspace_scope?: WorkspaceScopePayload;
   /** Local authenticated UI projection; absent on remote/temporary reads. */
@@ -1950,6 +2134,23 @@ export interface FilePreviewPayload {
   mime?: string;
   media_url?: string;
   entries?: FilePreviewEntry[];
+}
+
+export type WebUIMutationOutcome =
+  | "applied"
+  | "not_applied"
+  | "uncertain"
+  | "partial";
+
+export interface ApprovalDecisionPayload {
+  approval_id: string;
+  decision: "approve" | "deny";
+  session_key?: string;
+  session_incarnation?: string;
+  run_id?: string;
+  turn_id?: string;
+  effect_id?: string;
+  generation?: number;
 }
 
 export type Outbound =
@@ -1989,6 +2190,8 @@ export type Outbound =
       request_settings_version?: 1;
       request_intent?: "new" | "steer";
       target_turn_id?: string;
+      approval_decision?: ApprovalDecisionPayload;
+      stop_expectation?: StopExpectation;
       /** Marks messages sent by the embedded WebUI, without changing the
        * generic websocket protocol for other clients. */
       webui?: true;

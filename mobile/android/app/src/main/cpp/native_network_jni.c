@@ -4,6 +4,9 @@
 
 #include "nanobot_network.h"
 
+/* The broker limits raw WebSocket frames to 40 MiB. Allow Base64 and JSON overhead. */
+#define MAX_POLL_EVENT_BYTES (64 * 1024 * 1024)
+
 static jbyteArray copy_bytes(JNIEnv *env, const char *data, int32_t length) {
     if (length <= 0) {
         return NULL;
@@ -143,7 +146,10 @@ Java_ai_nanobot_mobile_network_NativeNetwork_pollEvent(JNIEnv *env, jobject thiz
     int32_t length = nanobot_network_poll_event((int64_t)handle, buffer, capacity);
     if (length == -7) {
         free(buffer);
-        capacity = 12 * 1024 * 1024;
+        capacity = nanobot_network_pending_event_size((int64_t)handle);
+        if (capacity <= 0 || capacity > MAX_POLL_EVENT_BYTES) {
+            return NULL;
+        }
         buffer = malloc(capacity);
         if (buffer == NULL) {
             return NULL;

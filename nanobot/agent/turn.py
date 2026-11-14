@@ -19,21 +19,31 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from nanobot.attachments.models import AttachmentRecord
 
 if TYPE_CHECKING:
+    from nanobot.agent.policy import ToolPolicy
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.base import ToolDenialKind
+    from nanobot.agent.tools.filesystem_effect import FilesystemEffectFact
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.agent.tools.registry import CapturedToolBindings
+    from nanobot.agent.turn_admission import EffectApprovalAuthority
     from nanobot.providers.base import LLMUsage
     from nanobot.security.desktop_permissions import (
         WorkspaceFullAccessReference,
         WorkspaceTaskAccessReference,
     )
-    from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
+    from nanobot.session.artifact_grants import (
+        ArtifactGrantSet,
+        ArtifactHandoffReceipt,
+        CanonicalChildArtifactInput,
+    )
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.source_request import SourceTranscript
-    from nanobot.session.turn_writer import SourceTurnWriter
+    from nanobot.session.source_store import SourceState
+    from nanobot.session.turn_writer import SourceToolIntentBinding, SourceTurnWriter
 
 __all__ = [
+    "ApprovalDecision",
     "ApprovalGrant",
     "Callback",
     "DelegationBudget",
@@ -174,6 +184,60 @@ class ApprovalGrant:
 
 
 @dataclass(frozen=True, slots=True)
+class ApprovalDecision:
+    """Typed, single-use response to one server-owned approval request."""
+
+    approval_id: str
+    decision: str
+    session_key: str | None = None
+    session_incarnation: str | None = None
+    run_id: str | None = None
+    turn_id: str | None = None
+    effect_id: str | None = None
+    generation: int | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.approval_id) is not str or not self.approval_id.strip():
+            raise ValueError("approval decision requires an approval_id")
+        if self.decision not in {"approve", "deny"}:
+            raise ValueError("approval decision must be approve or deny")
+        for name in (
+            "session_key",
+            "session_incarnation",
+            "run_id",
+            "turn_id",
+            "effect_id",
+        ):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not str or not value):
+                raise ValueError(f"approval decision {name} is invalid")
+        if self.generation is not None and (
+            type(self.generation) is not int or self.generation < 0
+        ):
+            raise ValueError("approval decision generation is invalid")
+
+    @classmethod
+    def from_mapping(cls, payload: Any) -> "ApprovalDecision":
+        if not isinstance(payload, dict):
+            raise ValueError("approval decision must be an object")
+        data = cast(dict[str, Any], payload)
+        approval_id = data.get("approval_id")
+        decision = data.get("decision")
+        if not isinstance(approval_id, str) or not isinstance(decision, str):
+            raise ValueError("approval decision requires an approval_id and decision")
+        return cls(
+            approval_id=approval_id,
+            decision=decision,
+            session_key=cast(str | None, data.get("session_key")),
+            session_incarnation=cast(str | None, data.get("session_incarnation")),
+            run_id=cast(str | None, data.get("run_id")),
+            turn_id=cast(str | None, data.get("turn_id")),
+            effect_id=cast(str | None, data.get("effect_id")),
+            generation=cast(int | None, data.get("generation")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TurnCallbacks:
     """Optional callbacks owned by the caller of a turn."""
 
@@ -203,6 +267,7 @@ class TurnRequest:
     scheduled_link: ScheduledTurnLink | None = None
     approval_grant: ApprovalGrant | None = None
     approval: ApprovalGrant = field(default_factory=ApprovalGrant)
+    approval_decision: ApprovalDecision | None = None
     callbacks: TurnCallbacks = field(default_factory=TurnCallbacks)
     metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
     run_id: str | None = None
@@ -211,34 +276,39 @@ class TurnRequest:
     # ``message`` keeps construction convenient for API callers that use the
     # channel-layer name while ``prompt`` remains the canonical field.
     message: str | None = None
+    expected_source_state: SourceState | None = None
 
     def __init__(
         self,
         prompt: str = "",
         content: str = "",
-        source: TurnSource = TurnSource.DIRECT,
+        source: TurnSource | str = TurnSource.DIRECT,
         session_key: str | None = None,
         route: DeliveryTarget | None = None,
         sender_id: str = "user",
         media: tuple[str, ...] | list[str] | None = None,
         attachments: tuple[AttachmentRecord, ...] = (),
         hooks: tuple[Any, ...] = (),
-        history_mode: HistoryMode = HistoryMode.SESSION,
-        trace_mode: TraceMode = TraceMode.NONE,
+        history_mode: HistoryMode | str = HistoryMode.SESSION,
+        trace_mode: TraceMode | str = TraceMode.NONE,
         delivery_target: DeliveryTarget | None = None,
         scheduled_link: ScheduledTurnLink | None = None,
         approval_grant: ApprovalGrant | None = None,
         approval: ApprovalGrant | None = None,
+        approval_decision: ApprovalDecision | None = None,
         callbacks: TurnCallbacks | None = None,
         metadata: Mapping[str, Any] | None = None,
         run_id: str | None = None,
         tool_names: tuple[str, ...] | None = None,
         scheduled: ScheduledTurnLink | None = None,
         message: str | None = None,
+        expected_source_state: SourceState | None = None,
     ) -> None:
         if content and prompt and content != prompt:
             raise ValueError("prompt and content must match when both are supplied")
         canonical_content = content or prompt or message or ""
+        if message is not None and canonical_content and canonical_content != message:
+            raise ValueError("prompt and message must match when both are supplied")
         object.__setattr__(self, "prompt", canonical_content)
         object.__setattr__(self, "content", canonical_content)
         object.__setattr__(
@@ -246,6 +316,12 @@ class TurnRequest:
             source if isinstance(source, TurnSource) else TurnSource(str(source)),
         )
         object.__setattr__(self, "session_key", session_key)
+        if expected_source_state is not None:
+            from nanobot.session.source_store import SourceState
+
+            if not isinstance(cast(object, expected_source_state), SourceState):
+                raise TypeError("source condition requires a trusted SourceState")
+        object.__setattr__(self, "expected_source_state", expected_source_state)
         object.__setattr__(self, "route", route)
         object.__setattr__(self, "sender_id", sender_id)
         object.__setattr__(self, "attachments", tuple(attachments))
@@ -272,6 +348,7 @@ class TurnRequest:
         object.__setattr__(self, "scheduled_link", scheduled_link)
         object.__setattr__(self, "approval_grant", approval_grant)
         object.__setattr__(self, "approval", approval or ApprovalGrant())
+        object.__setattr__(self, "approval_decision", approval_decision)
         object.__setattr__(self, "callbacks", callbacks or TurnCallbacks())
         object.__setattr__(self, "metadata", metadata or {})
         object.__setattr__(self, "run_id", run_id)
@@ -280,14 +357,9 @@ class TurnRequest:
             tuple(tool_names) if tool_names is not None else None,
         )
         object.__setattr__(self, "scheduled", scheduled)
-        object.__setattr__(self, "message", message)
+        object.__setattr__(self, "message", canonical_content)
         if self._media_paths:
             self._adopt_media()
-        if self.message is not None:
-            if self.prompt and self.prompt != self.message:
-                raise ValueError("prompt and message must match when both are supplied")
-            object.__setattr__(self, "content", self.message)
-            object.__setattr__(self, "prompt", self.message)
         object.__setattr__(self, "message", self.content)
         if self.route is None and self.delivery_target is not None:
             object.__setattr__(self, "route", self.delivery_target)
@@ -418,6 +490,11 @@ class RunPolicyContext:
     allow_side_effects: bool = True
     allow_external: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Only typed owner admission installs this volatile capability. Public
+    # ApprovalGrant values and saved metadata remain descriptive evidence.
+    effect_authority: EffectApprovalAuthority | None = field(
+        default=None, init=False, repr=False, compare=False,
+    )
 
     def __post_init__(self) -> None:
         if self.approval_granted is None:
@@ -476,6 +553,25 @@ class TurnContext:
         default=None, repr=False,
     )
     workspace_full_reference: WorkspaceFullAccessReference | None = field(
+        default=None, repr=False,
+    )
+    internal_system_instructions: str | None = field(default=None, repr=False)
+    internal_system_prompt: str | None = field(default=None, repr=False)
+    internal_include_skill_context: bool = True
+    internal_tool_policy: ToolPolicy | None = field(default=None, repr=False)
+    internal_max_iterations: int | None = field(default=None, repr=False)
+    active_tool_bindings: CapturedToolBindings | None = field(default=None, repr=False)
+    active_tool_intent_binding: SourceToolIntentBinding | None = field(default=None, repr=False)
+    request_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
+    followup_boundary_validator: Callable[[], bool] | None = field(default=None, repr=False)
+    followup_request_acknowledged: Callable[[tuple[str, ...]], None] | None = field(
+        default=None, repr=False,
+    )
+    pending_followup_acknowledgments: list[str] = field(default_factory=list, repr=False)
+    child_followup_continuation: bool = field(default=False, repr=False)
+    forwarded_child_approval_id: str | None = field(default=None, repr=False)
+    forwarded_child_id: str | None = field(default=None, repr=False)
+    canonical_child_artifact_input: CanonicalChildArtifactInput | None = field(
         default=None, repr=False,
     )
 
@@ -808,6 +904,7 @@ class TurnResult:
     policy_metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
     messages: list[dict[str, Any]] | None = None
     llm_usage: LLMUsage | None = None
+    artifact_handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.status), RunStatus):
@@ -858,6 +955,8 @@ class ToolOutcome:
     # Private recovery classification.  It is never persisted, serialized, or
     # exposed as policy authority; message text alone cannot set it.
     recovery_kind: ToolDenialKind | None = field(default=None, repr=False, compare=False)
+    # None means no trusted evidence; () proves a concrete pre-effect refusal.
+    filesystem_effects: tuple[FilesystemEffectFact, ...] | None = field(default=None, repr=False)
 
     @property
     def result(self) -> Any:

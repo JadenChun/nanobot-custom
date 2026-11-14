@@ -63,8 +63,11 @@ def _auth_path() -> Path:
     override = os.environ.get("NANOBOT_COPILOT_AUTH_PATH")
     if override:
         return Path(os.path.abspath(os.fspath(Path(override).expanduser())))
-    home = Path(os.environ.get("HOME", str(Path.home())))
-    return Path(os.path.abspath(os.fspath(home / ".nanobot" / "auth" / "github-copilot.json")))
+    from nanobot.config.paths import get_data_dir
+
+    return Path(
+        os.path.abspath(os.fspath(get_data_dir() / "auth" / "github-copilot.json"))
+    )
 
 
 def _legacy_auth_path() -> Path:

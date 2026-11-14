@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { flushSync } from "react-dom";
 import { StrictMode, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,8 +13,11 @@ import { ClientProvider } from "@/providers/ClientProvider";
 import type {
   CliAppsPayload,
   ConnectionStatus,
+  DelegatedChildPayload,
   FolderAccessRequest,
+  InboundEvent,
   SettingsPayload,
+  StopExpectation,
   UIMessage,
   WorkspacePermissionProjection,
   WorkspaceScopePayload,
@@ -48,6 +52,7 @@ function makeClient() {
   const latestRunTurnIdByChatId = new Map<string, string>();
   const completedTurnIdsByChatId = new Map<string, Set<string>>();
   const goalStateByChatId = new Map<string, import("@/lib/types").GoalStateWsPayload>();
+  let approvalDecisionIndex = 0;
   let status: ConnectionStatus = "open";
   const advanceRunGeneration = (chatId: string, turnId?: string) => {
     runGenerationByChatId.set(chatId, (runGenerationByChatId.get(chatId) ?? 0) + 1);
@@ -223,6 +228,7 @@ function makeClient() {
     }),
     sendMessage,
     sendSystemCommand: vi.fn().mockResolvedValue(undefined),
+    sendApprovalDecision: vi.fn(() => `approval-decision-${++approvalDecisionIndex}`),
     newChat: vi.fn(),
     forkChat: vi.fn(),
     attach: vi.fn(),
@@ -612,6 +618,584 @@ describe("ThreadShell", () => {
         json: async () => ({}),
       }),
     );
+  });
+
+  it("does not enable legacy Stop after authenticated history reports stop_target null", async () => {
+    const client = makeClient();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("/api/sessions/websocket%3Amodern-null-stop/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          stop_target: null,
+          messages: [],
+        }));
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    render(wrap(client, <ThreadShell
+      session={session("modern-null-stop")}
+      title="Modern Stop target"
+      onToggleSidebar={() => {}}
+    />));
+
+    expect(await screen.findByRole("textbox", { name: "Message input" })).toBeEnabled();
+    act(() => client._emitChat("modern-null-stop", {
+      event: "goal_status",
+      chat_id: "modern-null-stop",
+      status: "running",
+      started_at: 1_700_000_000,
+      turn_id: "modern-turn",
+    }));
+
+    const stopButton = await screen.findByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeDisabled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(client.finishRunLocally).not.toHaveBeenCalled();
+  });
+
+  it("keeps settled child activity visible without a Stop notice after canonical refresh", async () => {
+    const client = makeClient();
+    const chatId = "gui-null-notice";
+    const parentKey = `websocket:${chatId}`;
+    const root = {
+      store_identity: "root-store",
+      session_key: parentKey,
+      incarnation: "root-incarnation",
+      generation: 0,
+    };
+    const child = {
+      history_kind: "canonical" as const,
+      parent_session_key: parentKey,
+      child_session_key: "delegated:child-gui",
+      child_id: "child-gui",
+      profile: "delegated",
+      state: "active",
+      task_label: "Inspect GUI child",
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      outcome: null,
+      runtime_generation: 0,
+      turn_id: null,
+      parent_run_id: "parent-run",
+      child_run_id: "child-run",
+      parent_store_identity: root.store_identity,
+      parent_incarnation: root.incarnation,
+      parent_generation: root.generation,
+      root_key: parentKey,
+      root_store_identity: root.store_identity,
+      root_incarnation: root.incarnation,
+      root_generation: root.generation,
+      child_store_identity: "child-store",
+      child_incarnation: "child-incarnation",
+      child_generation: 0,
+      run_sequence: 1,
+      state_sequence: 1,
+      control_epoch: 1,
+      holds_capacity: true,
+      can_stop: true,
+      owned_work: true,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: "pending",
+    } satisfies DelegatedChildPayload;
+    const stoppedChild = {
+      ...child,
+      state: "stopped",
+      outcome: "stopped",
+      state_sequence: 2,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      result_disposition: "cancelled",
+    } satisfies DelegatedChildPayload;
+    const stopTarget: StopExpectation = {
+      version: 1,
+      source: root,
+      control_epoch: 1,
+      active_root_present: false,
+      active_turn_id: null,
+      active_root_run_ids: [],
+      children: [{
+        child_id: child.child_id,
+        source: {
+          store_identity: child.child_store_identity!,
+          session_key: child.child_session_key,
+          incarnation: child.child_incarnation!,
+          generation: child.child_generation!,
+        },
+        child_run_id: child.child_run_id!,
+        run_sequence: child.run_sequence!,
+        control_epoch: child.control_epoch!,
+      }],
+      pending_work_digest: "b".repeat(64),
+    };
+    const childMessage = (delegatedChild: DelegatedChildPayload): UIMessage => ({
+      id: `delegated-child-${delegatedChild.child_id}`,
+      role: "assistant",
+      kind: "delegated_child",
+      content: "",
+      createdAt: 1_700_000_000_000,
+      delegatedChild,
+    });
+    const terminalEvent: Extract<InboundEvent, { event: "delegated_child" }> = {
+      event: "delegated_child",
+      chat_id: chatId,
+      ...stoppedChild,
+    };
+    let threadRequests = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(`/api/sessions/${encodeURIComponent(parentKey)}/webui-thread`)) {
+        threadRequests += 1;
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          stop_target: threadRequests === 1 ? stopTarget : null,
+          messages: [childMessage(threadRequests === 1 ? child : stoppedChild)],
+        }));
+      }
+      if (url.includes(`/api/sessions/${encodeURIComponent(parentKey)}/delegated-children`)) {
+        return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    render(wrap(client, <ThreadShell
+      session={session(chatId)}
+      title="GUI null recovery"
+      onToggleSidebar={() => {}}
+    />));
+
+    expect(await screen.findByLabelText("Inspect GUI child")).toBeInTheDocument();
+    expect(await screen.findByText("Working")).toBeInTheDocument();
+    const stopButton = await screen.findByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeEnabled();
+    fireEvent.click(stopButton);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage).toHaveBeenLastCalledWith(
+      chatId,
+      "/stop",
+      undefined,
+      { stopExpectation: stopTarget },
+    );
+
+    act(() => {
+      client._emitChat(chatId, terminalEvent);
+      client._emitChat(chatId, {
+        event: "stop_target",
+        chat_id: chatId,
+        stop_target: null,
+      });
+    });
+
+    await waitFor(() => expect(threadRequests).toBeGreaterThan(1));
+    expect(await screen.findByText("Stopped")).toBeInTheDocument();
+    expect(screen.queryByText(
+      "Stop is unavailable until the current owned-work identity can be verified.",
+    )).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps both exact child approvals actionable while the parent is streaming", async () => {
+    const client = makeClient();
+    const parentKey = "websocket:approval-parent";
+    const children = [
+      { id: "child-a", label: "Inspect red", approvalId: "a".repeat(32), generation: 3 },
+      { id: "child-b", label: "Inspect blue", approvalId: "b".repeat(32), generation: 5 },
+      { id: "child-c", label: "Inspect green", approvalId: "c".repeat(32), generation: 7 },
+      { id: "child-d", label: "Inspect amber", approvalId: "e".repeat(32), generation: 8 },
+    ];
+    const source = {
+      store_identity: "root-store",
+      session_key: parentKey,
+      incarnation: "root-incarnation",
+      generation: 0,
+    };
+    const stopTarget = {
+      version: 1 as const,
+      source,
+      control_epoch: 2,
+      active_root_present: false,
+      active_turn_id: null,
+      active_root_run_ids: [],
+      children: children.map((child) => ({
+        child_id: child.id,
+        source: {
+          store_identity: `store-${child.id}`,
+          session_key: `delegated:${child.id}`,
+          incarnation: `incarnation-${child.id}`,
+          generation: child.generation,
+        },
+        child_run_id: `run-${child.id}`,
+        run_sequence: 1,
+        control_epoch: 2,
+      })),
+      pending_work_digest: "c".repeat(64),
+    };
+    const makeChild = (child: (typeof children)[number]) => ({
+      event: "delegated_child" as const,
+      chat_id: "approval-parent",
+      parent_session_key: parentKey,
+      child_session_key: `delegated:${child.id}`,
+      child_id: child.id,
+      profile: "delegated",
+      state: "waiting_approval",
+      task_label: child.label,
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      outcome: null,
+      runtime_generation: 0,
+      turn_id: null,
+      parent_run_id: "parent-run",
+      child_run_id: `run-${child.id}`,
+      parent_store_identity: source.store_identity,
+      parent_incarnation: source.incarnation,
+      parent_generation: source.generation,
+      root_key: parentKey,
+      root_store_identity: source.store_identity,
+      root_incarnation: source.incarnation,
+      root_generation: source.generation,
+      child_store_identity: `store-${child.id}`,
+      child_incarnation: `incarnation-${child.id}`,
+      child_generation: child.generation,
+      run_sequence: 1,
+      state_sequence: 1,
+      control_epoch: 2,
+      holds_capacity: true,
+      can_stop: true,
+      owned_work: true,
+      pending_approval_id: child.approvalId,
+      blocked_run_id: `run-${child.id}`,
+      result_disposition: null,
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const child = children.find((candidate) => (
+        url.includes(encodeURIComponent(`delegated:${candidate.id}`))
+      ));
+      if (child && url.includes("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          read_only: true,
+          history_kind: "canonical",
+          parent_session_key: parentKey,
+          root_key: parentKey,
+          source: {
+            store_identity: `store-${child.id}`,
+            session_key: `delegated:${child.id}`,
+            incarnation: `incarnation-${child.id}`,
+            generation: child.generation,
+          },
+          page: { before_cursor: null, has_more_before: false, loaded_message_count: 1 },
+          messages: [{
+            id: `approval-${child.id}`,
+            role: "assistant",
+            content: `I'm about to take a risky action and want your approval first. Planned action: write /tmp/${child.id}. Approval ID: ${child.approvalId}. Reply with the approval control to continue or deny.`,
+            createdAt: 10,
+            turnId: `turn-${child.id}`,
+          }],
+        }));
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    render(wrap(client, <ThreadShell
+      session={session("approval-parent")}
+      title="Approval parent"
+      onToggleSidebar={() => {}}
+    />));
+
+    act(() => client._emitChat("approval-parent", {
+      event: "goal_status",
+      chat_id: "approval-parent",
+      status: "running",
+      started_at: 1_700_000_000,
+    }));
+    act(() => client._emitChat("approval-parent", {
+      event: "stop_target",
+      chat_id: "approval-parent",
+      stop_target: stopTarget,
+    }));
+    for (const child of children) {
+      act(() => client._emitChat("approval-parent", makeChild(child)));
+    }
+
+    await screen.findByLabelText("Approval for Inspect red");
+    await screen.findByLabelText("Approval for Inspect blue");
+    await screen.findByLabelText("Approval for Inspect green");
+    await screen.findByLabelText("Approval for Inspect amber");
+    await waitFor(() => {
+      expect(within(screen.getByLabelText("Approval for Inspect red"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+      expect(within(screen.getByLabelText("Approval for Inspect blue"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+      expect(within(screen.getByLabelText("Approval for Inspect green"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+      expect(within(screen.getByLabelText("Approval for Inspect amber"))
+        .getByRole("button", { name: "Approve and continue" })).toBeEnabled();
+    });
+
+    fireEvent.click(within(screen.getByLabelText("Approval for Inspect red"))
+      .getByRole("button", { name: "Approve and continue" }));
+    fireEvent.click(within(screen.getByLabelText("Approval for Inspect blue"))
+      .getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(screen.getByLabelText("Approval for Inspect green"))
+      .getByRole("button", { name: "Approve and continue" }));
+
+    expect(client.sendApprovalDecision).toHaveBeenNthCalledWith(
+      1,
+      "approval-parent",
+      children[0]!.approvalId,
+      "approve",
+      {
+        sessionKey: "delegated:child-a",
+        sessionIncarnation: "incarnation-child-a",
+        runId: "run-child-a",
+        generation: 3,
+      },
+    );
+    expect(client.sendApprovalDecision).toHaveBeenNthCalledWith(
+      2,
+      "approval-parent",
+      children[1]!.approvalId,
+      "deny",
+      {
+        sessionKey: "delegated:child-b",
+        sessionIncarnation: "incarnation-child-b",
+        runId: "run-child-b",
+        generation: 5,
+      },
+    );
+    expect(client.sendApprovalDecision).toHaveBeenNthCalledWith(
+      3,
+      "approval-parent",
+      children[2]!.approvalId,
+      "approve",
+      {
+        sessionKey: "delegated:child-c",
+        sessionIncarnation: "incarnation-child-c",
+        runId: "run-child-c",
+        generation: 7,
+      },
+    );
+
+    act(() => client._emitChat("approval-parent", {
+      event: "message_admitted",
+      chat_id: "approval-parent",
+      turn_id: "approval-decision-1",
+      starts_turn: false,
+    }));
+    expect(within(screen.getByLabelText("Approval for Inspect red"))
+      .getByRole("button", { name: "Approve and continue" })).toBeDisabled();
+
+    act(() => client._emitChat("approval-parent", {
+      event: "error",
+      chat_id: "approval-parent",
+      turn_id: "approval-decision-2",
+      detail: "not_admitted",
+      reason: "invalid_approval_decision",
+    }));
+    expect(await screen.findByText(
+      "The approval decision was refused. Refresh the parent chat before deciding again.",
+    )).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Approval for Inspect blue"))
+      .getByRole("button", { name: "Approve and continue" })).toBeDisabled();
+
+    act(() => client._emitStatus("reconnecting"));
+    expect(await screen.findAllByText(
+      "Approval outcome is unknown after disconnect. Refresh status before deciding again.",
+    )).toHaveLength(2);
+    act(() => client._emitStatus("open"));
+
+    act(() => client._emitChat("approval-parent", {
+      event: "turn_end",
+      chat_id: "approval-parent",
+      turn_id: "parent-turn",
+    }));
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "Message input" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(client.sendMessage).toHaveBeenLastCalledWith(
+      "approval-parent",
+      "/stop",
+      undefined,
+      { stopExpectation: stopTarget },
+    );
+    expect(screen.getByRole("button", { name: "Stopping" })).toBeDisabled();
+    expect(screen.getByLabelText("Approval for Inspect red")).toBeInTheDocument();
+    expect(screen.getByLabelText("Approval for Inspect blue")).toBeInTheDocument();
+    expect(screen.getByLabelText("Approval for Inspect green")).toBeInTheDocument();
+
+    const staleAmberDecision = within(screen.getByLabelText("Approval for Inspect amber"))
+      .getByRole("button", { name: "Approve and continue" });
+    const replacedAmberApproval = {
+      ...makeChild(children[3]!),
+      pending_approval_id: "f".repeat(32),
+      state_sequence: 2,
+    };
+    act(() => {
+      flushSync(() => client._emitChat("approval-parent", replacedAmberApproval));
+      expect(staleAmberDecision).toBeEnabled();
+      fireEvent.click(staleAmberDecision);
+    });
+    expect(client.sendApprovalDecision).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns from read-only child history with the parent draft, attachment, position and focus", async () => {
+    const client = makeClient();
+    const parentKey = "websocket:inspect-parent";
+    const rootSource = {
+      store_identity: "root-store",
+      session_key: parentKey,
+      incarnation: "root-incarnation",
+      generation: 0,
+    };
+    const child = {
+      event: "delegated_child" as const,
+      chat_id: "inspect-parent",
+      parent_session_key: parentKey,
+      child_session_key: "delegated:inspect-child",
+      child_id: "inspect-child",
+      profile: "worker",
+      state: "completed",
+      task_label: "Inspect the migration",
+      task_label_truncated: false,
+      result_summary: "The migration notes were checked.",
+      result_summary_truncated: false,
+      outcome: "completed",
+      runtime_generation: 0,
+      turn_id: "parent-turn",
+      parent_run_id: "parent-run",
+      child_run_id: "child-run",
+      parent_store_identity: rootSource.store_identity,
+      parent_incarnation: rootSource.incarnation,
+      parent_generation: rootSource.generation,
+      root_key: parentKey,
+      root_store_identity: rootSource.store_identity,
+      root_incarnation: rootSource.incarnation,
+      root_generation: rootSource.generation,
+      child_store_identity: "child-store",
+      child_incarnation: "child-incarnation",
+      child_generation: 0,
+      run_sequence: 1,
+      state_sequence: 3,
+      control_epoch: 0,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: "delivered",
+    };
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:thread-shell-inspection"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/sessions/delegated%3Ainspect-child/webui-thread")) {
+        const older = url.includes("before=older-child-page");
+        const messages: UIMessage[] = older
+          ? [{
+              id: "child-tool-event",
+              role: "tool",
+              kind: "trace",
+              content: 'read_file({"path":"README.md"})',
+              traces: ['read_file({"path":"README.md"})'],
+              createdAt: 1_000,
+            }]
+          : [{
+              id: "child-answer",
+              role: "assistant",
+              content: "Newest child reply with complete details.",
+              createdAt: 2_000,
+            }];
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          read_only: true,
+          history_kind: "canonical",
+          parent_session_key: parentKey,
+          root_key: parentKey,
+          source: {
+            store_identity: "child-store",
+            session_key: "delegated:inspect-child",
+            incarnation: "child-incarnation",
+            generation: 0,
+          },
+          page: {
+            before_cursor: older ? null : "older-child-page",
+            has_more_before: !older,
+            loaded_message_count: messages.length,
+          },
+          messages,
+        }));
+      }
+      if (url.includes("/api/sessions/websocket%3Ainspect-parent/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          messages: [
+            { id: "parent-user", role: "user", content: "Parent prompt", createdAt: 1 },
+            { id: "parent-answer", role: "assistant", content: "Parent answer", createdAt: 2 },
+          ],
+        }));
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    const { container } = render(wrap(client, <ThreadShell
+      session={session("inspect-parent")}
+      title="Inspection parent"
+      onToggleSidebar={() => {}}
+    />));
+    expect(await screen.findByText("Parent answer")).toBeInTheDocument();
+    const composer = screen.getByRole("textbox", { name: "Message input" });
+    fireEvent.change(composer, { target: { value: "Keep this parent draft" } });
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["image"], "parent-draft.png", { type: "image/png" })] },
+    });
+    await screen.findByText("parent-draft.png");
+
+    act(() => client._emitChat("inspect-parent", child));
+    const inspect = await screen.findByRole("button", {
+      name: "Inspect Inspect the migration activity",
+    });
+    const parentScroller = screen.getByTestId("thread-message-region");
+    Object.defineProperty(parentScroller, "scrollHeight", { configurable: true, value: 400 });
+    Object.defineProperty(parentScroller, "clientHeight", { configurable: true, value: 100 });
+    parentScroller.scrollTop = 120;
+    fireEvent.wheel(parentScroller, { deltaY: -30 });
+    fireEvent.scroll(parentScroller);
+    inspect.focus();
+    fireEvent.click(inspect);
+
+    const dialog = await screen.findByRole("dialog", { name: "Inspect the migration" });
+    expect(within(dialog).getByText("Newest child reply with complete details.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Load earlier activity" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message input" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Stop|Approve|Cancel/ })).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Load earlier activity" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Worked" }));
+    expect(await within(dialog).findByText("Read file README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() => expect(screen.getByRole("button", {
+      name: "Inspect Inspect the migration activity",
+    })).toHaveFocus());
+    expect(screen.getByRole("textbox", { name: "Message input" })).toHaveValue("Keep this parent draft");
+    expect(screen.getByText("parent-draft.png")).toBeInTheDocument();
+    expect(parentScroller.scrollTop).toBe(120);
   });
 
   it("renders each logical round in a completed turn as its own usage bar", async () => {

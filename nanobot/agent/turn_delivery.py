@@ -116,7 +116,13 @@ class TurnDeliveryFactory:
             trusted_output_hook=trusted_output_hook,
         )
 
-    def unrouted(self, msg: InboundMessage, session_key: str) -> TurnDelivery:
+    def unrouted(
+        self,
+        msg: InboundMessage,
+        session_key: str,
+        *,
+        suppress_channel_output: bool = False,
+    ) -> TurnDelivery:
         """Create a lifecycle fallback without invoking edge routing policy."""
         return TurnDelivery(
             bus=self.bus,
@@ -128,6 +134,7 @@ class TurnDeliveryFactory:
                 chat_id=msg.chat_id,
                 metadata=dict(msg.metadata or {}),
             ),
+            suppress_channel_output=suppress_channel_output,
         )
 
     def silent(self, msg: InboundMessage, session_key: str) -> TurnDelivery:

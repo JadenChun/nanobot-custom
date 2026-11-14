@@ -2537,7 +2537,9 @@ async def test_session_delete_removes_file(
     try:
         path = sm._get_session_path("websocket:doomed")
         assert path.exists()
-        webui_path = tmp_path / "webui" / f"{SessionManager.safe_key('websocket:doomed')}.jsonl"
+        from nanobot.webui.transcript import webui_transcript_path
+
+        webui_path = webui_transcript_path("websocket:doomed")
         assert webui_path.is_file()
         resp = await _webui_mutate(
             channel,
@@ -2567,7 +2569,9 @@ async def test_session_delete_removes_transcript_without_canonical_file(
         {"event": "user", "chat_id": "transcript-only", "text": "recover me"},
     )
     assert not sm._get_session_path(key).exists()
-    webui_path = tmp_path / "webui" / f"{SessionManager.safe_key(key)}.jsonl"
+    from nanobot.webui.transcript import webui_transcript_path
+
+    webui_path = webui_transcript_path(key)
     assert webui_path.is_file()
 
     channel = _ch(bus, session_manager=sm, port=_next_in_process_port())
@@ -3156,19 +3160,24 @@ async def test_session_delete_action_accepts_websocket_keys(
 async def test_webui_thread_resigns_assistant_media_urls(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from nanobot.webui.media_api import sign_or_stage_media_path
     from nanobot.webui.transcript import append_transcript_object
 
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", tmp_path / "config.json")
     monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
     media_root = tmp_path / "media"
     websocket_media = media_root / "websocket"
     websocket_media.mkdir(parents=True)
-    external = tmp_path / "clip.mp4"
+    external = websocket_media / "clip.mp4"
     external.write_bytes(b"video")
 
     def fake_media_dir(channel: str | None = None) -> Path:
         return websocket_media if channel == "websocket" else media_root
 
     monkeypatch.setattr("nanobot.webui.media_gateway.get_media_dir", fake_media_dir)
+    historical = sign_or_stage_media_path(external, secret=b"old-process", media_dir=fake_media_dir)
+    assert historical is not None
+    staged = next(websocket_media.iterdir())
 
     append_transcript_object(
         "websocket:video-replay",
@@ -3180,8 +3189,8 @@ async def test_webui_thread_resigns_assistant_media_urls(
             "event": "message",
             "chat_id": "video-replay",
             "text": "video ready",
-            "media": [str(external)],
-            "media_urls": [{"url": "/api/media/old-sig/old-payload", "name": "clip.mp4"}],
+            "media": [str(staged)],
+            "media_urls": [historical],
         },
     )
 
@@ -3200,7 +3209,8 @@ async def test_webui_thread_resigns_assistant_media_urls(
         assert media[0]["kind"] == "video"
         assert media[0]["name"] == "clip.mp4"
         assert media[0]["url"].startswith("/api/media/")
-        assert media[0]["url"] != "/api/media/old-sig/old-payload"
+        assert media[0]["url"] != historical["url"]
+        pending = channel.gateway.media.attachment_store.custody.records("pending")
 
         repeated = await _http_get(
             "http://127.0.0.1:29914/api/sessions/websocket:video-replay/webui-thread",
@@ -3212,6 +3222,7 @@ async def test_webui_thread_resigns_assistant_media_urls(
         assert repeated_assistant["id"] == assistant["id"]
         assert repeated_assistant["media"][0]["url"] == media[0]["url"]
         assert len(list(websocket_media.iterdir())) == 1
+        assert channel.gateway.media.attachment_store.custody.records("pending") == pending == []
 
         fetched = await _http_get(f"http://127.0.0.1:29914{media[0]['url']}")
         assert fetched.status_code == 200

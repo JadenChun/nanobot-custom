@@ -283,7 +283,11 @@ def test_resolver_supports_assemblyai_provider_config() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transcribe_audio_file_routes_openrouter_provider(audio_file: Path) -> None:
+async def test_transcribe_audio_file_routes_openrouter_provider(audio_file: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "nanobot.audio.transcription.measure_audio_duration",
+        AsyncMock(return_value=1.0),
+    )
     captured: dict[str, object] = {}
 
     class StubOpenRouter:
@@ -319,7 +323,11 @@ async def test_transcribe_audio_file_routes_openrouter_provider(audio_file: Path
 
 
 @pytest.mark.asyncio
-async def test_transcribe_audio_file_routes_xiaomi_mimo_provider(audio_file: Path) -> None:
+async def test_transcribe_audio_file_routes_xiaomi_mimo_provider(audio_file: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "nanobot.audio.transcription.measure_audio_duration",
+        AsyncMock(return_value=1.0),
+    )
     captured: dict[str, object] = {}
 
     class StubXiaomiMiMo:
@@ -355,7 +363,11 @@ async def test_transcribe_audio_file_routes_xiaomi_mimo_provider(audio_file: Pat
 
 
 @pytest.mark.asyncio
-async def test_transcribe_audio_file_routes_assemblyai_provider(audio_file: Path) -> None:
+async def test_transcribe_audio_file_routes_assemblyai_provider(audio_file: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "nanobot.audio.transcription.measure_audio_duration",
+        AsyncMock(return_value=1.0),
+    )
     captured: dict[str, object] = {}
 
     class StubAssemblyAI:

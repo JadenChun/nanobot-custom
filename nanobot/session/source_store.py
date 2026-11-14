@@ -59,6 +59,8 @@ from nanobot.workspace_access_recovery import (
     parse_workspace_scope_metadata,
 )
 
+MAX_SOURCE_SERIALIZED_BYTES = 67_108_864
+
 if TYPE_CHECKING:
     from nanobot.session.artifact import ArtifactDescriptor
     from nanobot.session.artifact_reader import ArtifactReader
@@ -114,6 +116,19 @@ class SourceState:
     generation: int
     checkpoint_id: str | None
     checkpoint_fingerprint: str
+
+    def same_origin(self, other: SourceState) -> bool:
+        """Revisions/checkpoints advance within one source lifetime."""
+        return (self.store_identity, self.session_key, self.incarnation, self.generation) == (
+            other.store_identity, other.session_key, other.incarnation, other.generation,
+        )
+
+
+class SourceOriginMismatchError(RuntimeError):
+    """Delayed work no longer targets its original canonical source."""
+
+    def __init__(self) -> None:
+        super().__init__("The original session source is no longer available")
 
 
 @dataclass(frozen=True)
@@ -478,6 +493,10 @@ class SourceSessionStore:
     def matches_backend(self, backend: JsonlSessionStore) -> bool:
         """Observe exact backend identity only; this does not admit an operation."""
         return backend is self._backend
+
+    def shares_store_with(self, other: SourceSessionStore) -> bool:
+        """Observe one exact backend behind two validated store bindings."""
+        return type(other) is SourceSessionStore and other._backend is self._backend
 
     def select_artifact_location_metadata(self) -> ArtifactSourceLocation:
         """Retain this backend selection while observing only its live location values."""
@@ -1207,7 +1226,12 @@ class SourceSessionStore:
         records = [header, *events]
         canonical_events(records)
         result = self._snapshot(header, events)
-        text = _source_bytes(header, events).decode("utf-8")
+        raw = _source_bytes(header, events)
+        if len(raw) > MAX_SOURCE_SERIALIZED_BYTES:
+            raise SourceValidationError(
+                "source exceeds the maximum readable serialized size"
+            )
+        text = raw.decode("utf-8")
         return PreparedSourcePersistence(result, text, lambda: header["key"])
 
     def _write(
@@ -1306,6 +1330,10 @@ class SourceSessionStore:
                 return self._snapshot(header, committed)
             if any(event.get("role") == "user" for event in events):
                 _invalidate_workspace_access_request(header["metadata"])
+            # The result and its recovery fence are one atomic source replacement.
+            # A matching call/result link does not settle an unresolved effect.
+            if any("_filesystem_effects" in event for event in events) and validate_execution_links(merged):
+                header["metadata"]["execution_recovery_required"] = True
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             return self._write(header, merged)
@@ -1752,14 +1780,24 @@ class SourceSessionStore:
             and event.get("role") == "user"
             and event.get("content") == record.content
             and event.get("media", []) == list(record.media)
+            and event.get("_child_followup") == (
+                record.child_followup.to_dict() if record.child_followup is not None else None
+            )
+            and event.get("_background_result") == (
+                record.background_result.to_dict()
+                if record.background_result is not None
+                else None
+            )
         )
 
     def discard_pending_followups(
         self,
         key: str,
         owner: ExecutionOwner,
+        *,
+        expected_records: tuple[PendingFollowupRecord, ...] | None = None,
     ) -> tuple[str, ...]:
-        """Explicitly discard pending rows before `/stop` releases the owner."""
+        """Discard all rows or exact observed rows before the owner is released."""
         from nanobot.session.execution_owner import execution_transaction
 
         with execution_transaction(self._backend, key, owner):
@@ -1767,13 +1805,33 @@ class SourceSessionStore:
             records = parse_pending_followup_records(
                 header["metadata"].get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, [])
             )
-            if not records:
+            if expected_records is None:
+                selected_ids = {record.identifier for record in records}
+            else:
+                expected_by_id = {record.identifier: record for record in expected_records}
+                if len(expected_by_id) != len(expected_records):
+                    raise SourceValidationError("Duplicate pending follow-up discard identity")
+                stored_by_id = {record.identifier: record for record in records}
+                if any(stored_by_id.get(identifier) != expected
+                       for identifier, expected in expected_by_id.items()):
+                    raise SourceValidationError("Pending follow-up changed before discard")
+                selected_ids = set(expected_by_id)
+            discarded = tuple(
+                record.identifier for record in records if record.identifier in selected_ids
+            )
+            if not discarded:
                 return ()
-            del header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY]
+            remaining = [record for record in records if record.identifier not in selected_ids]
+            if remaining:
+                header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY] = [
+                    record.to_dict() for record in remaining
+                ]
+            else:
+                del header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY]
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             self._write(header, events)
-            return tuple(record.identifier for record in records)
+            return discarded
 
     def update_metadata(
         self,

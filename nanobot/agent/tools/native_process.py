@@ -8,6 +8,7 @@ import os
 import sys
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Literal, cast
 
 from nanobot.security.native_admission import (
@@ -36,6 +37,7 @@ class NativeProcessHandle:
         self._ready: asyncio.Future[None] = loop.create_future()
         self._root_started: asyncio.Future[int] = loop.create_future()
         self._root_done = asyncio.Event()
+        self._receipt_path: Path | None = None
         self._status_task = asyncio.create_task(self._read_status())
         self._reap_task = asyncio.create_task(self._reap_supervisor())
         self.stdin = supervisor.stdin
@@ -55,6 +57,29 @@ class NativeProcessHandle:
     def set_on_supervisor_exit(self, callback: Callable[[], None] | None) -> None:
         """Replace the internal owner cleanup hook after handle registration."""
         self._on_supervisor_exit = callback
+
+    def set_receipt_path(self, path: Path) -> None:
+        """Bind the supervisor's quiescence receipt for this launch."""
+        self._receipt_path = path
+
+    def quiescence_proven(self) -> bool:
+        """Return true only after the supervisor published its tree proof."""
+        task = self._reap_task
+        if not task.done() or task.cancelled() or task.exception() is not None:
+            return False
+        return self._receipt_path is not None and self._receipt_path.is_file()
+
+    async def wait_quiescent(self, timeout: float | None = None) -> bool:
+        """Wait for supervisor exit and the published tree-quiescence receipt."""
+        task = self._reap_task
+        if not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except asyncio.TimeoutError:
+                return False
+        if task.cancelled() or task.exception() is not None:
+            return False
+        return self._receipt_path is not None and self._receipt_path.is_file()
 
     async def _read_status(self) -> None:
         try:
@@ -171,8 +196,19 @@ class NativeProcessHandle:
         # exit without racing asyncio's process-exit wakeup.
         reap_task = self._reap_task
         if not reap_task.done():
-            with suppress(asyncio.CancelledError, asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.shield(reap_task), timeout=10)
+            try:
+                await asyncio.wait_for(asyncio.shield(reap_task), timeout=1.0)
+            except asyncio.TimeoutError:
+                # The control request was serviced, but the supervisor has not
+                # published quiescence proof yet. Keep the handle owned; the
+                # caller can retry after the receipt publisher advances.
+                return
+        if reap_task.cancelled():
+            raise RuntimeError("native process tree settlement was cancelled")
+        if reap_task.exception() is not None:
+            raise RuntimeError("native process tree settlement failed") from reap_task.exception()
+        if self._receipt_path is None or not self._receipt_path.is_file():
+            raise RuntimeError("native process tree quiescence proof is missing")
 
     async def close_control(self) -> None:
         if self._control_fd >= 0:
@@ -283,6 +319,9 @@ async def spawn_native_process(
         protocol = asyncio.StreamReaderProtocol(reader)
         await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, status_stream)
         handle = NativeProcessHandle(helper, reader, control_write)
+        handle.set_receipt_path(
+            reservation.ledger.receipt_dir / f"{reservation.launch_id}.receipt"
+        )
         control_write = -1
         payload = json.dumps(
             {

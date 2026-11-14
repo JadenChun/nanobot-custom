@@ -69,6 +69,7 @@ export interface MobileRuntime {
   recover(): Promise<void>;
   /** Mint a fresh access token and reopen live sockets before it expires. */
   renew(): Promise<void>;
+  dispose?(): void;
 }
 
 let installedMobileRuntime: MobileRuntime | null = null;
@@ -110,6 +111,7 @@ export function recoverMobileRuntime(): Promise<void> {
 }
 
 export function resetMobileRuntime(): void {
+  installedMobileRuntime?.dispose?.();
   installedMobileRuntime = null;
   ownerCapability = false;
   standardDispatchCapability = false;
@@ -121,12 +123,41 @@ export function shouldRegisterServiceWorker(): boolean {
 
 class MobileRuntimeError extends Error {}
 
-export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
-  const pending = new Map<number, {
+export function createMobileRuntime(transport: MobileTransport): MobileRuntime & { dispose(): void } {
+  type Entry = {
+    id: number | null;
+    done: boolean;
     resolve: (response: MobileHttpResponse) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
-  }>();
+  };
+  const pending = new Map<number, Entry>();
+  const admitted = new Set<Entry>();
+  // Native returns its request ID after launch. Join terminal events arriving
+  // during that interval, within the same finite admission and byte bounds.
+  const early = new Map<number, MobileEvent>();
+  const maxPending = 64;
+  const maxEarlyBytes = 64 * 1024 * 1024;
+  let earlyBytes = 0;
+  let launching = 0;
+  let disposed = false;
+  const cancel = (id: number): void => { void transport.cancel(id).catch(() => undefined); };
+  const settle = (entry: Entry, event?: MobileEvent, error?: Error): void => {
+    if (entry.done) return;
+    entry.done = true;
+    admitted.delete(entry);
+    if (entry.id !== null) pending.delete(entry.id);
+    clearTimeout(entry.timer);
+    if (error) {
+      if (entry.id !== null) cancel(entry.id);
+      entry.reject(error);
+    } else if (event?.type === "http_error") {
+      entry.reject(new MobileRuntimeError(event.code ?? "http_error"));
+    } else if (event) {
+      entry.resolve({ requestId: entry.id!, status: event.status ?? 0,
+        headers: event.headers ?? {}, bodyBase64: event.body_base64 ?? "" });
+    }
+  };
   const listeners = new Set<(event: MobileEvent) => void>();
   let listening: Promise<() => void> | null = null;
   const sockets = new Set<MobileWebSocket>();
@@ -134,6 +165,7 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
   let renewalTimer: ReturnType<typeof setTimeout> | null = null;
 
   const scheduleRenewal = (payload: Record<string, unknown>): void => {
+    if (disposed) return;
     const limits = payload.limits;
     const rawTtl = limits && typeof limits === "object"
       ? Number((limits as Record<string, unknown>).access_ttl_seconds)
@@ -149,24 +181,17 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
   const ensureListener = (): Promise<() => void> => {
     if (listening === null) {
       listening = transport.onEvent((event) => {
-        if (event.type === "http_response" && typeof event.request_id === "number") {
+        if (disposed) return;
+        if ((event.type === "http_response" || event.type === "http_error")
+          && typeof event.request_id === "number") {
           const entry = pending.get(event.request_id);
-          if (entry) {
-            pending.delete(event.request_id);
-            clearTimeout(entry.timer);
-            entry.resolve({
-              requestId: event.request_id,
-              status: event.status ?? 0,
-              headers: event.headers ?? {},
-              bodyBase64: event.body_base64 ?? "",
-            });
-          }
-        } else if (event.type === "http_error" && typeof event.request_id === "number") {
-          const entry = pending.get(event.request_id);
-          if (entry) {
-            pending.delete(event.request_id);
-            clearTimeout(entry.timer);
-            entry.reject(new MobileRuntimeError(event.code ?? "http_error"));
+          if (entry) settle(entry, event);
+          else if (launching > 0 && !early.has(event.request_id)) {
+            const bytes = (event.body_base64?.length ?? 0) + (event.message?.length ?? 0) + 8192;
+            if (early.size < maxPending && earlyBytes + bytes <= maxEarlyBytes) {
+              early.set(event.request_id, event);
+              earlyBytes += bytes;
+            }
           }
         }
         for (const listener of listeners) listener(event);
@@ -175,17 +200,39 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     return listening;
   };
 
-  const execute = async (input: MobileHttpRequest, timeoutMs: number): Promise<MobileHttpResponse> => {
-    await ensureListener();
-    const requestId = await transport.http(input);
-    if (!requestId) throw new MobileRuntimeError("mobile request was not admitted");
+  const execute = (input: MobileHttpRequest, timeoutMs: number): Promise<MobileHttpResponse> => {
+    if (disposed) return Promise.reject(new MobileRuntimeError("mobile runtime disposed"));
+    if (admitted.size >= maxPending) return Promise.reject(new MobileRuntimeError("mobile request queue is full"));
     return new Promise<MobileHttpResponse>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pending.delete(requestId);
-        void transport.cancel(requestId);
-        reject(new MobileRuntimeError("mobile request timed out"));
-      }, timeoutMs);
-      pending.set(requestId, { resolve, reject, timer });
+      const entry: Entry = { id: null, done: false, resolve, reject,
+        timer: setTimeout(() => settle(entry, undefined, new MobileRuntimeError("mobile request timed out")), timeoutMs) };
+      admitted.add(entry);
+      void (async () => {
+        try {
+          await ensureListener();
+          if (entry.done || disposed) return;
+          launching += 1;
+          try {
+            const id = await transport.http(input);
+            if (!id) throw new MobileRuntimeError("mobile request was not admitted");
+            entry.id = id;
+            const event = early.get(id);
+            if (event) {
+              earlyBytes -= (event.body_base64?.length ?? 0) + (event.message?.length ?? 0) + 8192;
+              early.delete(id);
+            }
+            if (entry.done || disposed) { cancel(id); return; }
+            if (pending.has(id)) throw new MobileRuntimeError("duplicate mobile request ID");
+            pending.set(id, entry);
+            if (event) settle(entry, event);
+          } finally {
+            launching -= 1;
+            if (launching === 0) { early.clear(); earlyBytes = 0; }
+          }
+        } catch (error) {
+          settle(entry, undefined, error instanceof Error ? error : new MobileRuntimeError(String(error)));
+        }
+      })();
     });
   };
 
@@ -198,9 +245,20 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     return response;
   };
 
-  const runtime: MobileRuntime = {
+  const runtime: MobileRuntime & { dispose(): void } = {
     transport,
     request,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (renewalTimer !== null) clearTimeout(renewalTimer);
+      for (const entry of [...admitted]) settle(entry, undefined, new MobileRuntimeError("mobile runtime disposed"));
+      early.clear(); earlyBytes = 0;
+      listeners.clear();
+      for (const socket of sockets) socket.close();
+      sockets.clear();
+      if (listening) void listening.then((remove) => remove()).catch(() => undefined);
+    },
     async handshake() {
       // Rotate the access token first: refresh invalidates every previous token
       // for this installation, so a token inherited from an earlier session can

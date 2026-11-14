@@ -1,14 +1,17 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -407,6 +410,7 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Operation: "mobile_pair_collect",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/pair/collect",
+		Native:    true,
 		Headers: map[string]string{
 			"X-Nanobot-Pairing-Id":     "pair-1",
 			"X-Nanobot-Pairing-Nonce":  "nonce-1",
@@ -430,6 +434,7 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Operation: "mobile_pair_collect",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/pair/collect",
+		Native:    true,
 		Headers:   map[string]string{"X-Admin": "1"},
 	}); err == nil {
 		t.Fatal("unlisted pairing header was accepted")
@@ -438,6 +443,7 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Operation: "mobile_pair_code",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/pair/code",
+		Native:    true,
 		Headers: map[string]string{
 			"X-Nanobot-Pairing-Code": "12345678",
 			"X-Nanobot-Installation": "install-1",
@@ -481,6 +487,7 @@ func TestHTTPRefreshRouteUsesBoundedHeaders(t *testing.T) {
 		Operation: "mobile_refresh_get",
 		Method:    http.MethodGet,
 		Path:      "/mobile/v1/refresh",
+		Native:    true,
 		Headers: map[string]string{
 			"X-Nanobot-Installation":  "install-1",
 			"X-Nanobot-Refresh-Token": "refresh-1",
@@ -496,6 +503,74 @@ func TestHTTPRefreshRouteUsesBoundedHeaders(t *testing.T) {
 	body, err := base64.StdEncoding.DecodeString(event["body_base64"].(string))
 	if err != nil || !strings.Contains(string(body), `"access_token":"nbm_at_new"`) {
 		t.Fatalf("body: %q err=%v", body, err)
+	}
+}
+
+func TestHTTPCredentialRouteRequiresTrustedNativeProvenance(t *testing.T) {
+	requests := make(chan string, 4)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mobile/v1/pair/prove", func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"native-secret"}`))
+	})
+	mux.HandleFunc("/mobile/v1/handshake", func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"mobile_protocol":1}`))
+	})
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+	core := testCore(t, server, nil)
+	proof := HTTPRequest{
+		Operation: "mobile_pair_prove",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/pair/prove",
+	}
+	if id, err := core.HTTP(proof); id != 0 || !errors.Is(err, ErrDenied) {
+		t.Fatalf("WebView proof request was not denied: id=%d err=%v", id, err)
+	}
+	select {
+	case request := <-requests:
+		t.Fatalf("denied WebView proof reached transport: %s", request)
+	default:
+	}
+
+	proof.Native = true
+	proofID, err := core.HTTP(proof)
+	if err != nil || proofID == 0 {
+		t.Fatalf("trusted native proof request was denied: id=%d err=%v", proofID, err)
+	}
+	proofEvent := waitEvent(t, core, "http_response")
+	if proofEvent["request_id"].(float64) != float64(proofID) {
+		t.Fatalf("proof response ID = %v, want %d", proofEvent["request_id"], proofID)
+	}
+	proofBody, err := base64.StdEncoding.DecodeString(proofEvent["body_base64"].(string))
+	if err != nil || !strings.Contains(string(proofBody), `"access_token":"native-secret"`) {
+		t.Fatalf("trusted native proof response = %q, err=%v", proofBody, err)
+	}
+	if request := <-requests; request != "GET /mobile/v1/pair/prove" {
+		t.Fatalf("native proof request = %q", request)
+	}
+
+	handshakeID, err := core.HTTP(HTTPRequest{
+		Operation: "mobile_handshake",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/handshake",
+	})
+	if err != nil || handshakeID == 0 {
+		t.Fatalf("WebView handshake was denied: id=%d err=%v", handshakeID, err)
+	}
+	handshakeEvent := waitEvent(t, core, "http_response")
+	if handshakeEvent["request_id"].(float64) != float64(handshakeID) {
+		t.Fatalf("handshake response ID = %v, want %d", handshakeEvent["request_id"], handshakeID)
+	}
+	handshakeBody, err := base64.StdEncoding.DecodeString(handshakeEvent["body_base64"].(string))
+	if err != nil || !strings.Contains(string(handshakeBody), `"mobile_protocol":1`) {
+		t.Fatalf("WebView handshake response = %q, err=%v", handshakeBody, err)
+	}
+	if request := <-requests; request != "GET /mobile/v1/handshake" {
+		t.Fatalf("handshake request = %q", request)
 	}
 }
 
@@ -550,5 +625,129 @@ func TestWebSocketPingTracksTheLiveSocket(t *testing.T) {
 	waitEvent(t, core, "ws_closed")
 	if err := core.WSPing(wsID); err != ErrNotFound {
 		t.Fatalf("WSPing retired socket: %v", err)
+	}
+}
+
+func TestQueueFullRetainsTerminalResult(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
+	if err := core.emit(map[string]any{"type": "filler"}); err != nil {
+		t.Fatalf("filler: %v", err)
+	}
+	if err := core.emit(map[string]any{
+		"type":       "http_response",
+		"request_id": 7,
+		"status":     200,
+	}); err != nil {
+		t.Fatalf("terminal emit: %v", err)
+	}
+	buffer := make([]byte, 512)
+	n, err := core.PollEvent(buffer)
+	if err != nil || n == 0 {
+		t.Fatalf("terminal poll: n=%d err=%v", n, err)
+	}
+	if string(buffer[:n]) != `{"request_id":7,"status":200,"type":"http_response"}` {
+		t.Fatalf("terminal event: %s", buffer[:n])
+	}
+}
+
+func TestTerminalBudgetHoldsEveryAdmittedResult(t *testing.T) {
+	release := make(chan struct{})
+	releaseResponses := sync.OnceFunc(func() { close(release) })
+	written := make(chan struct{}, 5)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		marker := r.URL.Query().Get("cursor")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("ETag", `"fixture-`+marker+`"`)
+		_, _ = w.Write(bytes.Repeat([]byte(marker), 8<<20))
+		written <- struct{}{}
+	}))
+	defer server.Close()
+	defer releaseResponses()
+	core := testCore(t, server, func(cfg *Config) {
+		cfg.QueueSize = 1
+		cfg.MaxRequests = 4
+	})
+	expected := make(map[uint64]byte)
+	for _, marker := range []byte("abcd") {
+		id, err := core.HTTP(HTTPRequest{
+			Operation: "fixture_read",
+			Method:    http.MethodGet,
+			Path:      "/fixture/v1/read?cursor=" + string(marker),
+		})
+		if err != nil {
+			t.Fatalf("admit %q: %v", marker, err)
+		}
+		expected[id] = marker
+	}
+	refused, err := core.HTTP(HTTPRequest{
+		Operation: "fixture_read",
+		Method:    http.MethodGet,
+		Path:      "/fixture/v1/read?cursor=e",
+	})
+	if refused != 0 || err != ErrQueueFull {
+		t.Fatalf("expected synchronous refusal, got id=%d err=%v", refused, err)
+	}
+	releaseResponses()
+	deadline := time.After(10 * time.Second)
+	for range expected {
+		select {
+		case <-written:
+		case <-deadline:
+			t.Fatal("fixture responses did not complete")
+		}
+	}
+	buffer := make([]byte, 12<<20)
+	seen := map[uint64]bool{}
+	for len(seen) < len(expected) {
+		n, err := core.PollEvent(buffer)
+		if err != nil {
+			t.Fatalf("poll: %v", err)
+		}
+		if n == 0 {
+			select {
+			case <-deadline:
+				t.Fatalf("terminal results did not settle: %v", seen)
+			case <-time.After(10 * time.Millisecond):
+			}
+			continue
+		}
+		var event struct {
+			Type      string            `json:"type"`
+			RequestID uint64            `json:"request_id"`
+			Headers   map[string]string `json:"headers"`
+			Body      string            `json:"body_base64"`
+		}
+		if err := json.Unmarshal(buffer[:n], &event); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		marker, admitted := expected[event.RequestID]
+		if !admitted || seen[event.RequestID] || event.Type != "http_response" {
+			t.Fatalf("unexpected terminal result: id=%d type=%s", event.RequestID, event.Type)
+		}
+		body, err := base64.StdEncoding.DecodeString(event.Body)
+		if err != nil || len(body) != 8<<20 || body[0] != marker || event.Headers["etag"] != `"fixture-`+string(marker)+`"` {
+			t.Fatalf("wrong response for request %d", event.RequestID)
+		}
+		seen[event.RequestID] = true
+	}
+	if n, err := core.PollEvent(buffer); n != 0 || err != nil {
+		t.Fatalf("extra terminal result: n=%d err=%v", n, err)
+	}
+}
+
+func TestHTTPRequestCountIsBounded(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.MaxRequests = 1 })
+	core.mu.Lock()
+	core.requests[99] = func() {}
+	core.mu.Unlock()
+	if _, err := core.HTTP(HTTPRequest{
+		Operation: "fixture_read",
+		Method:    http.MethodGet,
+		Path:      "/fixture/v1/read",
+	}); err != ErrQueueFull {
+		t.Fatalf("request count bound: %v", err)
 	}
 }

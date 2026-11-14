@@ -124,6 +124,17 @@ def build_mobile_edge(
             owner=bool(getattr(identity, "is_owner", False)),
         )
 
+    async def delegated_children_handler(
+        _identity: object,
+        key: str,
+        query: dict[str, list[str]],
+    ) -> tuple[int, dict[str, Any]]:
+        return await asyncio.to_thread(
+            http.mobile_delegated_children_payload,
+            key,
+            query,
+        )
+
     async def api_handler(identity: Any, path: str) -> tuple[int, dict[str, Any]]:
         return await http.mobile_api_payload(
             path,
@@ -151,6 +162,7 @@ def build_mobile_edge(
         model_settings_handler=model_settings_handler,
         workspaces_handler=workspaces_handler,
         thread_handler=thread_handler,
+        delegated_children_handler=delegated_children_handler,
         api_handler=api_handler,
         feature_handler=feature_handler,
         standard_handler=standard_handler,

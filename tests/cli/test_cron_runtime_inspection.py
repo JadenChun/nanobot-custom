@@ -1,14 +1,21 @@
+import hashlib
 import json
+import shutil
 
 import pytest
 from typer.testing import CliRunner
 
 from nanobot.cli.cron_runtime import cron_runtime_app
+from nanobot.cron import scheduler_store
+from nanobot.cron.occurrence_store import CronOccurrenceStore
 from nanobot.cron.runtime_inspection import (
     inspect_occurrences,
     inspect_scheduler,
     reconcile_occurrence,
 )
+from nanobot.cron.scheduler import Scheduler
+from nanobot.cron.scheduler_store import SchedulerStore
+from nanobot.cron.service import CronOccurrenceRuntime
 from tests.cron.stage3_fixtures import offline_denial, runtime  # noqa: F401
 from tests.cron.test_scheduler import prebegin_crash, reconcile
 
@@ -17,6 +24,120 @@ def snapshot(root):
     return [(str(path.relative_to(root)), path.stat().st_ino, path.stat().st_mtime_ns,
              path.read_bytes() if path.is_file() else None)
             for path in [root, *sorted(root.rglob("*"))]]
+
+
+async def _roll_with_receipts(tmp_path, monkeypatch, *, with_bridge=False):
+    graph, job, clock, _calls, _channels = runtime(tmp_path)
+    clock.now = 1100
+    await graph.scheduler.wake_once()
+    manual = graph.authorize_manual("operator-run", job.job_id, job.job_instance_id, job.definition_revision)
+    await graph.execute_now(manual)
+    if with_bridge:
+        clock.now = 1200
+
+        async def interrupt(*_args):
+            raise OSError("interrupted before dispatch")
+
+        with monkeypatch.context() as fixture:
+            fixture.setattr(graph.scheduler, "_dispatch", interrupt)
+            with pytest.raises(OSError, match="interrupted before dispatch"):
+                await graph.scheduler.wake_once()
+    graph.stop_claiming()
+    graph.scheduler.release_lease()
+    if with_bridge:
+        claimed = next(record for record in graph.service.occurrence_store.inspect_records()
+                       if record.state == "claimed")
+        reconcile(graph, claimed)
+    with graph.store.stopped_writer() as lease:
+        graph.store.rollover_epoch(lease, compact_evidence=True)
+    await graph.aclose()
+    return graph, clock
+
+
+def _rollback_export(graph, destination):
+    return CliRunner().invoke(cron_runtime_app, [
+        "scheduler-rollback-export", "--offline-copy",
+        "--root", str(graph.store.root), "--occurrence-root", str(graph.service.occurrence_store.root),
+        "--namespace", "stage3", "--runtime-identity", "copied-root",
+        "--destination", str(destination),
+    ])
+
+
+@pytest.mark.parametrize("schema", [1, 2])
+async def test_rollback_export_retains_receipts_and_next_due_job(tmp_path, monkeypatch, schema):
+    graph, clock = await _roll_with_receipts(tmp_path, monkeypatch, with_bridge=schema == 2)
+    occurrence_root = graph.service.occurrence_store.root
+    before = snapshot(graph.store.root.parent)
+    occurrences = inspect_occurrences(occurrence_root, namespace="stage3")
+    current = inspect_scheduler(graph.store.root, namespace="stage3", runtime_identity="copied-root")
+    exported = tmp_path / "exported"
+
+    result = _rollback_export(graph, exported)
+
+    assert result.exit_code == 0, result.output
+    data = (exported / "state.json").read_bytes()
+    assert json.loads(result.output) == {
+        "classification": "scheduler_rollback_export",
+        "schema_version": schema,
+        "generation": current["generation"],
+        "occurrence_count": len(occurrences["records"]),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    assert snapshot(graph.store.root.parent) == before
+    state = inspect_scheduler(exported, namespace="stage3", runtime_identity="copied-root")
+    assert state["cursors"] == current["cursors"]
+    assert state["classifications"] == current["classifications"]
+    assert state["request_count"] == 1
+    assert len(state["bridges"]) == schema - 1
+    assert json.loads(data)["state"]["requests"][0]["request_id"] == "operator-run"
+
+    restored = tmp_path / "restored"
+    shutil.copytree(exported, restored / "scheduler")
+    shutil.copytree(occurrence_root, restored / "occurrences")
+    store = CronOccurrenceStore(restored / "occurrences", namespace="stage3")
+    definitions = graph.service.definition_store
+    calls = []
+
+    async def dispatch(claim, reprove):
+        reprove()
+        calls.append(claim.identity.scheduled_fire_time_ms)
+
+    scheduler = Scheduler(
+        definitions, CronOccurrenceRuntime(definitions, store),
+        SchedulerStore(restored / "scheduler", namespace="stage3", runtime_identity="copied-root"),
+        clock, dispatch,
+    )
+    scheduler.acquire_and_reconcile()
+    try:
+        await scheduler.wake_once()
+        assert calls == []
+        assert inspect_occurrences(store.root, namespace="stage3") == occurrences
+        clock.now = 1200 if schema == 1 else 1300
+        await scheduler.wake_once()
+        await scheduler.wake_once()
+        assert calls == [clock.now]
+    finally:
+        scheduler.stop_claiming()
+        scheduler.release_lease()
+
+
+@pytest.mark.parametrize("failure", ["archive", "capacity"])
+async def test_rollback_export_refuses_unusable_history(tmp_path, monkeypatch, failure):
+    graph, _clock = await _roll_with_receipts(tmp_path, monkeypatch)
+    root = graph.store.root
+    if failure == "archive":
+        archive = root / ".epochs" / "epoch-0.json"
+        archive.write_bytes(archive.read_bytes()[:-1])
+    else:
+        monkeypatch.setattr(scheduler_store, "MAX_STATE_BYTES", (root / "state.json").stat().st_size)
+    before = snapshot(root.parent)
+    destination = tmp_path / "exported"
+
+    result = _rollback_export(graph, destination)
+
+    assert result.exit_code == 5
+    assert not destination.exists()
+    assert snapshot(root.parent) == before
 
 
 async def test_existing_only_content_free_inspection_changes_no_objects(tmp_path, monkeypatch):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import plistlib
+import re
 import shlex
 import subprocess
 import sys
@@ -65,7 +66,8 @@ def test_agent_and_gateway_help_accept_compatibility_log_file() -> None:
         )
 
         assert result.returncode == 0, result.stderr
-        assert "--log-file" in result.stdout
+        output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+        assert "--log-file" in "".join(output.split())
 
 
 def test_file_only_agent_runtime_logging_does_not_write_to_stderr(tmp_path: Path) -> None:

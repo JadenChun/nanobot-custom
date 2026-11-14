@@ -180,6 +180,7 @@ class ToolDenialKind(StrEnum):
 
     PRIVATE_NETWORK = "private_network"
     MANAGED_UNAVAILABLE = "managed_unavailable"
+    WRITE_PERMISSION = "write_permission"
 
 
 PRIVATE_NETWORK_DENIAL_NOTE = (

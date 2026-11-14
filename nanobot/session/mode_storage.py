@@ -25,6 +25,7 @@ _WORKSPACE_ID_NAME = "workspace-id"
 _WORKSPACE_ID_LENGTH = 32
 MODE_JSON_LIMIT = 1_048_576
 MODE_ENUM_LIMIT = 4096
+MODE_JOURNAL_LIMIT = 4096
 
 
 class SessionModeError(RuntimeError):
@@ -1039,6 +1040,26 @@ class SessionModeStorage:
                 pass
             os.close(parent)
 
+    def rename(self, source: str, target: str) -> None:
+        """Move one private directory entry without following either parent."""
+        source_parent, source_leaf = self._parent(source)
+        target_parent, target_leaf = self._parent(target, create=True)
+        try:
+            self._require_current()
+            os.rename(
+                source_leaf,
+                target_leaf,
+                src_dir_fd=source_parent,
+                dst_dir_fd=target_parent,
+            )
+            os.fsync(source_parent)
+            os.fsync(target_parent)
+        except OSError:
+            raise _mode_error() from None
+        finally:
+            os.close(source_parent)
+            os.close(target_parent)
+
     def unlink(self, name: str) -> None:
         parent, leaf = self._parent(name)
         try:
@@ -1051,7 +1072,13 @@ class SessionModeStorage:
         finally:
             os.close(parent)
 
-    def list(self, name: str, *, suffix: str | None = None) -> tuple[str, ...]:
+    def list(
+        self,
+        name: str,
+        *,
+        suffix: str | None = None,
+        maximum: int | None = None,
+    ) -> tuple[str, ...]:
         try:
             parent, leaf = self._parent(name)
         except FileNotFoundError:
@@ -1067,7 +1094,8 @@ class SessionModeStorage:
             if value.st_uid != os.geteuid() or value.st_mode & 0o777 != 0o700:
                 raise _mode_error()
             names = os.listdir(directory)
-            if len(names) > MODE_ENUM_LIMIT:
+            limit = MODE_ENUM_LIMIT if maximum is None else maximum
+            if len(names) > limit:
                 raise _mode_error()
             if suffix is not None:
                 if any(not item.endswith(suffix) for item in names):

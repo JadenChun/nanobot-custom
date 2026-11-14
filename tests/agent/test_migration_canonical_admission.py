@@ -9,7 +9,13 @@ from nanobot.agent.loop import AgentLoop
 from nanobot.agent.run_store import RunStore
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import DelegationBudget, DeliveryTarget, RunStatus, TurnRequest
+from nanobot.agent.turn import (
+    ApprovalDecision,
+    DelegationBudget,
+    DeliveryTarget,
+    RunStatus,
+    TurnRequest,
+)
 from nanobot.agent.turn_admission import ApprovalAdmission
 from nanobot.session.manager import SessionManager
 
@@ -17,7 +23,7 @@ from nanobot.session.manager import SessionManager
 def host(tmp_path):
     loop = object.__new__(AgentLoop)
     loop._fork_dependencies = SimpleNamespace(
-        foreground_manager=SimpleNamespace(new_budget=DelegationBudget),
+        foreground_manager=SimpleNamespace(new_budget=DelegationBudget, _delegation_tree=None),
         resource_policy=SimpleNamespace(workspace=tmp_path, context_manager=object()))
     loop.approval_admission = ApprovalAdmission()
     loop.sessions = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
@@ -25,6 +31,12 @@ def host(tmp_path):
     loop._session_locks = weakref.WeakValueDictionary()
     loop._bus_cleanup_tasks = {}
     loop._pending_republish = {}
+    # This host has no delegated children to reconcile. Keep its canonical
+    # execution bookkeeping explicit rather than bypassing runtime guards.
+    loop._background_results_reconciled = True
+    loop._uncertain_children_reconciled = True
+    loop._active_root_bindings = {}
+    loop._source_activity_admissions = {}
     loop.tools = ToolRegistry()
     loop._process_turn = AsyncMock(return_value=SimpleNamespace(
         run_result=AgentRunResult(final_content='answer', messages=[]), outbound=None))
@@ -64,15 +76,36 @@ async def test_same_session_serializes_and_other_session_progresses(tmp_path):
     assert calls == ['first', 'other', 'second']
 
 
-@pytest.mark.parametrize('reply,status,calls', [('yes', RunStatus.COMPLETED, 1), ('no', RunStatus.CANCELLED, 0)])
-async def test_approval_reply_uses_task_lock_or_cancels_without_execution(tmp_path, reply, status, calls):
+@pytest.mark.asyncio
+@pytest.mark.parametrize('decision,status,calls', [('approve', RunStatus.COMPLETED, 1), ('deny', RunStatus.CANCELLED, 0)])
+async def test_approval_reply_uses_task_lock_or_cancels_without_execution(tmp_path, decision, status, calls):
     loop = host(tmp_path)
-    await loop.approval_admission.store(session_key='cron:job', channel='telegram', chat_id='42', summary='risky')
-    result = await loop.execute_turn(TurnRequest(content=reply, route=DeliveryTarget(channel='telegram', chat_id='42')))
+    pending = await loop.approval_admission.store(
+        session_key='cron:job', channel='telegram', chat_id='42', summary='risky')
+    approval = ApprovalDecision(
+        approval_id=pending.approval_id, decision=decision, session_key='cron:job')
+    result = await loop.execute_turn(TurnRequest(
+        content='approval_decision',
+        route=DeliveryTarget(channel='telegram', chat_id='42'),
+        approval_decision=approval,
+    ))
     assert result.status is status and loop._process_turn.await_count == calls
     if calls:
         assert loop._process_turn.await_args.kwargs['session_key'] == 'cron:job'
         assert loop._process_turn.await_args.kwargs['run_context'].policy.approval_granted
+
+
+@pytest.mark.asyncio
+async def test_text_yes_does_not_execute_approval_or_consume_pending_request(tmp_path):
+    loop = host(tmp_path)
+    pending = await loop.approval_admission.store(
+        session_key='cron:job', channel='telegram', chat_id='42', summary='risky')
+    await loop.execute_turn(TurnRequest(
+        content='yes', route=DeliveryTarget(channel='telegram', chat_id='42')))
+    call = loop._process_turn.await_args
+    assert call.kwargs['session_key'] == 'telegram:42'
+    assert not call.kwargs['run_context'].policy.approval_granted
+    assert (await loop.approval_admission.snapshot_decision('cron:job', None)).pending is pending
 
 
 async def test_cancelled_waiter_finalizes_without_stage_execution(tmp_path):
@@ -181,16 +214,28 @@ async def test_cancelled_direct_waiter_does_not_publish_idle_for_active_turn(tmp
     lock.release()
 
 
+@pytest.mark.asyncio
 async def test_direct_approval_cleanup_uses_effective_key_while_lock_owned(tmp_path):
+    from nanobot.agent.loop import _TurnExecutionOptions
+
     loop = host(tmp_path)
-    await loop.approval_admission.store(session_key='cron:job', channel='telegram', chat_id='42', summary='task')
+    pending = await loop.approval_admission.store(
+        session_key='cron:job', channel='telegram', chat_id='42', summary='task')
     observed = []
-    async def idle(msg, key, status):
+    async def cleanup(key):
         assert loop._get_session_lock(key).locked()
-        observed.append((key, status))
-    loop.runtime_event_publisher = SimpleNamespace(run_status_changed=idle, clear_turn=lambda key: None)
-    await loop.process_direct('yes', session_key='telegram:42', channel='telegram', chat_id='42')
-    assert observed == [('cron:job', 'idle')]
+        observed.append(key)
+    decision = ApprovalDecision(
+        approval_id=pending.approval_id, decision='approve', session_key='cron:job')
+    await loop.execute_turn(
+        TurnRequest(
+            content='approval_decision',
+            route=DeliveryTarget(channel='telegram', chat_id='42'),
+            approval_decision=decision,
+        ),
+        _options=_TurnExecutionOptions(on_admission_end=cleanup),
+    )
+    assert observed == ['cron:job']
 
 
 async def test_idle_publisher_failure_still_clears_and_unlocks(tmp_path):
@@ -375,9 +420,12 @@ async def test_cancelled_waiter_exclusions_do_not_load_or_admit(tmp_path, monkey
             '_type': 'metadata', 'key': key, 'metadata': {'source_schema_version': 1},
         }) + '\nmalformed history must not be read\n')
     else:
-        await loop.approval_admission.store(session_key='cron:actual', channel='cli',
-                                           chat_id='exclude', summary='private task')
-        request = TurnRequest(content='yes', session_key=key, run_id='excluded')
+        pending = await loop.approval_admission.store(
+            session_key='cron:actual', channel='cli', chat_id='exclude', summary='private task')
+        request = TurnRequest(
+            content='approval_decision', session_key=key, run_id='excluded',
+            approval_decision=ApprovalDecision(
+                approval_id=pending.approval_id, decision='approve', session_key='cron:actual'))
         key = 'cron:actual'
     reached = asyncio.Event()
     lock = loop._get_session_lock(key)
@@ -421,7 +469,7 @@ async def test_cancellation_before_record_construction_releases_receipt(tmp_path
         reached.set()
         await asyncio.Future()
 
-    loop.approval_admission.snapshot = snapshot
+    loop.approval_admission.snapshot_decision = snapshot
     task = asyncio.create_task(loop.execute_turn(TurnRequest(content='private', run_id='too-early')))
     await reached.wait()
     assert len(loop.sessions._cancellation_receipts) == 1

@@ -4,11 +4,16 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.system.Os
+import android.system.OsConstants
 import java.io.File
 import java.io.FileOutputStream
 import java.security.GeneralSecurityException
+import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -30,6 +35,9 @@ data class PendingPairingSetup(
     val origin: String,
     val pairingId: String,
     val challenge: String,
+    val generation: Long,
+    val code: String = "",
+    val label: String = "",
 )
 
 data class CustodyRecord(
@@ -47,6 +55,9 @@ data class CustodyRecord(
     val pendingPairingId: String = "",
     val pendingPairingOrigin: String = "",
     val pendingPairingChallenge: String = "",
+    val pendingPairingGeneration: Long = 0,
+    val pendingPairingCode: String = "",
+    val pendingPairingLabel: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("version", version)
@@ -63,6 +74,9 @@ data class CustodyRecord(
         .put("pending_pairing_id", pendingPairingId)
         .put("pending_pairing_origin", pendingPairingOrigin)
         .put("pending_pairing_challenge", pendingPairingChallenge)
+        .put("pending_pairing_generation", pendingPairingGeneration)
+        .put("pending_pairing_code", pendingPairingCode)
+        .put("pending_pairing_label", pendingPairingLabel)
 
     companion object {
         fun fromJson(json: JSONObject): CustodyRecord {
@@ -95,6 +109,9 @@ data class CustodyRecord(
                 pendingPairingId = json.optString("pending_pairing_id"),
                 pendingPairingOrigin = json.optString("pending_pairing_origin"),
                 pendingPairingChallenge = json.optString("pending_pairing_challenge"),
+                pendingPairingGeneration = json.optLong("pending_pairing_generation"),
+                pendingPairingCode = json.optString("pending_pairing_code"),
+                pendingPairingLabel = json.optString("pending_pairing_label"),
             )
         }
     }
@@ -110,6 +127,49 @@ class CustodyStore(context: Context) {
     private val custodyDir = File(appContext.filesDir, "custody")
     private val recordFile = File(custodyDir, "record.enc")
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+
+    private val attemptFence = PendingAttemptFence(
+        read = {
+            val file = File(custodyDir, "attempt.generation")
+            if (!file.exists()) PendingAttemptFence.State(0, false) else {
+                val pieces = file.readText(Charsets.US_ASCII).split(":")
+                require(pieces.size == 3 && pieces[0] == "1" && pieces[2] in setOf("0", "1")) { "invalid pending attempt fence" }
+                val generation = pieces[1].toLong()
+                require(generation >= 0) { "invalid pending generation" }
+                PendingAttemptFence.State(generation, pieces[2] == "1")
+            }
+        },
+        persist = { state ->
+            ensureDirectory()
+            val temporary = File(custodyDir, "attempt.generation.tmp")
+            FileOutputStream(temporary).use { stream ->
+                stream.write("1:${state.generation}:${if (state.active) 1 else 0}".toByteArray(Charsets.US_ASCII))
+                stream.fd.sync()
+            }
+            check(temporary.renameTo(File(custodyDir, "attempt.generation"))) { "pending fence could not be persisted" }
+            syncDirectory()
+        },
+    )
+
+    fun attemptGeneration(): Long = attemptFence.generation()
+    fun cancelPairing() { attemptFence.cancel() }
+    fun requirePairing(generation: Long) { attemptFence.withCurrent(generation) {} }
+    fun requireAuthority(generation: Long) { attemptFence.withCurrent(generation, requireActive = false) {} }
+    fun <T> withAuthority(generation: Long, action: () -> T): T =
+        attemptFence.withCurrent(generation, requireActive = false, write = action)
+    fun <T> withPairing(generation: Long, action: () -> T): T = attemptFence.withCurrent(generation, write = action)
+
+    fun beginPairing(origin: String, installationId: String, challenge: String = "", code: String = "", label: String = ""): Long {
+        return withAuthority(attemptGeneration()) {
+            check(loadPairingCancellation() == null) { "Complete pairing cancellation first." }
+            val current = loadOrCreate(origin, installationId)
+            val generation = attemptFence.begin()
+            save(current.copy(pendingPairingId = "", pendingPairingOrigin = origin,
+                pendingPairingChallenge = challenge, pendingPairingGeneration = generation,
+                pendingPairingCode = code, pendingPairingLabel = label))
+            generation
+        }
+    }
 
     @Synchronized
     fun loadOrCreate(origin: String, installationId: String?, hostname: String = "nanobot-android"): CustodyRecord {
@@ -162,7 +222,13 @@ class CustodyStore(context: Context) {
             throw CustodyCorruptException("custody record cannot be decrypted", exception)
         }
         return try {
-            CustodyRecord.fromJson(JSONObject(String(plaintext, Charsets.UTF_8)))
+            val record = CustodyRecord.fromJson(JSONObject(String(plaintext, Charsets.UTF_8)))
+            // An older app could write credentials before settling the pending setup.
+            if (record.pendingPairingOrigin.isNotBlank()) {
+                record.copy(accessToken = "", refreshToken = "", accessExpiresAt = 0, refreshExpiresAt = 0)
+            } else {
+                record
+            }
         } catch (exception: CustodyUnknownVersionException) {
             throw exception
         } catch (exception: Exception) {
@@ -198,6 +264,7 @@ class CustodyStore(context: Context) {
             temp.delete()
             throw CustodyException("custody record could not be replaced atomically")
         }
+        syncDirectory()
     }
 
     @Synchronized
@@ -230,13 +297,14 @@ class CustodyStore(context: Context) {
         return updated
     }
 
-    @Synchronized
     fun savePendingPairing(
         origin: String,
         installationId: String,
         pairingId: String,
         challenge: String,
-    ): CustodyRecord {
+        generation: Long,
+    ): CustodyRecord = attemptFence.withCurrent(generation) {
+        synchronized(this) {
         if (origin.isBlank() || pairingId.isBlank() || challenge.isBlank()) {
             throw CustodyException("pending pairing is incomplete")
         }
@@ -251,54 +319,66 @@ class CustodyStore(context: Context) {
             pendingPairingId = pairingId,
             pendingPairingOrigin = origin,
             pendingPairingChallenge = challenge,
+            pendingPairingGeneration = generation,
+            pendingPairingCode = "",
             updatedAt = System.currentTimeMillis(),
         )
         save(updated)
-        return updated
+        updated
+        }
     }
 
-    @Synchronized
-    fun loadPendingPairing(): PendingPairingSetup? {
-        val record = load() ?: return null
-        if (
-            record.pendingPairingId.isBlank() ||
-            record.pendingPairingOrigin.isBlank() ||
-            record.pendingPairingChallenge.isBlank()
-        ) {
-            return null
+    fun loadPendingPairing(): PendingPairingSetup? =
+        load()?.pendingSetup()?.takeIf { attemptFence.isCurrent(it.generation) }
+
+    fun loadPairingCancellation(): PendingPairingSetup? =
+        load()?.pendingSetup()?.takeIf {
+            it.pairingId.isNotBlank() && !attemptFence.isCurrent(it.generation)
         }
+
+    fun fencePendingPairing(): Pair<Long, PendingPairingSetup?> =
+        attemptFence.cancel { load()?.pendingSetup() }
+
+    fun finishPairingCancellation(generation: Long, pending: PendingPairingSetup) {
+        withAuthority(generation) {
+            synchronized(this) {
+                val record = load() ?: return@synchronized
+                if (record.pendingPairingGeneration == pending.generation) {
+                    save(record.withoutPendingSetup())
+                }
+            }
+        }
+    }
+
+    private fun CustodyRecord.pendingSetup(): PendingPairingSetup? {
+        if (pendingPairingOrigin.isBlank() ||
+            (pendingPairingChallenge.isBlank() && pendingPairingCode.isBlank())
+        ) return null
         return PendingPairingSetup(
-            origin = record.pendingPairingOrigin,
-            pairingId = record.pendingPairingId,
-            challenge = record.pendingPairingChallenge,
+            origin = pendingPairingOrigin,
+            pairingId = pendingPairingId,
+            challenge = pendingPairingChallenge,
+            generation = pendingPairingGeneration,
+            code = pendingPairingCode,
+            label = pendingPairingLabel,
         )
     }
 
-    @Synchronized
-    fun clearPendingPairing() {
-        val record = load() ?: return
-        if (
-            record.pendingPairingId.isBlank() &&
-            record.pendingPairingChallenge.isBlank()
-        ) {
-            return
-        }
-        save(
-            record.copy(
-                pendingPairingId = "",
-                pendingPairingOrigin = "",
-                pendingPairingChallenge = "",
-                updatedAt = System.currentTimeMillis(),
-            )
+    private fun CustodyRecord.withoutPendingSetup(): CustodyRecord =
+        copy(
+            pendingPairingId = "",
+            pendingPairingOrigin = "",
+            pendingPairingChallenge = "",
+            pendingPairingGeneration = 0,
+            pendingPairingCode = "",
+            pendingPairingLabel = "",
         )
-    }
 
     /**
      * Persist a rotation only while the same live custody binding still exists.
      * A logout/revoke that cleared or fenced custody must win over an older
      * in-flight refresh completion.
      */
-    @Synchronized
     fun saveRefreshedTokens(
         origin: String,
         installationId: String,
@@ -306,32 +386,61 @@ class CustodyStore(context: Context) {
         refreshToken: String,
         accessExpiresIn: Int = 600,
         refreshExpiresIn: Int = 30 * 24 * 60 * 60,
+        expectedGeneration: Long = attemptGeneration(),
+    ): CustodyRecord = attemptFence.withCurrent(expectedGeneration, requireActive = false) {
+        synchronized(this) {
+            val current = load() ?: throw CustodyMismatchException("custody was cleared during refresh")
+            if (current.installationId != installationId || current.origin != origin ||
+                current.revocationPending || current.pendingPairingOrigin.isNotBlank()
+            ) {
+                throw CustodyMismatchException("custody binding changed during refresh")
+            }
+            val updated = current.withCredentials(accessToken, refreshToken, accessExpiresIn, refreshExpiresIn)
+            save(updated)
+            updated
+        }
+    }
+
+    private fun CustodyRecord.withCredentials(
+        accessToken: String,
+        refreshToken: String,
+        accessExpiresIn: Int,
+        refreshExpiresIn: Int,
     ): CustodyRecord {
-        if (accessToken.isBlank() || refreshToken.isBlank()) {
+        if (accessToken.isBlank()) {
+            throw CustodyException("refreshed credentials are empty")
+        }
+        if (refreshToken.isBlank() && refreshExpiresIn > 0) {
             throw CustodyException("refreshed credentials are empty")
         }
         if (accessToken.length > 512 || refreshToken.length > 512) {
             throw CustodyException("refreshed credentials exceed the bound")
         }
-        val current = load() ?: throw CustodyMismatchException("custody was cleared during refresh")
-        if (
-            current.installationId != installationId ||
-            current.origin != origin ||
-            current.revocationPending
-        ) {
-            throw CustodyMismatchException("custody binding changed during refresh")
-        }
         val now = System.currentTimeMillis()
-        val updated = current.copy(
+        return copy(
             accessToken = accessToken,
             refreshToken = refreshToken,
             accessExpiresAt = now + accessExpiresIn * 1000L,
             refreshExpiresAt = if (refreshExpiresIn <= 0) 0L else now + refreshExpiresIn * 1000L,
             updatedAt = now,
         )
-        save(updated)
-        return updated
     }
+
+    fun savePairingTokens(generation: Long, pairingId: String, approved: JSONObject): CustodyRecord =
+        attemptFence.withCurrent(generation) {
+            synchronized(this) {
+                val record = load() ?: throw CustodyMismatchException("custody target is missing")
+                check(record.pendingPairingGeneration == generation && record.pendingPairingId == pairingId &&
+                    record.installationId == approved.getString("installation_id") && !record.revocationPending
+                ) { "pairing approval is not current" }
+                val settled = record.withoutPendingSetup().withCredentials(
+                    approved.getString("access_token"), approved.optString("refresh_token"),
+                    approved.optInt("expires_in", 600), approved.optInt("refresh_expires_in", 0),
+                )
+                save(settled)
+                settled
+            }
+        }
 
     /**
      * Return the installation identity used for pairing. Before the first
@@ -428,6 +537,60 @@ class CustodyStore(context: Context) {
         File(appContext.filesDir, "nanobot-tmp").deleteRecursively()
     }
 
+    /** Return this installation's P-256 SubjectPublicKeyInfo DER bytes. */
+    @Synchronized
+    fun deviceProofPublicKey(): ByteArray {
+        val certificate = keyStore.getCertificate(DEVICE_PROOF_ALIAS)
+            ?: generateDeviceProofKey()
+        return certificate.publicKey.encoded
+    }
+
+    /** Sign canonical proof bytes with the non-exportable Android Keystore key. */
+    @Synchronized
+    fun signDeviceProof(payload: ByteArray): ByteArray {
+        if (payload.isEmpty() || payload.size > 4096) {
+            throw CustodyException("device proof payload is outside the bound")
+        }
+        deviceProofPublicKey()
+        val privateKey = (keyStore.getEntry(DEVICE_PROOF_ALIAS, null) as? KeyStore.PrivateKeyEntry)
+            ?.privateKey
+            ?: throw CustodyKeyInvalidException("device proof key is missing")
+        return try {
+            Signature.getInstance("SHA256withECDSA").run {
+                initSign(privateKey)
+                update(payload)
+                sign()
+            }
+        } catch (exception: GeneralSecurityException) {
+            throw CustodyKeyInvalidException("device proof signing failed", exception)
+        }
+    }
+
+    internal fun deleteDeviceProofKeyForTest() {
+        if (keyStore.containsAlias(DEVICE_PROOF_ALIAS)) {
+            keyStore.deleteEntry(DEVICE_PROOF_ALIAS)
+        }
+    }
+
+    private fun generateDeviceProofKey(): java.security.cert.Certificate {
+        val generator = KeyPairGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_EC,
+            "AndroidKeyStore",
+        )
+        generator.initialize(
+            KeyGenParameterSpec.Builder(
+                DEVICE_PROOF_ALIAS,
+                KeyProperties.PURPOSE_SIGN,
+            )
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                .build()
+        )
+        generator.generateKeyPair()
+        return keyStore.getCertificate(DEVICE_PROOF_ALIAS)
+            ?: throw CustodyKeyInvalidException("device proof key could not be created")
+    }
+
     internal fun deleteKeyForTest() {
         if (keyStore.containsAlias(ALIAS)) {
             keyStore.deleteEntry(ALIAS)
@@ -438,9 +601,28 @@ class CustodyStore(context: Context) {
 
     private fun pendingInstallationFile(): File = File(custodyDir, "installation.id")
 
+    private fun syncDirectory(directory: File = custodyDir) {
+        val descriptor = Os.open(
+            directory.absolutePath,
+            OsConstants.O_RDONLY or OsConstants.O_NOFOLLOW,
+            0,
+        )
+        try {
+            check(OsConstants.S_ISDIR(Os.fstat(descriptor).st_mode)) {
+                "custody sync target is not a directory"
+            }
+            Os.fsync(descriptor)
+        } finally {
+            Os.close(descriptor)
+        }
+    }
+
     private fun ensureDirectory() {
-        if (!custodyDir.exists() && !custodyDir.mkdirs()) {
-            throw CustodyException("custody directory could not be created")
+        if (!custodyDir.exists()) {
+            if (!custodyDir.mkdirs()) {
+                throw CustodyException("custody directory could not be created")
+            }
+            syncDirectory(appContext.filesDir)
         }
         custodyDir.setReadable(false, false)
         custodyDir.setWritable(false, false)
@@ -483,6 +665,7 @@ class CustodyStore(context: Context) {
 
     companion object {
         private const val ALIAS = "nanobot.mobile.custody.v1"
+        private const val DEVICE_PROOF_ALIAS = "nanobot.mobile.device-proof.v1"
         private const val MAGIC = "NBC1"
         private const val FILE_VERSION = 1
         private val AAD = "nanobot-custody-v1".toByteArray(Charsets.UTF_8)

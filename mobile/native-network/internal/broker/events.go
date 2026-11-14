@@ -14,6 +14,10 @@ func (c *Core) PollEvent(out []byte) (int, error) {
 	if len(c.pending) > 0 {
 		return c.copyPending(out)
 	}
+	if event, ok := c.popTerminal(); ok {
+		c.pending = event
+		return c.copyPending(out)
+	}
 	select {
 	case event := <-c.events:
 		c.pending = event
@@ -21,6 +25,13 @@ func (c *Core) PollEvent(out []byte) (int, error) {
 	default:
 		return 0, nil
 	}
+}
+
+// PendingEventSize returns the size of the event retained after a short poll.
+func (c *Core) PendingEventSize() int {
+	c.eventMu.Lock()
+	defer c.eventMu.Unlock()
+	return len(c.pending)
 }
 
 func (c *Core) copyPending(out []byte) (int, error) {
@@ -41,8 +52,83 @@ func (c *Core) emit(event map[string]any) error {
 	case c.events <- data:
 		return nil
 	default:
+		if id, terminal := terminalRequestID(data); terminal {
+			if c.retainTerminal(id, data) {
+				return nil
+			}
+		}
 		return ErrQueueFull
 	}
+}
+
+func terminalRequestID(data []byte) (uint64, bool) {
+	var event struct {
+		Type      string  `json:"type"`
+		RequestID float64 `json:"request_id"`
+	}
+	if err := json.Unmarshal(data, &event); err != nil {
+		return 0, false
+	}
+	if event.Type != "http_response" && event.Type != "http_error" {
+		return 0, false
+	}
+	if event.RequestID <= 0 || event.RequestID != float64(uint64(event.RequestID)) {
+		return 0, false
+	}
+	return uint64(event.RequestID), true
+}
+
+func (c *Core) retainTerminal(id uint64, data []byte) bool {
+	c.terminalMu.Lock()
+	defer c.terminalMu.Unlock()
+	if existing, ok := c.terminalEvents[id]; ok {
+		c.terminalBytes -= len(existing)
+	}
+	if len(data) > c.terminalByteLimit {
+		c.removeTerminalLocked(id)
+		return false
+	}
+	if _, exists := c.terminalEvents[id]; !exists {
+		c.terminalOrder = append(c.terminalOrder, id)
+	}
+	c.terminalEvents[id] = data
+	c.terminalBytes += len(data)
+	// Admission reserves one terminal slot per request. Never evict an
+	// earlier admitted result to store a newer one.
+	if c.terminalBytes > c.terminalByteLimit {
+		c.removeTerminalLocked(id)
+		return false
+	}
+	return true
+}
+
+func (c *Core) hasTerminalCapacityLocked() bool {
+	c.terminalMu.Lock()
+	defer c.terminalMu.Unlock()
+	return len(c.requests)+len(c.terminalEvents) < c.maxTerminalResults
+}
+
+func (c *Core) removeTerminalLocked(id uint64) {
+	if existing, ok := c.terminalEvents[id]; ok {
+		delete(c.terminalEvents, id)
+		c.terminalBytes -= len(existing)
+	}
+}
+
+func (c *Core) popTerminal() ([]byte, bool) {
+	c.terminalMu.Lock()
+	defer c.terminalMu.Unlock()
+	for len(c.terminalOrder) > 0 {
+		id := c.terminalOrder[0]
+		c.terminalOrder = c.terminalOrder[1:]
+		event, ok := c.terminalEvents[id]
+		if !ok {
+			continue
+		}
+		c.removeTerminalLocked(id)
+		return event, true
+	}
+	return nil, false
 }
 
 // A tiny mutex wrapper keeps the event queue logic readable without exposing

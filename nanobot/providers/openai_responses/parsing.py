@@ -28,6 +28,8 @@ FINISH_REASON_MAP = {
     "failed": "error",
     "cancelled": "error",
 }
+MISSING_TERMINAL_EVENT_MESSAGE = "Responses stream ended without a terminal event"
+
 REPLAYABLE_FINISH_REASONS = frozenset({"stop", "tool_calls", "function_call"})
 
 
@@ -390,6 +392,7 @@ async def consume_sse_with_reasoning(
     streamed_reasoning = False
     reasoning_summary_key: tuple[str | None, int] | None = None
     refusal_seen = False
+    terminal_seen = False
     refusal_deltas: dict[tuple[str | None, int | None], str] = {}
     emitted_refusal_text = ""
     async for event in iter_sse(response):
@@ -543,6 +546,7 @@ async def consume_sse_with_reasoning(
                     if on_reasoning_delta:
                         await on_reasoning_delta(summary)
         elif event_type in {"response.completed", "response.incomplete"}:
+            terminal_seen = True
             response_obj = _response_object(event.get("response")) or {}
             if capture is not None:
                 capture.record_completed(response_obj, event_type=event_type)
@@ -574,6 +578,11 @@ async def consume_sse_with_reasoning(
             detail = event.get("error") or event.get("message") or event
             raise RuntimeError(f"Response failed: {str(detail)[:500]}")
 
+    if not terminal_seen:
+        # A clean EOF is not a completed Responses request. Keep any visible
+        # partial output in the transport log, but never promote it to a usable
+        # result or dispatch its incomplete tool calls.
+        raise RuntimeError(MISSING_TERMINAL_EVENT_MESSAGE)
     if refusal_seen:
         finish_reason = "refusal"
     return content, tool_calls, finish_reason, usage, reasoning_content
@@ -705,6 +714,7 @@ async def consume_sdk_stream(
     reasoning_content: str | None = None
     streamed_reasoning = False
     refusal_seen = False
+    terminal_seen = False
     refusal_deltas: dict[tuple[str | None, int | None], str] = {}
     emitted_refusal_text = ""
     async for raw_event in stream:
@@ -835,6 +845,7 @@ async def consume_sdk_stream(
                     )
                 )
         elif event_type in {"response.completed", "response.incomplete"}:
+            terminal_seen = True
             resp = getattr(event, "response", None)
             response_obj = _response_object(resp) or {}
             if capture is not None:
@@ -871,6 +882,11 @@ async def consume_sdk_stream(
             detail = getattr(event, "error", None) or getattr(event, "message", None) or event
             raise RuntimeError(f"Response failed: {str(detail)[:500]}")
 
+    if not terminal_seen:
+        # A clean EOF is not a completed Responses request. Keep any visible
+        # partial output in the transport log, but never promote it to a usable
+        # result or dispatch its incomplete tool calls.
+        raise RuntimeError(MISSING_TERMINAL_EVENT_MESSAGE)
     if refusal_seen:
         finish_reason = "refusal"
     return content, tool_calls, finish_reason, usage, reasoning_content

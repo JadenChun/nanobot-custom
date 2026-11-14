@@ -6,11 +6,14 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid
+from contextlib import AbstractContextManager, suppress
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple, Sequence, cast
 from urllib.parse import unquote, urlparse
@@ -32,11 +35,14 @@ WEBUI_TRANSCRIPT_INCOMPLETE_KEY = "transcript_incomplete"
 _MAX_TRANSCRIPT_FILE_BYTES = 8 * 1024 * 1024
 _ACTIVE_TRANSCRIPT_ROTATE_BYTES = 2 * 1024 * 1024
 _TARGET_ACTIVE_TRANSCRIPT_BYTES = _ACTIVE_TRANSCRIPT_ROTATE_BYTES // 2
-_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 2
+_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 3
 _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
 _TRANSCRIPT_SEGMENT_RE = re.compile(r"^\d{6}\.jsonl$")
 _DEFAULT_TRANSCRIPT_PAGE_LIMIT = 160
 _MAX_TRANSCRIPT_PAGE_LIMIT = 1000
+# The no-query replay path uses the same bounded page budget as paginated
+# reads. Older history remains reachable through the returned page cursor.
+_NO_QUERY_TRANSCRIPT_PAGE_LIMIT = _MAX_TRANSCRIPT_PAGE_LIMIT
 _WEBUI_TURN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _WEBUI_REPLAY_IDENTITY_KEY = "_webui_replay_identity"
 _MARKDOWN_LOCAL_IMAGE_RE = re.compile(
@@ -149,13 +155,169 @@ def _media_kind_from_name(name: str) -> str:
     return "file"
 
 
+def _transcript_stem(session_key: str) -> str:
+    """Collision-resistant, reversible transcript filename stem."""
+    return SessionManager.storage_key(session_key)
+
+
+def _legacy_transcript_stem(session_key: str) -> str:
+    return SessionManager.safe_key(session_key)
+
+
+def _transcript_chat_id(session_key: str) -> str:
+    return session_key.split(":", 1)[1] if ":" in session_key else session_key
+
+
+def _legacy_transcript_path(session_key: str) -> Path:
+    return get_webui_dir() / f"{_legacy_transcript_stem(session_key)}.jsonl"
+
+
+def _legacy_transcript_segments_dir(session_key: str) -> Path:
+    return get_webui_dir() / f"{_legacy_transcript_stem(session_key)}.segments"
+
+
+def _jsonl_chat_ids(path: Path) -> set[str]:
+    ids: set[str] = set()
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    row = cast(dict[str, Any], value)
+                    chat_id = row.get("chat_id")
+                    if isinstance(chat_id, str) and chat_id:
+                        ids.add(chat_id)
+    except OSError:
+        return set()
+    return ids
+
+
+def _legacy_owner(path: Path, session_key: str) -> str:
+    if not path.is_file():
+        return "absent"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = None
+    expected = _transcript_chat_id(session_key)
+    if isinstance(payload, dict):
+        row = cast(dict[str, Any], payload)
+        chat_id = row.get("chat_id")
+        if isinstance(chat_id, str) and chat_id:
+            return "own" if chat_id == expected else "other"
+        return "ambiguous"
+    ids = _jsonl_chat_ids(path)
+    if not ids:
+        return "ambiguous"
+    if ids == {expected}:
+        return "own"
+    return "mixed" if expected in ids else "other"
+
+
+def _legacy_dir_owner(directory: Path, session_key: str) -> str:
+    if not directory.is_dir():
+        return "absent"
+    ids: set[str] = set()
+    for path in sorted(directory.glob("*.jsonl")):
+        ids.update(_jsonl_chat_ids(path))
+    if not ids:
+        return "ambiguous"
+    expected = _transcript_chat_id(session_key)
+    if ids == {expected}:
+        return "own"
+    return "mixed" if expected in ids else "other"
+
+
+def _write_manifest_json(path: Path, payload: dict[str, Any]) -> None:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _rewrite_manifest_active_name(
+    directory: Path,
+    *,
+    old_stem: str,
+    new_stem: str,
+) -> None:
+    manifest_path = directory / "manifest.json"
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    data = cast(dict[str, Any], payload)
+    active_name = data.get("active_name")
+    if not isinstance(active_name, str) or not active_name.startswith(old_stem):
+        return
+    new_name = new_stem + active_name[len(old_stem):]
+    old_active = get_webui_dir() / active_name
+    new_active = get_webui_dir() / new_name
+    if old_active.is_file() and not new_active.exists():
+        os.replace(old_active, new_active)
+    data["active_name"] = new_name
+    _write_manifest_json(manifest_path, data)
+
+
+def _migrate_legacy_transcript(session_key: str) -> None:
+    """Move one unambiguous legacy transcript to its collision-free identity."""
+    new_path = webui_transcript_path(session_key)
+    new_dir = webui_transcript_segments_dir(session_key)
+    if new_path.exists() or new_dir.exists():
+        return
+    old_path = _legacy_transcript_path(session_key)
+    old_dir = _legacy_transcript_segments_dir(session_key)
+    root_owner = _legacy_owner(old_path, session_key)
+    dir_owner = _legacy_dir_owner(old_dir, session_key)
+    if root_owner in {"other", "mixed"} or dir_owner in {"other", "mixed"}:
+        logger.warning(
+            "Quarantining colliding legacy transcript for {}",
+            session_key,
+        )
+    old_stem = _legacy_transcript_stem(session_key)
+    new_stem = _transcript_stem(session_key)
+    if dir_owner == "own" and old_dir.is_dir() and not new_dir.exists():
+        os.replace(old_dir, new_dir)
+        _rewrite_manifest_active_name(
+            new_dir,
+            old_stem=old_stem,
+            new_stem=new_stem,
+        )
+    if root_owner == "own" and old_path.is_file() and not new_path.exists():
+        os.replace(old_path, new_path)
+
+
+def active_transcript_path(session_key: str) -> Path:
+    """Return the committed active transcript file for this session."""
+    _migrate_legacy_transcript(session_key)
+    _entries, active_name = _read_segment_manifest_state(session_key)
+    if active_name:
+        return get_webui_dir() / active_name
+    return webui_transcript_path(session_key)
+
+
 def webui_transcript_path(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.jsonl"
 
 
 def webui_transcript_segments_dir(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.segments"
 
 
@@ -164,7 +326,7 @@ def _webui_transcript_manifest_path(session_key: str) -> Path:
 
 
 def _legacy_webui_thread_path(session_key: str) -> Path:
-    stem = SessionManager.safe_key(session_key)
+    stem = _legacy_transcript_stem(session_key)
     return get_webui_dir() / f"{stem}.json"
 
 
@@ -188,6 +350,293 @@ class _SessionBackfillTurn(NamedTuple):
 
 def _record_json_line(record: dict[str, Any]) -> str:
     return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+
+
+_DELEGATED_CHILD_LIFETIME_FIELDS = (
+    "parent_session_key",
+    "parent_store_identity",
+    "parent_incarnation",
+    "parent_generation",
+    "root_key",
+    "root_store_identity",
+    "root_incarnation",
+    "root_generation",
+    "child_session_key",
+    "child_store_identity",
+    "child_incarnation",
+    "child_generation",
+)
+_DELEGATED_CHILD_CANONICAL_FIELDS = (
+    "parent_session_key",
+    "child_session_key",
+    "child_id",
+    "profile",
+    "state",
+    "outcome",
+    "runtime_generation",
+    "task_label",
+    "task_label_truncated",
+    "result_summary",
+    "result_summary_truncated",
+    "parent_run_id",
+    "child_run_id",
+    "parent_store_identity",
+    "parent_incarnation",
+    "parent_generation",
+    "root_key",
+    "root_store_identity",
+    "root_incarnation",
+    "root_generation",
+    "child_store_identity",
+    "child_incarnation",
+    "child_generation",
+    "run_sequence",
+    "state_sequence",
+    "control_epoch",
+    "holds_capacity",
+    "can_stop",
+    "owned_work",
+    "pending_approval_id",
+    "blocked_run_id",
+    "result_disposition",
+)
+
+
+def _delegated_child_lifetime(
+    child: Mapping[str, Any],
+) -> tuple[object, ...] | None:
+    values: list[object] = []
+    for name in _DELEGATED_CHILD_LIFETIME_FIELDS:
+        value = child.get(name)
+        if name.endswith("_generation"):
+            if type(value) is not int or value < 0:
+                return None
+        elif not isinstance(value, str) or not value:
+            return None
+        values.append(value)
+    return tuple(values)
+
+
+def _delegated_child_version(child: Mapping[str, Any]) -> tuple[int, int]:
+    run_sequence = child.get("run_sequence")
+    state_sequence = child.get("state_sequence")
+    return (
+        run_sequence if type(run_sequence) is int and run_sequence >= 0 else 0,
+        state_sequence if type(state_sequence) is int and state_sequence >= 0 else 0,
+    )
+
+
+def _delegated_child_facts(child: Mapping[str, Any]) -> tuple[object, ...]:
+    return tuple(child.get(name) for name in _DELEGATED_CHILD_CANONICAL_FIELDS)
+
+
+def validate_retained_transcript_record(row: dict[str, object]) -> None:
+    """Qualify known durable display rows without replay normalization/repair."""
+    supported = {
+        "user", "message", "delta", "reasoning_delta", "reasoning_end", "stream_end",
+        "turn_end", "file_edit", "fork_marker", "delegated_child", "context_compaction",
+        "goal_state", "goal_status", "session_updated", "user_message", "error",
+        "runtime_model_updated", "turn_model_updated",
+    }
+    event = row.get("event")
+    version = row.get("schemaVersion", row.get("schema_version", WEBUI_TRANSCRIPT_SCHEMA_VERSION))
+    if (event not in supported or type(version) is not int
+            or version != WEBUI_TRANSCRIPT_SCHEMA_VERSION):
+        raise ValueError("unsupported retained transcript event/version")
+    if "chat_id" in row and (not isinstance(row["chat_id"], str) or not row["chat_id"]):
+        raise ValueError("invalid retained transcript chat identity")
+    if event == "delegated_child":
+        if (any(not isinstance(row.get(name), str) or not row.get(name)
+                for name in ("child_id", "child_session_key", "profile", "state"))
+                or type(row.get("runtime_generation", 0)) is not int
+                or cast(int, row.get("runtime_generation", 0)) < 0):
+            raise ValueError("invalid retained delegated-child activity")
+        optional_strings = (
+            "parent_session_key", "outcome", "parent_run_id", "child_run_id", "parent_store_identity",
+            "parent_incarnation", "root_key", "root_store_identity",
+            "root_incarnation", "child_store_identity", "child_incarnation",
+            "pending_approval_id", "blocked_run_id", "result_disposition",
+        )
+        if any(
+            row.get(name) is not None and not isinstance(row.get(name), str)
+            for name in optional_strings
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        integer_fields = (
+            "parent_generation", "root_generation", "child_generation",
+            "run_sequence", "state_sequence", "control_epoch",
+        )
+        if any(
+            row.get(name) is not None and type(row.get(name)) is not int
+            for name in integer_fields
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        boolean_fields = ("holds_capacity", "can_stop", "owned_work")
+        if any(
+            row.get(name) is not None and type(row.get(name)) is not bool
+            for name in boolean_fields
+        ):
+            raise ValueError("invalid retained delegated-child activity")
+        task_label = row.get("task_label")
+        if task_label is not None and (
+            not isinstance(task_label, str) or len(task_label) > 160
+        ):
+            raise ValueError("invalid retained delegated-child task label")
+        result_summary = row.get("result_summary")
+        if result_summary is not None and (
+            not isinstance(result_summary, str) or len(result_summary) > 1000
+        ):
+            raise ValueError("invalid retained delegated-child result summary")
+        for name in ("task_label_truncated", "result_summary_truncated"):
+            if name in row and type(row[name]) is not bool:
+                raise ValueError("invalid retained delegated-child truncation flag")
+    if event == "context_compaction" and (
+        not isinstance(row.get("compaction_id"), str) or not row.get("compaction_id")
+        or row.get("phase") not in {"started", "succeeded", "failed", "cancelled"}
+    ):
+        raise ValueError("invalid retained compaction activity")
+    if event == "goal_state" and not isinstance(row.get("goal_state"), dict):
+        raise ValueError("invalid retained goal state")
+    if event == "goal_status" and not isinstance(row.get("status"), str):
+        raise ValueError("invalid retained goal status")
+    for name in ("text", "content"):
+        if name in row and not isinstance(row[name], (str, list)):
+            raise ValueError("invalid retained display text")
+    for name in ("tool_events", "edits"):
+        if name in row and (not isinstance(row[name], list)
+                            or any(not isinstance(item, dict) for item in cast(list[object], row[name]))):
+            raise ValueError("invalid retained display records")
+
+
+def validate_retained_webui_thread(data: dict[str, object]) -> None:
+    """Qualify retained WebuiThreadPersistedPayload/UIMessage snapshots purely.
+
+    Legacy JSON snapshots and current replay payloads share these display rows;
+    accepting their outer messages list alone cannot certify retained evidence.
+    Unknown fields fail closed so a future reference representation needs its
+    owner's explicit inventory support before maintenance can delete anything.
+    """
+    allowed = {
+        "schemaVersion", "schema_version", "sessionKey", "chat_id", "savedAt", "messages",
+        "fork_boundary_message_count", "completed_turn_ids", "has_pending_tool_calls",
+        "active_turn_id", "page", "workspace_scope", "workspace_access_request",
+        "workspace_permissions",
+    }
+    if set(data) - allowed or not isinstance(data.get("messages"), list):
+        raise ValueError("unsupported retained thread record")
+    versions = [data[name] for name in ("schemaVersion", "schema_version") if name in data]
+    if len(versions) > 1 or any(type(value) is not int or value != WEBUI_TRANSCRIPT_SCHEMA_VERSION for value in versions):
+        raise ValueError("unsupported retained display version")
+    for name in ("sessionKey", "chat_id", "savedAt"):
+        if name in data and not isinstance(data[name], str):
+            raise ValueError("invalid retained thread identity")
+    for name in ("fork_boundary_message_count",):
+        if name in data and (type(data[name]) is not int or cast(int, data[name]) < 0):
+            raise ValueError("invalid retained thread count")
+    if "completed_turn_ids" in data and (
+        not isinstance(data["completed_turn_ids"], list)
+        or any(not isinstance(value, str) for value in cast(list[object], data["completed_turn_ids"]))
+    ):
+        raise ValueError("invalid retained completed turns")
+    if "has_pending_tool_calls" in data and type(data["has_pending_tool_calls"]) is not bool:
+        raise ValueError("invalid retained pending state")
+    if data.get("active_turn_id") is not None and not isinstance(data["active_turn_id"], str):
+        raise ValueError("invalid retained active turn")
+    for name in ("workspace_scope", "workspace_access_request", "workspace_permissions"):
+        if name in data and data[name] is not None and not isinstance(data[name], dict):
+            raise ValueError("invalid retained workspace projection")
+    if "page" in data:
+        page = data["page"]
+        page_fields = {"before_cursor", "has_more_before", "loaded_message_count", "total_known_message_count", "user_message_offset"}
+        if not isinstance(page, dict) or set(cast(dict[object, object], page)) - page_fields:
+            raise ValueError("invalid retained thread page")
+        checked = cast(dict[str, object], page)
+        for name, value in checked.items():
+            if name == "before_cursor":
+                valid = value is None or isinstance(value, str)
+            elif name == "has_more_before":
+                valid = type(value) is bool
+            else:
+                valid = type(value) is int and value >= 0
+            if not valid:
+                raise ValueError("invalid retained thread page")
+        if (checked.get("has_more_before") is not False
+                or checked.get("before_cursor") is not None
+                or checked.get("user_message_offset", 0) != 0
+                or any(checked[name] != len(cast(list[object], data["messages"]))
+                       for name in ("loaded_message_count", "total_known_message_count") if name in checked)):
+            raise ValueError("incomplete retained thread page")
+
+    strings = {"id", "content", "activitySegmentId", "reasoning", "turnId"}
+    numbers = {"createdAt", "latencyMs", "completedAt", "contextWindowTokens", "turnSeq"}
+    booleans = {"isStreaming", "reasoningStreaming"}
+    objects = {"compaction", "delegatedChild", "usage", "source", "sessionMessage"}
+    records = {"toolEvents", "fileEdits", "cliApps", "mcpPresets", "sessionMentions", "roundUsages"}
+    choices = {
+        "role": {"user", "assistant", "tool", "system"},
+        "kind": {"message", "trace", "compaction", "delegated_child"},
+        "activityKind": {"model"}, "compactReply": {"empty", "failed"},
+        "turnPhase": {"user", "reasoning", "activity", "answer", "complete"},
+        "deliveryStatus": {"sending", "accepted", "failed"},
+        "deliveryErrorKind": {"message_too_big", "workspace_scope_rejected", "connection_closed", "turn_rejected"},
+    }
+    known = strings | numbers | booleans | objects | records | set(choices) | {"traces", "images", "media"}
+    for raw in cast(list[object], data["messages"]):
+        if not isinstance(raw, dict):
+            raise ValueError("nonobject retained display message")
+        row = cast(dict[str, object], raw)
+        if set(row) - known or not {"id", "role", "content", "createdAt"} <= set(row):
+            raise ValueError("unsupported retained display message")
+        for name, value in row.items():
+            if name in strings:
+                valid = isinstance(value, str) and (name != "id" or bool(value))
+            elif name in numbers:
+                valid = type(value) in (int, float) and math.isfinite(cast(int | float, value)) and cast(int | float, value) >= 0
+            elif name in booleans:
+                valid = type(value) is bool
+            elif name in choices:
+                valid = isinstance(value, str) and value in choices[name]
+            elif name in objects:
+                valid = isinstance(value, dict)
+            elif name in records:
+                # Replay can retain a null toolEvents field after merging an
+                # ordinary trace with a prior unstructured activity row.
+                valid = (name == "toolEvents" and value is None) or (
+                    isinstance(value, list) and all(isinstance(item, dict) for item in cast(list[object], value)))
+            elif name == "traces":
+                valid = isinstance(value, list) and all(isinstance(item, str) for item in cast(list[object], value))
+            else:
+                valid = isinstance(value, list)
+                if valid:
+                    for media in cast(list[object], value):
+                        if not isinstance(media, dict):
+                            valid = False
+                            break
+                        item = cast(dict[str, object], media)
+                        fields = {"url", "name", "kind", "id"}
+                        if name == "images":
+                            fields.add("path")
+                        if (set(item) - fields or any(not isinstance(field, str) for field in item.values())
+                                or (name == "media" and item.get("kind") not in {"image", "video", "file"})):
+                            valid = False
+                            break
+            if not valid:
+                raise ValueError("invalid retained display message field")
+
+
+def media_publication(value: object) -> AbstractContextManager[None]:
+    from nanobot.attachments._media import configured_custody
+    from nanobot.attachments.store import AttachmentStore
+
+    custody = configured_custody()
+    custody.declare("webui", get_webui_dir().resolve(strict=True))
+    return AttachmentStore(custody.root / "attachments", media_root=custody.root).publication(value)
+
+
+def _fsync_transcript_directory(path: Path) -> None:
+    from nanobot.attachments._media import fsync_directory
+
+    fsync_directory(path)
 
 
 def _read_transcript_file(path: Path) -> list[dict[str, Any]]:
@@ -240,15 +689,17 @@ def _write_records_to_path(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            for row in rows:
-                raw = _record_json_line(row)
-                if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
-                    raise ValueError("webui transcript line too large")
-                f.write(raw + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        with media_publication(rows):
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    raw = _record_json_line(row)
+                    if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
+                        raise ValueError("webui transcript line too large")
+                    f.write(raw + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+            _fsync_transcript_directory(path.parent)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
@@ -310,37 +761,70 @@ def _normalize_manifest_entry(session_key: str, entry: Any) -> dict[str, Any] | 
     }
 
 
-def _write_segment_manifest(session_key: str, entries: list[dict[str, Any]]) -> None:
+def _write_segment_manifest(
+    session_key: str,
+    entries: list[dict[str, Any]],
+    *,
+    active_name: str | None = None,
+) -> None:
     directory = webui_transcript_segments_dir(session_key)
     directory.mkdir(parents=True, exist_ok=True)
     data = {
         "version": _TRANSCRIPT_SEGMENT_MANIFEST_VERSION,
         "segments": entries,
+        "active": active_name,
     }
     path = _webui_transcript_manifest_path(session_key)
     tmp_path = path.with_suffix(".json.tmp")
     try:
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp_path, path)
+        from nanobot.attachments._inventory import rows
+        from nanobot.attachments._media import read_bytes
+
+        retained_rows: list[dict[str, object]] = []
+        for entry in entries:
+            retained_rows.extend(rows(read_bytes(directory / f"{entry['id']}.jsonl")))
+        if active_name:
+            retained_rows.extend(rows(read_bytes(get_webui_dir() / active_name)))
+        with media_publication(retained_rows):
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+            _fsync_transcript_directory(directory)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
 
 
-def _rebuild_segment_manifest(session_key: str) -> list[dict[str, Any]]:
+def _rebuild_segment_manifest(
+    session_key: str,
+) -> tuple[list[dict[str, Any]], str | None]:
     segment_ids = _segment_ids_on_disk(session_key)
     entries = [_segment_manifest_entry(session_key, segment_id) for segment_id in segment_ids]
-    if entries:
-        _write_segment_manifest(session_key, entries)
+    stem = _transcript_stem(session_key)
+    active_names = sorted(
+        path.name
+        for path in get_webui_dir().glob(f"{stem}.active.*.jsonl")
+        if path.is_file()
+    )
+    # Never merge two active generations. One committed file is recoverable;
+    # multiple candidates need operator review.
+    active_name = active_names[0] if len(active_names) == 1 else None
+    if entries or active_name:
+        _write_segment_manifest(session_key, entries, active_name=active_name)
     else:
         _webui_transcript_manifest_path(session_key).unlink(missing_ok=True)
-    return entries
+    return entries, active_name
 
 
-def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
+def _read_segment_manifest_state(
+    session_key: str,
+) -> tuple[list[dict[str, Any]], str | None]:
+    _migrate_legacy_transcript(session_key)
     directory = webui_transcript_segments_dir(session_key)
     if not directory.is_dir():
-        return []
+        return [], None
     path = _webui_transcript_manifest_path(session_key)
     if not path.is_file():
         return _rebuild_segment_manifest(session_key)
@@ -360,20 +844,35 @@ def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
             if normalized is None:
                 return _rebuild_segment_manifest(session_key)
             entries.append(normalized)
-        if [entry["id"] for entry in entries] != _segment_ids_on_disk(session_key):
+        active_name = manifest.get("active")
+        if active_name is not None and (
+            not isinstance(active_name, str)
+            or "/" in active_name
+            or "\\" in active_name
+            or not active_name.endswith(".jsonl")
+        ):
             return _rebuild_segment_manifest(session_key)
-        return entries
+        return entries, active_name
     except (OSError, json.JSONDecodeError, TypeError, AttributeError):
         return _rebuild_segment_manifest(session_key)
+
+
+def _read_segment_manifest_entries(session_key: str) -> list[dict[str, Any]]:
+    return _read_segment_manifest_state(session_key)[0]
 
 
 def _read_segment_ids(session_key: str) -> list[str]:
     return [entry["id"] for entry in _read_segment_manifest_entries(session_key)]
 
 
-def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -> None:
+def _append_segment_turns(
+    session_key: str,
+    turns: list[list[dict[str, Any]]],
+    *,
+    write_manifest: bool = True,
+) -> list[dict[str, Any]]:
     if not turns:
-        return
+        return _read_segment_manifest_entries(session_key)
     entries = _read_segment_manifest_entries(session_key)
     next_id = int(entries[-1]["id"]) + 1 if entries else 1
     batch: list[list[dict[str, Any]]] = []
@@ -407,20 +906,22 @@ def _append_segment_turns(session_key: str, turns: list[list[dict[str, Any]]]) -
         batch_bytes += turn_bytes
     if batch:
         write_batch()
-    _write_segment_manifest(session_key, entries)
+    if write_manifest:
+        _write_segment_manifest(session_key, entries)
+    return entries
 
 
 def _rotate_active_transcript_if_needed(session_key: str) -> None:
-    path = webui_transcript_path(session_key)
-    if not path.is_file():
+    active_path = active_transcript_path(session_key)
+    if not active_path.is_file():
         return
     try:
-        if path.stat().st_size <= _ACTIVE_TRANSCRIPT_ROTATE_BYTES:
+        if active_path.stat().st_size <= _ACTIVE_TRANSCRIPT_ROTATE_BYTES:
             return
     except OSError:
         return
 
-    lines = _read_transcript_file(path)
+    lines = _read_transcript_file(active_path)
     if not lines:
         return
     turns = _split_transcript_turns(lines)
@@ -441,21 +942,28 @@ def _rotate_active_transcript_if_needed(session_key: str) -> None:
     kept = turns[keep_start:]
     if not moved:
         return
-    _append_segment_turns(session_key, moved)
-    _write_records_to_path(path, _flatten_turns(kept))
+    entries = _append_segment_turns(session_key, moved, write_manifest=False)
+    active_name = f"{_transcript_stem(session_key)}.active.{secrets.token_hex(8)}.jsonl"
+    next_active = get_webui_dir() / active_name
+    _write_records_to_path(next_active, _flatten_turns(kept))
+    # The manifest commit is the rotation point. Before it, readers use the
+    # old active file. After it, readers use the segments plus the new active.
+    _write_segment_manifest(session_key, entries, active_name=active_name)
+    with suppress(OSError):
+        active_path.unlink()
 
 
 def _chunk_ids(session_key: str) -> list[str]:
     _rotate_active_transcript_if_needed(session_key)
     ids = _read_segment_ids(session_key)
-    if webui_transcript_path(session_key).is_file():
+    if active_transcript_path(session_key).is_file():
         ids.append(_TRANSCRIPT_ACTIVE_CHUNK_ID)
     return ids
 
 
 def _read_chunk_turns(session_key: str, chunk_id: str) -> list[list[dict[str, Any]]]:
     if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
-        path = webui_transcript_path(session_key)
+        path = active_transcript_path(session_key)
     else:
         path = _segment_file_path(session_key, chunk_id)
     if not path.is_file():
@@ -523,7 +1031,7 @@ def _chunk_turn_refs(
             continue
         refs.append(_TranscriptChunkRef(chunk_id, ordinal, turn_count, int(entry["user_count"])))
         ordinal += turn_count
-    if webui_transcript_path(session_key).is_file():
+    if active_transcript_path(session_key).is_file():
         active_turns = _cached_chunk_turns(
             session_key,
             _TRANSCRIPT_ACTIVE_CHUNK_ID,
@@ -648,10 +1156,11 @@ def _select_transcript_page(
 
 
 def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
+    _migrate_legacy_transcript(session_key)
     lines: list[dict[str, Any]] = []
     for chunk_id in _chunk_ids(session_key):
         if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
-            lines.extend(_read_transcript_file(webui_transcript_path(session_key)))
+            lines.extend(_read_transcript_file(active_transcript_path(session_key)))
         else:
             lines.extend(_read_transcript_file(_segment_file_path(session_key, chunk_id)))
     return lines
@@ -659,10 +1168,11 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
 
 def webui_transcript_signature(session_key: str) -> tuple[tuple[str, int, int], ...]:
     """Return a cheap content signature for a session's transcript chunks."""
+    _migrate_legacy_transcript(session_key)
     entries: list[tuple[str, int, int]] = []
     for chunk_id in _chunk_ids(session_key):
         path = (
-            webui_transcript_path(session_key)
+            active_transcript_path(session_key)
             if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID
             else _segment_file_path(session_key, chunk_id)
         )
@@ -687,13 +1197,14 @@ def _append_to_active_transcript(session_key: str, obj: dict[str, Any]) -> None:
     if len(raw.encode("utf-8")) > _MAX_TRANSCRIPT_FILE_BYTES:
         msg = "webui transcript line too large"
         raise ValueError(msg)
-    path = webui_transcript_path(session_key)
+    path = active_transcript_path(session_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     line = raw + "\n"
-    with open(path, "a", encoding="utf-8") as f:
+    with media_publication(obj), open(path, "a", encoding="utf-8") as f:
         f.write(line)
         f.flush()
         os.fsync(f.fileno())
+        _fsync_transcript_directory(path.parent)
 
 
 def _now_ms() -> int:
@@ -1004,15 +1515,29 @@ def write_session_messages_as_transcript(
 
 
 def delete_webui_transcript(session_key: str) -> bool:
+    _migrate_legacy_transcript(session_key)
     removed = False
-    for path in (webui_transcript_path(session_key), _legacy_webui_thread_path(session_key)):
-        if not path.is_file():
-            continue
+    path = webui_transcript_path(session_key)
+    if path.is_file():
         try:
             path.unlink()
             removed = True
         except OSError as e:
             logger.warning("Failed to delete webui transcript {}: {}", path, e)
+    legacy_thread = _legacy_webui_thread_path(session_key)
+    if _legacy_owner(legacy_thread, session_key) == "own" and legacy_thread.is_file():
+        try:
+            legacy_thread.unlink()
+            removed = True
+        except OSError as e:
+            logger.warning("Failed to delete legacy webui transcript {}: {}", legacy_thread, e)
+    active_glob = f"{_transcript_stem(session_key)}.active.*.jsonl"
+    for active_path in get_webui_dir().glob(active_glob):
+        try:
+            active_path.unlink()
+            removed = True
+        except OSError as e:
+            logger.warning("Failed to delete active webui transcript {}: {}", active_path, e)
     segments_dir = webui_transcript_segments_dir(session_key)
     if segments_dir.is_dir():
         try:
@@ -1094,14 +1619,14 @@ def build_user_transcript_event(
     text: str,
     *,
     media_paths: list[Any] | None = None,
-    attachments: Sequence[Mapping[str, Any]] | None = None,
+    attachments: Sequence[object] | None = None,
     cli_apps: list[Any] | None = None,
     mcp_presets: list[Any] | None = None,
     session_mentions: Sequence[Any] | None = None,
 ) -> dict[str, Any] | None:
     paths = [str(path) for path in (media_paths or []) if path]
     records = [
-        dict(attachment)
+        dict(cast(Mapping[str, Any], attachment))
         for attachment in (attachments or [])
         if isinstance(attachment, Mapping)
     ]
@@ -1173,7 +1698,11 @@ def _session_user_event(
         text,
         media_paths=media or None,
         attachments=(
-            [dict(item) for item in cast(list[Any], attachments) if isinstance(item, Mapping)]
+            [
+                dict(cast(Mapping[str, Any], item))
+                for item in cast(list[object], attachments)
+                if isinstance(item, Mapping)
+            ]
             if isinstance(attachments, list)
             else None
         ),
@@ -1267,17 +1796,6 @@ def _split_transcript_turns(lines: list[dict[str, Any]]) -> list[list[dict[str, 
     if current:
         turns.append(current)
     return turns
-
-
-def _annotate_replay_identities(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        record
-        for turn_ordinal, turn in enumerate(_split_transcript_turns(lines))
-        for record in _records_with_replay_identity(
-            turn,
-            turn_ordinal=turn_ordinal,
-        )
-    ]
 
 
 def _stable_record_digest(record: dict[str, Any]) -> str:
@@ -1627,7 +2145,7 @@ _MAX_TOOL_EVENT_FIELD_BYTES = 16 * 1024
 _TOOL_EVENT_BOUNDED_FIELDS = ("result", "arguments", "error")
 
 
-def _bounded_tool_value(value: Any) -> Any:
+def _bounded_tool_value(value: object) -> object:
     """Redact inline payloads and long text while preserving the value's shape."""
     if isinstance(value, str):
         if value.startswith("data:") and ";base64," in value:
@@ -1637,11 +2155,13 @@ def _bounded_tool_value(value: Any) -> Any:
             return value[:_MAX_TOOL_EVENT_TEXT_CHARS]
         return value
     if isinstance(value, list):
-        items = [_bounded_tool_value(item) for item in value]
-        return value if all(new is old for new, old in zip(items, value)) else items
+        values = cast(list[object], value)
+        items = [_bounded_tool_value(item) for item in values]
+        return values if all(new is old for new, old in zip(items, values)) else items
     if isinstance(value, dict):
-        items = {key: _bounded_tool_value(item) for key, item in value.items()}
-        return value if all(items[key] is value[key] for key in value) else items
+        entries = cast(dict[object, object], value)
+        items = {key: _bounded_tool_value(item) for key, item in entries.items()}
+        return entries if all(items[key] is entries[key] for key in entries) else items
     return value
 
 
@@ -2365,6 +2885,115 @@ def replay_transcript_to_ui_messages(
             messages.append(row)
             continue
 
+        if ev == "delegated_child":
+            child_id = rec.get("child_id")
+            child_session_key = rec.get("child_session_key")
+            profile = rec.get("profile")
+            state = rec.get("state")
+            if (
+                not isinstance(child_id, str)
+                or not child_id
+                or not isinstance(child_session_key, str)
+                or not child_session_key
+                or not isinstance(profile, str)
+                or not profile
+                or not isinstance(state, str)
+                or not state
+            ):
+                continue
+            generation = rec.get("runtime_generation")
+            if type(generation) is not int or generation < 0:
+                generation = 0
+            task_label = rec.get("task_label")
+            if not isinstance(task_label, str) or len(task_label) > 160:
+                task_label = ""
+            result_summary = rec.get("result_summary")
+            if not isinstance(result_summary, str) or len(result_summary) > 1000:
+                result_summary = None
+            child: dict[str, Any] = {
+                "child_session_key": child_session_key,
+                "child_id": child_id,
+                "parent_session_key": (
+                    rec.get("parent_session_key")
+                    if isinstance(rec.get("parent_session_key"), str)
+                    else None
+                ),
+                "profile": profile,
+                "state": state,
+                "runtime_generation": generation,
+                "task_label": task_label,
+                "task_label_truncated": rec.get("task_label_truncated") is True,
+                "result_summary": result_summary,
+                "result_summary_truncated": rec.get("result_summary_truncated") is True,
+            }
+            outcome = rec.get("outcome")
+            child["outcome"] = outcome if isinstance(outcome, str) else None
+            turn_id = rec.get("turn_id")
+            child["turn_id"] = turn_id if isinstance(turn_id, str) and turn_id else None
+            for name in (
+                "parent_run_id", "child_run_id", "parent_store_identity",
+                "parent_incarnation", "root_key", "root_store_identity",
+                "root_incarnation", "child_store_identity", "child_incarnation",
+                "pending_approval_id", "blocked_run_id", "result_disposition",
+            ):
+                value = rec.get(name)
+                child[name] = value if isinstance(value, str) and value else None
+            for name in (
+                "parent_generation", "root_generation", "child_generation",
+                "run_sequence", "state_sequence", "control_epoch",
+            ):
+                value = rec.get(name)
+                child[name] = value if type(value) is int and value >= 0 else 0
+            for name in ("holds_capacity", "can_stop", "owned_work"):
+                value = rec.get(name)
+                child[name] = value if type(value) is bool else False
+            existing_index: int | None = None
+            for index, message in enumerate(messages):
+                candidate_child = message.get("delegatedChild")
+                if (
+                    isinstance(candidate_child, dict)
+                    and cast(dict[str, Any], candidate_child).get("child_id") == child_id
+                ):
+                    existing_index = index
+                    break
+            if existing_index is None:
+                messages.append(
+                    {
+                        "id": f"delegated-child-{child_id}",
+                        "role": "assistant",
+                        "kind": "delegated_child",
+                        "content": "",
+                        "delegatedChild": child,
+                        "createdAt": _created_at_ms(rec, idx),
+                        **({"turnId": turn_id} if isinstance(turn_id, str) and turn_id else {}),
+                    }
+                )
+            else:
+                previous_child = messages[existing_index].get("delegatedChild")
+                if not isinstance(previous_child, dict):
+                    continue
+                previous = cast(dict[str, Any], previous_child)
+                prior_lifetime = _delegated_child_lifetime(previous)
+                next_lifetime = _delegated_child_lifetime(child)
+                if prior_lifetime is None or next_lifetime is None or prior_lifetime != next_lifetime:
+                    continue
+                prior_version = _delegated_child_version(previous)
+                next_version = _delegated_child_version(child)
+                if next_version < prior_version:
+                    continue
+                if next_version == prior_version:
+                    if _delegated_child_facts(previous) != _delegated_child_facts(child):
+                        continue
+                    continue
+                if child["turn_id"] is None:
+                    child["turn_id"] = previous.get("turn_id")
+                messages[existing_index] = {
+                    **messages[existing_index],
+                    "delegatedChild": child,
+                    **({"turnId": turn_id} if isinstance(turn_id, str) and turn_id else {}),
+                }
+            continue
+
         if ev == "file_edit":
             raw_edits = rec.get("edits")
             if isinstance(raw_edits, list):
@@ -2769,6 +3398,7 @@ def has_unfinished_transcript_tail(session_key: str) -> bool:
     every historical segment here would make restart cost grow with the full
     conversation history.
     """
+    _migrate_legacy_transcript(session_key)
     return has_pending_tool_calls(
         _read_transcript_file(webui_transcript_path(session_key))
     )
@@ -2813,7 +3443,11 @@ def build_webui_thread_response(
     if paginated:
         lines, page = _select_transcript_page(session_key, limit=limit, before=before)
     else:
-        lines = _annotate_replay_identities(read_transcript_lines(session_key))
+        lines, page = _select_transcript_page(
+            session_key,
+            limit=_NO_QUERY_TRANSCRIPT_PAGE_LIMIT,
+            before=None,
+        )
     if not lines and active_turn_started_at is None:
         return None
     needs_user_backfill = _needs_user_event_backfill(lines)
@@ -2860,9 +3494,8 @@ def build_webui_thread_response(
         ),
         "active_turn_id": active_turn_id,
     }
-    if page is not None:
-        page["loaded_message_count"] = len(msgs)
-        payload["page"] = page
+    page["loaded_message_count"] = len(msgs)
+    payload["page"] = page
     if fork_boundary is not None:
         payload["fork_boundary_message_count"] = fork_boundary
     return payload

@@ -21,6 +21,8 @@ import {
 import {
   NanobotClient,
   connectionEndpoint,
+  fetchDelegatedChildHistory,
+  fetchDelegatedChildren,
   fetchAvailableSkills,
   fetchGatewayHealth,
   fetchHistory,
@@ -47,6 +49,12 @@ import {
   type TokenUsage,
   type WorkspaceScopePayload,
 } from "./protocol"
+import {
+  DelegatedChildProjection,
+  type DelegatedChildActivity,
+  type DelegatedChildReference,
+  type StopExpectation,
+} from "./delegated-children"
 import {
   CommandMenu,
   resolveSlashCommandLifecycle,
@@ -132,6 +140,131 @@ interface ChatClient {
     chatId: string,
     recoveryId: string,
   ): Promise<RecoveryState>
+}
+
+interface ChildDetailReturnState {
+  shellIndex: number
+  scrollTop: number
+  composerFocused: boolean
+}
+
+interface PresentedApproval {
+  approvalId: string
+  childId: string
+  requestKey: string
+  childIncarnation: string
+  childSessionKey: string
+  runId: string
+  generation: number
+  runSequence: number
+  stateSequence: number
+  plannedAction: string
+}
+
+function hasOwn(record: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key)
+}
+
+function approvalRequestKey(child: DelegatedChildActivity): string {
+  return JSON.stringify([
+    child.child_id,
+    child.pending_approval_id,
+    child.blocked_run_id,
+    child.run_sequence,
+    child.state_sequence,
+    child.parent_session_key,
+    child.parent_store_identity,
+    child.parent_incarnation,
+    child.parent_generation,
+    child.root_key,
+    child.root_store_identity,
+    child.root_incarnation,
+    child.root_generation,
+    child.child_session_key,
+    child.child_store_identity,
+    child.child_incarnation,
+    child.child_generation,
+  ])
+}
+
+function approvalPromptSummary(content: string, approvalId: string): string | null {
+  const prefix = "I'm about to take a risky action and want your approval first. Planned action: "
+  const suffix = ". Reply with the approval control to continue or deny."
+  const text = content.trim()
+  if (!text.startsWith(prefix) || !text.endsWith(suffix)) return null
+  const body = text.slice(prefix.length, -suffix.length).trim()
+  const match = /(?:^|\s)Approval ID:\s*([0-9a-f]{32})(?![0-9a-f])/iu.exec(body)
+  if (!match || match[1] !== approvalId) return null
+  const summary = body
+    .replace(/(?:^|\s)Approval ID:\s*[0-9a-f]{32}(?![0-9a-f])/iu, " ")
+    .replace(/\.\s*$/u, "")
+    .trim()
+  return summary || null
+}
+
+function isPendingChildApproval(child: DelegatedChildActivity): boolean {
+  return child.state === "waiting_approval"
+    && Boolean(child.pending_approval_id)
+    && Boolean(child.blocked_run_id)
+    && child.blocked_run_id === child.child_run_id
+}
+
+function sameChildLifetime(left: DelegatedChildActivity, right: DelegatedChildActivity): boolean {
+  return left.child_id === right.child_id
+    && left.parent_session_key === right.parent_session_key
+    && left.parent_store_identity === right.parent_store_identity
+    && left.parent_incarnation === right.parent_incarnation
+    && left.parent_generation === right.parent_generation
+    && left.root_key === right.root_key
+    && left.root_store_identity === right.root_store_identity
+    && left.root_incarnation === right.root_incarnation
+    && left.root_generation === right.root_generation
+    && left.child_session_key === right.child_session_key
+    && left.child_store_identity === right.child_store_identity
+    && left.child_incarnation === right.child_incarnation
+    && left.child_generation === right.child_generation
+}
+
+function sameSummaryReference(
+  left: DelegatedChildReference,
+  right: DelegatedChildReference | undefined,
+): boolean {
+  return right?.history_kind === "summary"
+    && left.history_kind === "summary"
+    && JSON.stringify(left) === JSON.stringify(right)
+}
+
+function formatPresentedApproval(
+  child: DelegatedChildActivity,
+  approval: PresentedApproval,
+): string {
+  return `Approval for ${child.task_label || "delegated task"}: ${approval.plannedAction}`
+    + ` · child ${child.child_id} (${child.child_session_key})`
+    + ` · run ${approval.runId} · approval ${approval.approvalId}`
+    + ` · use /child approve ${approval.approvalId} or /child deny ${approval.approvalId}`
+}
+
+function isStaleStopRefusal(event: Extract<InboundEvent, { event: "error" }>): boolean {
+  return (event.detail === "not_admitted"
+      && (event.reason === "stale_stop_target" || event.reason === "invalid_stop_expectation"))
+    || event.detail === "stale_stop_target"
+    || event.detail === "invalid_stop_expectation"
+    || event.reason === "stale_stop_target"
+    || event.reason === "invalid_stop_expectation"
+}
+
+function sameStopTargetSource(
+  left: StopExpectation["source"] | null,
+  right: StopExpectation["source"] | null,
+): boolean {
+  return left === right || (
+    left !== null
+    && right !== null
+    && left.store_identity === right.store_identity
+    && left.session_key === right.session_key
+    && left.incarnation === right.incarnation
+    && left.generation === right.generation
+  )
 }
 
 interface Palette {
@@ -499,6 +632,30 @@ export class NanobotTui {
   private backgroundKnown: boolean
   private activeTurn = false
   private activeTurnId: string | null = null
+  private readonly delegatedChildren = new DelegatedChildProjection()
+  private readonly modernStopTargetChats = new Set<string>()
+  private stopTarget: StopExpectation | null = null
+  private stopTargetRevision = 0
+  private stopInFlight = false
+  private readonly stopRequestTurns = new Set<string>()
+  private connected = false
+  private delegatedStatusAvailable = false
+  private childRefreshPending = false
+  private childRefreshRequestedAgain = false
+  private connectionRevision = 0
+  private readonly pendingApprovalTurns = new Map<string, string>()
+  private readonly pendingApprovalIds = new Set<string>()
+  private readonly refusedApprovalIds = new Set<string>()
+  private readonly presentedApprovals = new Map<string, PresentedApproval>()
+  private readonly approvalDetailErrors = new Map<string, string>()
+  private readonly approvalDetailErrorKeys = new Map<string, string>()
+  private readonly approvalDetailRequests = new Map<string, {
+    requestKey: string
+    promise: Promise<void>
+  }>()
+  private childDetailTranscript: Transcript | null = null
+  private childDetailReturn: ChildDetailReturnState | null = null
+  private childDetailRequest = 0
   private activeLabel = "Thinking"
   private retryStatus: RenderedRetryStatus | null = null
   private activeStartedAt = 0
@@ -517,6 +674,11 @@ export class NanobotTui {
   private submitPending = false
   private submitGeneration = 0
   private unsentSubmit = false
+  private pendingFollowUp: {
+    chatId: string
+    turnId: string
+    prompt: QueuedPrompt
+  } | null = null
   private connectionMessage = "Getting ready…"
   private readonly promptHistory: string[] = []
   private historyCursor = 0
@@ -566,7 +728,7 @@ export class NanobotTui {
     renderer: CliRenderer,
     private readonly options: AppOptions,
     client?: ChatClient,
-    treeSitterClient = getTreeSitterClient(),
+    private readonly treeSitterClient = getTreeSitterClient(),
     host: TuiHost = createTuiHost({}),
     clipboardImageReader: ClipboardImageReader = createClipboardImageReader(),
   ) {
@@ -592,6 +754,9 @@ export class NanobotTui {
       (state) => this.handleTranscriptNavigation(state),
       options.workspace,
     )
+    this.transcript.setDelegatedChildOpenHandler((childId) => {
+      void this.openChildDetail(childId)
+    })
     this.commandMenu = new CommandMenu(renderer, commandMenuTheme(this.palette))
     this.commandMenu.setCommands([], LOCAL_COMMANDS)
     this.sessionMenu = new SessionMenu(
@@ -667,7 +832,7 @@ export class NanobotTui {
       backgroundColor: RGBA.defaultBackground(),
       onMouseDown: (event) => {
         if (event.button !== 0) return
-        if (!this.diffViewer.visible) {
+        if (!this.diffViewer.visible && !this.childDetailTranscript) {
           // OpenTUI applies automatic focus after mouse handlers run. Prevent
           // a focusable transcript ancestor from stealing text focus back
           // after the composer has been restored here.
@@ -921,6 +1086,7 @@ export class NanobotTui {
 
   private submit(): void {
     if (this.quitting || this.composer.isDestroyed) return
+    if (this.childDetailTranscript) return
     const visibleContent = this.composer.plainText.trim()
     if (this.sessionLoading) {
       this.status.content = "Loading sessions…"
@@ -957,6 +1123,16 @@ export class NanobotTui {
     if (!visibleContent) return
     if (["exit", "quit", "/quit", ":q"].includes(visibleContent.toLowerCase())) {
       this.quit()
+      return
+    }
+    if (visibleContent.toLowerCase() === "/stop") {
+      this.clearComposer()
+      this.commandMenu.hide()
+      this.requestStop()
+      return
+    }
+    if (visibleContent.toLowerCase() === "/child" || visibleContent.toLowerCase().startsWith("/child ")) {
+      void this.handleChildCommand(visibleContent)
       return
     }
     if (["/continue", "/dismiss"].includes(visibleContent.toLowerCase())) {
@@ -1013,13 +1189,520 @@ export class NanobotTui {
     this.sendPrompt(prompt)
   }
 
-  private sendPrompt(prompt: QueuedPrompt, steering = false): boolean {
+  private async handleChildCommand(content: string): Promise<void> {
+    const parts = content.trim().split(/\s+/u)
+    const sub = (parts[1] || "list").toLowerCase()
+    const childId = parts[2]
+    this.clearComposer()
+    this.commandMenu.hide()
+    if (sub === "list") {
+      if (this.delegatedChildren.references.length === 0) {
+        this.transcript.notice("No delegated children in this chat")
+        return
+      }
+      for (const child of this.delegatedChildren.references) {
+        const outcome = child.outcome ? ` (${child.outcome})` : ""
+        this.transcript.notice(`${child.task_label || child.profile || "Delegated task"}`
+          + ` · ${child.state}${outcome}`
+          + (child.history_kind === "summary" ? " · summary only" : ""))
+      }
+      return
+    }
+    if (sub === "back") {
+      this.closeChildDetail()
+      return
+    }
+    if (sub === "approvals") {
+      const candidates = this.delegatedChildren.rows.filter(isPendingChildApproval)
+      if (candidates.length === 0) {
+        this.transcript.notice("No pending delegated child approvals")
+        return
+      }
+      await Promise.all(candidates.map((child) => this.ensureApprovalDetails(child, true)))
+      for (const candidate of candidates) {
+        const current = this.delegatedChildren.get(candidate.child_id)
+        if (!current || !isPendingChildApproval(current)) continue
+        const presented = current.pending_approval_id
+          ? this.presentedApprovals.get(current.pending_approval_id)
+          : undefined
+        if (!presented || presented.requestKey !== approvalRequestKey(current)) {
+          const unavailable = current.pending_approval_id
+            ? this.approvalDetailErrors.get(current.pending_approval_id)
+            : undefined
+          this.transcript.notice(
+            `${current.task_label || "Delegated task"} · Approval details unavailable`
+              + (unavailable ? ` · ${unavailable}` : " · inspect /child open ${current.child_id}"),
+            true,
+          )
+          continue
+        }
+        this.transcript.notice(formatPresentedApproval(current, presented))
+      }
+      return
+    }
+    if (sub === "approve" || sub === "deny") {
+      if (!childId) {
+        this.transcript.notice(`Usage: /child ${sub} <approval-id>`, true)
+        return
+      }
+      this.submitApprovalDecision(childId, sub === "approve" ? "approve" : "deny")
+      return
+    }
+    if (sub === "wait" || sub === "stop" || sub === "steer") {
+      this.transcript.notice(
+        "Per-child lifecycle controls are unavailable · send follow-ups in the original chat",
+        true,
+      )
+      return
+    }
+    if (sub !== "open") {
+      this.transcript.notice("Usage: /child [list|open <id>|back|approvals|approve <id>|deny <id>]", true)
+      return
+    }
+    if (!childId || !this.delegatedChildren.getReference(childId)) {
+      this.transcript.notice(`Unknown delegated child: ${childId || "(missing id)"}`, true)
+      return
+    }
+    await this.openChildDetail(childId)
+  }
+
+  private async ensureApprovalDetails(
+    child: DelegatedChildActivity,
+    retryUnavailable = false,
+  ): Promise<void> {
+    if (!isPendingChildApproval(child) || !child.pending_approval_id) return
+    const approvalId = child.pending_approval_id
+    const requestKey = approvalRequestKey(child)
+    const presented = this.presentedApprovals.get(approvalId)
+    if (presented?.requestKey === requestKey) return
+    const existing = this.approvalDetailRequests.get(approvalId)
+    if (existing?.requestKey === requestKey) return existing.promise
+    if (!retryUnavailable && this.approvalDetailErrorKeys.get(approvalId) === requestKey) return
+
+    const chatId = this.currentChatId
+    const request = (async () => {
+      try {
+        const history = await fetchDelegatedChildHistory(
+          this.options.apiUrl,
+          this.options.apiToken,
+          chatId,
+          child,
+          this.apiReauthenticator,
+        )
+        const latest = this.delegatedChildren.get(child.child_id)
+        if (
+          chatId !== this.currentChatId
+          || !latest
+          || approvalRequestKey(latest) !== requestKey
+          || history.historyKind !== "canonical"
+        ) return
+        const summary = [...history.messages]
+          .reverse()
+          .filter((message) => message.role === "assistant")
+          .map((message) => approvalPromptSummary(message.content, approvalId))
+          .find((value): value is string => value !== null)
+        if (!summary) {
+          this.presentedApprovals.delete(approvalId)
+          this.approvalDetailErrors.set(
+            approvalId,
+            "the exact action could not be verified from canonical child history",
+          )
+          this.approvalDetailErrorKeys.set(approvalId, requestKey)
+          return
+        }
+        this.presentedApprovals.set(approvalId, {
+          approvalId,
+          childId: child.child_id,
+          requestKey,
+          childIncarnation: child.child_incarnation,
+          childSessionKey: child.child_session_key,
+          runId: child.blocked_run_id!,
+          generation: child.child_generation,
+          runSequence: child.run_sequence,
+          stateSequence: child.state_sequence,
+          plannedAction: summary,
+        })
+        this.approvalDetailErrors.delete(approvalId)
+        this.approvalDetailErrorKeys.delete(approvalId)
+        this.refusedApprovalIds.delete(approvalId)
+      } catch (error) {
+        const latest = this.delegatedChildren.get(child.child_id)
+        if (chatId !== this.currentChatId || !latest || approvalRequestKey(latest) !== requestKey) return
+        this.presentedApprovals.delete(approvalId)
+        this.approvalDetailErrors.set(
+          approvalId,
+          error instanceof Error ? error.message : String(error),
+        )
+        this.approvalDetailErrorKeys.set(approvalId, requestKey)
+      }
+    })()
+    this.approvalDetailRequests.set(approvalId, { requestKey, promise: request })
+    try {
+      await request
+    } finally {
+      if (this.approvalDetailRequests.get(approvalId)?.promise === request) {
+        this.approvalDetailRequests.delete(approvalId)
+      }
+    }
+  }
+
+  private submitApprovalDecision(approvalId: string, decision: "approve" | "deny"): void {
+    const presented = this.presentedApprovals.get(approvalId)
+    const child = presented ? this.delegatedChildren.get(presented.childId) : undefined
+    if (
+      !presented
+      || !child
+      || !isPendingChildApproval(child)
+      || child.pending_approval_id !== approvalId
+      || approvalRequestKey(child) !== presented.requestKey
+      || child.blocked_run_id !== presented.runId
+      || child.child_session_key !== presented.childSessionKey
+      || child.child_incarnation !== presented.childIncarnation
+      || child.child_generation !== presented.generation
+      || child.run_sequence !== presented.runSequence
+      || child.state_sequence !== presented.stateSequence
+    ) {
+      this.transcript.notice("That child approval is stale or its exact action is unavailable", true)
+      this.requestDelegatedChildRefresh(this.currentChatId)
+      return
+    }
+    if (this.refusedApprovalIds.has(approvalId)) {
+      this.transcript.notice("That child approval was refused · refresh status before deciding again", true)
+      this.requestDelegatedChildRefresh(this.currentChatId)
+      return
+    }
+    if (this.pendingApprovalIds.has(approvalId)) {
+      this.transcript.notice("That child approval decision is already pending", true)
+      return
+    }
+    if (!this.connected || !this.ready) {
+      this.transcript.notice("Child approval is unavailable while disconnected or loading", true)
+      return
+    }
+
     let turnId: string
     try {
-      turnId = this.client.send(prompt.content, prompt.options)
+      turnId = this.client.send("approval_decision", {
+        approvalDecision: {
+          approval_id: approvalId,
+          decision,
+          session_key: child.child_session_key,
+          session_incarnation: child.child_incarnation,
+          run_id: child.blocked_run_id!,
+          generation: child.child_generation,
+        },
+      })
+    } catch {
+      this.transcript.notice("Child approval decision was not sent · reconnect and refresh status", true)
+      return
+    }
+    this.pendingApprovalIds.add(approvalId)
+    this.pendingApprovalTurns.set(approvalId, turnId)
+    this.transcript.notice(
+      `Sent ${decision} for ${presented.plannedAction} · child ${child.child_id}`
+        + ` · run ${child.blocked_run_id} · approval ${approvalId}; waiting for child status`,
+    )
+  }
+
+  private syncDelegatedChildren(): void {
+    this.transcript.updateDelegatedChildren(
+      this.delegatedChildren.references,
+      this.connected && this.delegatedStatusAvailable,
+      this.connected,
+    )
+    this.updateMeta()
+  }
+
+  private observeApprovalUpdate(child: DelegatedChildActivity): void {
+    const approvalId = child.pending_approval_id
+    const valid = isPendingChildApproval(child)
+    for (const [id, presented] of this.presentedApprovals) {
+      if (presented.childId !== child.child_id) continue
+      if (!valid || id !== approvalId) {
+        this.presentedApprovals.delete(id)
+        this.approvalDetailErrors.delete(id)
+        this.approvalDetailErrorKeys.delete(id)
+        this.refusedApprovalIds.delete(id)
+        this.clearApprovalControl(id)
+      }
+    }
+    if (!valid || !approvalId) return
+
+    const requestKey = approvalRequestKey(child)
+    const presented = this.presentedApprovals.get(approvalId)
+    if (presented && presented.requestKey !== requestKey) {
+      this.presentedApprovals.delete(approvalId)
+      this.approvalDetailErrors.delete(approvalId)
+      this.approvalDetailErrorKeys.delete(approvalId)
+      this.refusedApprovalIds.delete(approvalId)
+      this.clearApprovalControl(approvalId)
+    }
+    const request = this.approvalDetailRequests.get(approvalId)
+    if (request?.requestKey === requestKey) return
+    void this.ensureApprovalDetails(child)
+  }
+
+  private requestDelegatedChildRefresh(chatId: string): void {
+    if (!chatId || chatId !== this.currentChatId) return
+    if (this.childRefreshPending) {
+      this.childRefreshRequestedAgain = true
+      return
+    }
+    this.childRefreshPending = true
+    const rootKey = `websocket:${chatId}`
+    const startedAt = this.delegatedChildren.revisionSnapshot()
+    const startedTargetRevision = this.stopTargetRevision
+    const startedTargetSource = this.stopTarget ? { ...this.stopTarget.source } : null
+    const startedAttachGeneration = this.hydrationId
+    const startedConnectionRevision = this.connectionRevision
+    void fetchDelegatedChildren(
+      this.options.apiUrl,
+      this.options.apiToken,
+      rootKey,
+      this.apiReauthenticator,
+    ).then((snapshot) => {
+      if (chatId !== this.currentChatId || !snapshot) return
+      if (
+        startedTargetRevision !== this.stopTargetRevision
+        || !sameStopTargetSource(startedTargetSource, this.stopTarget?.source ?? null)
+        || startedAttachGeneration !== this.hydrationId
+        || startedConnectionRevision !== this.connectionRevision
+      ) return
+      const target = snapshot.stopTargetSnapshotAvailable
+        ? snapshot.stopTargetSnapshotValid ? snapshot.stopTarget ?? null : null
+        : this.stopTarget
+      const applied = this.delegatedChildren.applyHydration(
+        snapshot.children,
+        rootKey,
+        target,
+        startedAt,
+      )
+      if (!applied) {
+        this.status.content = "Canonical child status could not be reconciled"
+        return
+      }
+      if (snapshot.stopTargetSnapshotAvailable) {
+        this.modernStopTargetChats.add(chatId)
+        this.acceptStopTarget(snapshot.stopTarget ?? null, chatId)
+      }
+      this.delegatedStatusAvailable = true
+      for (const child of this.delegatedChildren.rows) {
+        if (isPendingChildApproval(child) && child.pending_approval_id) {
+          this.refusedApprovalIds.delete(child.pending_approval_id)
+        }
+        this.observeApprovalUpdate(child)
+      }
+      this.syncDelegatedChildren()
+      if (this.delegatedChildren.refreshRequired) {
+        this.status.content = "Conflicting child status retained · waiting for a newer canonical update"
+      }
+    }).catch(() => {
+      if (chatId !== this.currentChatId) return
+      this.syncDelegatedChildren()
+    }).finally(() => {
+      this.childRefreshPending = false
+      if (this.childRefreshRequestedAgain && chatId === this.currentChatId) {
+        this.childRefreshRequestedAgain = false
+        this.requestDelegatedChildRefresh(chatId)
+      }
+    })
+  }
+
+  private acceptStopTarget(target: StopExpectation | null, chatId: string): void {
+    if (chatId !== this.currentChatId) return
+    const expectedRootKey = `websocket:${chatId}`
+    if (target && target.source.session_key !== expectedRootKey) {
+      this.setStopTarget(null)
+      this.stopInFlight = false
+      this.transcript.notice("The live Stop target did not match this chat · refreshing status", true)
+      this.requestDelegatedChildRefresh(chatId)
+      return
+    }
+    this.setStopTarget(target)
+    if (!target) this.stopInFlight = false
+    this.updateMeta()
+  }
+
+  private setStopTarget(target: StopExpectation | null): void {
+    this.stopTarget = target
+    this.stopTargetRevision += 1
+  }
+
+  private hasOwnedWork(): boolean {
+    return this.stopTarget !== null || this.delegatedChildren.rows.some((child) => (
+      child.owned_work
+      || child.holds_capacity
+      || ["reserved", "joining", "waiting_approval", "stopping", "uncertain"]
+        .includes(child.state)
+    ))
+  }
+
+  private requestStop(): void {
+    const chatId = this.currentChatId || this.client.activeChatId
+    if (!this.connected || !chatId) {
+      this.status.content = "Stop unavailable while disconnected"
+      return
+    }
+    if (this.stopInFlight) {
+      this.status.content = "Stop is waiting for canonical status"
+      return
+    }
+
+    let options: MessageOptions
+    const exactTarget = this.stopTarget
+    if (exactTarget) {
+      options = { stopExpectation: exactTarget }
+    } else if (this.modernStopTargetChats.has(chatId)) {
+      this.status.content = "Live Stop target unavailable · refreshing status"
+      this.requestDelegatedChildRefresh(chatId)
+      return
+    } else if (this.delegatedChildren.rows.some((child) => (
+      child.owned_work
+      || child.holds_capacity
+      || ["reserved", "joining", "waiting_approval", "stopping", "uncertain"]
+        .includes(child.state)
+    ))) {
+      this.status.content = "Child work is visible but its exact live Stop target is unavailable"
+      this.requestDelegatedChildRefresh(chatId)
+      return
+    } else if (this.activeTurn && this.activeTurnId) {
+      options = { targetTurnId: this.activeTurnId }
+    } else {
+      this.status.content = this.hasOwnedWork()
+        ? "Exact live Stop target unavailable · refreshing status"
+        : this.activeTurn
+          ? "Current root turn has no live ID · Stop unavailable"
+          : "No active work to stop"
+      this.requestDelegatedChildRefresh(chatId)
+      return
+    }
+
+    try {
+      const turnId = this.client.send("/stop", options)
+      this.stopRequestTurns.add(turnId)
+      this.stopInFlight = true
+      this.status.content = "Stop requested · waiting for canonical status"
+    } catch {
+      this.status.content = "Stop was not sent · reconnect and refresh status"
+    }
+  }
+
+  private refreshStopStatus(): void {
+    const chatId = this.currentChatId
+    if (!chatId) return
+    // A stale typed target is no longer authority. Keep the modern capability
+    // marker so this refresh cannot fall back to a root-only legacy request.
+    this.setStopTarget(null)
+    this.stopInFlight = false
+    this.status.content = "Stop target was refused · refreshing status; press again to retry"
+    this.requestDelegatedChildRefresh(chatId)
+  }
+
+  private async openChildDetail(childId: string): Promise<void> {
+    const child = this.delegatedChildren.getReference(childId)
+    const chatId = this.currentChatId
+    if (!child || !chatId) {
+      this.transcript.notice(`Unknown delegated child: ${childId}`, true)
+      return
+    }
+    if (this.childDetailTranscript) return
+    const request = ++this.childDetailRequest
+    const returnState: ChildDetailReturnState = {
+      shellIndex: Math.max(0, this.shell.getChildren().indexOf(this.transcript.root) + 1),
+      scrollTop: this.transcript.root.scrollTop,
+      composerFocused: this.composer.focused,
+    }
+    this.status.content = `Loading read-only child history · ${child.task_label || "delegated task"}`
+    try {
+      const history = await fetchDelegatedChildHistory(
+        this.options.apiUrl,
+        this.options.apiToken,
+        chatId,
+        child,
+        this.apiReauthenticator,
+      )
+      const current = this.delegatedChildren.getReference(childId)
+      if (
+        request !== this.childDetailRequest
+        || chatId !== this.currentChatId
+        || !current
+        || (child.history_kind === "summary"
+          ? !sameSummaryReference(child, current)
+          : current.history_kind === "summary" || !sameChildLifetime(current, child))
+      ) return
+
+      const detail = new Transcript(
+        this.renderer,
+        transcriptTheme(this.palette, this.backgroundKnown),
+        this.treeSitterClient,
+        undefined,
+        this.options.workspace,
+        "nanobot-tui-child-detail",
+      )
+      detail.header({
+        model: this.modelName || this.modelPreset,
+        workspace: this.options.workspace,
+        version: this.options.version,
+        access: this.options.access,
+      })
+      const kind = history.historyKind === "summary"
+        ? "Read-only summary · inspect-only history"
+        : "Read-only canonical child history"
+      detail.notice(`${kind} · ${child.task_label || "Delegated task"} · ${child.state}`)
+      detail.history(history.messages)
+
+      this.childDetailReturn = returnState
+      this.childDetailTranscript = detail
+      this.transcript.root.visible = false
+      this.composerFrame.visible = false
+      this.composer.blur()
+      this.shell.add(detail.root, returnState.shellIndex)
+      this.status.content = "Read-only child detail · Escape to return"
+      this.updateMeta()
+      this.renderer.requestRender()
+    } catch (error) {
+      if (request !== this.childDetailRequest || chatId !== this.currentChatId) return
+      this.status.content = error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  private closeChildDetail(): void {
+    this.childDetailRequest += 1
+    const detail = this.childDetailTranscript
+    const returnState = this.childDetailReturn
+    if (!detail) return
+    this.childDetailTranscript = null
+    this.childDetailReturn = null
+    this.shell.remove(detail.root)
+    detail.destroy()
+    detail.root.destroyRecursively()
+    this.transcript.root.visible = true
+    this.composerFrame.visible = true
+    if (returnState) this.transcript.root.scrollTop = returnState.scrollTop
+    if (returnState?.composerFocused) this.composer.focus()
+    this.status.content = this.readyStatus()
+    this.updateMeta()
+    this.renderer.requestRender()
+  }
+
+  private sendPrompt(prompt: QueuedPrompt, steering = false): string | null {
+    if (steering && !this.activeTurnId) {
+      this.status.content = "The active turn is not ready · wait or press Ctrl+C"
+      return null
+    }
+    const options = steering
+      ? {
+          ...prompt.options,
+          requestIntent: "steer" as const,
+          targetTurnId: this.activeTurnId ?? undefined,
+        }
+      : prompt.options
+    let turnId: string
+    try {
+      turnId = this.client.send(prompt.content, options)
     } catch {
       this.markSubmitUnsent(true)
-      return false
+      return null
     }
     this.unsentSubmit = false
     this.clearComposer()
@@ -1037,10 +1720,10 @@ export class NanobotTui {
     if (steering) {
       this.renderActiveStatus()
       this.updateMeta()
-      return true
+      return turnId
     }
     this.beginTurn(turnId)
-    return true
+    return turnId
   }
 
   private beginTurn(turnId: string | null, startedAt?: number): void {
@@ -1070,10 +1753,110 @@ export class NanobotTui {
     }
   }
 
+  private approvalForTurn(turnId: string | undefined): string | null {
+    if (!turnId) return null
+    for (const [approvalId, requestTurnId] of this.pendingApprovalTurns) {
+      if (requestTurnId === turnId) return approvalId
+    }
+    return null
+  }
+
+  private clearApprovalControl(approvalId: string): void {
+    this.pendingApprovalTurns.delete(approvalId)
+    this.pendingApprovalIds.delete(approvalId)
+  }
+
+  private recoverUnacknowledgedApprovals(): void {
+    if (this.pendingApprovalTurns.size === 0) return
+    for (const approvalId of this.pendingApprovalTurns.keys()) {
+      this.refusedApprovalIds.add(approvalId)
+      this.clearApprovalControl(approvalId)
+    }
+    this.status.content = "Child approval outcome is unknown after disconnect · reconnect and refresh status"
+  }
+
+  private handleClientControlEvent(event: InboundEvent): boolean {
+    const turnId = "turn_id" in event ? event.turn_id : undefined
+    if (!turnId) return false
+
+    if (this.stopRequestTurns.has(turnId)) {
+      if (event.event === "error") {
+        this.stopRequestTurns.delete(turnId)
+        if (isStaleStopRefusal(event)) {
+          this.refreshStopStatus()
+        } else {
+          this.stopInFlight = false
+          this.status.content = event.reason || event.detail || "Stop request was refused"
+        }
+        return true
+      }
+      if (event.event === "turn_end") {
+        this.stopRequestTurns.delete(turnId)
+        this.status.content = "Stop request finished · confirming canonical status"
+        this.requestDelegatedChildRefresh(this.currentChatId)
+        return true
+      }
+      if (["message_accepted", "message_admitted", "user_message", "message"].includes(event.event)) {
+        return true
+      }
+    }
+
+    const approvalId = this.approvalForTurn(turnId)
+    if (!approvalId) return false
+    if (event.event === "error") {
+      this.clearApprovalControl(approvalId)
+      this.refusedApprovalIds.add(approvalId)
+      this.transcript.notice(
+        `Approval ${approvalId} was refused · refresh canonical child status before deciding again`,
+        true,
+      )
+      this.requestDelegatedChildRefresh(this.currentChatId)
+      return true
+    }
+    if (event.event === "turn_end") {
+      this.clearApprovalControl(approvalId)
+      this.status.content = `Approval ${approvalId} finished · confirming child status`
+      this.requestDelegatedChildRefresh(this.currentChatId)
+      return true
+    }
+    if (["message_accepted", "message_admitted", "user_message", "message"].includes(event.event)) {
+      // message_accepted with starts_turn:false confirms admission only. Keep
+      // the decision pending until canonical child status settles it.
+      return true
+    }
+    return false
+  }
+
   accept(event: InboundEvent): void {
     if (event.event === "attached") {
-      const switchedSession = Boolean(this.currentChatId && this.currentChatId !== event.chat_id)
+      const previousChatId = this.currentChatId
+      if (previousChatId && previousChatId !== event.chat_id) {
+        this.closeChildDetail()
+        this.delegatedChildren.clear()
+        this.setStopTarget(null)
+        this.stopInFlight = false
+        this.stopRequestTurns.clear()
+        this.pendingApprovalTurns.clear()
+        this.pendingApprovalIds.clear()
+        this.refusedApprovalIds.clear()
+        this.presentedApprovals.clear()
+        this.approvalDetailErrors.clear()
+        this.approvalDetailErrorKeys.clear()
+      }
       this.currentChatId = event.chat_id
+      if (hasOwn(event, "stop_target")) {
+        this.modernStopTargetChats.add(event.chat_id)
+        this.acceptStopTarget(event.stop_target ?? null, event.chat_id)
+      } else if (this.modernStopTargetChats.has(event.chat_id)) {
+        // Once this session has exposed the modern field, a later omission
+        // cannot downgrade its explicit null to the legacy root fallback.
+        this.setStopTarget(null)
+      } else {
+        this.setStopTarget(null)
+      }
+      this.stopInFlight = false
+      this.delegatedStatusAvailable = false
+      this.syncDelegatedChildren()
       if (event.usage) this.lastUsage = event.usage
       if (event.model_preset !== undefined) {
         this.applyModelPreset(event.model_preset)
@@ -1091,14 +1874,17 @@ export class NanobotTui {
       if (queuesEvents) {
         this.ready = false
         this.pendingEvents = []
+      } else {
+        this.pendingEvents = null
       }
       const hydrationId = ++this.hydrationId
       void this.prepareChat(event.chat_id, restoring, hydrationId).then(() => {
         if (hydrationId !== this.hydrationId) return
         this.applyRecoveryState(event.recovery_state ?? null)
         this.flushPendingEvents()
+        this.requestDelegatedChildRefresh(event.chat_id)
         this.syncQueuePreview()
-        if (switchedSession) this.sendNextFollowUp()
+        this.sendNextFollowUp()
       })
       return
     }
@@ -1112,13 +1898,38 @@ export class NanobotTui {
       this.pendingEvents.push(event)
       return
     }
+    if (this.handleClientControlEvent(event)) return
 
     switch (event.event) {
       case "context_compaction":
         this.transcript.compaction({ id: event.compaction_id, phase: event.phase })
         return
+      case "delegated_child": {
+        const rootKey = `websocket:${event.chat_id}`
+        const result = this.delegatedChildren.applyLive(event, rootKey)
+        this.delegatedStatusAvailable = true
+        const row = this.delegatedChildren.get(event.child_id)
+        if (row) this.observeApprovalUpdate(row)
+        this.syncDelegatedChildren()
+        if (result === "conflict" || result === "lifetime_mismatch") {
+          this.status.content = "Delegated child status changed · refreshing canonical status"
+          this.requestDelegatedChildRefresh(event.chat_id)
+        } else if (result === "invalid") {
+          this.requestDelegatedChildRefresh(event.chat_id)
+        }
+        if (this.stopInFlight) this.requestDelegatedChildRefresh(event.chat_id)
+        return
+      }
+      case "stop_target":
+        this.modernStopTargetChats.add(event.chat_id)
+        this.acceptStopTarget(event.stop_target, event.chat_id)
+        return
       case "message_accepted":
         this.reconcileTurnOwnership(event)
+        return
+      case "message_admitted":
+        this.reconcileTurnOwnership(event)
+        this.commitAdmittedFollowUp(event)
         return
       case "user_message": {
         if (this.transcript.user(
@@ -1208,6 +2019,17 @@ export class NanobotTui {
         return
       case "turn_end":
         if (event.turn_id && this.activeTurnId && event.turn_id !== this.activeTurnId) return
+        if (
+          this.stopInFlight
+          && event.turn_id
+          && event.turn_id === this.activeTurnId
+          && !this.modernStopTargetChats.has(event.chat_id)
+        ) {
+          // A legacy root-only Stop targets this exact root turn, so its
+          // canonical end settles the outstanding request. Modern snapshots
+          // may include child-owned work that outlives the root reply.
+          this.stopInFlight = false
+        }
         if (event.turn_id) {
           this.commandTurns.delete(event.turn_id)
           this.modelCommandTurns.delete(event.turn_id)
@@ -1282,6 +2104,9 @@ export class NanobotTui {
         }
         return
       case "error":
+        if (this.pendingFollowUp && event.turn_id === this.pendingFollowUp.turnId) {
+          this.pendingFollowUp = null
+        }
         const commandLifecycle = event.turn_id ? this.commandTurns.get(event.turn_id) : undefined
         if (event.turn_id) {
           this.commandTurns.delete(event.turn_id)
@@ -1336,6 +2161,22 @@ export class NanobotTui {
         if (hydrationId !== this.hydrationId) return
         this.historyBeforeCursor = history.beforeCursor
         this.historyHasMore = history.hasMoreBefore
+        if (history.stopTargetSnapshotAvailable) {
+          this.modernStopTargetChats.add(chatId)
+          this.acceptStopTarget(history.stopTarget ?? null, chatId)
+        }
+        const rootKey = `websocket:${chatId}`
+        this.delegatedChildren.applyHistory(
+          history.messages.flatMap((message) => message.delegatedChild ? [message.delegatedChild] : []),
+          rootKey,
+        )
+        for (const child of this.delegatedChildren.rows) this.observeApprovalUpdate(child)
+        this.syncDelegatedChildren()
+        this.reconcilePendingFollowUp(history)
+        if (history.activeTurnId) {
+          this.activeTurnId = history.activeTurnId
+          this.setActive(true)
+        }
         this.transcript.history(history.messages)
         this.restorePromptHistory(history.messages)
         const reversedHistory = [...history.messages].reverse()
@@ -1476,29 +2317,46 @@ export class NanobotTui {
     // Invalid frames do not mean the transport is unavailable. Keep the last
     // accurate user-facing state unless the protocol supplied connection diagnostics.
     if (status === "error" && !info) return
+    this.connectionRevision += 1
     this.connectionMessage = connectionStatusText(status, info)
     if (this.options.desktopGatewayId && status === "error") {
       this.connectionMessage = "Desktop disconnected or incompatible · exit and run nanobot to reconnect"
     }
     if (status === "connected") {
+      this.connected = true
       this.ready = false
+      this.syncDelegatedChildren()
       this.renderConnectionMessage()
       return
     }
     if (["starting", "connecting", "reconnecting", "unavailable"].includes(status)) {
+      this.recoverUnacknowledgedApprovals()
+      this.connected = false
+      this.delegatedStatusAvailable = false
       this.ready = false
+      this.syncDelegatedChildren()
       if (status === "reconnecting" || status === "unavailable") this.setActive(false)
       this.renderConnectionMessage()
       return
     }
     if (status === "error") {
-      if (info) this.ready = false
+      if (info) {
+        this.recoverUnacknowledgedApprovals()
+        this.connected = false
+        this.delegatedStatusAvailable = false
+        this.ready = false
+        this.syncDelegatedChildren()
+      }
       this.setActive(false)
       this.renderConnectionMessage()
       return
     }
     if (!this.quitting) {
+      this.recoverUnacknowledgedApprovals()
+      this.connected = false
+      this.delegatedStatusAvailable = false
       this.ready = false
+      this.syncDelegatedChildren()
       this.setActive(false)
       this.renderConnectionMessage()
     }
@@ -1575,10 +2433,52 @@ export class NanobotTui {
 
   private sendNextFollowUp(): void {
     if (!this.ready || this.activeTurn || this.quitting) return
-    const prompt = this.promptQueue.takeFollowUp()
+    // Peek now, commit only after the session owner confirms admission.
+    // A sent but unconfirmed item must not be submitted twice.
+    if (this.pendingFollowUp) return
+    const prompt = this.promptQueue.peekFollowUp()
     if (!prompt) return
+    const turnId = this.sendPrompt(prompt)
+    if (!turnId) return
+    this.pendingFollowUp = {
+      chatId: this.currentChatId || this.client.activeChatId,
+      turnId,
+      prompt,
+    }
     this.syncQueuePreview()
-    this.sendPrompt(prompt)
+  }
+
+  private reconcilePendingFollowUp(history: {
+    activeTurnId?: string
+    completedTurnIds?: string[]
+  }): void {
+    const pending = this.pendingFollowUp
+    if (!pending || pending.chatId !== this.currentChatId) return
+    const admitted = pending.turnId === history.activeTurnId
+      || (history.completedTurnIds || []).includes(pending.turnId)
+    if (!admitted) return
+    if (this.promptQueue.commitFollowUp(pending.prompt)) {
+      this.pendingFollowUp = null
+      this.syncQueuePreview()
+    }
+  }
+
+  private commitAdmittedFollowUp(event: {
+    chat_id: string
+    turn_id?: string
+    attempt_id?: string
+    starts_turn: boolean
+  }): void {
+    const pending = this.pendingFollowUp
+    if (!pending || event.chat_id !== pending.chatId) return
+    const admittedId = event.turn_id ?? event.attempt_id
+    if (!admittedId || admittedId !== pending.turnId) return
+    if (!event.starts_turn) return
+    if (!this.promptQueue.commitFollowUp(pending.prompt)) return
+    this.pendingFollowUp = null
+    this.syncQueuePreview()
+    this.renderActiveStatus()
+    this.updateMeta()
   }
 
   private get promptQueue(): PromptQueue {
@@ -1622,41 +2522,45 @@ export class NanobotTui {
   }
 
   private restoreQueuedPrompts(): void {
-    const queued = this.promptQueue.restore()
-    if (!queued.length) return
+    if (this.pendingFollowUp) return
+    const queued = this.promptQueue.snapshot()
+    if (!queued.length || !this.restoreDraft([this.composerPrompt(), ...queued])) return
+    this.promptQueue.clear()
     this.syncQueuePreview()
-    const current = this.draft.expand(this.composer.plainText).trim()
-    this.setComposer([current, ...queued.map((prompt) => prompt.content)].filter(Boolean).join("\n\n"))
+  }
+
+  private restoreDraft(prompts: readonly QueuedPrompt[]): boolean {
+    const media = prompts.flatMap((prompt) => prompt.options.media ?? [])
+    if (media.length > MAX_DRAFT_IMAGES) return false
+    this.setComposer(prompts.map((prompt) => prompt.content).filter(Boolean).join("\n\n"))
+    for (const image of media) {
+      const visible = this.composer.plainText
+      const insertion = this.draft.image(image, visible)
+      if (insertion) this.composer.insertText(visible ? ` ${insertion.text}` : insertion.text)
+    }
+    return true
   }
 
   private queueFollowUp(): void {
     if (!this.activeTurn || !this.ready) return
-    const visibleContent = this.composer.plainText.trim()
-    if (this.draft.media(visibleContent).length) {
-      this.status.content = "Images cannot be queued · press Enter to send now"
-      return
-    }
-    const content = this.draft.expand(visibleContent).trim()
-    if (!content) return
-    this.promptQueue.enqueue({
-      content,
-      options: mentionOptions(content, this.availableMentions()),
-    })
+    const prompt = this.composerPrompt()
+    if (!this.canSendPrompt(prompt)) return
+    this.promptQueue.enqueue(prompt)
     this.clearComposer()
     this.commandMenu.hide()
     this.mentionMenu.hide()
     this.skillMenu.hide()
-    this.recordPrompt(content)
+    this.recordPrompt(prompt.content)
     this.syncQueuePreview()
     this.renderActiveStatus()
     this.updateMeta()
   }
 
   private editLastFollowUp(): boolean {
-    const prompt = this.promptQueue.takeLast()
-    if (!prompt) return false
-    const current = this.draft.expand(this.composer.plainText).trim()
-    this.setComposer([prompt.content, current].filter(Boolean).join("\n\n"))
+    const prompt = this.promptQueue.snapshot().at(-1)
+    if (!prompt || this.pendingFollowUp?.prompt === prompt) return false
+    if (!this.restoreDraft([prompt, this.composerPrompt()])) return false
+    this.promptQueue.takeLast()
     this.syncQueuePreview()
     this.renderActiveStatus()
     this.updateMeta()
@@ -1664,12 +2568,15 @@ export class NanobotTui {
   }
 
   private clearPromptQueue(): void {
+    this.pendingFollowUp = null
     this.promptQueue.clear()
     this.syncQueuePreview()
   }
 
   private syncQueuePreview(): void {
-    this.queuePreview.update(this.promptQueue.snapshot().map(({ content }) => content))
+    this.queuePreview.update(this.promptQueue.snapshot().map(
+      ({ content, displayContent }) => displayContent ?? content,
+    ))
   }
 
   private handleTranscriptNavigation(state: TranscriptNavigation): void {
@@ -1688,6 +2595,37 @@ export class NanobotTui {
         key.preventDefault()
         return
       }
+    }
+    if (this.childDetailTranscript) {
+      if (key.name === "escape") {
+        this.closeChildDetail()
+        key.preventDefault()
+        return
+      }
+      if (key.ctrl && key.name === "c") {
+        const selected = this.renderer.getSelection()?.getSelectedText()
+        if (selected) void this.copySelection(selected)
+        else if (this.activeTurn || this.hasOwnedWork()) this.requestStop()
+        key.preventDefault()
+        return
+      }
+      if (key.name === "pageup" || key.name === "pagedown") {
+        this.childDetailTranscript.scrollByPage(key.name === "pageup" ? -1 : 1)
+        key.preventDefault()
+        return
+      }
+      if (key.ctrl && (key.name === "home" || key.name === "end")) {
+        this.childDetailTranscript.scrollToEdge(key.name === "home" ? "top" : "bottom")
+        key.preventDefault()
+        return
+      }
+      if (key.ctrl && key.name === "o") {
+        this.childDetailTranscript.toggleActivityDetails()
+        key.preventDefault()
+        return
+      }
+      key.preventDefault()
+      return
     }
     if (this.diffViewer.visible) {
       if (key.ctrl && key.name === "c") {
@@ -1886,14 +2824,9 @@ export class NanobotTui {
         void this.copySelection(selected)
         return
       }
-      if (this.activeTurn) {
+      if (this.activeTurn || this.hasOwnedWork()) {
         this.restoreQueuedPrompts()
-        try {
-          this.client.send("/stop")
-          this.status.content = "Stopping…"
-        } catch {
-          this.setActive(false)
-        }
+        this.requestStop()
       } else if (this.composer.plainText) {
         this.clearComposer()
         this.status.content = this.readyStatus()
@@ -1962,6 +2895,7 @@ export class NanobotTui {
     this.activeThemeMode = mode
     this.palette = mode === "light" ? LIGHT : DARK
     this.transcript.setTheme(transcriptTheme(this.palette, this.backgroundKnown))
+    this.childDetailTranscript?.setTheme(transcriptTheme(this.palette, this.backgroundKnown))
     this.commandMenu.setTheme(commandMenuTheme(this.palette))
     this.sessionMenu.setTheme(commandMenuTheme(this.palette))
     this.mentionMenu.setTheme(commandMenuTheme(this.palette))
@@ -2001,7 +2935,9 @@ export class NanobotTui {
     const mode: FooterMode = this.runtimeControls.visible ? "runtime"
       : this.mentionMenu.visible ? "mention"
       : this.skillMenu.visible ? "skill"
+      : this.childDetailTranscript ? "child_detail"
       : this.activeTurn ? "active"
+      : this.hasOwnedWork() && !this.stopInFlight ? "owned_work"
       : this.branchMenu.visible ? "branch"
       : this.commandMenu.visible ? "command"
       : this.sessionMenu.visible ? "session"
@@ -2605,9 +3541,12 @@ export class NanobotTui {
       this.status.content = "A turn is already running · Ctrl+C to stop"
       return
     }
+    const sendOptions = lifecycle === "stop_active_turn" && this.activeTurnId
+      ? { ...options, targetTurnId: this.activeTurnId }
+      : options
     let turnId: string
     try {
-      turnId = this.client.send(content, options)
+      turnId = this.client.send(content, sendOptions)
     } catch {
       this.markSubmitUnsent(true)
       return
@@ -2880,6 +3819,10 @@ export class NanobotTui {
     this.stopSessionRefresh()
     this.composerSyntax.destroy()
     this.transcript.destroy()
+    if (this.childDetailTranscript) {
+      this.childDetailTranscript.destroy()
+      this.childDetailTranscript = null
+    }
     this.diffViewer.destroy()
     void this.clipboardImageReader.dispose().catch(() => {})
     this.host.release()

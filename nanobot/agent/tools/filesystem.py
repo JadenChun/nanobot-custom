@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false, reportUnusedFunction=false
 
+import asyncio
 import contextvars
 import difflib
 import mimetypes
@@ -13,9 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
+from nanobot.agent.tools.base import Tool, ToolDenialKind, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.file_state import FileStates, _hash_file, current_file_states
+from nanobot.agent.tools.filesystem_effect import (
+    FilesystemEffectAttempt,
+    FilesystemEffectCancelled,
+)
 from nanobot.agent.tools.path_utils import resolve_workspace_path
 from nanobot.agent.tools.schema import (
     BooleanSchema,
@@ -75,6 +80,26 @@ class FileToolsConfig(Base):
     """Filesystem tools configuration."""
 
     enable: bool = True  # built-in file tools on by default
+
+
+_assessed_write_target_var: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "nanobot_assessed_write_target", default=None,
+)
+
+
+def set_assessed_write_target(target: Path | None) -> contextvars.Token[Path | None]:
+    """Bind the server-resolved write target for the current tool execution."""
+    return _assessed_write_target_var.set(target)
+
+
+def reset_assessed_write_target(token: contextvars.Token[Path | None]) -> None:
+    """Restore the previous write-target binding."""
+    _assessed_write_target_var.reset(token)
+
+
+def current_assessed_write_target() -> Path | None:
+    """Return the server-resolved target for the current tool execution."""
+    return _assessed_write_target_var.get()
 
 
 class _FsTool(Tool):
@@ -382,6 +407,12 @@ class _FsTool(Tool):
         scope_error = self._write_scope_error(resolved)
         if scope_error:
             raise PermissionError(scope_error)
+        assessed = current_assessed_write_target()
+        if assessed is not None and resolved != assessed:
+            raise PermissionError(
+                "write target changed before execution: "
+                f"{path}. Retry the request so the new target can be assessed."
+            )
         return resolved
 
     def _reclassify_workspace_boundary(
@@ -430,6 +461,33 @@ class _FsTool(Tool):
         """Resolve a write request through the filesystem owner's existing policy."""
         return self._resolve_write(path)
 
+    def write_refusal(self, path: str) -> "str | ToolOutcome | None":
+        """Report a denied write without entering the mutation path."""
+        try:
+            self.resolve_write_path(path)
+        except FolderAccessNeededError as error:
+            return self._folder_access_result(error)
+        except WorkspaceBoundaryError as error:
+            return ToolResult.error(f"Error: {error}")
+        except PermissionError as error:
+            from nanobot.agent.turn import ToolOutcome
+
+            return ToolOutcome(
+                ToolResult.error(f"Error: {error}"),
+                "tool_error",
+                recovery_kind=ToolDenialKind.WRITE_PERMISSION,
+            )
+        except (OSError, ValueError) as error:
+            return ToolResult.error(f"Error: {error}")
+        return None
+
+    def _folder_access_result(self, error: FolderAccessNeededError) -> "str | ToolOutcome":
+        if self._resource_policy is None:
+            return ToolResult.error("Error: file access is unavailable")
+        from nanobot.agent.tools.workspace import folder_access_outcome
+
+        return folder_access_outcome(error, self._resource_policy)
+
     def _resolve(self, path: str, action: str = "read") -> Path:
         resolved = self._resolve_read(path)
         if self._resource_policy and action != "read":
@@ -477,9 +535,18 @@ def _is_blocked_device(path: str | Path) -> bool:
     return False
 
 
-def _builtin_skill_read_path(path: str) -> Path | None:
-    """Map workspace-relative skills/<name>/... reads onto bundled skills."""
-    from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+def _builtin_skill_read_path(
+    path: str,
+    workspace: Path | None = None,
+    resource_policy: Any | None = None,
+) -> Path | None:
+    """Return the bundled body when the loader selected the bundled source.
+
+    A selected project may contain its own ``skills/<name>/SKILL.md``. The
+    summary labels the bundled entry as ``skills/<name>/SKILL.md``, so the read
+    must follow the same source identity instead of a same-path project file.
+    """
+    from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 
     requested = Path(path)
     if requested.is_absolute():
@@ -491,7 +558,22 @@ def _builtin_skill_read_path(path: str) -> Path | None:
     candidate = (root / Path(*parts[1:])).resolve()
     if candidate != root and root not in candidate.parents:
         return None
-    return candidate if candidate.is_file() else None
+    if not candidate.is_file():
+        return None
+    if workspace is None:
+        return candidate
+    loader = SkillsLoader(workspace, resource_policy=resource_policy)
+    entry = next(
+        (
+            item
+            for item in loader.list_skills(filter_unavailable=False)
+            if item["name"] == parts[1]
+        ),
+        None,
+    )
+    if entry is None or entry.get("source") != "builtin":
+        return None
+    return candidate
 
 
 @tool_parameters(
@@ -676,8 +758,15 @@ class ReadFileTool(_FsTool):
                 return ToolResult.error(f"Error: Reading {path} is blocked (device path that could hang or produce infinite output).")
 
             fp = self._resolve_read(path)
-            if not fp.exists():
-                fp = _builtin_skill_read_path(path) or fp
+            builtin_skill = _builtin_skill_read_path(
+                path,
+                self._workspace,
+                self._resource_policy,
+            )
+            if builtin_skill is not None and (
+                self._workspace is not None or not fp.exists()
+            ):
+                fp = builtin_skill
             if _is_blocked_device(fp):
                 return ToolResult.error(f"Error: Reading {fp} is blocked (device path that could hang or produce infinite output).")
             if not fp.exists():
@@ -1007,15 +1096,18 @@ class WriteFileTool(_FsTool):
         async with self._mutation_guard(destination):
             if self._resolve_write(destination_request()) != destination:
                 raise destination_changed_error()
+            intended = read_bytes()
+            effect = FilesystemEffectAttempt.enter(self.name, destination, intended)
             destination.parent.mkdir(parents=True, exist_ok=True)
             temporary: Path | None = None
             try:
                 with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as stream:
                     temporary = Path(stream.name)
-                    stream.write(read_bytes())
+                    stream.write(intended)
                     stream.flush()
                     os.fsync(stream.fileno())
                 os.replace(temporary, destination)
+                effect.applied = True
                 self._record_touch(destination)
             finally:
                 if temporary is not None:
@@ -1024,6 +1116,7 @@ class WriteFileTool(_FsTool):
     async def execute(
         self, path: str | None = None, content: str | None = None, **kwargs: Any,
     ) -> "str | ToolOutcome":
+        effect: FilesystemEffectAttempt | None = None
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -1031,21 +1124,31 @@ class WriteFileTool(_FsTool):
                 raise ValueError("Unknown content")
             fp = self._resolve_write(path)
             async with self._mutation_guard(fp):
+                effect = FilesystemEffectAttempt.enter(self.name, fp, content.encode("utf-8"))
                 fp.parent.mkdir(parents=True, exist_ok=True)
                 fp.write_text(content, encoding="utf-8")
+                effect.applied = True
                 self._file_states.record_write(fp)
                 self._record_touch(fp)
                 return f"Successfully wrote {len(content)} characters to {fp}"
+        except asyncio.CancelledError as e:
+            if effect is not None:
+                raise FilesystemEffectCancelled(str(e), (effect.failed(),)) from e
+            raise
         except FolderAccessNeededError as e:
-            if self._resource_policy is not None:
-                from nanobot.agent.tools.workspace import folder_access_outcome
-
-                return folder_access_outcome(e, self._resource_policy)
-            return ToolResult.error("Error: file access is unavailable")
+            return self._folder_access_result(e)
         except PermissionError as e:
-            return ToolResult.error(f"Error: {e}")
+            return _mutation_error(ToolResult.error(f"Error: {e}"), effect)
         except Exception as e:
-            return ToolResult.error(f"Error writing file: {e}")
+            return _mutation_error(ToolResult.error(f"Error writing file: {e}"), effect)
+
+
+def _mutation_error(result: str, effect: FilesystemEffectAttempt | None) -> "str | ToolOutcome":
+    if effect is None:
+        return result
+    from nanobot.agent.turn import ToolOutcome
+
+    return ToolOutcome(content=result, filesystem_effects=(effect.failed(),))
 
 
 # ---------------------------------------------------------------------------
@@ -1370,6 +1473,7 @@ class EditFileTool(_FsTool):
         replace_all: bool = False, occurrence: int | None = None,
         line_hint: int | None = None, expected_replacements: int | None = None, **kwargs: Any,
     ) -> "str | ToolOutcome":
+        effect: FilesystemEffectAttempt | None = None
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -1393,8 +1497,10 @@ class EditFileTool(_FsTool):
                 # Create-file semantics: old_text='' + file doesn't exist → create
                 if not file_exists:
                     if old_text == "":
+                        effect = FilesystemEffectAttempt.enter(self.name, fp, new_text.encode("utf-8"))
                         fp.parent.mkdir(parents=True, exist_ok=True)
                         fp.write_text(new_text, encoding="utf-8")
+                        effect.applied = True
                         self._file_states.record_write(fp)
                         self._record_touch(fp)
                         return f"Successfully created {fp}"
@@ -1414,7 +1520,9 @@ class EditFileTool(_FsTool):
                     content = raw.decode("utf-8")
                     if content.strip():
                         return ToolResult.error(f"Error: Cannot create file — {path} already exists and is not empty.")
+                    effect = FilesystemEffectAttempt.enter(self.name, fp, new_text.encode("utf-8"))
                     fp.write_text(new_text, encoding="utf-8")
+                    effect.applied = True
                     self._file_states.record_write(fp)
                     self._record_touch(fp)
                     return f"Successfully edited {fp}"
@@ -1503,23 +1611,26 @@ class EditFileTool(_FsTool):
                 if uses_crlf:
                     new_content = new_content.replace("\n", "\r\n")
 
-                fp.write_bytes(new_content.encode("utf-8"))
+                intended = new_content.encode("utf-8")
+                effect = FilesystemEffectAttempt.enter(self.name, fp, intended)
+                fp.write_bytes(intended)
+                effect.applied = True
                 self._file_states.record_write(fp)
                 self._record_touch(fp)
                 msg = f"Successfully edited {fp}"
                 if warning:
                     msg = f"{warning}\n{msg}"
                 return msg
+        except asyncio.CancelledError as e:
+            if effect is not None:
+                raise FilesystemEffectCancelled(str(e), (effect.failed(),)) from e
+            raise
         except FolderAccessNeededError as e:
-            if self._resource_policy is not None:
-                from nanobot.agent.tools.workspace import folder_access_outcome
-
-                return folder_access_outcome(e, self._resource_policy)
-            return ToolResult.error("Error: file access is unavailable")
+            return self._folder_access_result(e)
         except PermissionError as e:
-            return ToolResult.error(f"Error: {e}")
+            return _mutation_error(ToolResult.error(f"Error: {e}"), effect)
         except Exception as e:
-            return ToolResult.error(f"Error editing file: {e}")
+            return _mutation_error(ToolResult.error(f"Error editing file: {e}"), effect)
 
     def _file_not_found_msg(self, path: str, fp: Path) -> str:
         """Build an error message with 'Did you mean ...?' suggestions."""

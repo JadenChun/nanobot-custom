@@ -1,8 +1,9 @@
 # A3 architecture record
 
-This is the current, reviewable record of the A3 audit and candidate refactor, as of
-2026-11-11. It collects the design, reasons, implementation order and evidence in the
-repository. **The plan is frozen as `A3-PLAN-2026-11-11`; the implementation merge is on HOLD.**
+This records the A3 audit and candidate refactor. The architecture baseline is
+dated 2026-11-11; implementation progress is updated through 2026-11-13. It collects
+the design, reasons, implementation order and evidence in the repository.
+**The plan is frozen as `A3-PLAN-2026-11-11`; the implementation merge is on HOLD.**
 The [freeze record](plan-review.md#frozen-baseline-and-subsequent-work) identifies the
 documentation baseline. Implementation and release acceptance remain open.
 
@@ -29,6 +30,13 @@ their behavior or become a first-release coordinator requirement.
 Candidate-code findings and runtime qualification are later work and do not select
 planning requirements.
 
+**Linux and Android emulator verification (2026-11-13).** The implementation
+branch includes current staging. The full Linux suite, strict Python check, and
+installed WebUI scenarios passed. The Android emulator exercised signed pairing,
+access renewal, child history, and owner revocation across the recorded builds.
+The handoff pins the artifacts and lists the remaining release acceptance work.
+[Latest handoff](implementation-handoff.md#linux-and-android-emulator-verification)
+
 | Read | Purpose |
 | --- | --- |
 | [Planning review and accepted direction](plan-review.md) | User acceptance, selected scope/defaults and the frozen documentation baseline for implementation review. |
@@ -38,6 +46,7 @@ planning requirements.
 | [Design and alternatives](design.md) | Ownership, data flow, required invariants, observed mechanisms and smaller options. |
 | [D1–D7 decisions](decisions.md) | Accepted architectural direction/defaults and historical candidate observations. |
 | [Implementation plan](implementation-plan.md) | A3-0 plus ten stages, dependencies, owner boundaries, acceptance and rollback. |
+| [Implementation correction handoff](implementation-handoff.md) | Latest committed checkpoint, verification limits, remaining acceptance criteria and continuation order; earlier checkpoints remain historical. |
 | [Review and merge gates](review.md) | Independent findings, inspected evidence, reported claims and conditions for acceptance. |
 | [Evidence and finding ledger](evidence.json) | Machine-readable pins, 136 finding/package/stage assignments, qualifications and evidence states. |
 | [Archive manifest](audit-manifest.json) | Exact Git blob and SHA-256 identities for the 138 imported audit files. |
@@ -59,18 +68,14 @@ does not make that candidate merged behavior.
 | Migration CI exercise | [`dee68697157dccb0b49a6782c8dd13a594c9cf92`](https://github.com/JadenChun/nanobot-custom/commit/dee68697157dccb0b49a6782c8dd13a594c9cf92) descends from `980b491d01cdf308041bd9ba7a2ccdd5998d6a99` and adds only two lines/comment to the baseline script. It lacks the later `7fbb00c2a` and `0518de5f` fixes and is a CI exercise, not a separate architectural implementation. |
 
 The six repairs ending at [`d3380eb69d3c8416a9ca72522001234ce30a8eeb`](https://github.com/JadenChun/nanobot-custom/tree/d3380eb69d3c8416a9ca72522001234ce30a8eeb)
-are included in the updated pre-refactor staging baseline. Their
-[reconciliation dispositions](review.md#repair-branch-reconciliation) still apply to the
-separate refactor candidate. Commit ancestry alone does not establish whether that
-candidate preserves each correction semantically.
+are included in the updated pre-refactor staging baseline. The current review
+records the disposition of each repair against the implementation branch.
+[Current candidate dispositions](review.md#current-candidate-dispositions)
 
-Future refactor acceptance must compare against the latest `staging`, including these
-pre-refactor repairs and the [integration validation](review.md#pre-refactor-staging-validation).
-The existing refactor review and its source links remain pinned to
-`0518de5f5013b77cbc20d2c5b456e973f33c68f5`; they do not attest reconciliation with the
-updated baseline. The implementation branch and PR #27 remain separate. The immutable
-138-file manifest covers the architecture audit history; the feature-repair records
-under `docs/audits/feature-implementation-2026-11-05/` retain their separate provenance.
+The original refactor review and its source links retain their
+`0518de5f5013b77cbc20d2c5b456e973f33c68f5` pin. The 138-file manifest covers the
+architecture audit history. The feature-repair records under
+`docs/audits/feature-implementation-2026-11-05/` retain their own source history.
 
 ## Evidence vocabulary
 

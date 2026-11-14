@@ -1,10 +1,18 @@
 """Tests for GitStore — git-backed version control for memory files."""
 
 import os
+import subprocess
+import sys
+import textwrap
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Barrier
 from unittest.mock import patch
 
 import pytest
 
+import nanobot.utils.gitstore as gitstore_module
+from nanobot.agent.memory import MemoryStore
 from nanobot.utils.gitstore import CommitInfo, GitStore, GitStoreError
 
 TRACKED = ["SOUL.md", "USER.md", "memory/MEMORY.md"]
@@ -285,6 +293,379 @@ class TestRevert:
         assert git_ready.revert(backup_sha, message_prefix="dream:") is None
         assert (ws / "SOUL.md").read_text(encoding="utf-8") == "dream v2"
         assert git_ready.log()[0].sha == latest_sha
+
+
+def _dream_restore_fixture(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = MemoryStore(workspace, sessions_root=tmp_path / "sessions")
+    store.write_soul("soul before")
+    store.write_user("user before")
+    store.write_memory("memory before")
+    store.set_last_dream_cursor(1)
+    retained = workspace / "skills" / "nested" / "retained.bin"
+    retained.parent.mkdir(parents=True)
+    retained.write_bytes(b"before\xff\x00")
+    retained.chmod(0o755)
+    deleted = workspace / "skills" / "old" / "gone.bin"
+    deleted.parent.mkdir(parents=True)
+    deleted.write_bytes(b"baseline deletion target\x00")
+    store.git.init()
+
+    store.write_soul("soul after")
+    store.write_user("user after")
+    store.write_memory("memory after")
+    store.set_last_dream_cursor(2)
+    retained.write_bytes(b"after\xfe\x00")
+    created = workspace / "skills" / "new" / "added.bin"
+    created.parent.mkdir(parents=True)
+    created.write_bytes(b"new admitted file")
+    deleted.unlink()
+    deleted.parent.rmdir()
+    sha = store.git.auto_commit("dream: bounded restore test")
+    assert sha is not None
+    return store, sha, retained, deleted, created
+
+
+def _assert_dream_snapshot_before(store, retained, deleted, created):
+    import stat
+
+    assert store.read_soul() == "soul before"
+    assert store.read_user() == "user before"
+    assert store.read_memory() == "memory before"
+    assert store.get_last_dream_cursor() == 1
+    assert retained.read_bytes() == b"before\xff\x00"
+    assert stat.S_IMODE(retained.stat().st_mode) == 0o755
+    assert deleted.read_bytes() == b"baseline deletion target\x00"
+    assert not created.exists()
+
+
+@pytest.mark.parametrize(
+    "fault_path",
+    [
+        "memory/.dream_cursor",
+        "memory/MEMORY.md",
+        "SOUL.md",
+        "USER.md",
+        "skills/old/gone.bin",
+        "skills/nested/retained.bin",
+    ],
+)
+def test_restore_resumes_after_atomic_file_publication_failure(tmp_path, monkeypatch, fault_path):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    original = gitstore_module.atomic_publish_admitted_file
+    faulted = False
+
+    def publish_then_fail(workspace, path, data, mode, *, allowed_current):
+        nonlocal faulted
+        result = original(workspace, path, data, mode, allowed_current=allowed_current)
+        if path == fault_path and not faulted:
+            faulted = True
+            raise OSError("injected publication interruption")
+        return result
+
+    monkeypatch.setattr(gitstore_module, "atomic_publish_admitted_file", publish_then_fail)
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+    assert faulted
+
+    fresh = MemoryStore(store.workspace, sessions_root=tmp_path / "sessions")
+    fresh.reconcile_dream_operation()
+    _assert_dream_snapshot_before(fresh, retained, deleted, created)
+    assert fresh.git.log()[0].message.startswith("revert: undo")
+
+
+def test_restore_resumes_after_added_file_deletion_failure(tmp_path, monkeypatch):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    original = gitstore_module.atomic_delete_admitted_file
+    faulted = False
+
+    def delete_then_fail(workspace, path, *, allowed_current):
+        nonlocal faulted
+        original(workspace, path, allowed_current=allowed_current)
+        if path == "skills/new/added.bin" and not faulted:
+            faulted = True
+            raise OSError("injected deletion interruption")
+
+    monkeypatch.setattr(gitstore_module, "atomic_delete_admitted_file", delete_then_fail)
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+    assert faulted
+
+    monkeypatch.setattr(gitstore_module, "atomic_delete_admitted_file", original)
+    restored = store.git.revert(sha, message_prefix="dream:")
+    assert restored is not None
+    _assert_dream_snapshot_before(store, retained, deleted, created)
+
+
+def test_restore_reconciles_commit_that_published_before_error(tmp_path, monkeypatch):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    original = GitStore.auto_commit
+    observed: list[str | None] = []
+
+    def commit_then_fail(self, message):
+        result = original(self, message)
+        if message.startswith("revert:"):
+            observed.append(result)
+            raise GitStoreError("injected lost acknowledgement")
+        return result
+
+    monkeypatch.setattr(GitStore, "auto_commit", commit_then_fail)
+    restored = store.git.revert(sha, message_prefix="dream:")
+
+    assert restored is not None
+    assert observed == [restored]
+    assert store.git.log()[0].sha == restored
+    _assert_dream_snapshot_before(store, retained, deleted, created)
+
+
+def test_restore_before_commit_error_stays_pending_and_retries(tmp_path, monkeypatch):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    original = GitStore.auto_commit
+
+    def fail_before_commit(self, message):
+        if message.startswith("revert:"):
+            raise GitStoreError("injected pre-publication failure")
+        return original(self, message)
+
+    monkeypatch.setattr(GitStore, "auto_commit", fail_before_commit)
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+    assert (store.workspace / ".git" / "nanobot-dream-operation.json").is_file()
+
+    monkeypatch.setattr(GitStore, "auto_commit", original)
+    restored = store.git.revert(sha, message_prefix="dream:")
+    assert restored is not None
+    assert not (store.workspace / ".git" / "nanobot-dream-operation.json").exists()
+    _assert_dream_snapshot_before(store, retained, deleted, created)
+
+
+def test_restore_commit_cleanup_error_is_reconciled_on_retry(tmp_path, monkeypatch):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    original = gitstore_module.clear_operation
+    faulted = False
+
+    def clear_then_fail(workspace):
+        nonlocal faulted
+        if not faulted:
+            faulted = True
+            raise OSError("injected cleanup failure")
+        original(workspace)
+
+    monkeypatch.setattr(gitstore_module, "clear_operation", clear_then_fail)
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+    assert faulted
+    assert store.git.log()[0].message.startswith("revert: undo")
+    assert (store.workspace / ".git" / "nanobot-dream-operation.json").is_file()
+
+    monkeypatch.setattr(gitstore_module, "clear_operation", original)
+    restored = store.git.revert(sha, message_prefix="dream:")
+    assert restored == store.git.log()[0].sha
+    assert not (store.workspace / ".git" / "nanobot-dream-operation.json").exists()
+    _assert_dream_snapshot_before(store, retained, deleted, created)
+
+
+def test_malformed_restore_owner_refuses_before_snapshot_mutation(tmp_path):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    before = {
+        path: (store.workspace / path).read_bytes()
+        for path in ("SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor")
+    }
+    operation = store.workspace / ".git" / "nanobot-dream-operation.json"
+    operation.write_bytes(b'{"version":true,"unknown":"record"}')
+
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+
+    assert {path: (store.workspace / path).read_bytes() for path in before} == before
+    assert retained.read_bytes() == b"after\xfe\x00"
+    assert not deleted.exists()
+    assert created.read_bytes() == b"new admitted file"
+    assert operation.read_bytes() == b'{"version":true,"unknown":"record"}'
+
+
+def test_missing_restore_target_blob_refuses_before_snapshot_mutation(tmp_path):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    from dulwich.repo import Repo
+
+    full_sha = store.git._resolve_sha(sha)
+    assert full_sha is not None
+    with Repo(str(store.workspace)) as repo:
+        target = repo[full_sha]
+        parent = repo[target.parents[0]]
+        tree = repo[parent.tree]
+        soul_blob = tree[b"SOUL.md"][1]
+    loose_blob = store.workspace / ".git" / "objects" / soul_blob[:2].decode() / soul_blob[2:].decode()
+    assert loose_blob.is_file()
+    loose_blob.unlink()
+
+    operation = store.workspace / ".git" / "nanobot-dream-operation.json"
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+
+    assert store.soul_file.read_text(encoding="utf-8") == "soul after"
+    assert store.user_file.read_text(encoding="utf-8") == "user after"
+    assert store.memory_file.read_text(encoding="utf-8") == "memory after"
+    assert store.get_last_dream_cursor() == 2
+    assert retained.read_bytes() == b"after\xfe\x00"
+    assert not deleted.exists()
+    assert created.read_bytes() == b"new admitted file"
+    assert not operation.exists()
+
+
+def test_directory_at_restore_file_path_refuses_before_snapshot_mutation(tmp_path):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    obstruction = retained.with_name("retained.bin")
+    retained.unlink()
+    obstruction.mkdir()
+    obstruction_bytes = obstruction / "unrelated.bin"
+    obstruction_bytes.write_bytes(b"directory obstruction bytes")
+    unrelated = store.workspace / "workspace-note.txt"
+    unrelated.write_bytes(b"unrelated workspace bytes")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.bin"
+    sentinel.write_bytes(b"outside bytes")
+    fixed_before = {
+        path: (store.workspace / path).read_bytes()
+        for path in ("SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor")
+    }
+    operation = store.workspace / ".git" / "nanobot-dream-operation.json"
+
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+
+    assert {path: (store.workspace / path).read_bytes() for path in fixed_before} == fixed_before
+    assert obstruction.is_dir()
+    assert obstruction_bytes.read_bytes() == b"directory obstruction bytes"
+    assert not deleted.exists()
+    assert created.read_bytes() == b"new admitted file"
+    assert unrelated.read_bytes() == b"unrelated workspace bytes"
+    assert sentinel.read_bytes() == b"outside bytes"
+    assert not operation.exists()
+
+
+def test_unsupported_git_skill_symlink_refuses_before_restore(tmp_path):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_bytes(b"outside bytes")
+    link = store.workspace / "skills" / "unsafe-link"
+    link.symlink_to(sentinel)
+    symlink_sha = store.git.auto_commit("dream: unsupported symlink")
+    assert symlink_sha is not None
+    before_memory = store.memory_file.read_bytes()
+    before_soul = store.soul_file.read_bytes()
+
+    with pytest.raises(GitStoreError):
+        store.git.revert(symlink_sha, message_prefix="dream:")
+
+    assert sentinel.read_bytes() == b"outside bytes"
+    assert store.memory_file.read_bytes() == before_memory
+    assert store.soul_file.read_bytes() == before_soul
+    assert retained.read_bytes() == b"after\xfe\x00"
+    assert not deleted.exists()
+    assert created.read_bytes() == b"new admitted file"
+
+
+def test_restore_revalidates_skill_parent_at_atomic_publication(tmp_path, monkeypatch):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_bytes(b"outside retained sentinel")
+    parent = store.workspace / "skills" / "nested"
+    moved = tmp_path / "nested-original"
+    original = gitstore_module.atomic_publish_admitted_file
+    attacked = False
+
+    def replace_parent_then_publish(workspace, path, data, mode, *, allowed_current):
+        nonlocal attacked
+        if path == "skills/nested/retained.bin" and not attacked:
+            attacked = True
+            parent.rename(moved)
+            parent.symlink_to(outside, target_is_directory=True)
+        return original(workspace, path, data, mode, allowed_current=allowed_current)
+
+    monkeypatch.setattr(gitstore_module, "atomic_publish_admitted_file", replace_parent_then_publish)
+    with pytest.raises(GitStoreError):
+        store.git.revert(sha, message_prefix="dream:")
+    assert attacked
+    assert sentinel.read_bytes() == b"outside retained sentinel"
+    assert (store.workspace / ".git" / "nanobot-dream-operation.json").is_file()
+
+    parent.unlink()
+    moved.rename(parent)
+    monkeypatch.setattr(gitstore_module, "atomic_publish_admitted_file", original)
+    restored = store.git.revert(sha, message_prefix="dream:")
+    assert restored is not None
+    assert sentinel.read_bytes() == b"outside retained sentinel"
+    _assert_dream_snapshot_before(store, retained, deleted, created)
+
+
+def test_restore_requests_from_distinct_instances_serialize(tmp_path):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    other = MemoryStore(store.workspace, sessions_root=tmp_path / "sessions")
+    barrier = Barrier(2)
+
+    def restore(memory):
+        barrier.wait(timeout=5)
+        return memory.git.revert(sha, message_prefix="dream:")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(restore, memory) for memory in (store, other)]
+        outcomes = [future.result(timeout=10) for future in futures]
+
+    assert sum(value is not None for value in outcomes) == 1
+    assert sum(value is None for value in outcomes) == 1
+    _assert_dream_snapshot_before(store, retained, deleted, created)
+
+
+def test_restore_hard_exit_reopens_and_resumes_without_cursor_skip(tmp_path):
+    store, sha, retained, deleted, created = _dream_restore_fixture(tmp_path)
+    script = textwrap.dedent(
+        """
+        import os
+        import sys
+        from pathlib import Path
+        from nanobot.config.loader import set_config_path
+        import nanobot.utils.gitstore as gitstore
+        from nanobot.agent.memory import MemoryStore
+
+        workspace, sessions, target, config = map(Path, sys.argv[1:])
+        set_config_path(config)
+        publish = gitstore.atomic_publish_admitted_file
+        def exit_after_soul(root, path, data, mode, *, allowed_current):
+            result = publish(root, path, data, mode, allowed_current=allowed_current)
+            if path == "SOUL.md":
+                os._exit(73)
+            return result
+        gitstore.atomic_publish_admitted_file = exit_after_soul
+        MemoryStore(workspace, sessions_root=sessions).git.revert(
+            target.name, message_prefix="dream:",
+        )
+        """
+    )
+    workspace = store.workspace
+    config = tmp_path / "instance" / "config.json"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2])
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(workspace), str(tmp_path / "sessions"), sha, str(config)],
+        capture_output=True,
+        check=False,
+        env=env,
+        timeout=20,
+    )
+    assert result.returncode == 73, result.stderr.decode(errors="replace")
+
+    fresh = MemoryStore(workspace, sessions_root=tmp_path / "sessions")
+    fresh.reconcile_dream_operation()
+    _assert_dream_snapshot_before(fresh, retained, deleted, created)
+    assert fresh.build_dream_prompt() is None
 
 
 class TestMemoryStoreGitProperty:

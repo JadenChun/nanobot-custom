@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { AlertCircle, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { CodeBlock } from "@/components/CodeBlock";
 import { MarkdownText } from "@/components/MarkdownText";
 import { splitFilePath } from "@/components/FileReferenceChip";
+import { ThreadInspectorDialog } from "@/components/thread/ThreadInspector";
 import { useMobileBack } from "@/hooks/useMobileBack";
 import { ApiError, fetchFilePreview } from "@/lib/api";
 import type { FilePreviewPayload } from "@/lib/types";
@@ -15,9 +16,10 @@ interface FilePreviewPanelProps {
   sessionKey: string;
   path: string;
   token: string;
-  desktopWidth?: number;
-  isClosing?: boolean;
-  onResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  refreshKey?: number;
+  modal?: boolean;
+  active?: boolean;
+  visible?: boolean;
   onClose: () => void;
 }
 
@@ -42,14 +44,15 @@ export function FilePreviewPanel({
   sessionKey,
   path,
   token,
-  desktopWidth = 544,
-  isClosing = false,
-  onResizeStart,
+  refreshKey = 0,
+  modal = true,
+  active = true,
+  visible = true,
   onClose,
 }: FilePreviewPanelProps) {
   const { t } = useTranslation();
   const [state, setState] = useState<PreviewState>({ status: "loading" });
-  const [entered, setEntered] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [activePath, setActivePath] = useState(path);
   const [viewMode, setViewMode] = useState<"formatted" | "source">("formatted");
   const pathHistoryRef = useRef<string[]>([]);
@@ -66,11 +69,6 @@ export function FilePreviewPanel({
   }, [activePath]);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setEntered(true));
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
     fetchFilePreview(tokenRef.current, sessionKey, activePath)
@@ -83,7 +81,7 @@ export function FilePreviewPanel({
     return () => {
       cancelled = true;
     };
-  }, [activePath, sessionKey]);
+  }, [activePath, sessionKey, refreshKey]);
 
   const navigateToPath = (next: string) => {
     if (next === activePath) return;
@@ -100,7 +98,7 @@ export function FilePreviewPanel({
     }
     onClose();
     return true;
-  });
+  }, active);
 
   const displayPath = state.status === "ready" ? state.payload.display_path : activePath;
   const previewPath = state.status === "ready" ? state.payload.path : displayPath;
@@ -155,284 +153,248 @@ export function FilePreviewPanel({
       : t("filePreview.failed", { defaultValue: "Could not preview this file." }))
     : null;
 
-  return (
-    <aside
-      aria-label={t("filePreview.aria", { defaultValue: "File preview" })}
-      style={{
-        "--file-preview-width": `${desktopWidth}px`,
-        "--file-preview-slot-width": !entered || isClosing ? "0px" : `${desktopWidth}px`,
-      } as CSSProperties}
-      className={cn(
-        // Phones get the whole viewport: a side-by-side split leaves too little
-        // room to read anything. Desktop keeps the resizable side panel.
-        "fixed inset-0 z-50 w-full overflow-hidden",
-        "md:relative md:inset-auto md:z-auto md:w-[var(--file-preview-slot-width)] md:min-w-0 md:shrink-0",
-        "md:transition-[width] md:duration-300 md:ease-out md:will-change-[width]",
-        isClosing && "pointer-events-none",
-      )}
-      data-testid="file-preview-panel"
-      data-file-preview-panel
-    >
+  const content = (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="file-preview-panel">
       <div
-        className={cn(
-          "absolute inset-0 flex w-full flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]",
-          "md:inset-y-0 md:left-auto md:right-0 md:w-[var(--file-preview-width)] md:pb-0",
-          "border-border/70 bg-background md:border-l md:shadow-none shadow-2xl",
-          "transition-[opacity,transform] duration-300 ease-out will-change-transform",
-          !entered || isClosing ? "translate-x-full opacity-0" : "translate-x-0 opacity-100",
-          "motion-reduce:translate-x-0",
-        )}
+        className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 px-3"
+        title={previewPath}
       >
-        {onResizeStart ? (
+        {canNavigateBack ? (
           <button
             type="button"
-            aria-label={t("filePreview.resize", { defaultValue: "Resize file preview" })}
+            onClick={() => {
+              const parent = activePath.replace(/\/[^/]+\/?$/, "") || "/";
+              navigateToPath(parent);
+            }}
             className={cn(
-              "group absolute inset-y-0 left-0 z-20 hidden w-3 -translate-x-1/2 cursor-col-resize touch-none md:flex",
-              "items-stretch justify-center focus-visible:outline-none",
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+              "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             )}
-            onPointerDown={onResizeStart}
+            title={t("filePreview.back", { defaultValue: "Back to parent folder" })}
+            aria-label={t("filePreview.back", { defaultValue: "Back to parent folder" })}
           >
-            <span
-              aria-hidden
-              className={cn(
-                "h-full w-px bg-foreground/25 opacity-0 transition-opacity",
-                "group-hover:opacity-100 group-focus-visible:bg-ring group-focus-visible:opacity-100",
-              )}
-            />
+            <ChevronLeft className="h-4 w-4" aria-hidden />
           </button>
         ) : null}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div
-            className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 px-3"
-            title={previewPath}
-          >
-            {canNavigateBack ? (
-              <button
-                type="button"
-                onClick={() => {
-                  const parent = activePath.replace(/\/[^/]+\/?$/, "") || "/";
-                  navigateToPath(parent);
-                }}
+        <nav
+          aria-label={t("filePreview.breadcrumb", { defaultValue: "File path" })}
+          className="flex min-w-0 flex-1 items-center overflow-hidden text-sm leading-5"
+          title={breadcrumbTitle}
+          data-testid="file-preview-breadcrumb"
+        >
+          {navTrail.parts.length > visibleTrail.length ? (
+            <>
+              <span className="shrink-0 text-muted-foreground/55">...</span>
+              <ChevronRight
+                className="mx-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/35"
+                aria-hidden
+              />
+            </>
+          ) : normalizedPreviewPath.startsWith("/") ? (
+            <>
+              <span className="shrink-0 text-muted-foreground/55">/</span>
+              <ChevronRight
+                className="mx-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/35"
+                aria-hidden
+              />
+            </>
+          ) : null}
+          {visibleTrail.map(({ part, index }, position) => {
+            const isLast = position === visibleTrail.length - 1;
+            const label = (
+              <span
                 className={cn(
-                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                  "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "min-w-0 truncate rounded-mark px-1 py-0.5",
+                  isLast
+                    ? "font-medium text-foreground"
+                    : "max-w-[26vw] shrink text-muted-foreground/78",
                 )}
-                title={t("filePreview.back", { defaultValue: "Back to parent folder" })}
-                aria-label={t("filePreview.back", { defaultValue: "Back to parent folder" })}
+                data-testid={isLast ? "file-preview-title" : undefined}
               >
-                <ChevronLeft className="h-4 w-4" aria-hidden />
-              </button>
-            ) : null}
-            <nav
-              aria-label={t("filePreview.breadcrumb", { defaultValue: "File path" })}
-              className="flex min-w-0 flex-1 items-center overflow-hidden text-sm leading-5"
-              title={breadcrumbTitle}
-              data-testid="file-preview-breadcrumb"
-            >
-              {navTrail.parts.length > visibleTrail.length ? (
-                <>
-                  <span className="shrink-0 text-muted-foreground/55">...</span>
+                {part}
+              </span>
+            );
+            return (
+              <span
+                key={`${part}-${index}`}
+                className="flex min-w-0 items-center overflow-hidden"
+              >
+                {position > 0 ? (
                   <ChevronRight
                     className="mx-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/35"
                     aria-hidden
                   />
-                </>
-              ) : normalizedPreviewPath.startsWith("/") ? (
-                <>
-                  <span className="shrink-0 text-muted-foreground/55">/</span>
-                  <ChevronRight
-                    className="mx-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/35"
-                    aria-hidden
-                  />
-                </>
-              ) : null}
-              {visibleTrail.map(({ part, index }, position) => {
-                const isLast = position === visibleTrail.length - 1;
-                const label = (
-                  <span
-                    className={cn(
-                      "min-w-0 truncate rounded-mark px-1 py-0.5",
-                      isLast
-                        ? "font-medium text-foreground"
-                        : "max-w-[26vw] shrink text-muted-foreground/78",
-                    )}
-                    data-testid={isLast ? "file-preview-title" : undefined}
-                  >
-                    {part}
-                  </span>
-                );
-                return (
-                  <span
-                    key={`${part}-${index}`}
-                    className="flex min-w-0 items-center overflow-hidden"
-                  >
-                    {position > 0 ? (
-                      <ChevronRight
-                        className="mx-1 h-3.5 w-3.5 shrink-0 text-muted-foreground/35"
-                        aria-hidden
-                      />
-                    ) : null}
-                    {isDirectory && !isLast ? (
-                      <button
-                        type="button"
-                        onClick={() => navigateToPath(navTrail.prefixes[index])}
-                        className="min-w-0 rounded-mark px-1 py-0.5 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        title={navTrail.prefixes[index]}
-                      >
-                        {label}
-                      </button>
-                    ) : (
-                      label
-                    )}
-                  </span>
-                );
-              })}
-            </nav>
-            {isMarkdown ? (
-              <div
-                role="group"
-                aria-label={t("filePreview.viewMode", { defaultValue: "Preview mode" })}
-                className="flex shrink-0 items-center rounded-full border border-border/60 bg-muted/30 p-0.5 text-[11px] font-medium"
-              >
-                {(["formatted", "source"] as const).map((mode) => (
+                ) : null}
+                {isDirectory && !isLast ? (
                   <button
-                    key={mode}
                     type="button"
-                    onClick={() => setViewMode(mode)}
-                    aria-pressed={viewMode === mode}
-                    className={cn(
-                      "rounded-full px-2 py-0.5 transition-colors",
-                      viewMode === mode
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
+                    onClick={() => navigateToPath(navTrail.prefixes[index])}
+                    className="min-w-0 rounded-mark px-1 py-0.5 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    title={navTrail.prefixes[index]}
                   >
-                    {mode === "formatted"
-                      ? t("filePreview.formatted", { defaultValue: "Formatted" })
-                      : t("filePreview.source", { defaultValue: "Source" })}
+                    {label}
                   </button>
-                ))}
-              </div>
-            ) : null}
-            <button
-              type="button"
-              onClick={onClose}
-              className={cn(
-                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-              title={t("filePreview.close", { defaultValue: "Close file preview" })}
-              aria-label={t("filePreview.close", { defaultValue: "Close file preview" })}
-              data-testid="file-preview-close"
-            >
-              <X className="h-4 w-4" aria-hidden />
-            </button>
+                ) : (
+                  label
+                )}
+              </span>
+            );
+          })}
+        </nav>
+        {isMarkdown ? (
+          <div
+            role="group"
+            aria-label={t("filePreview.viewMode", { defaultValue: "Preview mode" })}
+            className="flex shrink-0 items-center rounded-full border border-border/60 bg-muted/30 p-0.5 text-[11px] font-medium"
+          >
+            {(["formatted", "source"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                aria-pressed={viewMode === mode}
+                className={cn(
+                  "rounded-full px-2 py-0.5 transition-colors",
+                  viewMode === mode
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {mode === "formatted"
+                  ? t("filePreview.formatted", { defaultValue: "Formatted" })
+                  : t("filePreview.source", { defaultValue: "Source" })}
+              </button>
+            ))}
           </div>
+        ) : null}
+        {modal ? (
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            className={cn(
+              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+              "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+            title={t("filePreview.close", { defaultValue: "Close file preview" })}
+            aria-label={t("filePreview.close", { defaultValue: "Close file preview" })}
+            data-testid="file-preview-close"
+          >
+            <X className="h-4 w-4" aria-hidden />
+          </button>
+        ) : null}
+      </div>
 
-          <div className="min-h-0 flex-1 overflow-auto">
-            {state.status === "loading" ? (
-              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                {t("filePreview.loading", { defaultValue: "Loading preview..." })}
-              </div>
-            ) : state.status === "error" ? (
-              <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">
-                <div className="max-w-sm">
-                  <AlertCircle
-                    className="mx-auto mb-3 h-5 w-5 text-muted-foreground/70"
-                    aria-hidden
-                  />
-                  <p>{errorMessage}</p>
-                </div>
-              </div>
-            ) : state.payload.kind === "image" && state.payload.media_url ? (
-              <div className="flex h-full items-center justify-center bg-muted/20 p-3">
-                <img
-                  src={state.payload.media_url}
-                  alt={fileName}
-                  className="max-h-full max-w-full rounded-control object-contain"
-                  loading="eager"
-                  decoding="async"
-                  draggable={false}
-                />
-              </div>
-            ) : state.payload.kind === "directory" ? (
-              <ul className="min-h-full py-1" aria-label={t("filePreview.directory", { defaultValue: "Folder contents" })}>
-                {(state.payload.entries ?? []).map((entry) => (
-                  <li key={entry.path}>
-                    <button
-                      type="button"
-                      onClick={() => navigateToPath(entry.path)}
-                      className={cn(
-                        "flex w-full items-center gap-2 px-4 py-2 text-left text-[13px]",
-                        "transition-colors hover:bg-muted/55 focus-visible:bg-muted/55 focus-visible:outline-none",
-                      )}
-                    >
-                      <span className={cn("shrink-0", entry.kind === "directory" ? "text-sky-500" : "text-muted-foreground")}>
-                        {entry.kind === "directory" ? "▸" : "·"}
-                      </span>
-                      <span className={cn("min-w-0 flex-1 truncate", entry.kind === "directory" && "font-medium")}>
-                        {entry.name}
-                      </span>
-                      {entry.kind === "file" ? (
-                        <span className="shrink-0 text-[11px] text-muted-foreground/70">
-                          {formatEntrySize(entry.size)}
-                        </span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-                {(state.payload.entries ?? []).length === 0 ? (
-                  <li className="px-4 py-6 text-center text-sm text-muted-foreground">
-                    {t("filePreview.emptyFolder", { defaultValue: "This folder is empty." })}
-                  </li>
-                ) : null}
-              </ul>
-            ) : isMarkdown && viewMode === "formatted" ? (
-              <div className="min-h-full px-4 py-3 text-[13.5px] leading-6">
-                {state.payload.truncated ? (
-                  <div className="mb-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-                    {t("filePreview.truncated", {
-                      defaultValue: "Preview is truncated because this file is large.",
-                    })}
-                  </div>
-                ) : null}
-                <MarkdownText
+      <div className="min-h-0 flex-1 overflow-auto">
+        {state.status === "loading" ? (
+          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            {t("filePreview.loading", { defaultValue: "Loading preview..." })}
+          </div>
+        ) : state.status === "error" ? (
+          <div className="flex h-full items-center justify-center px-8 text-center text-sm text-muted-foreground">
+            <div className="max-w-sm">
+              <AlertCircle
+                className="mx-auto mb-3 h-5 w-5 text-muted-foreground/70"
+                aria-hidden
+              />
+              <p>{errorMessage}</p>
+            </div>
+          </div>
+        ) : state.payload.kind === "image" && state.payload.media_url ? (
+          <div className="flex h-full items-center justify-center bg-muted/20 p-3">
+            <img
+              src={state.payload.media_url}
+              alt={fileName}
+              className="max-h-full max-w-full rounded-control object-contain"
+              loading="eager"
+              decoding="async"
+              draggable={false}
+            />
+          </div>
+        ) : state.payload.kind === "directory" ? (
+          <ul className="min-h-full py-1" aria-label={t("filePreview.directory", { defaultValue: "Folder contents" })}>
+            {(state.payload.entries ?? []).map((entry) => (
+              <li key={entry.path}>
+                <button
+                  type="button"
+                  onClick={() => navigateToPath(entry.path)}
                   className={cn(
-                    "max-w-none break-words text-[13.5px] leading-6",
-                    "[&_pre]:max-w-full [&_pre]:overflow-x-auto",
-                    "[&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto",
+                    "flex w-full items-center gap-2 px-4 py-2 text-left text-[13px]",
+                    "transition-colors hover:bg-muted/55 focus-visible:bg-muted/55 focus-visible:outline-none",
                   )}
                 >
-                  {state.payload.content}
-                </MarkdownText>
+                  <span className={cn("shrink-0", entry.kind === "directory" ? "text-sky-500" : "text-muted-foreground")}>
+                    {entry.kind === "directory" ? "▸" : "·"}
+                  </span>
+                  <span className={cn("min-w-0 flex-1 truncate", entry.kind === "directory" && "font-medium")}>
+                    {entry.name}
+                  </span>
+                  {entry.kind === "file" ? (
+                    <span className="shrink-0 text-[11px] text-muted-foreground/70">
+                      {formatEntrySize(entry.size)}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            ))}
+            {(state.payload.entries ?? []).length === 0 ? (
+              <li className="px-4 py-6 text-center text-sm text-muted-foreground">
+                {t("filePreview.emptyFolder", { defaultValue: "This folder is empty." })}
+              </li>
+            ) : null}
+          </ul>
+        ) : isMarkdown && viewMode === "formatted" ? (
+          <div className="min-h-full px-4 py-3 text-[13.5px] leading-6">
+            {state.payload.truncated ? (
+              <div className="mb-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                {t("filePreview.truncated", {
+                  defaultValue: "Preview is truncated because this file is large.",
+                })}
               </div>
-            ) : (
-              <div className="min-h-full">
-                {state.payload.truncated ? (
-                  <div className="mx-4 mt-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-                    {t("filePreview.truncated", {
-                      defaultValue: "Preview is truncated because this file is large.",
-                    })}
-                  </div>
-                ) : null}
-                <CodeBlock
-                  language={state.payload.language}
-                  code={state.payload.content}
-                  chrome="none"
-                  highlight
-                  showLineNumbers
-                  wrapLongLines={false}
-                  className="min-h-full"
-                />
-              </div>
-            )}
+            ) : null}
+            <MarkdownText
+              className={cn(
+                "max-w-none break-words text-[13.5px] leading-6",
+                "[&_pre]:max-w-full [&_pre]:overflow-x-auto",
+                "[&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto",
+              )}
+            >
+              {state.payload.content}
+            </MarkdownText>
           </div>
-        </div>
+        ) : (
+          <div className="min-h-full">
+            {state.payload.truncated ? (
+              <div className="mx-4 mt-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                {t("filePreview.truncated", {
+                  defaultValue: "Preview is truncated because this file is large.",
+                })}
+              </div>
+            ) : null}
+            <CodeBlock
+              language={state.payload.language}
+              code={state.payload.content}
+              chrome="none"
+              highlight
+              showLineNumbers
+              wrapLongLines={false}
+              className="min-h-full"
+            />
+          </div>
+        )}
       </div>
-    </aside>
+    </div>
+  );
+  if (!modal) return content;
+  if (!visible) return null;
+  return (
+    <ThreadInspectorDialog focusRef={closeButtonRef} onClose={onClose}>
+      <Dialog.Title className="sr-only">{t("filePreview.aria", { defaultValue: "File preview" })}</Dialog.Title>
+      <Dialog.Description className="sr-only">{breadcrumbTitle}</Dialog.Description>
+      {content}
+    </ThreadInspectorDialog>
   );
 }

@@ -1,5 +1,6 @@
 import { decodeNotification } from "../../../packages/client-events/notifications";
 import type {
+  ApprovalDecisionPayload,
   ConnectionStatus,
   InboundEvent,
   Outbound,
@@ -12,6 +13,8 @@ import type {
   FolderAccessRequest,
   WorkspaceScopePayload,
   WorkspacePermissionProjection,
+  WebUIMutationOutcome,
+  StopExpectation,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
 import {
@@ -159,11 +162,20 @@ interface PendingWebUIRequest extends PendingRequest<unknown> {
 class WebUIMutationError extends Error {
   status: number;
   workspaceModeConflict?: unknown;
+  outcome?: WebUIMutationOutcome;
+  requestId?: string;
 
-  constructor(status: number, message: string, workspaceModeConflict?: unknown) {
+  constructor(
+    status: number,
+    message: string,
+    workspaceModeConflict?: unknown,
+    options?: { outcome?: WebUIMutationOutcome; requestId?: string },
+  ) {
     super(message);
     this.status = status;
     this.workspaceModeConflict = workspaceModeConflict;
+    this.outcome = options?.outcome;
+    this.requestId = options?.requestId;
     this.name = "WebUIMutationError";
   }
 }
@@ -205,6 +217,15 @@ export interface CanonicalRunSnapshot {
   hasPendingToolCalls: boolean;
   /** Exact active turn when supplied by a current gateway. */
   activeTurnId?: string | null;
+}
+
+export interface ApprovalDecisionIdentity {
+  sessionKey?: string;
+  sessionIncarnation?: string;
+  runId?: string;
+  turnId?: string;
+  effectId?: string;
+  generation?: number;
 }
 
 type PendingMessageState = "queued" | "sent" | "unknown" | "accepted";
@@ -798,7 +819,10 @@ export class NanobotClient {
   }
 
   private recordCanonicalTurnOwnership(
-    ev: Extract<InboundEvent, { event: "message_accepted" | "user_message" }>,
+    ev: Extract<
+      InboundEvent,
+      { event: "message_accepted" | "message_admitted" | "user_message" }
+    >,
   ): void {
     const activeTurnId = ev.active_turn_id;
     if (!activeTurnId) return;
@@ -1151,14 +1175,17 @@ export class NanobotClient {
     action: string,
     payload: Record<string, unknown> = {},
     timeoutMs: number = 20_000,
+    requestId: string = crypto.randomUUID(),
   ): Promise<T> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WS_OPEN) {
       return Promise.reject(
-        new WebUIMutationError(503, "WebUI connection is not open"),
+        new WebUIMutationError(503, "WebUI connection is not open", undefined, {
+          outcome: "uncertain",
+          requestId,
+        }),
       );
     }
-    const requestId = crypto.randomUUID();
     const frame: Outbound = {
       type: "webui_request",
       request_id: requestId,
@@ -1167,7 +1194,10 @@ export class NanobotClient {
     };
     if (!this.frameFitsTransport(frame)) {
       return Promise.reject(
-        new WebUIMutationError(413, "WebUI mutation payload is too large"),
+        new WebUIMutationError(413, "WebUI mutation payload is too large", undefined, {
+          outcome: "not_applied",
+          requestId,
+        }),
       );
     }
 
@@ -1176,7 +1206,10 @@ export class NanobotClient {
       try {
         serializedFrame = JSON.stringify(frame);
       } catch {
-        reject(new WebUIMutationError(503, "Could not encode WebUI request"));
+        reject(new WebUIMutationError(503, "Could not encode WebUI request", undefined, {
+          outcome: "uncertain",
+          requestId,
+        }));
         return;
       }
       const timer = setTimeout(() => {
@@ -1185,6 +1218,8 @@ export class NanobotClient {
           new WebUIMutationError(
             504,
             `WebUI request timed out after ${timeoutMs}ms`,
+            undefined,
+            { outcome: "uncertain", requestId },
           ),
         );
       }, timeoutMs);
@@ -1199,7 +1234,10 @@ export class NanobotClient {
       } catch {
         clearTimeout(timer);
         this.pendingWebUIRequests.delete(requestId);
-        reject(new WebUIMutationError(503, "Could not send WebUI request"));
+        reject(new WebUIMutationError(503, "Could not send WebUI request", undefined, {
+          outcome: "uncertain",
+          requestId,
+        }));
       }
     });
   }
@@ -1249,6 +1287,8 @@ export class NanobotClient {
       requestIntent?: "new" | "steer";
       targetTurnId?: string;
       turnId?: string;
+      approvalDecision?: ApprovalDecisionPayload;
+      stopExpectation?: StopExpectation;
       /** False for side-channel or injected messages that do not own a lifecycle. */
       startsNewRun?: boolean;
       /** Internal/side-channel turns never raise completion notifications. */
@@ -1272,6 +1312,12 @@ export class NanobotClient {
         : {}),
       ...(options?.quotedContext?.trim() ? { quoted_context: options.quotedContext.trim() } : {}),
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
+      ...(options?.approvalDecision
+        ? { approval_decision: options.approvalDecision }
+        : {}),
+      ...(options?.stopExpectation
+        ? { stop_expectation: options.stopExpectation }
+        : {}),
       // System commands are internal chat controls, not workspace requests.
       ...(systemCommand
         ? {}
@@ -1306,6 +1352,38 @@ export class NanobotClient {
     this.queueSend(frame);
   }
 
+  sendApprovalDecision(
+    chatId: string,
+    approvalId: string,
+    decision: "approve" | "deny",
+    identity?: string | ApprovalDecisionIdentity,
+  ): string {
+    const sourceIdentity = typeof identity === "string"
+      ? { sessionKey: identity }
+      : identity;
+    const turnId = crypto.randomUUID();
+    this.sendMessage(chatId, "approval_decision", undefined, {
+      turnId,
+      approvalDecision: {
+        approval_id: approvalId,
+        decision,
+        ...(sourceIdentity?.sessionKey ? { session_key: sourceIdentity.sessionKey } : {}),
+        ...(sourceIdentity?.sessionIncarnation
+          ? { session_incarnation: sourceIdentity.sessionIncarnation }
+          : {}),
+        ...(sourceIdentity?.runId ? { run_id: sourceIdentity.runId } : {}),
+        ...(sourceIdentity?.turnId ? { turn_id: sourceIdentity.turnId } : {}),
+        ...(sourceIdentity?.effectId ? { effect_id: sourceIdentity.effectId } : {}),
+        ...(sourceIdentity?.generation !== undefined
+          ? { generation: sourceIdentity.generation }
+          : {}),
+      },
+      startsNewRun: false,
+      sideChannel: true,
+    });
+    return turnId;
+  }
+
   sendSystemCommand(chatId: string, command: string, timeoutMs = 5_000): Promise<void> {
     const normalized = command.trim();
     const turnId = `${SYSTEM_COMMAND_TURN_PREFIX}${crypto.randomUUID()}`;
@@ -1329,8 +1407,35 @@ export class NanobotClient {
     });
   }
 
-  setSidebarState(state: SidebarStatePayload): Promise<SidebarStatePayload> {
-    return this.requestMutation<SidebarStatePayload>("sidebar.update", { state });
+  controlDelegatedChild(
+    parentKey: string,
+    childId: string,
+    runtimeGeneration: number,
+    action: "wait" | "steer" | "stop",
+    content?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.requestMutation<Record<string, unknown>>(
+      "delegation.child.control",
+      {
+        parent_key: parentKey,
+        child_id: childId,
+        runtime_generation: runtimeGeneration,
+        action,
+        ...(content !== undefined ? { content } : {}),
+      },
+    );
+  }
+
+  setSidebarState(
+    state: SidebarStatePayload,
+    requestId?: string,
+  ): Promise<SidebarStatePayload> {
+    return this.requestMutation<SidebarStatePayload>(
+      "sidebar.update",
+      { state },
+      20_000,
+      requestId,
+    );
   }
 
   // -- internals ---------------------------------------------------------
@@ -1426,7 +1531,10 @@ export class NanobotClient {
           workspace_scope: parsed.error.workspace_scope,
           workspace_permissions: parsed.error.workspace_permissions,
         } : undefined;
-        pending.reject(new WebUIMutationError(status, message, workspaceModeConflict));
+        pending.reject(new WebUIMutationError(status, message, workspaceModeConflict, {
+          outcome: parsed.error?.outcome,
+          requestId: parsed.request_id,
+        }));
       }
       return;
     }
@@ -1452,11 +1560,18 @@ export class NanobotClient {
     const turnId = "turn_id" in parsed && typeof parsed.turn_id === "string"
       ? parsed.turn_id
       : null;
-    if (parsed.event === "message_accepted" || parsed.event === "user_message") {
+    if (
+      parsed.event === "message_accepted"
+      || parsed.event === "message_admitted"
+      || parsed.event === "user_message"
+    ) {
       this.recordCanonicalTurnOwnership(parsed);
     }
-    if (parsed.event === "message_accepted") {
+    if (parsed.event === "message_admitted") {
       this.recordRunAcceptance(parsed.chat_id, parsed.turn_id);
+      return;
+    }
+    if (parsed.event === "message_accepted") {
       if (!isSystemCommandTurnId(turnId)) {
         this.dispatch(parsed.chat_id, parsed);
       }

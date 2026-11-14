@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
+    DelegatedChildEvent,
     GoalStateSyncEvent,
     GoalStatusEvent,
+    MessageAdmittedEvent,
     ProgressEvent,
     RetryStatusEvent,
     RetryWaitEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
+    StopTargetEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
     UserInputEvent,
@@ -30,6 +33,8 @@ from nanobot.webui.metadata import (
 from nanobot.webui.outbound_wire import (
     WebUIWirePayload,
     WebUIWirePersistence,
+    encode_delegated_child,
+    encode_stop_target,
     encode_turn_end,
     project_notification,
 )
@@ -147,6 +152,22 @@ class WebUIOutboundProjector:
             if event["event"] == "goal_state":
                 await self._transport.send_goal_state(chat_id, event["goal_state"])
                 continue
+            if event["event"] == "stop_target":
+                target = event.get("stop_target")
+                await self._transport.send_payload(
+                    chat_id,
+                    cast(WebUIWirePayload, encode_stop_target(
+                        chat_id,
+                        StopTargetEvent(
+                            stop_target=(
+                                cast(dict[str, object], target)
+                                if isinstance(target, dict) else None
+                            ),
+                        ),
+                    )),
+                    persistence="transient",
+                )
+                continue
             await self._transport.send_goal_status(
                 chat_id,
                 "running",
@@ -194,6 +215,43 @@ class WebUIOutboundProjector:
                     model_preset=event.model_preset,
                     context_window_tokens=event.context_window_tokens,
                     fallback=event.fallback,
+                )
+            return
+        if isinstance(event, DelegatedChildEvent):
+            await self._transport.send_payload(
+                msg.chat_id,
+                cast(WebUIWirePayload, encode_delegated_child(msg.chat_id, event)),
+                persistence="turn_activity",
+            )
+            return
+        if isinstance(event, StopTargetEvent):
+            await self._transport.send_payload(
+                msg.chat_id,
+                cast(WebUIWirePayload, encode_stop_target(msg.chat_id, event)),
+                persistence="transient",
+            )
+            return
+        if isinstance(event, MessageAdmittedEvent):
+            if conns:
+                await self._transport.send_payload(
+                    msg.chat_id,
+                    cast(WebUIWirePayload, {
+                        "event": "message_admitted",
+                        "chat_id": msg.chat_id,
+                        **({"turn_id": event.turn_id} if event.turn_id else {}),
+                        **({"attempt_id": event.attempt_id} if event.attempt_id else {}),
+                        **({"session_key": event.session_key} if event.session_key else {}),
+                        **(
+                            {"session_incarnation": event.session_incarnation}
+                            if event.session_incarnation else {}
+                        ),
+                        **(
+                            {"active_turn_id": event.active_turn_id}
+                            if event.active_turn_id else {}
+                        ),
+                        "starts_turn": event.starts_turn,
+                    }),
+                    persistence="transient",
                 )
             return
         if isinstance(event, UserInputEvent):

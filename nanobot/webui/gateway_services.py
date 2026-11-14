@@ -49,6 +49,7 @@ class GatewayServices:
     temporary_chats: WebUITemporaryChats
     session_projection: WebUISessionProjection
     session_manager: SessionManager | None
+    child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
     cron_service: CronService | None
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
@@ -60,7 +61,9 @@ def build_gateway_services(
     config: WebSocketConfig,
     bus: MessageBus,
     session_manager: SessionManager | None,
-    static_dist_path: Path | None,
+    stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
+    child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
+    static_dist_path: Path | None = None,
     workspace_path: Path,
     context_manager: ContextRepoManager | None = None,
     default_restrict_to_workspace: bool,
@@ -143,7 +146,11 @@ def build_gateway_services(
         binding=lambda chat_id: temporary_chats.binding(None, chat_id),
         set_mode=lambda chat_id, mode: temporary_chats.set_access_mode(chat_id, mode),
     )
-    session_projection = WebUISessionProjection(session_manager, log=logger)
+    session_projection = WebUISessionProjection(
+        session_manager,
+        stop_target_for_key=stop_target_for_key,
+        log=logger,
+    )
     http = GatewayHTTPHandler(
         config=config,
         session_manager=session_manager,
@@ -172,6 +179,7 @@ def build_gateway_services(
         mcp_reload=mcp_reload,
         skill_state_action=skill_state_action,
         recovery_action=recovery_action,
+        stop_target_for_key=stop_target_for_key,
         log=logger,
     )
     if mobile_edge is None and remote_access is not None and remote_access.enabled:
@@ -204,6 +212,7 @@ def build_gateway_services(
         temporary_chats=temporary_chats,
         session_projection=session_projection,
         session_manager=session_manager,
+        child_control=child_control,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,

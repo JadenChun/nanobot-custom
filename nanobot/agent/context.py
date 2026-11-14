@@ -2,6 +2,7 @@
 
 import json
 import platform
+import re
 import uuid
 from dataclasses import dataclass
 from enum import Enum
@@ -39,7 +40,7 @@ from nanobot.security.workspace_access import (
 )
 from nanobot.session.keys import last_channel_from_metadata
 from nanobot.session.manager import Session
-from nanobot.session.source_projection import RuntimeNode, SourceNode
+from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
 from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.session.summary import SessionSummary
 from nanobot.utils import helpers
@@ -107,7 +108,66 @@ class TranscriptInput:
     @property
     def message_count(self) -> int:
         """Number of boundary-preserving messages in the assembled transcript."""
-        return 1 + len(self.history) + (self.current_message is not None)
+        summary_count = int(
+            self.session_summary is not None
+            and self.session_summary["text"] != "(nothing)"
+        )
+        return 1 + summary_count + len(self.history) + (self.current_message is not None)
+
+
+_TOOL_GUIDANCE_NAMES = frozenset({
+    "apply_patch",
+    "cron",
+    "edit_file",
+    "exec",
+    "exec_session",
+    "generate_image",
+    "list_dir",
+    "list_exec_sessions",
+    "message",
+    "read_artifact",
+    "read_file",
+    "repository_catalog",
+    "request_folder_access",
+    "run_cli_app",
+    "save_knowledge",
+    "select_workspace",
+    "web_fetch",
+    "web_search",
+    "write_file",
+})
+_TOOL_REFERENCE_RE = re.compile(r"[`'\"]([a-z][a-z0-9_]+)[`'\"]")
+
+
+def _filter_tool_guidance(
+    text: str,
+    tool_names: frozenset[str] | None,
+) -> str:
+    """Remove guidance lines that name a tool this turn cannot use."""
+    if tool_names is None:
+        return text
+    unavailable = sorted(_TOOL_GUIDANCE_NAMES - tool_names)
+    if not unavailable:
+        return text
+    pattern = re.compile(r"\b(?:" + "|".join(map(re.escape, unavailable)) + r")\b")
+    return "\n".join(line for line in text.splitlines() if not pattern.search(line))
+
+
+def _render_tool_contract(tool_names: frozenset[str] | None) -> str:
+    """Render tool guidance against the tools admitted for this turn."""
+    template = render_template("agent/tool_contract.md")
+    if tool_names is None:
+        return template
+    lines: list[str] = []
+    for line in template.splitlines():
+        referenced = {
+            name for name in _TOOL_REFERENCE_RE.findall(line)
+            if name in _TOOL_GUIDANCE_NAMES
+        }
+        if referenced and not referenced.issubset(tool_names):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
 
 
 class ContextBuilder:
@@ -150,9 +210,9 @@ class ContextBuilder:
         self,
         *,
         channel: str | None = None,
-        session_summary: SessionSummary | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
@@ -184,7 +244,7 @@ class ContextBuilder:
         elif catalog:
             parts.append("# Repository Catalog\n\nMetadata for discovery; read the selected repository's "
                          "instructions and relevant files on demand. Use absolute paths when switching work.\n" + catalog)
-        parts.append(render_template("agent/tool_contract.md"))
+        parts.append(_render_tool_contract(tool_names))
 
         project_path = focus.expanduser().resolve()
         if project_path != self.workspace.expanduser().resolve():
@@ -242,14 +302,7 @@ class ContextBuilder:
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
-        if session_summary and session_summary["text"] != "(nothing)":
-            parts.append(
-                "[Archived Context Summary]\n\n"
-                f"Previous conversation summary (last active {session_summary['last_active']}):\n"
-                f"{session_summary['text']}"
-            )
-
-        return "\n\n---\n\n".join(parts)
+        return _filter_tool_guidance("\n\n---\n\n".join(parts), tool_names)
 
     def _managed_prompt_roots(self) -> list[Path]:
         roots = [self.workspace.expanduser().resolve(strict=False)]
@@ -464,6 +517,7 @@ class ContextBuilder:
         runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Compatibility wrapper for callers that need merged adjacent roles."""
         blocks = runtime_context_blocks
@@ -519,6 +573,7 @@ class ContextBuilder:
         channel: str | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build a model transcript while preserving the fresh-turn boundary."""
         root = workspace or self.workspace
@@ -527,13 +582,20 @@ class ContextBuilder:
                 "role": "system",
                 "content": self.build_system_prompt(
                     channel=channel,
-                    session_summary=transcript.session_summary,
                     workspace=root,
                     include_memory=include_memory,
+                    tool_names=tool_names,
                 ),
             },
-            *transcript.history,
         ]
+        summary = transcript.session_summary
+        if summary and summary["text"] != "(nothing)":
+            summary_text = (
+                f"Previous conversation summary (last active {summary['last_active']}):\n"
+                f"{summary['text']}"
+            )
+            messages.append(CheckpointNode("legacy-summary", summary_text).message())
+        messages.extend(transcript.history)
         if transcript.current_message is None:
             return messages
 
@@ -550,17 +612,26 @@ class ContextBuilder:
         self, transcript: TranscriptInput, *, history: SourceTranscript,
         input_event_id: str | None, channel: str | None = None,
         workspace: Path | None = None, include_memory: bool = True,
+        tool_names: frozenset[str] | None = None,
+        system_prompt_override: str | None = None,
+        include_skill_context: bool = True,
     ) -> SourceTranscript:
         """Bind source identities at construction, never by message offsets."""
+        system_content = (
+            system_prompt_override
+            if system_prompt_override is not None
+            else self.build_system_prompt(
+                channel=channel, workspace=workspace or self.workspace,
+                include_memory=include_memory, tool_names=tool_names)
+        )
         nodes: list[RequestNode] = [RuntimeNode(uuid.uuid4().hex, {
-            'role': 'system', 'content': self.build_system_prompt(
-                channel=channel, session_summary=None, workspace=workspace or self.workspace,
-                include_memory=include_memory),
+            'role': 'system', 'content': system_content,
         }), *history.nodes]
         if transcript.current_message is not None:
             current = self.build_current_message(
                 transcript.current_message, media=list(transcript.media) if transcript.media else None,
-                current_role=transcript.current_role, runtime_context_blocks=transcript.runtime_context_blocks)
+                current_role=transcript.current_role, runtime_context_blocks=transcript.runtime_context_blocks,
+                include_skill_context=include_skill_context)
             nodes.append(SourceNode(input_event_id, current) if input_event_id is not None
                          else RuntimeNode(uuid.uuid4().hex, current))
         return SourceTranscript(tuple(nodes))
@@ -572,15 +643,17 @@ class ContextBuilder:
         media: list[str] | None = None,
         current_role: str = "user",
         runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
+        include_skill_context: bool = True,
     ) -> dict[str, Any]:
         """Build only the fresh turn message without merging it into history."""
         content = self.build_user_content(current_message, image_paths=media)
         blocks: list[RuntimeContextBlock] = []
         if current_role == "user":
             blocks.extend(runtime_context_blocks or ())
-            skill_context = self.skills.build_explicit_skill_runtime_context(current_message)
-            if skill_context is not None and skill_context not in blocks:
-                blocks.append(skill_context)
+            if include_skill_context:
+                skill_context = self.skills.build_explicit_skill_runtime_context(current_message)
+                if skill_context is not None and skill_context not in blocks:
+                    blocks.append(skill_context)
         merged, runtime_context_meta = append_runtime_context(content, blocks)
         current: dict[str, Any] = {"role": current_role, "content": merged}
         if current_role == "user" and runtime_context_meta is not None:

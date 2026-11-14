@@ -828,6 +828,7 @@ class RecoveryCoordinator:
             metadata = snapshot.header["metadata"]
             messages = decode_pending_followups(
                 metadata.get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, []), session.key,
+                source_state=snapshot.state,
             )
             checkpoint = backend.get_runtime_checkpoint_path(session.key)
             if (

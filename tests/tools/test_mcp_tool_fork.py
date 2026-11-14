@@ -271,7 +271,7 @@ def test_wrapper_uses_annotation_for_read_only() -> None:
         ),
     )
 
-    wrapper = MCPToolWrapper(
+    remote_wrapper = MCPToolWrapper(
         SimpleNamespace(call_tool=None),
         "ltx",
         tool_def,
@@ -280,9 +280,22 @@ def test_wrapper_uses_annotation_for_read_only() -> None:
         server_command=None,
     )
 
-    assert wrapper.is_read_only is True
-    assert wrapper.mcp_metadata.read_only_source == "annotation"
-    assert is_read_only_mcp_tool(wrapper) is True
+    assert remote_wrapper.is_read_only is False
+    assert remote_wrapper.mcp_metadata.read_only_source == "annotation_untrusted"
+    assert is_read_only_mcp_tool(remote_wrapper) is False
+
+    local_wrapper = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "ltx",
+        tool_def,
+        transport_type="stdio",
+        server_url=None,
+        server_command="fake",
+    )
+
+    assert local_wrapper.is_read_only is True
+    assert local_wrapper.mcp_metadata.read_only_source == "annotation"
+    assert is_read_only_mcp_tool(local_wrapper) is True
 
 
 def test_wrapper_uses_localhost_heuristic_when_annotation_missing() -> None:

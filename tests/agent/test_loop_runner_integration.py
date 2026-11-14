@@ -1076,10 +1076,13 @@ async def test_admitted_runner_still_requires_policy_context(tmp_path, admitted_
 
 @pytest.mark.asyncio
 async def test_admitted_legacy_subagent_scope_is_still_refused(tmp_path, admitted_async):
-    loop = await _make_loop(tmp_path, admitted_async)
+    from nanobot.agent.subagent import RetiredSubagentAuthority
 
-    with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
-        loop.subagents._build_tools()
+    loop = await _make_loop(tmp_path, admitted_async)
+    assert isinstance(loop.subagents, RetiredSubagentAuthority)
+    assert not hasattr(loop.subagents, "_build_tools")
+    with pytest.raises(RuntimeError, match="retired"):
+        await loop.subagents.spawn("legacy scope")
 
 
 @pytest.mark.asyncio

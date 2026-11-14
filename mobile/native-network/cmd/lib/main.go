@@ -240,6 +240,15 @@ func nanobot_network_poll_event(handle C.int64_t, out *C.char, capacity C.int32_
 	return C.int32_t(n)
 }
 
+//export nanobot_network_pending_event_size
+func nanobot_network_pending_event_size(handle C.int64_t) C.int32_t {
+	core := lookup(handle)
+	if core == nil {
+		return codeFor(broker.ErrNotFound)
+	}
+	return C.int32_t(core.PendingEventSize())
+}
+
 //export nanobot_network_stop
 func nanobot_network_stop(handle C.int64_t) C.int32_t {
 	managerMu.Lock()

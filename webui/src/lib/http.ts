@@ -89,6 +89,16 @@ async function mobileFetch(
       { allowNotFound: true },
     );
   }
+  const delegatedChildren = /^\/api\/sessions\/([^/]+)\/delegated-children$/.exec(url.pathname);
+  if (delegatedChildren) {
+    const key = decodeURIComponent(delegatedChildren[1]);
+    return mobileJsonRequest(
+      runtime,
+      "mobile_delegated_children",
+      `/mobile/v1/sessions/${encodeURIComponent(key)}/delegated-children${url.search}`,
+      { allowNotFound: true },
+    );
+  }
   const media = /^\/api\/media\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
   if (media) {
     const response = await runtime.request({
