@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -212,6 +212,94 @@ async def test_server_send_message(bus: MagicMock) -> None:
     finally:
         await ch.stop()
         await t
+
+
+@pytest.mark.asyncio
+async def test_large_read_file_activity_keeps_websocket_connection_open(
+    bus: MagicMock,
+    tmp_path: Path,
+) -> None:
+    from nanobot.agent.hook import AgentHookContext
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.providers.base import ToolCallRequest
+    from nanobot.utils.progress_events import build_tool_event_finish_payloads
+
+    reader = ReadFileTool(workspace=tmp_path, restrict_to_workspace=True)
+    tool_calls = [
+        ToolCallRequest(
+            id=f"read-image-{index}",
+            name="read_file",
+            arguments={"path": f"candidate-{index}.png"},
+        )
+        for index in range(4)
+    ]
+    results = []
+    source_bytes = b"\x89PNG\r\n\x1a\n" + b"x" * (1_600_000 - 8)
+    for index in range(4):
+        path = tmp_path / f"candidate-{index}.png"
+        path.write_bytes(source_bytes)
+        result = await reader.execute(path=path.name)
+        assert isinstance(result, list)
+        results.append(result)
+
+    context = AgentHookContext(
+        iteration=0,
+        messages=[],
+        tool_calls=tool_calls,
+        tool_results=results,
+        tool_events=cast(list[dict[str, str]], [
+            {
+                "name": "read_file",
+                "status": "ok",
+                "detail": "image read",
+                "media_artifacts": ([{
+                    "id": "artifact_fixture",
+                    "kind": "image",
+                    "mime": "image/png",
+                    "name": "candidate-0.png",
+                }] if index == 0 else []),
+            }
+            for index in range(4)
+        ]),
+    )
+    finish_events = build_tool_event_finish_payloads(context)
+    event_bytes = json.dumps(finish_events, ensure_ascii=False).encode("utf-8")
+    assert len(event_bytes) < 8 * 1024 * 1024
+    assert b"data:image/" not in event_bytes
+
+    ch = _ch(bus, port=0)
+    server = asyncio.create_task(ch.start())
+    try:
+        for _ in range(500):
+            if ch._server is not None:
+                break
+            if server.done():
+                await server
+            await asyncio.sleep(0.01)
+        assert ch._server is not None
+        port = ch._server.sockets[0].getsockname()[1]
+        async with WsTestClient(f"ws://127.0.0.1:{port}/", client_id="large-image") as client:
+            ready = await client.recv_ready()
+            await ch.send(OutboundMessage(
+                channel="websocket",
+                chat_id=ready.chat_id,
+                content="image activity",
+                event=ProgressEvent(tool_events=finish_events),
+            ))
+            received = await client.recv_message()
+            received_bytes = json.dumps(received.raw, ensure_ascii=False).encode("utf-8")
+            assert len(received_bytes) < 8 * 1024 * 1024
+            assert "data:image/" not in str(received.raw)
+            assert len(received.raw["tool_events"]) == 4
+            await ch.send(OutboundMessage(
+                channel="websocket",
+                chat_id=ready.chat_id,
+                content="still connected",
+            ))
+            assert (await client.recv_message()).text == "still connected"
+    finally:
+        await ch.stop()
+        await server
 
 
 @pytest.mark.asyncio

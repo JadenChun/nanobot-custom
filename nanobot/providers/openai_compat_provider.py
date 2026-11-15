@@ -45,6 +45,7 @@ from nanobot.providers.base import (
     track_stream_delivery,
 )
 from nanobot.providers.capabilities import ModelCapabilities, model_capabilities_from_metadata
+from nanobot.providers.image_history import recent_image_messages
 from nanobot.providers.openai_responses import (
     MISSING_TERMINAL_EVENT_MESSAGE,
     ResponsesStreamCapture,
@@ -584,6 +585,7 @@ class OpenAICompatProvider(LLMProvider):
     """
 
     _native_compaction_available = True
+    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = 1
 
     def __init__(
         self,
@@ -659,6 +661,27 @@ class OpenAICompatProvider(LLMProvider):
         # probe again after _RESPONSES_PROBE_INTERVAL_S seconds.
         self._responses_failures: dict[str, int] = {}
         self._responses_tripped_at: dict[str, float] = {}
+
+    def _prepare_local_tool_image_batch(
+        self,
+        messages: list[dict[str, Any]],
+        provider_context: ProviderCallContext | None,
+    ) -> tuple[list[dict[str, Any]], ProviderCallContext | None]:
+        """Bound the newest tool-image batch on the selected local leaf."""
+        if not self._is_local:
+            return messages, provider_context
+        prepared = recent_image_messages(
+            messages,
+            max_tool_images=self._MAX_LOCAL_TOOL_IMAGES_PER_BATCH,
+        )
+        if prepared != messages and provider_context is not None:
+            # A native prefix or usage anchor may still include the omitted images.
+            provider_context = replace(
+                provider_context,
+                conversation_state=None,
+                local_usage_anchor=None,
+            )
+        return prepared, provider_context
 
     def model_capabilities(
         self,
@@ -2009,6 +2032,12 @@ class OpenAICompatProvider(LLMProvider):
         stream: bool,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> PreparedRequestBudgetPreview | None:
+        messages, prepared_context = self._prepare_local_tool_image_batch(
+            messages,
+            provider_context,
+        )
+        assert prepared_context is not None
+        provider_context = prepared_context
         if not self.supports_source_summary:
             return None
         if self._should_use_responses_api(model, generation.reasoning_effort):
@@ -3021,6 +3050,10 @@ class OpenAICompatProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
+        messages, provider_context = self._prepare_local_tool_image_batch(
+            messages,
+            provider_context,
+        )
         client = await self._ensure_client()
         try:
             if self._should_use_responses_api(model, reasoning_effort):
@@ -3305,6 +3338,10 @@ class OpenAICompatProvider(LLMProvider):
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
+        messages, provider_context = self._prepare_local_tool_image_batch(
+            messages,
+            provider_context,
+        )
         chat_stream: object | None = None
         stream_iter: AsyncIterator[Any] | None = None
         preserve_cleanup_outcome = False
