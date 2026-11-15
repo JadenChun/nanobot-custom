@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from nanobot.cron.service import CronService
     from nanobot.session.manager import SessionManager
     from nanobot.triggers.local_store import LocalTriggerStore
+    from nanobot.webui.remote_owner import GatewayRemoteOwner
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class GatewayServices:
     local_trigger_store: LocalTriggerStore | None
     cron_pending_job_ids: Callable[[str], set[str]] | None
     local_trigger_pending_ids: Callable[[str], set[str]] | None
+    remote_owner: GatewayRemoteOwner | None = None
 
 
 def build_gateway_services(
@@ -192,20 +194,22 @@ def build_gateway_services(
         stop_target_for_key=stop_target_for_key,
         log=logger,
     )
-    if mobile_edge is None and remote_access is not None and remote_access.enabled:
-        from nanobot.remote.composition import build_mobile_edge
-
-        mobile_edge = build_mobile_edge(
-            remote_access,
-            http,
-            media,
-            instance_root=settings.config.path.parent,
-        )
-    if remote_access is not None and remote_access.enabled:
+    remote_owner = None
+    if remote_access is not None:
         from nanobot.remote.client import RemoteAccessClient
-        from nanobot.remote.composition import owner_socket_path
+        from nanobot.remote.composition import build_mobile_edge, owner_socket_path
         from nanobot.remote.permissions import OwnerPermissionAdapter
+        from nanobot.webui.remote_owner import GatewayRemoteOwner
 
+        remote_owner = GatewayRemoteOwner(remote_access, settings.config)
+        settings.config.set_remote_access_enabled = remote_owner.set_enabled
+        if mobile_edge is None:
+            mobile_edge = build_mobile_edge(
+                remote_access,
+                http,
+                media,
+                instance_root=settings.config.path.parent,
+            )
         owner_client = RemoteAccessClient(
             owner_socket_path(remote_access, instance_root=settings.config.path.parent),
             timeout=remote_access.owner_timeout_seconds,
@@ -213,7 +217,11 @@ def build_gateway_services(
         http.owner_permission_adapter = OwnerPermissionAdapter(owner_client)
         http.owner_audit_client = owner_client
     endpoint = WebUIGatewayEndpoint(
-        config=config, http=http, tokens=tokens, mobile_edge=mobile_edge
+        config=config,
+        http=http,
+        tokens=tokens,
+        mobile_edge=mobile_edge,
+        mobile_enabled=remote_owner.is_enabled if remote_owner is not None else None,
     )
     return GatewayServices(
         http=http,
@@ -232,4 +240,5 @@ def build_gateway_services(
         local_trigger_store=local_trigger_store,
         cron_pending_job_ids=cron_pending_job_ids,
         local_trigger_pending_ids=local_trigger_pending_ids,
+        remote_owner=remote_owner,
     )

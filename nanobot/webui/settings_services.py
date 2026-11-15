@@ -26,6 +26,7 @@ class WebUISettingsConfig:
         self.path = config_path.expanduser().resolve(strict=False)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.on_remote_device_revoked: Callable[[str], None] | None = None
+        self.set_remote_access_enabled: Callable[[bool], None] | None = None
         self._lock = threading.RLock()
         lock_path = self.path.with_suffix(f"{self.path.suffix}.lock")
         self._file_lock = FileLock(str(lock_path))

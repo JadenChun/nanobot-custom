@@ -58,11 +58,13 @@ class WebUIGatewayEndpoint:
         http: GatewayHTTPHandler,
         tokens: GatewayTokenStore,
         mobile_edge: "MobileGatewayEdge | None" = None,
+        mobile_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._config = config
         self._http = http
         self._tokens = tokens
         self._mobile_edge = mobile_edge
+        self._mobile_enabled = mobile_enabled
         http.mobile_revalidator = self.revalidate_mobile_connection
         self.webui_connections: set[ServerConnection] = set()
         # Every accepted WebUI-protocol socket, desktop and mobile. Kept apart
@@ -79,17 +81,18 @@ class WebUIGatewayEndpoint:
     ) -> Any:
         """Route one listener request to a WS handshake or the HTTP application."""
         got, query = parse_request_path(request.path)
+        mobile_edge = self._current_mobile_edge()
         if got == "/mobile/v1/ws" and is_websocket_upgrade(request):
-            if self._mobile_edge is None:
+            if mobile_edge is None:
                 return connection.respond(404, "Not Found")
-            response = await self._mobile_edge.authorize_websocket(connection, request)
+            response = await mobile_edge.authorize_websocket(connection, request)
             if response is None:
                 self.protocol_connections.add(connection)
             return response
         if got == "/mobile/v1" or got.startswith("/mobile/v1/"):
-            if self._mobile_edge is None:
+            if mobile_edge is None:
                 return connection.respond(404, "Not Found")
-            return await self._mobile_edge.handle(connection, request)
+            return await mobile_edge.handle(connection, request)
         expected_ws = normalize_config_path(self._config.path)
         if got == expected_ws and is_websocket_upgrade(request):
             terminal_version = query_first(query, "terminal_protocol")
@@ -148,6 +151,11 @@ class WebUIGatewayEndpoint:
     def is_webui_connection(self, connection: ServerConnection) -> bool:
         return connection in self.webui_connections
 
+    def _current_mobile_edge(self) -> MobileGatewayEdge | None:
+        if self._mobile_enabled is not None and not self._mobile_enabled():
+            return None
+        return self._mobile_edge
+
     async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
         """Revalidate current owner authority for one established mobile socket."""
         identity = attached_mobile_identity(connection)
@@ -158,14 +166,15 @@ class WebUIGatewayEndpoint:
         if not isinstance(identity, AccessIdentity):
             return False
         token = getattr(connection, "mobile_access_token", None)
-        if self._mobile_edge is None or not isinstance(token, str) or not token:
+        mobile_edge = self._current_mobile_edge()
+        if mobile_edge is None or not isinstance(token, str) or not token:
             return False
         try:
             request = getattr(connection, "request", None)
             if not isinstance(request, WsRequest):
                 return False
-            self._mobile_edge.authorize_target(request, identity.origin)
-            fresh = await self._mobile_edge.revalidate_mobile_access(identity, token)
+            mobile_edge.authorize_target(request, identity.origin)
+            fresh = await mobile_edge.revalidate_mobile_access(identity, token)
         except Exception:
             from dataclasses import replace
 

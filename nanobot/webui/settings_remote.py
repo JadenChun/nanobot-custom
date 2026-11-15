@@ -89,8 +89,11 @@ def handle_remote_access(
             enabled = body.get("enabled")
             if not isinstance(enabled, bool):
                 return http_error(400, "enabled must be a boolean")
-            manager.set_enabled(enabled)
-            config.update(lambda current: setattr(current.remote_access, "enabled", enabled))
+            if config.set_remote_access_enabled is not None:
+                config.set_remote_access_enabled(enabled)
+            else:
+                manager.set_enabled(enabled)
+                config.update(lambda current: setattr(current.remote_access, "enabled", enabled))
             return http_json_response({"enabled": enabled})
         if path == f"{_PREFIX}/revoke":
             installation_id = body.get("installation_id")

@@ -829,7 +829,27 @@ class WebSocketChannel(BaseChannel):
                     if self._server is server:
                         self._server = None
 
-        task = asyncio.create_task(runner())
+        async def run_with_remote_owner() -> None:
+            owner = self.gateway.remote_owner
+            if owner is None:
+                await runner()
+                return
+            startup = asyncio.create_task(asyncio.to_thread(owner.start))
+            watcher: asyncio.Task[None] | None = None
+            try:
+                await asyncio.shield(startup)
+                watcher = asyncio.create_task(owner.watch(stop_event))
+                await runner()
+            finally:
+                stop_event.set()
+                try:
+                    await asyncio.gather(startup, return_exceptions=True)
+                    if watcher is not None:
+                        await watcher
+                finally:
+                    await asyncio.to_thread(owner.stop)
+
+        task = asyncio.create_task(run_with_remote_owner())
         self._server_task = task
         try:
             await task
