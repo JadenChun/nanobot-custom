@@ -1,5 +1,54 @@
 # A3 implementation correction handoff
 
+## MCP schema admission repair 2026-11-15
+
+A staging chat could not use the ComfyUI MCP server. The gateway log at
+`13:23:58` shows the connection completed and then refused all six enabled
+tools with `schema uses unsupported keyword '$schema'`. The server publishes
+draft-07 schemas with a root `$schema` marker and `multipleOf` limits on
+canvas sizes. Both keywords were outside the local admission subset, so no
+MCP tool reached the model.
+
+Commit `78a4963f` accepts a non-empty string `$schema` as an annotation. It
+also enforces `multipleOf`, numeric `exclusiveMinimum` and numeric
+`exclusiveMaximum` against arguments before dispatch. An unusable limit stays
+refused: a non-numeric or boolean value, or a `multipleOf` of zero or less.
+
+A bounded probe against the live server published the six enabled tools. The
+probe called `generate_image` with `width: 513` and the registry refused it
+with `width must be a multiple of 32` before dispatch. It then dispatched
+`comfy_status` and received the live status document. The focused run passed
+1,650 tests with six skips; the two changed test modules passed 217 tests.
+The full Linux suite passed 18,607 tests with 22 skips and six subtests, and
+strict BasedPyright reported zero diagnostics in 546 files.
+
+The staging configuration also declared no `tools.mediaOutputRoots`, and the
+harness writes generated files under `/mnt/sshd/shared/comfyui/outputs`.
+Without that root, a returned image file cannot enter the media library. The
+staging configuration now lists that root. The running gateway still uses the
+`dd8a02ca` code, so the repair and the root take effect after a new candidate
+is installed and the gateway restarts.
+
+## Checkpoint after the reconciliation run 2026-11-15
+
+Commit `a0077313` projects the history response from one validated session
+source, so the permission data no longer repeats the same validation. The
+delegated-child scan runs in a worker thread; the live Stop target stays on
+the event loop because it reads event-loop task state. Commit `90ba7a20`
+keeps the composer docked while a saved chat opens and reveals the transcript
+from the newest message upward. Commit `9ec90bd4` enrolls the phone as
+`nanobot-<device label>`. Commit `a8f5a2a0` retains image-edit references
+that carry a role.
+
+The focused suites and the full Linux suite above cover these commits.
+`ruff check nanobot/` is clean.
+
+The memory-recovery suites require a tmpfs scratch directory on this host.
+The same file passes 205 tests under `/tmp` and fails 43 under the btrfs
+`/home` mount, and the fail-closed startup gate then spreads those errors.
+Use `/tmp` for the pytest basetemp and clean it afterwards.
+
+
 ## Final Android emulator readback
 
 The installed APK digest was `07d7e3e1103443d3bc35ffc8249b53a72cfd71bf5a36f21ac06eeeba45a492ff`.
