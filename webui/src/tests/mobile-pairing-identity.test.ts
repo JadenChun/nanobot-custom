@@ -759,6 +759,19 @@ describe("mobile pairing identity", () => {
     reload.mockRestore();
   });
 
+  it("uses a delivered pairing link before resuming an older attempt", async () => {
+    const fixture = installPlugin();
+    fixture.plugin.pendingPairingLink.mockResolvedValueOnce({
+      origin: "https://desktop.example",
+      installationId: "desktop-generated-id",
+    });
+    window.eval(bootstrapSource);
+    fixture.releaseIdentity({ installationId: "phone-local-id" });
+
+    await vi.waitFor(() => expect(fixture.pairStart).toHaveBeenCalledTimes(1));
+    expect(fixture.pairStart.mock.calls[0][0].origin).toBe("https://desktop.example");
+  });
+
   it("shows the pairing page when the saved pairing can no longer refresh", async () => {
     const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
     const { logout } = installPairedPlugin("repair");

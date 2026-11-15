@@ -619,7 +619,7 @@
     function watchForLink() {
       if (pairingLinkTimer) return;
       pairingLinkTimer = setInterval(async function () {
-        if (stopped || state !== "idle") return;
+        if (stopped || state === "waiting" || state === "accepting" || state === "cancelling") return;
         try {
           var link = await plugin.pendingPairingLink();
           if (!link || !link.origin) return;
@@ -841,6 +841,16 @@
         if (generation === startupGeneration && state === "idle") {
           setPill(ui.node, "Connects when pairing");
         }
+      }
+      var startupLink = null;
+      try {
+        startupLink = await plugin.pendingPairingLink();
+      } catch (_) {
+        startupLink = null;
+      }
+      if (startupLink && startupLink.origin) {
+        await begin(startupLink);
+        return;
       }
       if (!(await restorePendingPairing(startupGeneration))) {
         watchForLink();
