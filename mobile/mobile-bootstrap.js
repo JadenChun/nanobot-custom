@@ -941,20 +941,33 @@
       return probe.promise;
     }
 
+    function refreshNeedsPairing(message) {
+      if (message === "pairing was revoked" || message === "pairing upgrade required") return true;
+      return /^HTTP (400|401|403|410)\b/.test(message);
+    }
+
     async function requireValidAccess() {
       var probe = await probeHandshake();
       if (probe.error) return "unreachable";
       if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
+      var needsPairing = false;
       try {
         await plugin.refresh();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
-        return message === "pairing was revoked" || message === "pairing upgrade required"
-          ? "revoked"
-          : "unreachable";
+        if (message === "pairing was revoked" || message === "pairing upgrade required") return "revoked";
+        if (!refreshNeedsPairing(message)) return "unreachable";
+        needsPairing = true;
       }
       probe = await probeHandshake();
-      return probe.status === 200 ? "ok" : "unreachable";
+      if (probe.status === 200) return "ok";
+      return needsPairing ? "repair" : "unreachable";
+    }
+
+    async function discardInvalidPairing() {
+      try {
+        await plugin.logout({ serverReachable: true });
+      } catch (_) {}
     }
 
     function presentReauth(link, initialMessage) {
@@ -995,8 +1008,13 @@
         status.textContent = "Connecting to the server...";
         void connectTarget(link).then(function () {
           return requireValidAccess();
-        }).then(function (access) {
+        }).then(async function (access) {
           if (access === "revoked") return;
+          if (access === "repair") {
+            await discardInvalidPairing();
+            presentPairing();
+            return;
+          }
           if (access === "unreachable") {
             status.textContent = "Still can't reach this desktop. Check Tailscale and retry.";
             status.classList.add("is-error");
@@ -1019,6 +1037,11 @@
         await connectTarget(target);
         var access = await requireValidAccess();
         if (access === "revoked") return;
+        if (access === "repair") {
+          await discardInvalidPairing();
+          presentPairing();
+          return;
+        }
         if (access === "unreachable") {
           presentReauth(target, "Can't reach this desktop right now. Check Tailscale and retry.");
           return;

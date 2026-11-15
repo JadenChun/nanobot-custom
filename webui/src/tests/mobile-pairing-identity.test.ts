@@ -94,6 +94,7 @@ afterEach(() => {
 function installPairedPlugin(
   mode:
     | "revoked"
+    | "repair"
     | "unreachable"
     | "server_error"
     | "transport_error"
@@ -102,15 +103,28 @@ function installPairedPlugin(
 ) {
   let emit: ((event: Record<string, unknown>) => void) | null = null;
   let paired = true;
+  let nextRequest = 0;
   const refresh = vi.fn(async () => {
     if (mode === "revoked") {
       paired = false;
       window.location.reload();
       throw new Error("pairing was revoked");
     }
+    if (mode === "repair") throw new Error("HTTP 400: refresh_token_required");
     throw new Error("network");
   });
-  const logout = vi.fn(async () => ({ serverRevocationPending: false }));
+  const logout = vi.fn(async () => {
+    paired = false;
+    return { serverRevocationPending: false };
+  });
+  const http = vi.fn(async () => {
+    if (mode !== "repair") return { requestId: 1 };
+    const requestId = ++nextRequest;
+    setTimeout(() => {
+      emit?.({ type: "http_response", request_id: requestId, status: 401, body_base64: "" });
+    }, 0);
+    return { requestId };
+  });
   const plugin = {
     target: vi.fn(async () => paired ? ({
       origin: "https://desktop.example",
@@ -132,9 +146,19 @@ function installPairedPlugin(
       emit = listener;
       return { remove: vi.fn(async () => {}) };
     }),
-    http: vi.fn(async () => ({ requestId: 1 })),
+    http,
     refresh,
     logout,
+    pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
+    pendingPairing: vi.fn(async () => null),
+    pendingPairingLink: vi.fn(async () => null),
+    pairStart: vi.fn(),
+    pairStartCode: vi.fn(),
+    pairPoll: vi.fn(async () => ({ status: "waiting" })),
+    pairAccept: vi.fn(),
+    pairCancel: vi.fn(async () => ({ status: "cancelled" })),
+    connectTailscale: vi.fn(async () => ({ state: "ready" })),
+    openLogin: vi.fn(async () => undefined),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
     Plugins: { NativeNetwork: plugin },
@@ -672,6 +696,19 @@ describe("mobile pairing identity", () => {
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     expect(await plugin.target()).toBeNull();
     expect(reload).toHaveBeenCalledTimes(1);
+    reload.mockRestore();
+  });
+
+  it("shows the pairing page when the saved pairing can no longer refresh", async () => {
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
+    const { logout } = installPairedPlugin("repair");
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => expect(document.querySelector(".mobile-pairing")).not.toBeNull());
+
+    expect(document.querySelector(".mobile-reauth")).toBeNull();
+    expect(logout).toHaveBeenCalledWith({ serverReachable: true });
+    expect(reload).not.toHaveBeenCalled();
     reload.mockRestore();
   });
 
