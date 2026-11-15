@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from nanobot.agent.turn import TurnContext as RunTurnContext
     from nanobot.bus.queue import MessageBus
     from nanobot.session.manager import SessionManager
+    from nanobot.session.source_store import SourceSnapshot
     from nanobot.session.workspace_access_continuation import (
         WorkspaceAccessContinuationReference,
     )
@@ -582,6 +583,41 @@ class WorkspaceAccessRecoveryOwner:
             raise
         return self._public_request(key, checked_chat, snapshot, record)
 
+    @staticmethod
+    def _access_record(snapshot: SourceSnapshot) -> WorkspaceAccessRecord | None:
+        raw = snapshot.header["metadata"].get("workspace_access_request")
+        if raw is None:
+            return None
+        try:
+            return parse_workspace_access_record(raw)
+        except (TypeError, ValueError):
+            raise WorkspaceAccessActionError(503, "access_recovery_unavailable") from None
+
+    def thread_permission_context(
+        self,
+        chat_id: str,
+        snapshot: SourceSnapshot,
+        *,
+        controls_available: bool,
+    ) -> tuple[FolderAccessRequest | None, Any, WorkspacePermissionReference | None]:
+        """Project the history response from one validated canonical source."""
+        key, checked_chat = self._key(chat_id)
+        if snapshot.state.session_key != key or snapshot.header["metadata"].get("webui") is not True:
+            raise WorkspaceAccessActionError(404, "session_not_found")
+        owner = self.workspaces.permission_owner
+        if owner is None:
+            raise WorkspaceAccessActionError(503, "permission_state_unavailable")
+        source = self._binding(snapshot)
+        record = self._access_record(snapshot)
+        request = None if record is None else self._public_request(key, checked_chat, snapshot, record)
+        permissions = self._workspace_permissions_for_source(
+            key, owner, source, record, controls_available=controls_available,
+        )
+        reference = self._full_preview_reference(owner, key, source)
+        if reference is None:
+            reference = self._once_preview_reference(key, source, record)
+        return request, permissions, reference
+
     def workspace_permissions(
         self,
         chat_id: str,
@@ -604,22 +640,23 @@ class WorkspaceAccessRecoveryOwner:
         except Exception:
             raise WorkspaceAccessActionError(503, "permission_state_unavailable") from None
 
-        current_record: WorkspaceAccessRecord | None = None
-        raw_record = cast(dict[str, object], snapshot.header["metadata"]).get(
-            "workspace_access_request",
+        return self._workspace_permissions_for_source(
+            key, owner, source, self._access_record(snapshot), controls_available=controls_available,
         )
-        if raw_record is not None:
-            try:
-                record = parse_workspace_access_record(raw_record)
-            except (TypeError, ValueError):
-                raise WorkspaceAccessActionError(503, "access_recovery_unavailable") from None
-            if record["source_binding"] == source:
-                current_record = record
 
-        if current_record is not None:
+    def _workspace_permissions_for_source(
+        self,
+        key: str,
+        owner: DesktopPermissionOwner,
+        source: WorkspaceAccessSourceBinding,
+        record: WorkspaceAccessRecord | None,
+        *,
+        controls_available: bool,
+    ) -> Any:
+        if record is not None and record["source_binding"] == source:
             return self._permission_projection(
                 key,
-                current_record,
+                record,
                 controls_available=controls_available,
             )
 
@@ -670,31 +707,42 @@ class WorkspaceAccessRecoveryOwner:
         except Exception:
             raise WorkspaceAccessActionError(503, "permission_state_unavailable") from None
 
+        full = self._full_preview_reference(owner, key, source)
+        if full is not None:
+            return owner, full
+        return owner, self._once_preview_reference(key, source, self._access_record(snapshot))
+
+    @staticmethod
+    def _full_preview_reference(
+        owner: DesktopPermissionOwner,
+        key: str,
+        source: WorkspaceAccessSourceBinding,
+    ) -> WorkspacePermissionReference | None:
         full = owner.full_reference(session_key=key, source_binding=source)
         if full is not None and owner.authorizes_full(
             full,
             session_key=key,
             source_binding=source,
         ):
-            return owner, full
+            return full
+        return None
 
-        raw_record = cast(dict[str, object], snapshot.header["metadata"]).get(
-            "workspace_access_request",
-        )
-        if raw_record is None:
-            return owner, None
-        try:
-            record = parse_workspace_access_record(raw_record)
-        except (TypeError, ValueError):
-            raise WorkspaceAccessActionError(503, "access_recovery_unavailable") from None
+    def _once_preview_reference(
+        self,
+        key: str,
+        source: WorkspaceAccessSourceBinding,
+        record: WorkspaceAccessRecord | None,
+    ) -> WorkspaceTaskAccessReference | None:
+        if record is None:
+            return None
         selection = record.get("selection_authority")
         if (
             record["source_binding"] != source
             or selection is None
             or selection["kind"] != "once"
         ):
-            return owner, None
-        return owner, self._live_once_reference(key, record)
+            return None
+        return self._live_once_reference(key, record)
 
     def _public_request(
         self,

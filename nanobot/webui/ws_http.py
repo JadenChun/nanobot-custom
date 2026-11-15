@@ -1405,7 +1405,14 @@ class GatewayHTTPHandler:
     ) -> Response | None:
         m = re.match(r"^/api/sessions/([^/]+)/delegated-children$", got)
         if m:
-            return self._handle_delegated_children_get(request, m.group(1))
+            # The Stop target reads live event-loop task state, so resolve it
+            # here. Only the child scan moves to the worker thread.
+            return await asyncio.to_thread(
+                self._build_delegated_children_response,
+                request,
+                m.group(1),
+                self._live_stop_target(m.group(1)),
+            )
 
         m = re.match(r"^/api/sessions/([^/]+)/webui-thread$", got)
         if m:
@@ -1529,6 +1536,23 @@ class GatewayHTTPHandler:
         key: str,
     ) -> Response:
         """Return durable child references for one WebSocket parent chat."""
+        return self._build_delegated_children_response(
+            request, key, self._live_stop_target(key)
+        )
+
+    def _live_stop_target(self, key: str) -> dict[str, object] | None:
+        """Resolve the live Stop target on the event loop that owns the run."""
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None or self.stop_target_for_key is None:
+            return None
+        return self.stop_target_for_key(decoded_key)
+
+    def _build_delegated_children_response(
+        self,
+        request: WsRequest,
+        key: str,
+        stop_target: dict[str, object] | None,
+    ) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         decoded_key = _decode_api_key(key)
@@ -1644,10 +1668,7 @@ class GatewayHTTPHandler:
         return _http_json_response({
             "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
             "parentSessionKey": decoded_key,
-            "stop_target": (
-                self.stop_target_for_key(decoded_key)
-                if self.stop_target_for_key is not None else None
-            ),
+            "stop_target": stop_target,
             "children": page_children,
             "page": {
                 "before_cursor": next_cursor,
@@ -1919,10 +1940,11 @@ class GatewayHTTPHandler:
                 data["workspace_access_request"] = None
             else:
                 try:
-                    request_state = self.workspace_access_recovery.get(chat_id)
-                    permissions = (
-                        self.workspace_access_recovery.workspace_permissions(
+                    snapshot = backend.source.load_source_snapshot(decoded_key)
+                    request_state, permissions, permission_reference = (
+                        self.workspace_access_recovery.thread_permission_context(
                             chat_id,
+                            snapshot,
                             controls_available=(
                                 self.workspace_controls_available(connection)
                                 if local_permission_projection
@@ -1933,9 +1955,8 @@ class GatewayHTTPHandler:
                     # Projection may discover a durable residual after restart;
                     # resolve the scope again so the Full/retiring label and
                     # its Restricted future-access clamp describe one state.
-                    scope = self.workspaces.scope_for_session_key(decoded_key)
-                    _permission_owner, permission_reference = (
-                        self.workspace_access_recovery.preview_permission_context(chat_id)
+                    scope = self.workspaces.scope_for_session_key(
+                        decoded_key, source_snapshot=snapshot,
                     )
                     data["workspace_permissions"] = permissions
                     data["workspace_scope"] = self.workspaces.scope_payload(

@@ -49,6 +49,7 @@ from nanobot.webui.session_identity import webui_session_key
 
 if TYPE_CHECKING:
     from nanobot.session.manager import SessionManager
+    from nanobot.session.source_store import SourceSnapshot
 
 from nanobot.workspace_access_recovery import (
     WorkspaceModeActionResult,
@@ -403,17 +404,25 @@ class WebUIWorkspaceController:
             return default_scope
         return self._scope_from_metadata_value(raw_scope, default_scope=default_scope)
 
-    def scope_for_session_key(self, session_key: str) -> WorkspaceScope:
+    def scope_for_session_key(
+        self,
+        session_key: str,
+        *,
+        source_snapshot: SourceSnapshot | None = None,
+    ) -> WorkspaceScope:
+        if source_snapshot is not None and source_snapshot.state.session_key != session_key:
+            raise WorkspaceScopeError("workspace source does not match the session")
         draft = self._draft_scopes.get(session_key)
         if draft is not None:
             self._draft_scopes.move_to_end(session_key)
             return draft
         if self._sessions is None:
             return self.default_scope()
-        data = self._sessions.read_session_metadata(session_key)
-        if not isinstance(data, dict):
-            return self.default_scope()
-        metadata = data.get("metadata", {})
+        if source_snapshot is None:
+            data = self._sessions.read_session_metadata(session_key)
+            metadata: object = data.get("metadata") if data is not None else None
+        else:
+            metadata = source_snapshot.header["metadata"]
         if not isinstance(metadata, dict) or WORKSPACE_SCOPE_METADATA_KEY not in metadata:
             return self.default_scope()
         metadata_data = cast(dict[str, Any], metadata)
@@ -422,7 +431,11 @@ class WebUIWorkspaceController:
             preserve_full=True,
         )
         if scope.access_mode == "full":
-            source = self._source_binding(session_key)
+            source = (
+                self._source_binding(session_key)
+                if source_snapshot is None
+                else _snapshot_permission_source(source_snapshot)
+            )
             reference = (
                 self.permission_owner.full_reference(
                     session_key=session_key,
@@ -1356,11 +1369,7 @@ class WebUIWorkspaceController:
             snapshot = backend.source.load_source_snapshot(session_key)
         except Exception:
             return None
-        return {
-            "store_identity": snapshot.state.store_identity,
-            "incarnation": snapshot.state.incarnation,
-            "generation": snapshot.state.generation,
-        }
+        return _snapshot_permission_source(snapshot)
 
     _REQUEST_DEFAULTS_KEY = "webui_request_defaults"
 
@@ -1446,6 +1455,8 @@ class WebUIWorkspaceController:
         sessions = self._sessions
         owner = self.permission_owner
         if sessions is None or owner is None:
+            return
+        if not owner.has_full_retirement(session_key=session_key, source_binding=source):
             return
         from nanobot.webui.session_identity import webui_chat_id
 
@@ -1619,6 +1630,14 @@ class WorkspacePermissionActionError(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+def _snapshot_permission_source(snapshot: SourceSnapshot) -> PermissionSourceBinding:
+    return {
+        "store_identity": snapshot.state.store_identity,
+        "incarnation": snapshot.state.incarnation,
+        "generation": snapshot.state.generation,
+    }
 
 
 def _session_has_active_turn(sessions: SessionManager, key: str, chat_id: str) -> bool:

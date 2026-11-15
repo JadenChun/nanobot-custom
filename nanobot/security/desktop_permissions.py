@@ -1151,6 +1151,16 @@ class DesktopPermissionOwner:
                 retirement.unknown_processes = _count(unknown_processes)
                 self._changed()
 
+    def has_full_retirement(
+        self,
+        *,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+    ) -> bool:
+        source = _source_identity(session_key, source_binding)
+        with self._lock:
+            return source in self._full_retirements
+
     def observe_full_retirement_activity(
         self,
         *,

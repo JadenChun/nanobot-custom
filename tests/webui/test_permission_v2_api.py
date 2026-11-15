@@ -1196,20 +1196,15 @@ async def test_permission_projection_is_attached_only_to_local_owning_thread_rea
         def __init__(self) -> None:
             self.permission_calls: list[tuple[str, bool]] = []
 
-        def get(self, chat_id: str) -> dict[str, object]:
-            return {"chat_id": chat_id, "status": "ready"}
-
-        def workspace_permissions(
+        def thread_permission_context(
             self,
             chat_id: str,
+            _snapshot: object,
             *,
             controls_available: bool,
-        ) -> dict[str, object]:
+        ) -> tuple[dict[str, object], dict[str, object], None]:
             self.permission_calls.append((chat_id, controls_available))
-            return permission_projection
-
-        def preview_permission_context(self, _chat_id: str) -> tuple[None, None]:
-            return None, None
+            return {"chat_id": chat_id, "status": "ready"}, permission_projection, None
 
     recovery = Recovery()
     handler = object.__new__(GatewayHTTPHandler)
@@ -1218,11 +1213,13 @@ async def test_permission_projection_is_attached_only_to_local_owning_thread_rea
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
     handler.session_manager = SimpleNamespace(
-        source_backend=lambda _key: object(),
+        source_backend=lambda _key: SimpleNamespace(
+            source=SimpleNamespace(load_source_snapshot=lambda _session_key: object()),
+        ),
         read_session_file=lambda _key: {"messages": []},
     )
     handler.workspaces = SimpleNamespace(
-        scope_for_session_key=lambda _key: scope,
+        scope_for_session_key=lambda _key, **_kwargs: scope,
         scope_payload=lambda _scope, **_kwargs: {"project_path": "/tmp/project"},
         folder_grants_allowed_for_session=lambda _key: False,
     )
@@ -1332,20 +1329,19 @@ async def test_local_thread_request_permissions_and_scope_share_live_once_author
     )
 
     class Recovery:
-        def get(self, _chat_id: str) -> dict[str, object]:
-            return {"selected_access": selected_access, "task_access_state": "active"}
-
-        def workspace_permissions(
+        def thread_permission_context(
             self,
             _chat_id: str,
+            _snapshot: object,
             *,
             controls_available: bool,
-        ) -> dict[str, object]:
+        ) -> tuple[dict[str, object], dict[str, object], object]:
             assert controls_available
-            return permissions
-
-        def preview_permission_context(self, _chat_id: str) -> tuple[object, object]:
-            return owner, reference
+            return (
+                {"selected_access": selected_access, "task_access_state": "active"},
+                permissions,
+                reference,
+            )
 
     handler = object.__new__(GatewayHTTPHandler)
     handler.stop_target_for_key = None

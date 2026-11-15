@@ -36,6 +36,7 @@ _MAX_TRANSCRIPT_FILE_BYTES = 8 * 1024 * 1024
 _ACTIVE_TRANSCRIPT_ROTATE_BYTES = 2 * 1024 * 1024
 _TARGET_ACTIVE_TRANSCRIPT_BYTES = _ACTIVE_TRANSCRIPT_ROTATE_BYTES // 2
 _TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 3
+_LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = 2
 _TRANSCRIPT_ROTATION_INTENT_VERSION = 1
 _TRANSCRIPT_ROTATION_INTENT_NAME = "rotation.json"
 _TRANSCRIPT_ACTIVE_CHUNK_ID = "active"
@@ -960,7 +961,10 @@ def _read_segment_manifest_state(
         raw_segments = manifest.get("segments") if manifest is not None else None
         if (
             manifest is None
-            or manifest.get("version") != _TRANSCRIPT_SEGMENT_MANIFEST_VERSION
+            or manifest.get("version") not in (
+                _LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION,
+                _TRANSCRIPT_SEGMENT_MANIFEST_VERSION,
+            )
             or not isinstance(raw_segments, list)
         ):
             return _rebuild_segment_manifest(session_key)
@@ -970,6 +974,10 @@ def _read_segment_manifest_state(
             if normalized is None:
                 return _rebuild_segment_manifest(session_key)
             entries.append(normalized)
+        if manifest.get("version") == _LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION:
+            # Version 2 uses the original active filename. The next rotation
+            # writes a version 3 manifest with the committed active filename.
+            return entries, None
         active_name = manifest.get("active")
         if active_name is not None and (
             not isinstance(active_name, str)
@@ -1170,7 +1178,6 @@ def _chunk_turn_refs(
     session_key: str,
     turn_cache: dict[str, list[list[dict[str, Any]]]],
 ) -> list[_TranscriptChunkRef]:
-    _rotate_active_transcript_if_needed(session_key)
     refs: list[_TranscriptChunkRef] = []
     ordinal = 0
     for entry in _read_segment_manifest_entries(session_key):
