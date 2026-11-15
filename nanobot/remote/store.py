@@ -16,7 +16,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -158,6 +158,17 @@ class RemoteAccessStore:
             state = self.load()
             if state is None:
                 state = RemoteAccessState(installation_id=str(uuid.uuid4()))
+                self._save_locked(state)
+                return state
+            dropped = [
+                installation_id
+                for installation_id, device in state.devices.items()
+                if device.revoked
+            ]
+            if dropped:
+                for installation_id in dropped:
+                    state.devices.pop(installation_id, None)
+                state.revision += 1
                 self._save_locked(state)
             return state
 
@@ -350,7 +361,10 @@ class RemoteAccessStore:
             device = state.devices.get(installation_id)
             if device is None:
                 raise StoreError("device is unknown")
-            return self._revoke_device_locked(state, device)
+            state.devices.pop(installation_id, None)
+            state.revision += 1
+            self._save_locked(state)
+            return device
 
     def revoke_pairing_device(self, installation_id: str, pairing_id: str) -> bool:
         with self._locked():
@@ -359,44 +373,26 @@ class RemoteAccessStore:
             proof = state.device_proofs.get(installation_id)
             if device is None or proof is None or proof.pairing_id != pairing_id:
                 return False
-            self._revoke_device_locked(state, device)
+            state.devices.pop(installation_id, None)
+            state.revision += 1
+            self._save_locked(state)
             return True
 
-    def _revoke_device_locked(
-        self, state: RemoteAccessState, device: RemoteDevice
-    ) -> RemoteDevice:
-        if device.revoked:
-            return device
-        updated = replace(device, revoked_at=self.clock())
-        state.devices[device.installation_id] = updated
-        state.revision += 1
-        self._save_locked(state)
-        return updated
-
     def revoke_legacy_bearer_devices(self) -> list[str]:
-        """Revoke every active device that has no device-proof binding.
+        """Remove every legacy device that has no device-proof binding.
 
         This includes legacy owner-scoped bearer devices. The v2 device-key
-        contract is the only supported credential path after cutover.
+        contract is the only supported credential path after cutover, so a
+        revoked installation leaves no record behind to list or recover.
         """
 
         with self._locked():
             state = self._require_state()
             revoked: list[str] = []
-            now = self.clock()
             for installation_id, device in list(state.devices.items()):
                 if device.revoked or installation_id in state.device_proofs:
                     continue
-                state.devices[installation_id] = RemoteDevice(
-                    installation_id=device.installation_id,
-                    label=device.label,
-                    scopes=device.scopes,
-                    created_at=device.created_at,
-                    last_seen_at=device.last_seen_at,
-                    refresh_hash=device.refresh_hash,
-                    revoked_at=now,
-                    refresh_expires_at=device.refresh_expires_at,
-                )
+                state.devices.pop(installation_id, None)
                 revoked.append(installation_id)
             if revoked:
                 state.revision += 1

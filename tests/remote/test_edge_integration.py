@@ -113,7 +113,7 @@ async def test_real_gateway_edge_read_media_attachment_logout(tmp_path: Path) ->
             {"type": "logout"},
         )
         assert logged_out["ok"] is True
-        assert owner.store.get_device("install-edge-1").revoked
+        assert owner.store.get_device("install-edge-1") is None
         denied = await services.endpoint.process_request(
             None,
             WsRequest("/mobile/v1/handshake", headers(pair.access_token)),

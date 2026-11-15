@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from nanobot.remote import tailscale
-from nanobot.remote.auth import AuthUpgradeRequiredError, TokenService
+from nanobot.remote.auth import AuthRejectedError, TokenService
 from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.remote.pairing import (
@@ -109,8 +109,8 @@ def test_startup_revokes_legacy_owner_bearer_and_refresh_is_refused(tmp_path):
     revoked = store.revoke_legacy_bearer_devices()
 
     assert "install-legacy-owner" in revoked
-    assert store.get_device("install-legacy-owner").revoked is True
-    with pytest.raises(AuthUpgradeRequiredError):
+    assert store.get_device("install-legacy-owner") is None
+    with pytest.raises(AuthRejectedError):
         tokens.refresh("install-legacy-owner", pair.refresh_token)
 
 

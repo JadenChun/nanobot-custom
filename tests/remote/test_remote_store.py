@@ -43,7 +43,7 @@ def test_store_defaults_modes_and_round_trip(tmp_path) -> None:
     assert store.validate_refresh("install-0001", "refresh-token-2") is None
     snapshot = store.snapshot()
     assert snapshot["enabled"] is True
-    assert snapshot["devices"][0]["status"] == "revoked"
+    assert snapshot["devices"] == []
     assert "refresh_hash" not in json.dumps(snapshot)
 
 
@@ -150,6 +150,6 @@ def test_owner_device_has_no_idle_expiry_and_legacy_helper_revokes_v1_bearer(tmp
     assert set(store.revoke_legacy_chat_only_devices()) == {"install-owner", "install-legacy"}
     owner_device = store.get_device("install-owner")
     legacy_device = store.get_device("install-legacy")
-    assert owner_device is not None and owner_device.revoked
-    assert legacy_device is not None and legacy_device.revoked
+    assert owner_device is None
+    assert legacy_device is None
     assert store.revoke_legacy_chat_only_devices() == []

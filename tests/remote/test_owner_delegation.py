@@ -299,7 +299,7 @@ def test_device_rename_and_revoke_are_owner_scoped(tmp_path) -> None:
 
     revoked = delegation.revoke_device("install-legacy")
     assert revoked["revoked"] is True
-    assert store.get_device("install-legacy").revoked is True  # type: ignore[union-attr]
+    assert store.get_device("install-legacy") is None
 
     # The owner token remains valid after revoking another device.
     context = delegation.authenticate(owner_token)
@@ -343,7 +343,6 @@ def test_audit_is_bounded_sanitized_and_distinguishes_devices(tmp_path) -> None:
     assert len(snapshot["audit"]) == 500
     assert {device["installation_id"] for device in snapshot["devices"]} == {
         "install-owner",
-        "install-legacy",
     }
     serialized = str(snapshot)
     assert "refresh" not in serialized.lower()

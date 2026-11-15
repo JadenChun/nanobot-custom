@@ -195,7 +195,7 @@ def test_cancel_after_completed_pairing_returns_true_and_revokes_authority(tmp_p
     assert cancel(pairing, challenge) is True
 
     assert_token_invalid(tokens, access_token)
-    assert device_for(store, "install-1").revoked_at is not None
+    assert "install-1" not in store.load().devices
 
 
 def test_cancel_after_completed_pairing_allows_fresh_attempt_for_same_installation(
@@ -260,7 +260,7 @@ def test_cancel_before_proof_issues_no_device(tmp_path):
     assert cancel(pairing, challenge) is True
 
     devices = store.load().devices
-    assert "install-1" not in devices or devices["install-1"].revoked_at is not None
+    assert "install-1" not in devices
 
 
 def test_cancel_before_proof_allows_fresh_attempt_for_same_installation(tmp_path):
@@ -303,7 +303,7 @@ def test_restart_keeps_cancelled_device_revoked(tmp_path):
     restarted_tokens = token_service()(store)
     pairing_service()(store, restarted_tokens)
 
-    assert device_for(store, "install-1").revoked_at is not None
+    assert "install-1" not in store.load().devices
     assert_token_invalid(restarted_tokens, access_token)
 
 

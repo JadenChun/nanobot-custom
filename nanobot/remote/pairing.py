@@ -731,8 +731,10 @@ class PairingService:
         with self._lock:
             state = self.store.load()
             device = state.devices.get(installation_id) if state is not None else None
-            if state is None or not state.enabled or device is None:
+            if state is None or not state.enabled:
                 raise PairingRejectedError("installation is not recoverable")
+            if device is None:
+                raise PairingDeviceRevokedError("installation is not recoverable")
             binding = state.device_proofs.get(installation_id)
             if binding is None or binding.fingerprint != fingerprint:
                 raise PairingRejectedError("device proof is not current")
@@ -780,14 +782,6 @@ class PairingService:
             state = self.store.load()
             if state is None or not state.enabled:
                 raise PairingRejectedError("remote access is disabled")
-            binding = state.device_proofs.get(installation_id)
-            device = state.devices.get(installation_id)
-            if (
-                device is None or binding is None
-                or (binding.fingerprint, binding.generation, binding.origin)
-                != (recovery.fingerprint, recovery.generation, recovery.origin)
-            ):
-                raise PairingRejectedError("device proof is not current")
             try:
                 verify_device_proof(
                     claims,
@@ -804,8 +798,14 @@ class PairingService:
             except DeviceProofError as exc:
                 raise PairingRejectedError(exc.reason) from exc
             recovery.consumed = True
-            if device.revoked:
+            binding = state.device_proofs.get(installation_id)
+            device = state.devices.get(installation_id)
+            if device is None:
                 raise PairingDeviceRevokedError("installation is not recoverable")
+            if binding is None or (
+                binding.fingerprint, binding.generation, binding.origin
+            ) != (recovery.fingerprint, recovery.generation, recovery.origin):
+                raise PairingRejectedError("device proof is not current")
             try:
                 pair = self.tokens.reissue_device(installation_id, expected_proof=binding)
             except AuthRejectedError as exc:

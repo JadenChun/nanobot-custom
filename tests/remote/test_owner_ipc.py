@@ -186,9 +186,7 @@ def test_owner_restart_recovers_durable_state(tmp_path) -> None:
         # The v1 bearer record was durable enough to survive restart, and the
         # startup cutover revoked it before serving refresh authority.
         assert recovered.validate("install-0001", "refresh-token-1")["valid"] is False
-        devices = recovered.list_devices()
-        assert devices[0]["installation_id"] == "install-0001"
-        assert devices[0]["status"] == "revoked"
+        assert recovered.list_devices() == []
     finally:
         restarted.stop()
 

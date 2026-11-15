@@ -251,11 +251,11 @@ class TokenService:
     def revoke(self, installation_id: str) -> bool:
         with self._lock:
             try:
-                device = self.store.revoke_device(installation_id)
+                self.store.revoke_device(installation_id)
             except StoreError as exc:
                 raise AuthRejectedError(str(exc)) from exc
             self._remove_installation_grants(installation_id)
-            return device.revoked
+            return True
 
     def logout(self, access_token: str) -> bool:
         with self._lock:

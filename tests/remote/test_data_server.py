@@ -113,7 +113,7 @@ async def test_data_server_recovery_replay_and_revoke(tmp_path: Path) -> None:
             logout = client.post("/mobile/v1/logout", headers=new_headers, json={})
             assert logout.status_code == 200
             assert client.get("/mobile/v1/handshake", headers=new_headers).status_code == 401
-            assert owner.store.get_device("install-data-1").revoked
+            assert owner.store.get_device("install-data-1") is None
             refused_recovery = client.get(
                 "/mobile/v1/pair/recover",
                 headers=recovery_headers,

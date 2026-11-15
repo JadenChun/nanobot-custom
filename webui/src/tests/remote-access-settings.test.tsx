@@ -125,7 +125,8 @@ describe("RemoteAccessSettings", () => {
       />,
     );
     expect(screen.getByText("No owner phone paired.")).toBeInTheDocument();
-    expect(screen.getByText("Revoked devices (2)")).toBeInTheDocument();
+    expect(screen.queryByText("Revoked devices (2)")).toBeNull();
+    expect(screen.queryByText("Old Phone")).toBeNull();
     expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
   });
 
@@ -144,7 +145,8 @@ describe("RemoteAccessSettings", () => {
       />,
     );
     expect(screen.getByText("Phone")).toBeInTheDocument();
-    expect(screen.getByText("Revoked devices (1)")).toBeInTheDocument();
+    expect(screen.queryByText("Old Phone")).toBeNull();
+    expect(screen.queryByText("Revoked devices (1)")).toBeNull();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
   });
 

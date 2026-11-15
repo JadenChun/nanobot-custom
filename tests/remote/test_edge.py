@@ -699,8 +699,8 @@ async def test_edge_refresh_rejects_legacy_bearer(edge_setup) -> None:
         ("X-Nanobot-Refresh-Token", legacy.refresh_token),
     ]
     response = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
-    assert response is not None and response.status_code == 426
-    assert body(response)["error"] == "upgrade_required"
+    assert response is not None and response.status_code == 401
+    assert body(response)["error"] == "device_revoked"
     missing = await edge.handle(None, request("/mobile/v1/refresh", None))
     assert missing is not None and missing.status_code == 400
 

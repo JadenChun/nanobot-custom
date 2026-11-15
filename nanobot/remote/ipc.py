@@ -532,7 +532,7 @@ class OwnerIPCServer:
                     "ok": False,
                     "error": {"code": "unavailable", "message": str(exc)},
                 }
-            return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": device.revoked}}
+            return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": True}}
         if method == "audit_event":
             if role not in {"gateway", "admin"}:
                 return {"ok": False, "error": {"code": "denied", "message": "role cannot audit"}}
