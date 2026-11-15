@@ -266,16 +266,22 @@ async def acquire_execution(
                 raise SessionWriteConflict()
             if validate_snapshot is not None:
                 validate_snapshot(snapshot)
-            if reconcile_stale:
-                snapshot = SourceSessionStore.reconcile_stale_execution(backend, key, snapshot)
             metadata = snapshot.header["metadata"]
             checkpoint = backend.get_runtime_checkpoint_path(key)
-            recovery_required = (
-                "execution_lease" in metadata
-                or "execution_recovery_required" in metadata
-                or bool(validate_execution_links(snapshot.events))
+            unsettled = (
+                bool(validate_execution_links(snapshot.events))
                 or checkpoint.exists()
                 or checkpoint.is_symlink()
+            )
+            if reconcile_stale and not unsettled:
+                # The lock excludes other owners. Only settled history permits
+                # acquisition to replace a stale lease and clear its fence.
+                metadata.pop("execution_lease", None)
+                metadata.pop("execution_recovery_required", None)
+            recovery_required = (
+                unsettled
+                or "execution_lease" in metadata
+                or "execution_recovery_required" in metadata
             )
             token = uuid.uuid4().hex
             committed = SourceSessionStore.publish_execution_lease(

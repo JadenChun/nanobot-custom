@@ -1,16 +1,27 @@
 """Real canonical source turns with temporary state and synthetic providers."""
 
+import asyncio
 from unittest.mock import Mock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import ApprovalDecision, HistoryMode, TraceMode, TurnRequest
+from nanobot.agent.turn import (
+    ApprovalDecision,
+    DeliveryTarget,
+    HistoryMode,
+    TraceMode,
+    TurnRequest,
+    TurnSource,
+)
 from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.source import validate_execution_links
+from nanobot.session.execution_owner import acquire_execution
+from nanobot.session.source import new_source_event, validate_execution_links
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
+from tests.session.test_execution_auto_recovery import fence
 
 engine_config = engine_fixtures.engine_config
 
@@ -66,6 +77,154 @@ async def test_canonical_source_turn_persists_each_event_once(engine_config, mon
         assert '_source_origin' not in str(provider.calls[-1][0])
         assert len(provider.calls) == 2
         assert [e['role'] for e in result.messages] == ['user', 'assistant', 'tool', 'assistant']
+    finally:
+        await loop.aclose()
+
+
+async def test_identical_media_sends_publish_once_per_turn(engine_config):
+    attachment = engine_config.workspace_path / "example.png"
+    attachment.write_bytes(b"fixture media")
+    repeated = {"content": "Edited images", "media": [str(attachment)]}
+    distinct = {**repeated, "content": "A distinct reply"}
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="first", name="message", arguments=repeated),
+            ToolCallRequest(id="same", name="message", arguments=repeated),
+        ]),
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="distinct", name="message", arguments=distinct),
+        ]),
+        LLMResponse(content=distinct["content"]),
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="later", name="message", arguments=repeated),
+        ]),
+        LLMResponse(content=repeated["content"]),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "websocket:media"
+    route = DeliveryTarget(channel="websocket", chat_id="media")
+    upgrade(loop, key)
+    sent = []
+
+    async def capture(message):
+        await asyncio.sleep(0)
+        sent.append((message.content, message.media))
+
+    tool = loop.tools.get("message")
+    assert isinstance(tool, MessageTool)
+    tool.set_send_callback(capture)
+    try:
+        first = await loop.execute_turn(TurnRequest(content="Send the edited image", session_key=key, route=route))
+        assert first.error is None and first.outbound is None
+        assert sent == [(repeated["content"], [str(attachment)]), (distinct["content"], [str(attachment)])]
+
+        later = await loop.execute_turn(TurnRequest(content="Send the same edit again", session_key=key, route=route))
+        assert later.error is None and later.outbound is None
+        assert sent[2:] == [(repeated["content"], [str(attachment)])]
+    finally:
+        await loop.aclose()
+
+
+@pytest.mark.parametrize("completion", ["The edit is complete.", "Edited images", None])
+async def test_empty_stop_after_media_reply_finalizes_without_tools(engine_config, completion):
+    attachment = engine_config.workspace_path / "example.png"
+    attachment.write_bytes(b"fixture media")
+    send = ToolCallRequest(
+        id="send", name="message", arguments={"content": "Edited images", "media": [str(attachment)]},
+    )
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[send]),
+        LLMResponse(content=None, finish_reason="stop"),
+        LLMResponse(content=completion, finish_reason="stop"),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "websocket:media"
+    upgrade(loop, key)
+    sent = []
+
+    async def capture(message):
+        sent.append(message)
+
+    tool = loop.tools.get("message")
+    assert isinstance(tool, MessageTool)
+    tool.set_send_callback(capture)
+    try:
+        result = await loop.execute_turn(TurnRequest(
+            content="Send the edited image", session_key=key,
+            route=DeliveryTarget(channel="websocket", chat_id="media"),
+        ))
+
+        assert result.error is None and result.stop_reason == "completed"
+        assert len(sent) == 1 and sent[0].media == [str(attachment)]
+        assert len(provider.calls) == 3 and not provider.calls[-1][1]
+        if completion == "The edit is complete.":
+            assert result.outbound is not None and result.outbound.content == completion
+        else:
+            assert result.outbound is None
+    finally:
+        await loop.aclose()
+
+
+async def test_ephemeral_run_preserves_stale_fence_and_persistent_run_recovers(engine_config):
+    provider = ScriptedProvider([LLMResponse(content="Done"), LLMResponse(content="Resumed")])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "sdk:source"
+    backend = upgrade(loop, key)
+    fence(backend, key, lease=True)
+    before = backend.source.load_source_snapshot(key)
+    try:
+        await loop.process_direct_result("Inspect", session_key=key, source=TurnSource.SDK, ephemeral=True)
+        after = backend.source.load_source_snapshot(key)
+        assert after.header == before.header
+        assert after.events == before.events
+
+        resumed = await loop.execute_turn(TurnRequest(content="Resume", session_key=key))
+        assert resumed.error is None and resumed.content == "Resumed"
+    finally:
+        await loop.aclose()
+
+
+@pytest.mark.parametrize("has_uncertain_result", [False, True])
+async def test_unsettled_write_blocks_normal_turn_and_allows_explicit_reset(
+    engine_config, has_uncertain_result,
+):
+    provider = ScriptedProvider([LLMResponse(content="Ready")])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    key = "cli:source"
+    backend = upgrade(loop, key)
+    call = ToolCallRequest(id="write", name="write_file", arguments={"path": "sample.txt"})
+    intent = new_source_event(
+        {"role": "assistant", "content": None, "tool_calls": [call.to_openai_tool_call()]},
+        run_id="interrupted",
+    )
+    intent["_execution_ids"] = ["write-intent"]
+    events = [intent]
+    if has_uncertain_result:
+        outcome = new_source_event({
+            "role": "tool", "tool_call_id": "write", "name": "write_file",
+            "content": "Write outcome is unknown.", "_dispatched": True, "_outcome_status": "error",
+        }, run_id="interrupted")
+        outcome["_execution_id"] = "write-intent"
+        events.append(outcome)
+    try:
+        async with acquire_execution(backend, key, run_id="interrupted") as owner:
+            backend.source.append_source_events(key, owner.read_snapshot().state, events, owner=owner)
+        interrupted = backend.source.load_source_snapshot(key)
+
+        refused = await loop.execute_turn(TurnRequest(content="Keep working", session_key=key))
+        assert refused.error == "Source session requires recovery before execution"
+        assert not provider.calls
+        assert backend.source.load_source_snapshot(key).events == interrupted.events
+
+        reset = await loop.execute_turn(TurnRequest(content="/new", session_key=key))
+        assert reset.error is None
+        after = backend.source.load_source_snapshot(key)
+        assert after.state.generation == interrupted.state.generation + 1
+        assert not after.events
+        assert not (engine_config.workspace_path / "sample.txt").exists()
+
+        next_turn = await loop.execute_turn(TurnRequest(content="Start again", session_key=key))
+        assert next_turn.error is None and next_turn.content == "Ready"
     finally:
         await loop.aclose()
 

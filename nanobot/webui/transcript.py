@@ -2634,7 +2634,8 @@ def replay_transcript_to_ui_messages(
     messages: list[dict[str, Any]] = []
     buffer_message_id: str | None = None
     buffer_parts: list[str] = []
-    suppress_until_turn_end = False
+    media_reply_texts: set[tuple[str | None, str]] = set()
+    deferred_answers: dict[str, list[str]] = {}
     active_activity_segment_id: str | None = None
     active_file_edit_segment_id: str | None = None
     activity_segment_counter = 0
@@ -3226,10 +3227,13 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "delta":
-            if suppress_until_turn_end:
-                continue
             chunk = rec.get("text")
             if not isinstance(chunk, str):
+                continue
+            if media_reply_texts:
+                turn_id = _turn_fields(rec, "answer").get("turnId")
+                if isinstance(turn_id, str):
+                    deferred_answers.setdefault(turn_id, []).append(chunk)
                 continue
             close_activity_for_answer()
             turn_fields = _turn_fields(rec, "answer")
@@ -3266,13 +3270,24 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "stream_end":
-            if suppress_until_turn_end:
+            final_text = rec.get("text")
+            turn_fields = _turn_fields(rec, "answer")
+            merge_next = rec.get("resuming") is True and rec.get("merge_next") is True
+            turn_id = turn_fields.get("turnId")
+            if media_reply_texts and isinstance(turn_id, str):
+                deferred = deferred_answers.pop(turn_id, [])
+                if not isinstance(final_text, str):
+                    final_text = "".join(deferred)
+                if merge_next:
+                    deferred_answers[turn_id] = [final_text]
+            if media_reply_texts and (
+                not isinstance(final_text, str)
+                or not final_text.strip()
+                or (turn_fields.get("turnId"), final_text.strip()) in media_reply_texts
+            ):
                 buffer_message_id = None
                 buffer_parts = []
                 continue
-            merge_next = rec.get("resuming") is True and rec.get("merge_next") is True
-            final_text = rec.get("text")
-            turn_fields = _turn_fields(rec, "answer")
             source_fields = _source_fields(rec)
             if isinstance(final_text, str):
                 if buffer_message_id is None:
@@ -3313,7 +3328,7 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "reasoning_delta":
-            if suppress_until_turn_end:
+            if media_reply_texts:
                 continue
             chunk = rec.get("text")
             if not isinstance(chunk, str) or not chunk:
@@ -3329,7 +3344,7 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "reasoning_end":
-            if suppress_until_turn_end:
+            if media_reply_texts:
                 continue
             text = rec.get("text")
             if isinstance(text, str) and text:
@@ -3387,7 +3402,7 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "message":
-            if suppress_until_turn_end and rec.get("kind") in (
+            if media_reply_texts and rec.get("kind") in (
                 "tool_hint",
                 "progress",
                 "reasoning",
@@ -3491,12 +3506,16 @@ def replay_transcript_to_ui_messages(
             extra.update(_turn_fields(rec, "answer"))
             extra.update(_source_fields(rec))
             absorb_complete(extra, idx, _created_at_ms(rec, idx))
+            turn_id = extra.get("turnId")
+            if isinstance(turn_id, str):
+                deferred_answers.pop(turn_id, None)
             if media:
-                suppress_until_turn_end = True
+                media_reply_texts.add((turn_id, content_s.strip()))
             continue
 
         if ev == "turn_end":
-            suppress_until_turn_end = False
+            media_reply_texts.clear()
+            deferred_answers.clear()
             active_activity_segment_id = None
             active_file_edit_segment_id = None
             turn_id = rec.get("turn_id")

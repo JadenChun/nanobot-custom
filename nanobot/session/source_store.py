@@ -47,7 +47,6 @@ from nanobot.session.source import (
     SourceValidationError,
     canonical_events,
     merge_source_events,
-    new_source_event,
     validate_event_ids,
     validate_execution_links,
 )
@@ -434,113 +433,6 @@ class SourceSessionStore:
             raise SourceValidationError('Invalid configured artifact store binding')
         self._artifact_store = artifact_store
         self._store_identity = hashlib.sha256(str(backend.sessions_dir.resolve()).encode()).hexdigest()
-
-    @staticmethod
-    def reconcile_stale_execution(
-        backend: JsonlSessionStore,
-        key: str,
-        snapshot: SourceSnapshot,
-    ) -> SourceSnapshot:
-        """Clear a stale execution fence and close interrupted calls in place.
-
-        A prior process can stop without releasing its lease, or persist a call
-        without its result. Neither condition has a live owner once the caller
-        holds the OS lock, so acquisition records the interrupted outcome and
-        removes the fence instead of blocking the next turn. No tool is replayed.
-        """
-        metadata = snapshot.header["metadata"]
-        unresolved = validate_execution_links(snapshot.events)
-        fenced = (
-            "execution_lease" in metadata
-            or "execution_recovery_required" in metadata
-        )
-        if not fenced and not unresolved:
-            return snapshot
-        checkpoint = backend.get_runtime_checkpoint_path(key)
-        if checkpoint.exists() or checkpoint.is_symlink():
-            # A legacy checkpoint carries its own pending calls. Leave it to the
-            # legacy recovery path rather than guessing at an effect boundary.
-            return snapshot
-        events = list(snapshot.events)
-        if unresolved:
-            if not SourceSessionStore._unresolved_calls_are_tail(snapshot.events, unresolved):
-                # A result appended far from its call would break provider tool
-                # ordering. Leave a structural anomaly to explicit recovery.
-                return snapshot
-            events.extend(
-                SourceSessionStore._interrupted_tool_results(snapshot.events, unresolved)
-            )
-        header = deepcopy(snapshot.header)
-        header["metadata"].pop("execution_lease", None)
-        header["metadata"].pop("execution_recovery_required", None)
-        header["revision"] += 1
-        return backend.source._write(header, events)
-
-    @staticmethod
-    def _unresolved_calls_are_tail(
-        events: list[dict[str, object]],
-        unresolved: frozenset[str],
-    ) -> bool:
-        """Require unresolved calls to sit in the newest tool-call message."""
-        call_index: int | None = None
-        for index, event in enumerate(events):
-            if event.get("role") == "assistant" and event.get("tool_calls"):
-                call_index = index
-        if call_index is None:
-            return False
-        identities = events[call_index].get("_execution_ids")
-        if not isinstance(identities, list) or not unresolved.issubset(set(identities)):
-            return False
-        return all(event.get("role") == "tool" for event in events[call_index + 1:])
-
-    _INTERRUPTED_TOOL_RESULT = (
-        "Error: Task interrupted before this tool finished. "
-        "Verify the actual state before retrying. For a ComfyUI generation or "
-        "edit, call comfy_status(include_images=true) to collect the saved batch."
-    )
-
-    @staticmethod
-    def _interrupted_tool_results(
-        events: list[dict[str, object]],
-        unresolved: frozenset[str],
-    ) -> list[dict[str, object]]:
-        calls: dict[str, tuple[object, str, object]] = {}
-        for event in events:
-            if event.get("role") != "assistant":
-                continue
-            identities = event.get("_execution_ids")
-            tool_calls = event.get("tool_calls")
-            if not isinstance(identities, list) or not isinstance(tool_calls, list):
-                continue
-            for identity, call in zip(identities, tool_calls):
-                if identity not in unresolved or not isinstance(call, dict):
-                    continue
-                function = call.get("function")
-                name = function.get("name") if isinstance(function, dict) else None
-                calls[cast(str, identity)] = (
-                    call.get("id"),
-                    name if isinstance(name, str) and name else "tool",
-                    event.get("_run_id"),
-                )
-        results: list[dict[str, object]] = []
-        for identity in sorted(unresolved):
-            call = calls.get(identity)
-            if call is None:
-                continue
-            provider_id, name, run_id = call
-            result = new_source_event(
-                {
-                    "role": "tool",
-                    "tool_call_id": provider_id,
-                    "name": name,
-                    "content": SourceSessionStore._INTERRUPTED_TOOL_RESULT,
-                    "_recovery_interrupted": True,
-                },
-                run_id=run_id if isinstance(run_id, str) and run_id else "execution-recovery",
-            )
-            result["_execution_id"] = identity
-            results.append(result)
-        return results
 
     @staticmethod
     def publish_execution_lease(

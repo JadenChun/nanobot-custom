@@ -4952,33 +4952,6 @@ class AgentLoop:
             raise SourceOriginMismatchError()
         return existing
 
-    async def _reconcile_interactive_source(self, key: str) -> None:
-        """Close a stale execution fence before an interactive turn.
-
-        A crashed process can leave a lease, a recovery marker, or a tool call
-        without its result. Reconcile them in place so the next user message
-        runs; no tool is replayed. Cron and heartbeat turns keep the strict fence.
-        """
-        backend = self.sessions.source_backend(key)
-        if backend is None:
-            return
-        snapshot = backend.source.load_source_snapshot(key)
-        metadata = snapshot.header["metadata"]
-        if (
-            "execution_recovery_required" not in metadata
-            and "execution_lease" not in metadata
-            and not validate_execution_links(snapshot.events)
-        ):
-            return
-        async with acquire_execution(
-            backend,
-            key,
-            run_id=f"interactive-recovery:{uuid.uuid4().hex}",
-            reconcile_stale=True,
-        ):
-            pass
-        self.sessions.invalidate(key)
-
     @asynccontextmanager
     async def _acquire_source_execution_owner(
         self,
@@ -4989,13 +4962,25 @@ class AgentLoop:
         workspace_access_continuation: WorkspaceAccessContinuationReference | None,
         workspace_full_reference: WorkspaceFullAccessReference | None,
         expected_source_state: SourceState | None = None,
+        expected_source_token: str | None = None,
+        reconcile_stale: bool = False,
     ) -> AsyncGenerator[ExecutionOwner]:
         """Classify only a provable stale continuation binding as a rejection."""
         from nanobot.session.manager import SessionWriteConflict
 
         def validate_origin(snapshot: SourceSnapshot) -> None:
-            if expected_source_state is not None and not snapshot.state.same_origin(expected_source_state):
+            state = snapshot.state
+            if expected_source_state is not None and not state.same_origin(expected_source_state):
                 raise SourceOriginMismatchError()
+            if expected_source_token:
+                from nanobot.security.desktop_permissions import permission_source_token
+
+                if permission_source_token({
+                    "store_identity": state.store_identity,
+                    "incarnation": state.incarnation,
+                    "generation": state.generation,
+                }) != expected_source_token:
+                    raise WorkspaceScopeError("source_changed", status=409)
 
         owner_published = False
         try:
@@ -5011,6 +4996,7 @@ class AgentLoop:
                     else None
                 ),
                 validate_snapshot=validate_origin,
+                reconcile_stale=reconcile_stale,
             ) as owner:
                 owner_published = True
                 yield owner
@@ -5168,11 +5154,6 @@ class AgentLoop:
             context.workspace_full_reference = workspace_full_reference
             yield
             return
-        if (
-            context.request is not None
-            and context.request.source not in (TurnSource.CRON, TurnSource.HEARTBEAT)
-        ):
-            await self._reconcile_interactive_source(key)
         if not persistent:
             if self.sessions.has_managed_authority:
                 resolved = self.sessions.resolve_session_mode(key)
@@ -5223,6 +5204,15 @@ class AgentLoop:
                 admitted()
             yield
             return
+        from nanobot.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
+
+        request = context.request
+        source_token = request.metadata.get(WEBUI_SOURCE_TOKEN_METADATA_KEY) if request else None
+        reset = (
+            request is not None
+            and request.source not in (TurnSource.CRON, TurnSource.HEARTBEAT)
+            and request.content.strip().lower() == "/new"
+        )
         async with self._source_root_binding_scope(key), self._acquire_source_execution_owner(
             backend,
             key,
@@ -5230,29 +5220,19 @@ class AgentLoop:
             workspace_access_continuation=workspace_access_continuation,
             workspace_full_reference=workspace_full_reference,
             expected_source_state=expected_source_state,
+            expected_source_token=source_token if isinstance(source_token, str) else None,
+            reconcile_stale=(
+                request is not None
+                and request.source in {TurnSource.DIRECT, TurnSource.GATEWAY, TurnSource.SDK, TurnSource.API}
+                and not reset
+                and workspace_access_continuation is None
+                and workspace_full_reference is None
+            ),
         ) as owner:
             # Recovery may only enter the explicit reset route. Never consume an
             # approval or request a model while uncertain effects remain.
-            reset = (context.request is not None and context.request.source not in (TurnSource.CRON, TurnSource.HEARTBEAT)
-                     and context.request.content.strip().lower() == "/new")
             if owner.recovery_required and not reset:
                 raise RuntimeError("Source session requires recovery before execution")
-            if context.request is not None:
-                from nanobot.security.desktop_permissions import permission_source_token
-                from nanobot.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
-
-                expected_source_token = context.request.metadata.get(
-                    WEBUI_SOURCE_TOKEN_METADATA_KEY,
-                )
-                if isinstance(expected_source_token, str) and expected_source_token:
-                    state = owner.read_snapshot().state
-                    current_source_token = permission_source_token({
-                        "store_identity": state.store_identity,
-                        "incarnation": state.incarnation,
-                        "generation": state.generation,
-                    })
-                    if current_source_token != expected_source_token:
-                        raise WorkspaceScopeError("source_changed", status=409)
             if workspace_full_reference is not None:
                 state = owner.read_snapshot().state
                 source_binding: PermissionSourceBinding = {
@@ -6879,9 +6859,10 @@ class AgentLoop:
                            (ctx.delivery.route.channel, ctx.delivery.route.chat_id) in message_sends)
         if ctx.kind is TurnKind.USER and ctx.run_context is not None:
             final_text = (result.final_content or "").strip()
-            sent_to_primary = bool(final_text) and any(
+            sent_to_primary = any(
                 (message.channel, message.chat_id) == (ctx.delivery.route.channel, ctx.delivery.route.chat_id)
                 and isinstance(cast(object, message.content), str) and message.content.strip() == final_text
+                and (bool(final_text) or (bool(message.media) and result.stop_reason == "completed"))
                 for message in ctx.sent_messages
             )
         if (

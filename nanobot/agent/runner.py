@@ -1408,13 +1408,23 @@ class AgentRunner:
                 response.provider_state = None
 
             clean = hook.finalize_content(context, response.content)
+            delivered_reply = None
             if (
                 response.finish_reason
                 not in {"error", "length", "refusal", "content_filter"}
                 and is_blank_text(clean)
             ):
+                if spec.turn_context is not None and not had_injections:
+                    delivery = spec.turn_context.delivery
+                    target = delivery.primary or delivery.target
+                    if target is not None:
+                        delivered_reply = next((
+                            message for message in reversed(delivery.sent_messages)
+                            if message.media and (message.channel, message.chat_id)
+                            == (target.channel, target.chat_id)
+                        ), None)
                 empty_content_retries += 1
-                if empty_content_retries < _MAX_EMPTY_RETRIES:
+                if delivered_reply is None and empty_content_retries < _MAX_EMPTY_RETRIES:
                     logger.warning(
                         "Empty response on turn {} for {} ({}/{}); retrying",
                         iteration,
@@ -1427,10 +1437,9 @@ class AgentRunner:
                     await hook.after_iteration(context)
                     continue
                 logger.warning(
-                    "Empty response on turn {} for {} after {} retries; attempting finalization",
+                    "Empty response on turn {} for {}. Requesting final text without tools.",
                     iteration,
                     spec.session_key or "default",
-                    empty_content_retries,
                 )
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=False)
@@ -1456,7 +1465,7 @@ class AgentRunner:
                 original_content = response.content
                 clean = hook.finalize_content(context, response.content)
 
-            if response.finish_reason == "length":
+            if response.finish_reason == "length" and delivered_reply is None:
                 if len(length_recovery_parts) < _MAX_LENGTH_RECOVERIES:
                     length_recovery_parts.append(
                         _restore_outer_whitespace(clean or "", original_content)
@@ -1570,6 +1579,14 @@ class AgentRunner:
                 failure_error_kind = LLMProvider.public_error_kind(response)
                 break
             if is_blank_text(clean):
+                if delivered_reply is not None and response.finish_reason not in {
+                    "refusal", "content_filter",
+                }:
+                    final_content = delivered_reply.content
+                    context.final_content = final_content
+                    context.stop_reason = stop_reason = "completed"
+                    await hook.after_iteration(context)
+                    break
                 final_content = EMPTY_FINAL_RESPONSE_MESSAGE
                 stop_reason = "empty_final_response"
                 error = final_content

@@ -41,20 +41,6 @@ def add_unresolved_call(backend, key, *, tool="mcp_comfy_generate_image"):
 
 async def test_settled_fence_recovers_at_acquisition(backend):
     original = seed(backend)
-    fence(backend, original.state.session_key)
-
-    async with acquire_execution(backend, original.state.session_key, run_id="next", reconcile_stale=True) as owner:
-        assert owner.recovery_required is False
-        owner.validate_dispatch()
-
-    snapshot = backend.source.load_source_snapshot(original.state.session_key)
-    assert "execution_lease" not in snapshot.header["metadata"]
-    assert "execution_recovery_required" not in snapshot.header["metadata"]
-
-
-async def test_interrupted_comfy_call_is_recorded_and_does_not_block(backend):
-    original = seed(backend)
-    add_unresolved_call(backend, original.state.session_key)
     fence(backend, original.state.session_key, lease=True)
 
     async with acquire_execution(backend, original.state.session_key, run_id="next", reconcile_stale=True) as owner:
@@ -62,13 +48,25 @@ async def test_interrupted_comfy_call_is_recorded_and_does_not_block(backend):
         owner.validate_dispatch()
 
     snapshot = backend.source.load_source_snapshot(original.state.session_key)
-    assert "execution_recovery_required" not in snapshot.header["metadata"]
     assert "execution_lease" not in snapshot.header["metadata"]
-    results = [event for event in snapshot.events if event.get("role") == "tool"]
-    assert len(results) == 1
-    assert results[0]["_execution_id"] == "exec-comfy"
-    assert results[0]["tool_call_id"] == "call-comfy"
-    assert "comfy_status(include_images=true)" in results[0]["content"]
+    assert "execution_recovery_required" not in snapshot.header["metadata"]
+
+
+async def test_interrupted_tool_call_stays_fenced_without_a_result(backend):
+    original = seed(backend)
+    add_unresolved_call(backend, original.state.session_key)
+    fence(backend, original.state.session_key, lease=True)
+    interrupted = backend.source.load_source_snapshot(original.state.session_key)
+
+    async with acquire_execution(backend, original.state.session_key, run_id="next", reconcile_stale=True) as owner:
+        assert owner.recovery_required is True
+        with pytest.raises(ExecutionOwnershipError):
+            owner.validate_dispatch()
+
+    snapshot = backend.source.load_source_snapshot(original.state.session_key)
+    assert snapshot.header["metadata"]["execution_recovery_required"] is True
+    assert "execution_lease" not in snapshot.header["metadata"]
+    assert snapshot.events == interrupted.events
 
 
 async def test_structural_unresolved_call_keeps_the_fence(backend):

@@ -1,6 +1,7 @@
 """Recent images are a detached model view, not edits to conversation history."""
 
 import asyncio
+from base64 import b64decode
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -51,17 +52,19 @@ def image_urls(messages):
     return [block["image_url"]["url"] for block in images(messages)]
 
 
-async def saved_tool_image_batch(tmp_path):
+async def saved_tool_image_batch(tmp_path, *, payloads=None):
     from nanobot.agent.tools.filesystem import ReadFileTool
 
     reader = ReadFileTool(workspace=tmp_path, restrict_to_workspace=True)
+    if payloads is None:
+        payloads = [b"\x89PNG\r\n\x1a\n" + bytes([index]) + b"candidate" for index in range(4)]
     calls = [
         ToolCallRequest(
             id=f"read-{index}",
             name="read_file",
             arguments={"path": f"candidate-{index}.png"},
         )
-        for index in range(4)
+        for index in range(len(payloads))
     ]
     messages = [{
         "role": "assistant",
@@ -69,8 +72,7 @@ async def saved_tool_image_batch(tmp_path):
         "tool_calls": [call.to_openai_tool_call() for call in calls],
     }]
     urls = []
-    for index, call in enumerate(calls):
-        payload = b"\x89PNG\r\n\x1a\n" + bytes([index]) + b"candidate"
+    for index, (call, payload) in enumerate(zip(calls, payloads, strict=True)):
         (tmp_path / f"candidate-{index}.png").write_bytes(payload)
         result = await reader.execute(path=f"candidate-{index}.png")
         assert isinstance(result, list)
@@ -370,6 +372,21 @@ async def test_local_provider_preview_dispatch_and_later_read_share_image_projec
     )
     assert image_urls(cloud_requests[0]["messages"]) == expected_urls
     assert messages == original
+
+
+async def test_local_provider_can_review_three_small_images_together(tmp_path):
+    png = b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/wEAAAAASUVORK5CYII="
+    )
+    _reader, messages, _calls, expected_urls = await saved_tool_image_batch(
+        tmp_path, payloads=[png, png, png],
+    )
+    local, requests = _capturing_local_provider("http://127.0.0.1:11434/v1")
+    response = await local.chat_with_retry(messages=messages, model="fixture-model", max_tokens=128)
+
+    assert response.content == "ok"
+    assert image_urls(requests[0]["messages"]) == expected_urls
+    assert len(expected_urls) == 3
 
 
 async def test_local_fallback_leaf_applies_tool_image_cap(tmp_path):

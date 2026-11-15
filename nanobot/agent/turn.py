@@ -9,6 +9,7 @@ being migrated.
 from __future__ import annotations
 
 import re
+from asyncio import Lock
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.agent.tools.registry import CapturedToolBindings
     from nanobot.agent.turn_admission import EffectApprovalAuthority
+    from nanobot.bus.events import OutboundMessage
     from nanobot.providers.base import LLMUsage
     from nanobot.security.desktop_permissions import (
         WorkspaceFullAccessReference,
@@ -506,13 +508,14 @@ class DeliveryState:
     """Mutable delivery bookkeeping for a turn."""
 
     primary: DeliveryTarget | None = None
-    sent_messages: list[Any] = field(default_factory=list)
+    sent_messages: list[OutboundMessage] = field(default_factory=list)
     target: DeliveryTarget | None = None
     delivered: bool = False
     progress_sent: bool = False
     streaming: bool = False
     message_id: str | None = None
     last_error: str | None = None
+    message_send_lock: Lock = field(default_factory=Lock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.primary is None:

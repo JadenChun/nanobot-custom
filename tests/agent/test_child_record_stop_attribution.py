@@ -6,8 +6,6 @@ an unrelated chat keeps a real Stop target.
 """
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from nanobot.agent.child_sessions import DELEGATION_CHILD_METADATA_KEY
@@ -19,7 +17,8 @@ from tests.agent.test_delegation_child_sessions import (
 
 
 @pytest.mark.asyncio
-async def test_malformed_child_fences_only_its_own_root(tmp_path) -> None:
+@pytest.mark.parametrize("non_string_state", [False, True])
+async def test_malformed_child_fences_only_its_own_root(tmp_path, non_string_state) -> None:
     sessions, tree = _new_tree(tmp_path)
     parent = _new_parent(sessions)
     child = await _reserve(
@@ -32,9 +31,12 @@ async def test_malformed_child_fences_only_its_own_root(tmp_path) -> None:
     sessions.save(unrelated)
 
     corrupted = child.metadata()
-    corrupted["source_state"] = None
-    corrupted["parent_source_state"] = None
-    corrupted["root_source_state"] = None
+    if non_string_state:
+        corrupted["state"] = []
+    else:
+        corrupted["source_state"] = None
+        corrupted["parent_source_state"] = None
+        corrupted["root_source_state"] = None
     assert sessions.upsert_session_metadata(
         child.session_key,
         {DELEGATION_CHILD_METADATA_KEY: corrupted},

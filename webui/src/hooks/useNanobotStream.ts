@@ -360,7 +360,8 @@ export function useNanobotStream(
   const streamFrameRef = useRef<number | null>(null);
   const streamTimerRef = useRef<number | null>(null);
   const lastStreamFlushAtRef = useRef(Number.NEGATIVE_INFINITY);
-  const suppressStreamUntilTurnEndRef = useRef(false);
+  const mediaReplyTextsRef = useRef(new Map<string | undefined, Set<string>>());
+  const deferredAnswersRef = useRef(new Map<string, string>());
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
   const liveStopTargetSeenRef = useRef(false);
   const stopTargetRef = useRef(stopTarget);
@@ -475,6 +476,7 @@ export function useNanobotStream(
       streamTimerRef.current = null;
     }
     pendingStreamEventsRef.current = [];
+    deferredAnswersRef.current.clear();
     lastStreamFlushAtRef.current = Number.NEGATIVE_INFINITY;
   }, []);
 
@@ -528,6 +530,7 @@ export function useNanobotStream(
     if (!err.turnId) return;
 
     const rejectedTurnId = err.turnId;
+    deferredAnswersRef.current.delete(rejectedTurnId);
     pendingStreamEventsRef.current = pendingStreamEventsRef.current.filter(
       (event) => event.turn.turnId !== rejectedTurnId,
     );
@@ -581,7 +584,7 @@ export function useNanobotStream(
     );
     setRunStartedAt(remainingStartedAt);
     setIsStreaming(hasRemainingRun);
-    if (!hasRemainingRun) suppressStreamUntilTurnEndRef.current = false;
+    if (!hasRemainingRun) mediaReplyTextsRef.current.clear();
   }, [chatId, client]);
 
   useEffect(() => client.onError(applyStreamError), [applyStreamError, client]);
@@ -873,7 +876,7 @@ export function useNanobotStream(
     clearActivitySegment();
     clearPendingStreamWork();
     sideChannelTurnIdsRef.current.clear();
-    suppressStreamUntilTurnEndRef.current = false;
+    mediaReplyTextsRef.current.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, client, clearActivitySegment, clearPendingStreamWork]);
 
@@ -1078,9 +1081,17 @@ export function useNanobotStream(
         || ev.event === "stream_end"
       ) setRetryStatus(null);
       if (ev.event === "delta") {
-        if (suppressStreamUntilTurnEndRef.current) return;
         const chunk = typeof ev.text === "string" ? ev.text : "";
         if (!chunk) return;
+        if (mediaReplyTextsRef.current.size > 0) {
+          // Hold correlated text until the stream ends so a repeated caption stays hidden.
+          const turnId = eventTurnId(ev);
+          if (turnId) {
+            const deferred = deferredAnswersRef.current;
+            deferred.set(turnId, (deferred.get(turnId) ?? "") + chunk);
+          }
+          return;
+        }
         clearActivitySegment();
         setIsStreaming(true);
         pendingStreamEventsRef.current.push({
@@ -1094,7 +1105,7 @@ export function useNanobotStream(
       }
 
       if (ev.event === "reasoning_delta") {
-        if (suppressStreamUntilTurnEndRef.current) return;
+        if (mediaReplyTextsRef.current.size > 0) return;
         const chunk = ev.text;
         if (!chunk) return;
         if (fileEditSegmentRef.current) clearActivitySegment();
@@ -1110,14 +1121,26 @@ export function useNanobotStream(
 
       if (ev.event === "stream_end") {
         const turn = turnFieldsFromEvent(ev, "answer");
+        const mediaReplyTexts = mediaReplyTextsRef.current;
         const mergeNext = ev.resuming === true && ev.merge_next === true;
+        const deferred = deferredAnswersRef.current;
+        let finalAnswerText = typeof ev.text === "string" ? ev.text : undefined;
+        if (mediaReplyTexts.size > 0 && turn.turnId) {
+          finalAnswerText ??= deferred.get(turn.turnId);
+          deferred.delete(turn.turnId);
+          if (mergeNext && finalAnswerText) deferred.set(turn.turnId, finalAnswerText);
+        }
+        const finalText = finalAnswerText?.trim();
+        if (mediaReplyTexts.size > 0 && (
+          !finalText || mediaReplyTexts.get(turn.turnId)?.has(finalText)
+        )) return;
         flushPendingStreamEvents({
           closeAnswerSegment: !mergeNext,
-          ...(typeof ev.text === "string" ? { finalAnswerText: ev.text } : {}),
+          ...(finalAnswerText !== undefined ? { finalAnswerText } : {}),
           turn,
           source: ev.source,
         });
-        if (suppressStreamUntilTurnEndRef.current) return;
+        if (mediaReplyTexts.size > 0) return;
         if (ev.resuming) {
           setIsStreaming(true);
           return;
@@ -1138,7 +1161,7 @@ export function useNanobotStream(
       flushPendingStreamEvents({ closeAnswerSegment: shouldCloseAnswerBeforeEvent });
 
       if (ev.event === "reasoning_end") {
-        if (suppressStreamUntilTurnEndRef.current) return;
+        if (mediaReplyTextsRef.current.size > 0) return;
         setMessages((prev) => closeReasoningStream(prev, Date.now()));
         return;
       }
@@ -1291,7 +1314,8 @@ export function useNanobotStream(
           closedAssistantStreamIdsRef.current.clear();
           return finalized;
         });
-        suppressStreamUntilTurnEndRef.current = false;
+        mediaReplyTextsRef.current.clear();
+        deferredAnswersRef.current.clear();
         onTurnEnd?.();
         return;
       }
@@ -1355,7 +1379,7 @@ export function useNanobotStream(
 
       if (ev.event === "message") {
         if (
-          suppressStreamUntilTurnEndRef.current &&
+          mediaReplyTextsRef.current.size > 0 &&
           (ev.kind === "tool_hint" || ev.kind === "progress" || ev.kind === "reasoning")
         ) {
           return;
@@ -1472,6 +1496,7 @@ export function useNanobotStream(
         // part of the same live activity surface.
         clearActivitySegment();
         const completedTurn = turnFieldsFromEvent(ev, "answer");
+        if (completedTurn.turnId) deferredAnswersRef.current.delete(completedTurn.turnId);
         setMessages((prev) => {
           const activeId = buffer.current?.messageId;
           buffer.current = null;
@@ -1491,7 +1516,10 @@ export function useNanobotStream(
           });
         });
         if (hasMedia) {
-          suppressStreamUntilTurnEndRef.current = true;
+          const mediaReplyTexts = mediaReplyTextsRef.current;
+          const texts = mediaReplyTexts.get(completedTurn.turnId) ?? new Set<string>();
+          texts.add(ev.text.trim());
+          mediaReplyTexts.set(completedTurn.turnId, texts);
         }
         return;
       }
@@ -1609,7 +1637,7 @@ export function useNanobotStream(
           activeAssistantRef.current = null;
           closedAssistantStreamIdsRef.current.clear();
           clearActivitySegment();
-          suppressStreamUntilTurnEndRef.current = false;
+          mediaReplyTextsRef.current.clear();
         } else if (continueActiveTurn) {
           // Guidance belongs to the active backend turn. Preserve the answer
           // cursor so its resuming stream_end can finalize the text already
@@ -1747,7 +1775,7 @@ export function useNanobotStream(
     activeAssistantRef.current = null;
     closedAssistantStreamIdsRef.current.clear();
     clearActivitySegment();
-    suppressStreamUntilTurnEndRef.current = false;
+    mediaReplyTextsRef.current.clear();
     setRunStartedAt(null);
     setRetryStatus(null);
     setIsStreaming(false);

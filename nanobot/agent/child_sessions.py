@@ -55,19 +55,18 @@ _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 STOP_SETTLE_TIMEOUT = 10.0
 
 
-def _historical_terminal_child(payload: object) -> bool:
+def _historical_terminal_child(data: Mapping[str, object]) -> bool:
     """Whether one unparseable record is a retired pre-owner child.
 
     Older child records predate source owner states. A terminal record with no
     live capacity or pending control field cannot hold work, so treating it as
     a fence would disable Stop without protecting anything.
     """
-    if not isinstance(payload, Mapping):
+    state = data.get("state")
+    if not isinstance(state, str) or state not in _HISTORICAL_TERMINAL_STATES:
         return False
-    data = cast(Mapping[str, object], payload)
-    if data.get("state") not in _HISTORICAL_TERMINAL_STATES:
-        return False
-    if data.get("holds_capacity") is True:
+    capacity = data.get("holds_capacity")
+    if capacity is not None and capacity is not False:
         return False
     return not any(
         data.get(name) not in (None, "")
@@ -662,7 +661,7 @@ class DelegationTree:
                 continue
             if not key.startswith(CHILD_SESSION_PREFIX):
                 continue
-            payload: object = None
+            data: Mapping[str, object] | None = None
             try:
                 raw_value = self._read_child_metadata(key)
                 if not isinstance(raw_value, Mapping):
@@ -678,7 +677,7 @@ class DelegationTree:
                 data = cast(Mapping[str, object], payload)
                 admission = _parse_child_admission(key, data)
             except Exception:
-                if _historical_terminal_child(payload):
+                if data is not None and _historical_terminal_child(data):
                     logger.info("Retired historical delegated child {}", key)
                     continue
                 logger.warning("Ignoring admission for malformed delegated child {}", key)

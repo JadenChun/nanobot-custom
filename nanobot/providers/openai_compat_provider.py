@@ -585,7 +585,8 @@ class OpenAICompatProvider(LLMProvider):
     """
 
     _native_compaction_available = True
-    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = 1
+    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = 3
+    _MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES = 8 * 1024 * 1024
 
     def __init__(
         self,
@@ -670,9 +671,13 @@ class OpenAICompatProvider(LLMProvider):
         """Bound the newest tool-image batch on the selected local leaf."""
         if not self._is_local:
             return messages, provider_context
+        byte_limit = self._MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES
+        if self.policy.max_request_bytes is not None:
+            byte_limit = min(byte_limit, self.policy.max_request_bytes)
         prepared = recent_image_messages(
             messages,
             max_tool_images=self._MAX_LOCAL_TOOL_IMAGES_PER_BATCH,
+            max_tool_image_bytes=byte_limit,
         )
         if prepared != messages and provider_context is not None:
             # A native prefix or usage anchor may still include the omitted images.
