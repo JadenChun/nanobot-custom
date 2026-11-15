@@ -231,6 +231,7 @@ async def acquire_execution(
     expected_source: WorkspaceAccessSourceBinding | None = None,
     wait_for_lock: bool = True,
     validate_snapshot: Callable[[SourceSnapshot], None] | None = None,
+    reconcile_stale: bool = False,
 ) -> AsyncGenerator[ExecutionOwner, None]:
     if not isinstance(cast(object, run_id), str) or not run_id.strip():
         raise ExecutionOwnershipError()
@@ -265,13 +266,16 @@ async def acquire_execution(
                 raise SessionWriteConflict()
             if validate_snapshot is not None:
                 validate_snapshot(snapshot)
+            if reconcile_stale:
+                snapshot = SourceSessionStore.reconcile_stale_execution(backend, key, snapshot)
             metadata = snapshot.header["metadata"]
+            checkpoint = backend.get_runtime_checkpoint_path(key)
             recovery_required = (
                 "execution_lease" in metadata
                 or "execution_recovery_required" in metadata
                 or bool(validate_execution_links(snapshot.events))
-                or backend.get_runtime_checkpoint_path(key).exists()
-                or backend.get_runtime_checkpoint_path(key).is_symlink()
+                or checkpoint.exists()
+                or checkpoint.is_symlink()
             )
             token = uuid.uuid4().hex
             committed = SourceSessionStore.publish_execution_lease(

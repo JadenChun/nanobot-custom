@@ -4952,6 +4952,33 @@ class AgentLoop:
             raise SourceOriginMismatchError()
         return existing
 
+    async def _reconcile_interactive_source(self, key: str) -> None:
+        """Close a stale execution fence before an interactive turn.
+
+        A crashed process can leave a lease, a recovery marker, or a tool call
+        without its result. Reconcile them in place so the next user message
+        runs; no tool is replayed. Cron and heartbeat turns keep the strict fence.
+        """
+        backend = self.sessions.source_backend(key)
+        if backend is None:
+            return
+        snapshot = backend.source.load_source_snapshot(key)
+        metadata = snapshot.header["metadata"]
+        if (
+            "execution_recovery_required" not in metadata
+            and "execution_lease" not in metadata
+            and not validate_execution_links(snapshot.events)
+        ):
+            return
+        async with acquire_execution(
+            backend,
+            key,
+            run_id=f"interactive-recovery:{uuid.uuid4().hex}",
+            reconcile_stale=True,
+        ):
+            pass
+        self.sessions.invalidate(key)
+
     @asynccontextmanager
     async def _acquire_source_execution_owner(
         self,
@@ -5141,6 +5168,11 @@ class AgentLoop:
             context.workspace_full_reference = workspace_full_reference
             yield
             return
+        if (
+            context.request is not None
+            and context.request.source not in (TurnSource.CRON, TurnSource.HEARTBEAT)
+        ):
+            await self._reconcile_interactive_source(key)
         if not persistent:
             if self.sessions.has_managed_authority:
                 resolved = self.sessions.resolve_session_mode(key)
