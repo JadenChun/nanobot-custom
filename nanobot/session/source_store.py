@@ -463,6 +463,10 @@ class SourceSessionStore:
             return snapshot
         events = list(snapshot.events)
         if unresolved:
+            if not SourceSessionStore._unresolved_calls_are_tail(snapshot.events, unresolved):
+                # A result appended far from its call would break provider tool
+                # ordering. Leave a structural anomaly to explicit recovery.
+                return snapshot
             events.extend(
                 SourceSessionStore._interrupted_tool_results(snapshot.events, unresolved)
             )
@@ -471,6 +475,23 @@ class SourceSessionStore:
         header["metadata"].pop("execution_recovery_required", None)
         header["revision"] += 1
         return backend.source._write(header, events)
+
+    @staticmethod
+    def _unresolved_calls_are_tail(
+        events: list[dict[str, object]],
+        unresolved: frozenset[str],
+    ) -> bool:
+        """Require unresolved calls to sit in the newest tool-call message."""
+        call_index: int | None = None
+        for index, event in enumerate(events):
+            if event.get("role") == "assistant" and event.get("tool_calls"):
+                call_index = index
+        if call_index is None:
+            return False
+        identities = events[call_index].get("_execution_ids")
+        if not isinstance(identities, list) or not unresolved.issubset(set(identities)):
+            return False
+        return all(event.get("role") == "tool" for event in events[call_index + 1:])
 
     _INTERRUPTED_TOOL_RESULT = (
         "Error: Task interrupted before this tool finished. "

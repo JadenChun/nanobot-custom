@@ -71,6 +71,26 @@ async def test_interrupted_comfy_call_is_recorded_and_does_not_block(backend):
     assert "comfy_status(include_images=true)" in results[0]["content"]
 
 
+async def test_structural_unresolved_call_keeps_the_fence(backend):
+    original = seed(backend)
+    add_unresolved_call(backend, original.state.session_key)
+    snapshot = backend.source.load_source_snapshot(original.state.session_key)
+    user = new_source_event(
+        {"role": "user", "content": "next"}, run_id="run-next",
+    )
+    backend.source.append_source_events(
+        original.state.session_key, snapshot.state, [user],
+    )
+    fence(backend, original.state.session_key, lease=True)
+
+    async with acquire_execution(
+        backend, original.state.session_key, run_id="next", reconcile_stale=True,
+    ) as owner:
+        assert owner.recovery_required is True
+        with pytest.raises(ExecutionOwnershipError):
+            owner.validate_dispatch()
+
+
 async def test_default_acquisition_keeps_the_fence(backend):
     original = seed(backend)
     fence(backend, original.state.session_key)
