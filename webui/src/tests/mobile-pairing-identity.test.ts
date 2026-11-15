@@ -638,6 +638,31 @@ describe("mobile pairing identity", () => {
     expect(fixture.pairAccept).not.toHaveBeenCalled();
   });
 
+  it("returns to pairing when a resumed attempt was revoked", async () => {
+    const fixture = installHeldPairingPlugin("poll");
+    fixture.pairPoll.mockRejectedValueOnce(new Error("HTTP 403 device_revoked"));
+    window.eval(bootstrapSource);
+
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+    document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
+      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "installation=desktop-generated-id",
+      "challenge=pairing-1.nonce.secret",
+    ].join("&");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    });
+    expect(fixture.logout).toHaveBeenCalledWith({ serverReachable: true });
+    expect(document.querySelector<HTMLElement>(".mobile-pairing-status")?.textContent)
+      .not.toContain("device_revoked");
+  });
+
   it("returns to pairing when the owner already dropped the cancelled attempt", async () => {
     const fixture = installHeldPairingPlugin("collect");
     fixture.pairCancel.mockRejectedValueOnce(new Error("HTTP 400: bad_request"));

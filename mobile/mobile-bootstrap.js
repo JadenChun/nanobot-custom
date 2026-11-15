@@ -484,6 +484,13 @@
           }
           return;
         }
+        if (
+          /HTTP (403|404|410)\b/.test(message) &&
+          /device_revoked|pairing_rejected|pairing_not_found|pairing_consumed/.test(message)
+        ) {
+          await discardStalePairing();
+          return;
+        }
         fail(message);
       }
     }
@@ -721,6 +728,25 @@
 
     ui.retry.addEventListener("click", retryPending);
 
+    function finishCancellation() {
+      cancellationPending = false;
+      lastLink = null;
+      lastManual = null;
+      pendingSetup = null;
+      setState("idle");
+      watchForLink();
+    }
+
+    async function discardStalePairing() {
+      try {
+        if (typeof plugin.logout === "function") {
+          await plugin.logout({ serverReachable: true });
+        }
+      } catch (_) {}
+      if (stopped) return;
+      finishCancellation();
+    }
+
     async function cancelPairing() {
       if (stopped || state === "accepting" || state === "cancelling") return;
       var run = ++generation;
@@ -728,14 +754,6 @@
       stopTimers();
       setState("cancelling");
       ui.status.textContent = "Cancelling pairing...";
-      function finishCancellation() {
-        cancellationPending = false;
-        lastLink = null;
-        lastManual = null;
-        pendingSetup = null;
-        setState("idle");
-        watchForLink();
-      }
       try {
         if (typeof plugin.pairCancel !== "function") {
           throw new Error("native pairing cancellation is unavailable");
