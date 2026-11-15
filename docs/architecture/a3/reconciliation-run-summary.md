@@ -7,8 +7,8 @@
 **Branch:** `codex/a3-audit-reconciliation` follows
 `origin/codex/staging-audit-implementation` (`722bd8ec`).
 **Candidate:** `dd8a02ca`, tree `d5cbf40d9e3407a21af4d78f2f4b21af3c885918`.
-**Release state:** HOLD. Push, merge, deployment, and formal release
-qualification remain with the project owner.
+**Release state:** HOLD. Local A3 qualification passed for Linux and the
+Android emulator. Push, merge, and deployment remain with the project owner.
 
 OpenCode closed the four findings from the
 [November 15 decisions](decisions.md#a3-release-decisions-for-the-four-remaining-findings).
@@ -23,7 +23,7 @@ Codex reproduced and repaired a remaining OAuth isolation defect under E02-F16.
 | Ready for review | 0 |
 | Unverified | 0 |
 | Review findings | 9 (all accepted; RR1 and RR3 accepted in the third wave) |
-| Evidence rows | 131 |
+| Evidence rows | 132 |
 
 Recomputed from `findings`. `review_findings` is tracked separately.
 
@@ -38,10 +38,10 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | A3-4 | Accepted, Linux scope | 14 findings accepted. Review receipts cover approval, admission, Stop and applied-result readback. |
 | A3-5 | Accepted, Linux scope | 3 findings accepted. Receipts cover native subagent ownership, history and control. The external backend stays gated. |
 | A3-6 | Accepted, Linux scope | 30 findings accepted, including the corrected SDK and gateway OAuth ownership. |
-| A3-7 | Accepted, emulator scope | 16 findings accepted. The earlier signed app proved pairing, recovery and revocation. The final APK has a separate launch receipt. |
+| A3-7 | Accepted, emulator scope | 16 findings accepted. The final signed app paired with a device key, recovered after expiry and restart, and returned to pairing after revocation. |
 | A3-8 | Accepted, Linux scope | 24 findings accepted. Receipts cover durability, cleanup, crash recovery and asset paging. |
-| A3-9 | Release qualification open | 16 findings accepted. The final APK still needs an installed-app pairing, recovery and revoke receipt. |
-| A3-10 | Release qualification open | 8 findings accepted. AC10.3 depends on A3-9. The installed Linux rollback passed. |
+| A3-9 | Accepted, Linux and emulator scope | 16 findings accepted. The release wheel passed installed startup and rollback. The final APK passed device-key pairing, recovery, and revocation over Serve TLS. |
+| A3-10 | Accepted, Linux and emulator scope | 8 findings accepted. The stopped-copy rollback preserved post-cutover history and the final test device's revocation. |
 
 ## Repairs integrated in this run
 
@@ -66,10 +66,9 @@ Recomputed from `findings`. `review_findings` is tracked separately.
 | Android host checks | Go race suite, C ABI, and 32 JVM tests passed |
 | Installed Linux wheel | Version, package contents, dependencies, startup and isolated rollback passed |
 | Stopped-copy rollback | Session and cron state rehearsal passed |
-| Copied device revocation | Both installed wheel versions read the revoked device and its proof. The copied state bytes matched before and after both reads. |
-| Final signed APK | Installed and cold-launched twice on Android 16 x86_64 |
+| Copied device revocation | Both installed wheel versions read the final test device's revocation and proof without changing the state digest. |
+| Final signed APK | Android 16 x86_64 device-key pairing, expiry recovery after a cold restart, and owner revocation passed over Serve TLS. The app remained at pairing after restart. |
 | Final gateway over Serve TLS | 24/24 host device-key checks passed |
-| Earlier signed APK `08e171e0` | Installed app pairing, recovery and revocation passed |
 
 The `resume4/final/` receipts contain the suite logs, installed checks,
 and artifact identities. The wheel contains 546 matching Python files and 590
@@ -81,13 +80,14 @@ WebUI files. The final APK shares 534 files byte for byte with that bundle.
 | Source archive | `d74fefb49b8cafa0f610bc09fbf55ca11c5c184c226c7165f8a359a66ce37500` |
 | Android APK | `07d7e3e1103443d3bc35ffc8249b53a72cfd71bf5a36f21ac06eeeba45a492ff` |
 
-## Remaining work and limits
+The [final Android readback](implementation-handoff.md#final-android-emulator-readback)
+identifies the app and gateway receipts for this candidate.
 
-- The final signed APK needs a paired emulator run that covers recovery and
-  revocation at its digest. The rebuilt native libraries differ from those in
-  the earlier APK. Enroll a test app node in the tailnet before the run.
-- A3-10 AC10.3 needs the final A3-9 evidence. Release remains on hold.
-  The selected verification matrix is Linux and the Android emulator.
+## Release handoff and limits
+
+- Local qualification covers Linux and the Android emulator. The remote audit
+  branch still has the older candidate. Publication and rollout need a release
+  decision and the hosted checks for the published revision.
 - **Mobile WS frames:** `handle_ws_frame` has no caller and `build_mobile_edge`
   receives no replay cache or mutation handler, so mobile `mutation`/`logout`
   frames stay `scope_denied`. The November 15 decision leaves legacy bearer

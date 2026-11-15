@@ -1,5 +1,30 @@
 # A3 implementation correction handoff
 
+## Final Android emulator readback
+
+The installed APK digest was `07d7e3e1103443d3bc35ffc8249b53a72cfd71bf5a36f21ac06eeeba45a492ff`.
+It ran on Android 16 x86_64 against the disposable Linux gateway at
+`dd8a02ca`. The app signed the owner's challenge with its device key and
+opened a WebSocket through Serve TLS.
+
+The fixture advanced the gateway clock by 601 seconds. After the app cold
+restart, the first handshake returned `401`. The signed device recovery
+returned `200` and kept the same device generation. The app read from the
+gateway and reopened its socket. The separate 24-case host receipt covers
+lost delivery, replay, proof refusals, and closure of a revoked connection.
+
+The gateway owner revoked the app device and recorded `attempted` and
+`applied`. The app's next authenticated request returned `401`. Recovery
+returned `403 device_revoked` and the app showed the pairing screen. A later
+cold restart still showed pairing. Both installed wheel versions retained this
+revocation and proof when reading an identical stopped state copy.
+
+The test gateway and emulator stopped after the run. The receipts are under
+`a3-evidence/a3-reconciliation-2026-11-14/resume4/final/emulator/`. The
+release artifact digests are in the [run summary](reconciliation-run-summary.md#final-verification).
+A3-9 and A3-10 are accepted for the selected Linux and emulator scope.
+The implementation merge remains on hold.
+
 ## Fifth wave: OAuth and release readback
 
 Codex corrected E02-F16 in `dd8a02ca5d3b0dc52b6b11d5b320dc38d4659d0b`.
@@ -20,8 +45,8 @@ and an isolated switch and rollback. The stopped-copy session and cron
 rehearsal also passed. The signed APK installed and cold-launched twice on the
 Android 16 x86_64 emulator. The gateway passed 24 device-key checks over Serve
 TLS at `dd8a02ca`. The installed app's full pairing and recovery receipt
-still applies to the earlier signed APK `08e171e0`. The rebuilt APK includes
-different native library bytes. A3-9 and A3-10 therefore remain open.
+at this checkpoint applied to the earlier signed APK `08e171e0`. The
+[final emulator readback](#final-android-emulator-readback) closes that gap.
 
 Both installed wheel versions read the revoked device and its proof from a
 stopped copy of the earlier test gateway. The copy had the same digest after
