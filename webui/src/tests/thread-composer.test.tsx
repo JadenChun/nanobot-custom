@@ -3215,6 +3215,29 @@ describe("ThreadComposer", () => {
     expect(screen.queryByText("keep the UI minimal")).not.toBeInTheDocument();
   });
 
+  it("offers a queue-guidance button while a task is running", () => {
+    const onSend = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    expect(screen.queryByRole("button", { name: "Queue guidance" })).not.toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "also check the mobile layout" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Queue guidance" }));
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("also check the mobile layout")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
+  });
+
   it("guides queued guidance when Enter is pressed again", () => {
     const onSend = vi.fn();
     render(

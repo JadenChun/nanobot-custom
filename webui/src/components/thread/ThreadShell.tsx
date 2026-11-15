@@ -1395,17 +1395,11 @@ export function ThreadShell({
   );
 
   const admissionRejectedTurn = useMemo(() => {
-    if (
-      streamError?.kind !== "turn_rejected"
-      || streamError.detail !== "not_admitted"
-      || (
-        streamError.reason !== "busy_new_request"
-        && streamError.reason !== "steering_target_changed"
-      )
-    ) {
+    if (streamError?.kind !== "turn_rejected" || streamError.detail !== "not_admitted") {
       return null;
     }
-    return { turnId: streamError.turnId };
+    if (!streamError.reason) return null;
+    return { turnId: streamError.turnId, reason: streamError.reason };
   }, [streamError]);
 
   useLayoutEffect(() => {
@@ -2714,8 +2708,11 @@ export function ThreadShell({
   const mutateWorkspaceAccessMode = useCallback(async (mode: WorkspaceAccessMode, retryRetirement = false) => {
     const ownerChatId = chatId;
     if (!ownerChatId || temporary) throw new Error("session_required");
-    markWorkspacePermissionsStale();
-    const current = await refreshWorkspacePermissions();
+    // Reuse the live projection when it already describes this chat. The
+    // pre-read exists only to obtain the runtime id, revision and source
+    // token, and the server re-validates all three before any effect.
+    const current = workspacePermissions ?? await refreshWorkspacePermissions();
+    if (!workspacePermissions) markWorkspacePermissionsStale();
     if (permissionOwnerChatIdRef.current !== ownerChatId || temporary) return;
     if (!current) throw new Error("permission_state_unavailable");
     if (retryRetirement && (current.mode !== "full" || current.state !== "retiring")) {
@@ -2769,6 +2766,7 @@ export function ThreadShell({
     refreshWorkspacePermissions,
     temporary,
     updateWorkspacePermissions,
+    workspacePermissions,
   ]);
 
   const handleWorkspaceAccessModeChange = useCallback((mode: WorkspaceAccessMode) => {

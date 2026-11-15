@@ -33,6 +33,7 @@ import {
   GripVertical,
   History,
   ImageIcon,
+  ListPlus,
   Loader2,
   MessageCircle,
   Mic,
@@ -214,7 +215,7 @@ interface ThreadComposerProps {
     options?: SendOptions,
   ) => SubmittedTurn | null | boolean | void | Promise<boolean | void>;
   /** A queued send lost its admission and should return to the waiting stack. */
-  admissionRejectedTurn?: { turnId: string } | null;
+  admissionRejectedTurn?: { turnId: string; reason?: string } | null;
   onAdmissionRejectedPromptRestored?: (turnId: string) => void;
   disabled?: boolean;
   placeholder?: string;
@@ -2370,6 +2371,9 @@ export function ThreadComposer({
         : t("thread.composer.voice.hint");
   const showStopButton = isStreaming && !!onStop;
   const showBackgroundStopButton = !isStreaming && stopAvailable && !!onStop;
+  // Steering is reachable without a physical Enter key, so touch clients can
+  // add guidance to the running turn instead of waiting for it to end.
+  const showQueueGuidanceButton = canQueueGuidance;
   const relaxedHeroInput = isHero && images.length === 0 && !isStreaming;
   const inputTextClasses = cn(
     "w-full resize-none bg-transparent",
@@ -2829,6 +2833,25 @@ export function ThreadComposer({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
+            ) : null}
+            {showQueueGuidanceButton ? (
+              <Button
+                type="button"
+                size="icon"
+                aria-label={t("thread.composer.queueGuidance", {
+                  defaultValue: "Queue guidance",
+                })}
+                title={t("thread.composer.queueGuidance", {
+                  defaultValue: "Queue guidance",
+                })}
+                onClick={queueGuidancePrompt}
+                className={cn(
+                  "thread-composer-queue-guidance touch-target shrink-0 rounded-full border border-border/70 bg-card text-foreground/85 shadow-[0_3px_10px_rgba(15,23,42,0.08)] hover:bg-muted/65 hover:text-foreground",
+                  isHero ? "h-8 w-8" : "h-9 w-9",
+                )}
+              >
+                <ListPlus className="h-4 w-4" aria-hidden />
+              </Button>
             ) : null}
             {showBackgroundStopButton ? (
               <Button

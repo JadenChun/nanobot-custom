@@ -4046,7 +4046,30 @@ describe("ThreadShell", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    await waitFor(() => expect(screen.getByText("How is it going?")).toBeInTheDocument());
+    // The queued guidance leaves the queue only when its own owner receipt
+    // arrives; the row is still visible as guidance before that.
+    const queuedRow = () => document.querySelector("[data-queued-prompt-row='true']");
+    expect(queuedRow()?.textContent).toContain("How is it going?");
+
+    await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith(
+      "timing-chat",
+      "How is it going?",
+      undefined,
+      expect.objectContaining({ requestIntent: "steer", targetTurnId: turnId }),
+    ));
+    const steerTurnId = client.sendMessage.mock.calls.at(-1)?.[3]?.turnId;
+    expect(typeof steerTurnId).toBe("string");
+    act(() => client._emitChat("timing-chat", {
+      event: "message_admitted",
+      chat_id: "timing-chat",
+      turn_id: steerTurnId,
+      attempt_id: steerTurnId,
+      active_turn_id: turnId,
+      starts_turn: false,
+    }));
+
+    await waitFor(() => expect(queuedRow()).toBeNull());
+    expect(screen.getByText("How is it going?")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Working for / })).toBeInTheDocument();
     expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Thinking for / })).not.toBeInTheDocument();
