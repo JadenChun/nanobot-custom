@@ -1,5 +1,44 @@
 # A3 implementation correction handoff
 
+## Steer admission and access-mode switch 2026-11-15
+
+**Queued guidance never committed.** The WebUI queue holds a steer until its
+own owner receipt arrives. `MessageAdmittedEvent` was built only from
+`SessionTurnStarted`, which fires once per agent turn. A steer is an injection
+into the running turn, so its own turn id never received a receipt. The row
+stayed in "Queued guidance" and its held head blocked every later item.
+
+The loop now publishes `InjectionCommitted` after the steer is part of the
+running turn, and the WebUI coordinator translates it into the same receipt
+with `starts_turn` false and the joined turn as `active_turn_id`. The composer
+also exposes a queue-guidance button, because the send button becomes Stop
+while a turn runs and touch clients have no Enter key. Rejection restore now
+covers every named reason instead of two.
+
+**Access-mode switch cost.** Measured on a copy of the staging state, with a
+103 MiB transcript and 2.2 MiB of sessions:
+
+| Stage | Time |
+| --- | --- |
+| One history read, `limit=1` (each permission round trip) | 1.2 ms |
+| One history read, `limit=80 latest` | 245–252 ms |
+| Session source parse | 5.0 ms |
+| Metadata rewrite with two fsyncs | 20.0 ms |
+| One native-admission ledger scan | 1.4 ms |
+| Session list scan, seven files | 0.4 ms |
+
+The deployed `dd8a02ca` and this branch measured the same on every row, so the
+server work is milliseconds and was never the delay. The switch therefore runs
+four client round trips where two are full transcript reads, and the mutation
+executed synchronously on the gateway event loop. The mutation now runs in a
+worker thread, and the client reuses the live projection instead of repeating
+the pre-read. A `webui permission action=... duration_ms=...` line now reports
+each mutation, because mutations previously bypassed `_log_slow_http` and no
+access-mode timing existed anywhere.
+
+Two earlier suspects were ruled out by measurement: the transcript rotation
+call is 0.5 ms, and the session list scan is 0.4 ms.
+
 ## MCP schema admission repair 2026-11-15
 
 A staging chat could not use the ComfyUI MCP server. The gateway log at
