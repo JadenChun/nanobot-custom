@@ -110,6 +110,44 @@ describe("RemoteAccessSettings", () => {
     ));
   });
 
+  it("keeps revoked devices out of the paired-owner list", () => {
+    render(
+      <RemoteAccessSettings
+        token="token"
+        mutate={mutationTransport()}
+        initialStatus={{
+          ...status,
+          devices: [
+            { ...status.devices[0], installation_id: "install-old", label: "Old Phone", status: "revoked" },
+            { ...status.devices[0], installation_id: "install-older", label: "Older Phone", status: "revoked" },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("No owner phone paired.")).toBeInTheDocument();
+    expect(screen.getByText("Revoked devices (2)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revoke" })).toBeNull();
+  });
+
+  it("separates the active owner from revoked history", () => {
+    render(
+      <RemoteAccessSettings
+        token="token"
+        mutate={mutationTransport()}
+        initialStatus={{
+          ...status,
+          devices: [
+            status.devices[0],
+            { ...status.devices[0], installation_id: "install-old", label: "Old Phone", status: "revoked" },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Phone")).toBeInTheDocument();
+    expect(screen.getByText("Revoked devices (1)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
+  });
+
   it("starts an owner-only pairing and approves the scanned phone without a code", async () => {
     const collection = { collected: false };
     const mutate = mutationTransport(() => {

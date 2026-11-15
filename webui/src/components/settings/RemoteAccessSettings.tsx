@@ -319,6 +319,10 @@ export function RemoteAccessSettings({
     });
   };
 
+  const devices = status?.devices ?? [];
+  const activeDevices = devices.filter((device) => device.status === "active");
+  const revokedDevices = devices.filter((device) => device.status !== "active");
+
   return (
     <section className="space-y-6" aria-labelledby="remote-access-heading">
       <header>
@@ -384,9 +388,9 @@ export function RemoteAccessSettings({
 
       <div className="space-y-2">
         <h2 className="text-sm font-medium">Owner device</h2>
-        {status?.devices.length ? (
+        {activeDevices.length ? (
           <ul className="divide-y rounded-xl border">
-            {status.devices.map((device) => (
+            {activeDevices.map((device) => (
               <li key={device.installation_id} className="flex items-center justify-between gap-3 p-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -398,28 +402,45 @@ export function RemoteAccessSettings({
                     ) : null}
                   </div>
                   <p className="truncate text-xs text-muted-foreground">
-                    {device.status === "active" ? "Connected until revoked" : "Revoked"}
+                    Connected until revoked
                     {" · last seen "}
                     {formatLastSeen(device.last_seen_at)}
                   </p>
                 </div>
-                {device.status === "active" ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => setRevoking({
-                      installationId: device.installation_id,
-                      label: device.label,
-                    })}
-                    className="rounded-md border px-3 py-1 text-xs"
-                  >
-                    Revoke
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setRevoking({
+                    installationId: device.installation_id,
+                    label: device.label,
+                  })}
+                  className="rounded-md border px-3 py-1 text-xs"
+                >
+                  Revoke
+                </button>
               </li>
             ))}
           </ul>
         ) : <p className="text-sm text-muted-foreground">No owner phone paired.</p>}
+        {revokedDevices.length ? (
+          <details className="rounded-xl border px-3 py-2">
+            <summary className="cursor-pointer text-xs text-muted-foreground">
+              Revoked devices ({revokedDevices.length})
+            </summary>
+            <ul className="divide-y">
+              {revokedDevices.map((device) => (
+                <li key={device.installation_id} className="py-2">
+                  <p className="truncate text-sm">{device.label}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    Revoked
+                    {" · last seen "}
+                    {formatLastSeen(device.last_seen_at)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
         {revoking ? (
           <div role="alertdialog" aria-label={`Revoke ${revoking.label}`} className="rounded-xl border border-destructive/40 bg-destructive/5 p-3">
             <p className="text-sm font-medium">Revoke {revoking.label}?</p>
