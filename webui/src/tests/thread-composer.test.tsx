@@ -3215,7 +3215,7 @@ describe("ThreadComposer", () => {
     expect(screen.queryByText("keep the UI minimal")).not.toBeInTheDocument();
   });
 
-  it("offers a queue-guidance button while a task is running", () => {
+  it("queues guidance from the primary send button while a task is running", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -3227,15 +3227,19 @@ describe("ThreadComposer", () => {
     );
 
     const input = screen.getByLabelText("Message input");
-    expect(screen.queryByRole("button", { name: "Queue guidance" })).not.toBeInTheDocument();
+    // An empty composer shows Stop, matching the reference harness.
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to queue" })).not.toBeInTheDocument();
 
     fireEvent.change(input, { target: { value: "also check the mobile layout" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "Queue guidance" }));
+    // With content the same primary button queues guidance, never sends.
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
 
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByText("also check the mobile layout")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
+    expect(input).toHaveValue("");
   });
 
   it("guides queued guidance when Enter is pressed again", () => {

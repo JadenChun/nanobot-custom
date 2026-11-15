@@ -1222,7 +1222,7 @@
       "placeholderHero": "¿Qué tienes en mente?",
       "placeholderOpening": "Abriendo un nuevo tema…",
       "placeholderStreaming": "El modelo está respondiendo…",
-      "queueGuidance": "Poner en cola la indicación",
+      "queueGuidance": "Añadir a la cola",
       "inputAria": "Entrada de mensaje",
       "inputAriaFor": "Mensaje para {{title}}",
       "sendHint": "Enter para enviar · Shift+Enter para nueva línea",

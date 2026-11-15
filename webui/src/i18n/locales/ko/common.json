@@ -1222,7 +1222,7 @@
       "placeholderHero": "무슨 생각을 하고 있나요?",
       "placeholderOpening": "새 주제를 여는 중…",
       "placeholderStreaming": "모델이 응답 중입니다…",
-      "queueGuidance": "지침 대기열에 추가",
+      "queueGuidance": "대기열에 추가",
       "inputAria": "메시지 입력",
       "inputAriaFor": "{{title}}에게 보내는 메시지",
       "sendHint": "Enter로 전송 · Shift+Enter로 줄바꿈",

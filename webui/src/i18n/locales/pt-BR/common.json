@@ -1222,7 +1222,7 @@
       "placeholderHero": "Pergunte qualquer coisa...",
       "placeholderOpening": "Abrindo um novo tópico…",
       "placeholderStreaming": "O modelo está respondendo…",
-      "queueGuidance": "Enfileirar orientação",
+      "queueGuidance": "Adicionar à fila",
       "inputAria": "Campo de mensagem",
       "inputAriaFor": "Mensagem para {{title}}",
       "sendHint": "Enter para enviar · Shift+Enter para nova linha",

@@ -1222,7 +1222,7 @@
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new topic…",
       "placeholderStreaming": "Model is responding…",
-      "queueGuidance": "Queue guidance",
+      "queueGuidance": "Add to queue",
       "inputAria": "Message input",
       "inputAriaFor": "Message {{title}}",
       "sendHint": "Enter to send · Shift+Enter for newline",

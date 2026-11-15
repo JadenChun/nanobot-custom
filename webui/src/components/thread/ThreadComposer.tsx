@@ -33,7 +33,6 @@ import {
   GripVertical,
   History,
   ImageIcon,
-  ListPlus,
   Loader2,
   MessageCircle,
   Mic,
@@ -2369,11 +2368,12 @@ export function ThreadComposer({
       : voiceRecorder.state === "transcribing"
         ? t("thread.composer.voice.transcribing")
         : t("thread.composer.voice.hint");
-  const showStopButton = isStreaming && !!onStop;
+  // One primary button. While a turn runs it stops an empty composer and sends
+  // (queueing guidance) when there is something to say, matching the reference
+  // harness. Stop stays reachable from the queue rows and the slash command.
+  const showGuidanceSendButton = canQueueGuidance;
+  const showStopButton = isStreaming && !!onStop && !hasComposerContent;
   const showBackgroundStopButton = !isStreaming && stopAvailable && !!onStop;
-  // Steering is reachable without a physical Enter key, so touch clients can
-  // add guidance to the running turn instead of waiting for it to end.
-  const showQueueGuidanceButton = canQueueGuidance;
   const relaxedHeroInput = isHero && images.length === 0 && !isStreaming;
   const inputTextClasses = cn(
     "w-full resize-none bg-transparent",
@@ -2834,25 +2834,6 @@ export function ThreadComposer({
                 </Tooltip>
               </TooltipProvider>
             ) : null}
-            {showQueueGuidanceButton ? (
-              <Button
-                type="button"
-                size="icon"
-                aria-label={t("thread.composer.queueGuidance", {
-                  defaultValue: "Queue guidance",
-                })}
-                title={t("thread.composer.queueGuidance", {
-                  defaultValue: "Queue guidance",
-                })}
-                onClick={queueGuidancePrompt}
-                className={cn(
-                  "thread-composer-queue-guidance touch-target shrink-0 rounded-full border border-border/70 bg-card text-foreground/85 shadow-[0_3px_10px_rgba(15,23,42,0.08)] hover:bg-muted/65 hover:text-foreground",
-                  isHero ? "h-8 w-8" : "h-9 w-9",
-                )}
-              >
-                <ListPlus className="h-4 w-4" aria-hidden />
-              </Button>
-            ) : null}
             {showBackgroundStopButton ? (
               <Button
                 type="button"
@@ -2871,11 +2852,13 @@ export function ThreadComposer({
               </Button>
             ) : null}
             <Button
-              type={showStopButton || modelNeedsSetup ? "button" : "submit"}
+              type={showStopButton || showGuidanceSendButton || modelNeedsSetup
+                ? "button"
+                : "submit"}
               size="icon"
               disabled={showStopButton
                 ? interactionDisabled || stopDisabled
-                : !canSend && !canOpenModelSettings}
+                : !canSend && !showGuidanceSendButton && !canOpenModelSettings}
               aria-label={
                 showStopButton
                   ? stopPending
@@ -2883,9 +2866,17 @@ export function ThreadComposer({
                     : t("thread.composer.stop")
                   : modelNeedsSetup
                     ? t("thread.composer.configureModel", { defaultValue: "Configure model" })
-                    : t("thread.composer.send")
+                    : isStreaming
+                      ? t("thread.composer.queueGuidance")
+                      : t("thread.composer.send")
               }
-              onClick={showStopButton ? handleStop : modelNeedsSetup ? onModelBadgeClick : undefined}
+              onClick={showStopButton
+                ? handleStop
+                : showGuidanceSendButton
+                  ? queueGuidancePrompt
+                  : modelNeedsSetup
+                    ? onModelBadgeClick
+                    : undefined}
               className={cn(
                 "thread-composer-action touch-target shrink-0 rounded-full transition-transform",
                 showStopButton
@@ -2901,8 +2892,6 @@ export function ThreadComposer({
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               ) : (
                 <Square className={cn("fill-current stroke-current", isHero ? "h-3 w-3" : "h-3.5 w-3.5")} />
-              ) : isStreaming ? (
-                <Loader2 className={cn(isHero ? "h-4 w-4" : "h-4 w-4", "animate-spin")} />
               ) : (
                 <ArrowUp className={cn(isHero ? "h-4 w-4" : "h-4 w-4")} />
               )}

@@ -1222,7 +1222,7 @@
       "placeholderHero": "任何問題都可以問…",
       "placeholderOpening": "正在開啟新話題…",
       "placeholderStreaming": "模型正在回覆…",
-      "queueGuidance": "加入指導佇列",
+      "queueGuidance": "加入佇列",
       "inputAria": "訊息輸入框",
       "inputAriaFor": "傳送訊息給 {{title}}",
       "sendHint": "Enter 送出 · Shift+Enter 換行",

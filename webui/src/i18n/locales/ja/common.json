@@ -1222,7 +1222,7 @@
       "placeholderHero": "何を考えていますか？",
       "placeholderOpening": "新しいトピックを開いています…",
       "placeholderStreaming": "モデルが応答しています…",
-      "queueGuidance": "指示をキューに追加",
+      "queueGuidance": "キューに追加",
       "inputAria": "メッセージ入力欄",
       "inputAriaFor": "{{title}} へのメッセージ",
       "sendHint": "Enter で送信 · Shift+Enter で改行",

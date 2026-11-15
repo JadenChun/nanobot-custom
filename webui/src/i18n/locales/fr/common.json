@@ -1222,7 +1222,7 @@
       "placeholderHero": "Qu’avez-vous en tête ?",
       "placeholderOpening": "Ouverture d’un nouveau sujet…",
       "placeholderStreaming": "Le modèle est en train de répondre…",
-      "queueGuidance": "Mettre l'indication en file",
+      "queueGuidance": "Ajouter à la file",
       "inputAria": "Champ de message",
       "inputAriaFor": "Message pour {{title}}",
       "sendHint": "Entrée pour envoyer · Maj+Entrée pour un retour à la ligne",
