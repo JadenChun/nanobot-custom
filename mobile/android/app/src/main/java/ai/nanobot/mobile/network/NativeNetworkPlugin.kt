@@ -27,6 +27,7 @@ import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.text.Normalizer
 import ai.nanobot.mobile.attachments.AttachmentLimits
 import ai.nanobot.mobile.attachments.AttachmentPolicy
 import ai.nanobot.mobile.MainActivity
@@ -36,6 +37,7 @@ import ai.nanobot.mobile.links.PairingChallenge
 import ai.nanobot.mobile.links.PairingChallengeCodec
 import ai.nanobot.mobile.links.PairingLinkParser
 import ai.nanobot.mobile.media.MediaHandleStore
+import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -55,6 +57,10 @@ import java.io.ByteArrayOutputStream
 class NativeNetworkPlugin : Plugin() {
     private companion object {
         private const val TAG = "NanobotNetwork"
+        private const val HOSTNAME_PREFIX = "nanobot-"
+        private const val MAX_DNS_LABEL_LENGTH = 63
+        private val combiningMarks = Regex("\\p{M}+")
+        private val hostnameSeparators = Regex("[^a-z0-9]+")
     }
 
     @Volatile private var transportHandle: Long = 0L
@@ -308,6 +314,22 @@ class NativeNetworkPlugin : Plugin() {
             .take(64)
     }
 
+    private fun tailscaleHostname(): String {
+        val maxDeviceLength = MAX_DNS_LABEL_LENGTH - HOSTNAME_PREFIX.length
+        val device = sequenceOf(defaultDeviceLabel(), Build.MODEL, Build.DEVICE)
+            .map { label ->
+                Normalizer.normalize(label, Normalizer.Form.NFD)
+                    .replace(combiningMarks, "")
+                    .lowercase(Locale.ROOT)
+                    .replace(hostnameSeparators, "-")
+                    .trim('-')
+                    .take(maxDeviceLength)
+                    .trimEnd('-')
+            }
+            .firstOrNull { it.isNotEmpty() } ?: "android"
+        return HOSTNAME_PREFIX + device
+    }
+
     @PluginMethod
     fun pairingIdentity(call: PluginCall) {
         try {
@@ -368,7 +390,7 @@ class NativeNetworkPlugin : Plugin() {
                     existing.origin != origin ||
                     existing.installationId != installationId
                 ) {
-                    startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6), generation)
+                    startTransport(origin, installationId, generation)
                 }
                 waitUntilReady()
                 custody.requirePairing(generation)
@@ -452,7 +474,7 @@ class NativeNetworkPlugin : Plugin() {
         custody.requirePairing(generation)
         val existing = custody.load()
         if (transportHandle == 0L || existing == null || existing.origin != origin || existing.installationId != installationId) {
-            startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6), generation)
+            startTransport(origin, installationId, generation)
         }
         waitUntilReady()
         custody.requirePairing(generation)
@@ -1478,9 +1500,9 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @Synchronized
-    private fun startTransport(origin: String, installationId: String, hostname: String, generation: Long) {
+    private fun startTransport(origin: String, installationId: String, generation: Long) {
         custody.withPairing(generation) {
-            startTransport(custody.loadOrCreate(origin, installationId, hostname))
+            startTransport(custody.loadOrCreate(origin, installationId))
         }
     }
 
@@ -1501,7 +1523,7 @@ class NativeNetworkPlugin : Plugin() {
         val config = JSONObject()
             .put("origin", record.origin)
             .put("installation_id", record.installationId)
-            .put("hostname", record.hostname)
+            .put("hostname", tailscaleHostname())
             .put("state_dir", stateDir.absolutePath)
             .put("state_key_base64", record.stateKeyBase64)
             .put("max_ws_frame_bytes", 37_748_736)
