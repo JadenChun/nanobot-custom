@@ -40,6 +40,7 @@ from nanobot.agent.child_sessions import (
     STOP_SETTLE_TIMEOUT,
     ChildAdmission,
     ChildControlState,
+    DelegationTree,
     OriginalChatStopAdmission,
 )
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
@@ -2466,6 +2467,34 @@ class AgentLoop:
             pending_sources.append((snapshot.state, records))
         return tuple(pending_sources)
 
+    def _stop_descendants_for_key(
+        self,
+        tree: DelegationTree,
+        key: str,
+        root_source_state: SourceState,
+        root_source: StopSourceOrigin,
+    ) -> tuple[ChildAdmission, ...] | None:
+        """Return this chat's child inventory, fencing only chats it can affect.
+
+        A malformed durable child record fences child admission for the whole
+        tree. Treating that as "no Stop anywhere" would disable Stop in every
+        unrelated chat, so a chat whose inventory the failure cannot reach keeps
+        a real target. A chat that could own the unreadable record stays fenced.
+        """
+        if tree.recovery_error is None:
+            return tree.original_chat_stop_descendants(
+                key, root_source_state, max_entries=MAX_STOP_TARGET_CHILDREN,
+            )
+        failing_roots = tree.recovery_error_child_keys()
+        if failing_roots is None or key in failing_roots:
+            return None
+        try:
+            return tree.original_chat_stop_descendants(
+                key, root_source_state, max_entries=MAX_STOP_TARGET_CHILDREN,
+            )
+        except ValueError:
+            return None
+
     def stop_target_for_key(self, key: str) -> dict[str, object] | None:
         """Return the complete live original-chat Stop target, or unavailable."""
         if not is_webui_session_key(key):
@@ -2473,7 +2502,7 @@ class AgentLoop:
         try:
             manager = self._fork_dependencies.foreground_manager
             tree = manager._delegation_tree
-            if tree is None or tree.recovery_error is not None:
+            if tree is None:
                 return None
             backend = self.sessions.source_backend(key)
             if backend is None:
@@ -2483,11 +2512,11 @@ class AgentLoop:
                 return None
             root_source_state = root_snapshot.state
             root_source = StopSourceOrigin.from_source_state(root_source_state)
-            descendants = tree.original_chat_stop_descendants(
-                key,
-                root_source_state,
-                max_entries=MAX_STOP_TARGET_CHILDREN,
+            descendants = self._stop_descendants_for_key(
+                tree, key, root_source_state, root_source,
             )
+            if descendants is None:
+                return None
 
             active_tasks = self._active_root_task_identity(key)
             source_admission = self._source_activity_admissions.get(key)

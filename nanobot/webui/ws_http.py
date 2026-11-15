@@ -1562,6 +1562,16 @@ class GatewayHTTPHandler:
             request, key, self._live_stop_target(key)
         )
 
+    def _derives_stop_target(self, session_key: str) -> bool:
+        """Return whether this gateway can derive a modern Stop target at all."""
+        if self.stop_target_for_key is None or self.session_manager is None:
+            return False
+        try:
+            return self.session_manager.source_backend(session_key) is not None
+        except Exception:
+            self._log.exception("stop target source classification failed")
+            return False
+
     def _live_stop_target(self, key: str) -> dict[str, object] | None:
         """Resolve the live Stop target on the event loop that owns the run."""
         decoded_key = _decode_api_key(key)
@@ -1934,11 +1944,16 @@ class GatewayHTTPHandler:
                     "total_known_message_count": 0,
                     "user_message_offset": 0,
                 }
-        data["stop_target"] = (
-            self.stop_target_for_key(decoded_key)
-            if not is_child and self.stop_target_for_key is not None
-            else None
-        )
+        # Emit the key only for a session whose Stop target this gateway can
+        # derive, which is the same condition the loop uses. A session without a
+        # canonical source has no such authority, and an explicit null would tell
+        # the client that modern Stop exists and is empty, permanently disabling
+        # the legacy Stop path it still needs.
+        if not is_child and self._derives_stop_target(decoded_key):
+            data["stop_target"] = (
+                self.stop_target_for_key(decoded_key)
+                if self.stop_target_for_key is not None else None
+            )
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
         local_permission_projection = (
             connection is not None

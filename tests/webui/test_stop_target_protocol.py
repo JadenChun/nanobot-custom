@@ -186,6 +186,15 @@ async def test_channel_manager_wires_live_callback_to_attach_hydration_and_threa
     workspace.mkdir()
     sessions = SessionManager(workspace, sessions_root=tmp_path / "sessions")
     sessions.upsert_session_metadata("websocket:exact-stop", {"webui": True}, create_if_absent=True)
+    # A chat carries modern Stop authority only when its source can prove it.
+    seeded = sessions.get_or_create("websocket:exact-stop")
+    sessions.save(seeded)
+    sessions._jsonl_store.source.upgrade_source_session(
+        "websocket:exact-stop",
+        expected_revision=seeded.revision,
+        expected_generation=seeded.generation,
+        expected_incarnation=seeded.incarnation,
+    )
     config = Config.model_validate({
         "agents": {"defaults": {"workspace": str(workspace)}},
         "channels": {"websocket": {"enabled": True, "websocketRequiresToken": False}},

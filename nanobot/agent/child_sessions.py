@@ -590,6 +590,10 @@ class DelegationTree:
         self._control_epochs: dict[str, int] = {}
         self._original_stop_admissions: dict[str, OriginalChatStopAdmission] = {}
         self._recovery_error: str | None = None
+        # A malformed record cannot always be attributed to one chat. Record
+        # the roots it could belong to so Stop stays fenced only where it must.
+        self._unreadable_child_roots: set[str] = set()
+        self._unreadable_child_scope_unknown = False
         self._restore()
 
     @classmethod
@@ -618,16 +622,19 @@ class DelegationTree:
         except Exception:
             logger.exception("Delegated child recovery scan failed")
             self._recovery_error = "session index scan failed"
+            self._note_unattributable_failure()
             return
         for raw_info in cast(list[object], sessions):
             if not isinstance(raw_info, Mapping):
                 self._recovery_error = "session index contains a malformed row"
+                self._note_unattributable_failure()
                 logger.warning("Delegated child recovery found a malformed session row")
                 continue
             info = cast(Mapping[str, object], raw_info)
             key = info.get("key")
             if not isinstance(key, str):
                 self._recovery_error = "session index contains a malformed key"
+                self._note_unattributable_failure()
                 logger.warning("Delegated child recovery found a session without a valid key")
                 continue
             if not key.startswith(CHILD_SESSION_PREFIX):
@@ -649,6 +656,10 @@ class DelegationTree:
             except Exception:
                 logger.warning("Ignoring admission for malformed delegated child {}", key)
                 self._recovery_error = f"malformed child record: {key}"
+                # Fence only the chat this record can affect when its payload
+                # still names a root. Otherwise no chat can prove its own
+                # inventory, so every chat stays fenced.
+                self._attribute_unreadable_child(key)
                 continue
             if admission.live:
                 admission = replace(
@@ -665,6 +676,7 @@ class DelegationTree:
                 )
                 if not self._persist(admission):
                     self._recovery_error = f"child uncertainty could not be persisted: {key}"
+                    self._note_unreadable_root(admission.root_key)
             self._children[admission.child_id] = admission
             self._control_epochs[admission.root_key] = max(
                 self._control_epochs.get(admission.root_key, 0),
@@ -684,6 +696,47 @@ class DelegationTree:
         """Whether unresolved durable child state currently fences admission."""
         return self._recovery_error
 
+    def _note_unreadable_root(self, root_key: str) -> None:
+        """Record one root whose child inventory is unreadable."""
+        self._unreadable_child_roots.add(root_key)
+
+    def _note_unattributable_failure(self) -> None:
+        """Record a failure no single chat can be excluded from."""
+        self._unreadable_child_scope_unknown = True
+
+    def _attribute_unreadable_child(self, session_key: str) -> None:
+        """Record which chat one unparseable child record can affect."""
+        root_key: object = None
+        try:
+            raw_value = self.sessions.read_session_metadata(session_key)
+            metadata = (
+                cast(Mapping[str, object], raw_value).get("metadata")
+                if isinstance(raw_value, Mapping) else None
+            )
+            payload = (
+                cast(Mapping[str, object], metadata).get(DELEGATION_CHILD_METADATA_KEY)
+                if isinstance(metadata, Mapping) else None
+            )
+            if isinstance(payload, Mapping):
+                root_key = cast(Mapping[str, object], payload).get("root_key")
+        except Exception:
+            root_key = None
+        if isinstance(root_key, str) and root_key:
+            self._note_unreadable_root(root_key)
+            return
+        # Without a readable root the record could belong to any chat.
+        self._note_unattributable_failure()
+
+    def recovery_error_child_keys(self) -> frozenset[str] | None:
+        """Return the chats a recovery failure can affect.
+
+        ``None`` means no chat can be excluded, so every chat stays fenced. A
+        set names exactly the chats whose child inventory is unreadable.
+        """
+        if self._unreadable_child_scope_unknown:
+            return None
+        return frozenset(self._unreadable_child_roots)
+
     @property
     def background_result_lock(self) -> asyncio.Lock:
         """Serialize result recovery and journal admission across shared loops."""
@@ -699,6 +752,8 @@ class DelegationTree:
             self._children.clear()
             self._attempts.clear()
             self._control_epochs.clear()
+            self._unreadable_child_roots = set()
+            self._unreadable_child_scope_unknown = False
             self._recovery_error = None
             self._restore()
             return self._recovery_error is None
