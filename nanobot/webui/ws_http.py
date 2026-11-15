@@ -1248,6 +1248,28 @@ class GatewayHTTPHandler:
 
         return connection.respond(404, "Not Found")
 
+    def _log_permission_stage(
+        self,
+        path: str,
+        started: float,
+        payload: Mapping[str, Any],
+        result: Mapping[str, Any],
+    ) -> None:
+        """Report access-mode mutation cost so a slow switch is attributable."""
+        action = "prepare_full" if path.endswith("/prepare-full") else "mode_set"
+        mode = payload.get("mode")
+        conflict = "error" in result
+        report = getattr(self._log, "info", None)
+        if report is None:
+            return
+        report(
+            "webui permission action={} mode={} conflict={} duration_ms={}",
+            action,
+            mode if isinstance(mode, str) else "none",
+            conflict,
+            int((time.perf_counter() - started) * 1000),
+        )
+
     def _log_slow_http(self, path: str, response: Any | None, started: float) -> None:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         if elapsed_ms < _SLOW_WEBUI_HTTP_LOG_MS:
@@ -2795,15 +2817,21 @@ class GatewayHTTPHandler:
             if permission_failure is not None:
                 return permission_failure
         try:
+            stage_started = time.perf_counter()
+            # The mutation parses and rewrites the session source under a
+            # store-wide lock. Keep it off the event loop so one switch does not
+            # stall every other chat, stream and turn admission.
             if path == "/api/workspaces/access/prepare-full":
-                result = self.workspaces.prepare_full(
+                result = await asyncio.to_thread(
+                    self.workspaces.prepare_full,
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
                     owner_installation_id=owner_installation_id,
                 )
             else:
-                result = self.workspaces.set_permission_mode(
+                result = await asyncio.to_thread(
+                    self.workspaces.set_permission_mode,
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
@@ -2814,6 +2842,7 @@ class GatewayHTTPHandler:
         except Exception:
             self._log.exception("workspace permission mutation failed")
             return _http_error(503, "permission_state_unavailable")
+        self._log_permission_stage(path, stage_started, payload, result)
 
         if "error" in result:
             await self.bus.publish_event(
