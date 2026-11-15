@@ -224,6 +224,7 @@ function installHeldPairingPlugin(hold: "collect" | "poll") {
     resolveCancel = resolve;
   }));
   const pairAccept = vi.fn(async () => undefined);
+  const logout = vi.fn(async () => ({ serverRevocationPending: false }));
   const plugin = {
     target: vi.fn(async () => ({ hasAccess: false })),
     pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
@@ -232,6 +233,7 @@ function installHeldPairingPlugin(hold: "collect" | "poll") {
     pairPoll,
     pairAccept,
     pairCancel,
+    logout,
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
@@ -243,6 +245,7 @@ function installHeldPairingPlugin(hold: "collect" | "poll") {
     pairPoll,
     pairAccept,
     pairCancel,
+    logout,
     resolveCancel: () => resolveCancel({ status: "cancelled" }),
     releaseHeld: () => {
       if (hold === "collect") releaseCollect({
@@ -633,6 +636,38 @@ describe("mobile pairing identity", () => {
     expect(document.body.textContent).not.toContain("Paired. Loading Nanobot...");
     expect(document.body.textContent).not.toContain("999999");
     expect(fixture.pairAccept).not.toHaveBeenCalled();
+  });
+
+  it("returns to pairing when the owner already dropped the cancelled attempt", async () => {
+    const fixture = installHeldPairingPlugin("collect");
+    fixture.pairCancel.mockRejectedValueOnce(new Error("HTTP 400: bad_request"));
+    window.eval(bootstrapSource);
+
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+    document.querySelector<HTMLInputElement>(".mobile-pairing-input")!.value = [
+      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "installation=desktop-generated-id",
+      "challenge=pairing-1.nonce.secret",
+    ].join("&");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(fixture.pairStart).toHaveBeenCalledTimes(1));
+
+    [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((button) => button.textContent === "Use a different link")!.click();
+
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    });
+    expect(fixture.logout).toHaveBeenCalledWith({ serverReachable: true });
+    expect(document.querySelector<HTMLElement>(".mobile-pairing-status")?.textContent)
+      .not.toContain("Pairing cancellation failed");
+
+    fixture.releaseHeld();
+    await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
   it("shows a native pairing cancellation persistence failure", async () => {

@@ -728,23 +728,43 @@
       stopTimers();
       setState("cancelling");
       ui.status.textContent = "Cancelling pairing...";
-      try {
-        if (typeof plugin.pairCancel !== "function") {
-          throw new Error("native pairing cancellation is unavailable");
-        }
-        await plugin.pairCancel();
-        if (stopped || run !== generation) return;
+      function finishCancellation() {
         cancellationPending = false;
         lastLink = null;
         lastManual = null;
         pendingSetup = null;
         setState("idle");
         watchForLink();
+      }
+      try {
+        if (typeof plugin.pairCancel !== "function") {
+          throw new Error("native pairing cancellation is unavailable");
+        }
+        await plugin.pairCancel();
+        if (stopped || run !== generation) return;
+        finishCancellation();
       } catch (error) {
         if (stopped || run !== generation) return;
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0) {
           needLogin(run);
+          return;
+        }
+        // The owner already dropped this attempt, or the local challenge has no
+        // collector proof left to cancel remotely. Clear the local record and
+        // return to the pairing page instead of trapping the phone on Retry.
+        if (
+          /^HTTP 4\d\d\b/.test(message) ||
+          message.indexOf("pairing challenge is") >= 0 ||
+          message.indexOf("pairing secret is") >= 0 ||
+          message.indexOf("pairing id is") >= 0 ||
+          message.indexOf("no pending pairing challenge") >= 0
+        ) {
+          try {
+            await plugin.logout({ serverReachable: true });
+          } catch (_) {}
+          if (stopped || run !== generation) return;
+          finishCancellation();
           return;
         }
         fail("Pairing cancellation failed: " + message);
