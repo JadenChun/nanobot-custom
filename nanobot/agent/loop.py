@@ -3656,11 +3656,14 @@ class AgentLoop:
                     )
                     return None
                 try:
-                    return await _to_user_message(pending_msg)
+                    binding = await _to_user_message(pending_msg)
                 except BaseException:
                     if source_writer is not None and active_session_key is not None:
                         self._retain_admitted_activity_for_republish(active_session_key, pending_msg)
                     raise
+                if binding is not None and active_session_key is not None:
+                    await self._publish_injection_committed(pending_msg, active_session_key)
+                return binding
 
             items: list[SourceInjectionBinding | dict[str, object]] = []
             if first_msg is not None:
@@ -4592,6 +4595,19 @@ class AgentLoop:
         # and never blocks the bus from receiving a sibling decision or Stop.
         self.schedule_background(resume_child())
         return True
+
+    async def _publish_injection_committed(
+        self,
+        msg: InboundMessage,
+        session_key: str,
+    ) -> None:
+        """Announce queued guidance after it is part of the running turn."""
+        if msg.channel != "websocket":
+            return
+        metadata = msg.metadata
+        if metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY) != "steer":
+            return
+        await self.runtime_event_publisher.injection_committed(msg, session_key)
 
     @staticmethod
     def _webui_steering_rejection(msg: InboundMessage) -> tuple[str, str] | None:

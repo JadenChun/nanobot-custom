@@ -29,6 +29,7 @@ from nanobot.bus.outbound_events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import (
     GoalStateChanged,
+    InjectionCommitted,
     RuntimeEventContext,
     RuntimeModelChanged,
     SessionTurnStarted,
@@ -765,6 +766,10 @@ class WebuiTurnCoordinator:
                 UserInputAccepted,
             ),
             self.bus.subscribe(
+                self._handle_injection_committed,
+                InjectionCommitted,
+            ),
+            self.bus.subscribe(
                 self._handle_session_turn_started,
                 SessionTurnStarted,
             ),
@@ -862,6 +867,31 @@ class WebuiTurnCoordinator:
                 provenance={"session_message": public_metadata},
             ),
         ))
+
+    async def _handle_injection_committed(self, event: InjectionCommitted) -> None:
+        """Publish the owner receipt for guidance committed into a running turn."""
+        if not self._is_websocket_event(event.context):
+            return
+        metadata = event.context.metadata
+        turn_id = metadata.get(WEBUI_TURN_METADATA_KEY)
+        if not isinstance(turn_id, str) or not turn_id:
+            return
+        session = self.sessions.get_or_create(event.context.session_key)
+        await self.bus.publish_outbound(
+            outbound_message_for_event(
+                channel=event.context.channel,
+                chat_id=event.context.chat_id,
+                event=MessageAdmittedEvent(
+                    turn_id=turn_id,
+                    attempt_id=turn_id,
+                    session_key=event.context.session_key,
+                    session_incarnation=session.incarnation,
+                    active_turn_id=websocket_turn_id(event.context.chat_id),
+                    starts_turn=False,
+                ),
+                metadata=dict(metadata),
+            )
+        )
 
     async def _handle_session_turn_started(self, event: SessionTurnStarted) -> None:
         if not self._is_websocket_event(event.context):

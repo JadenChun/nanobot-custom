@@ -41,6 +41,13 @@ class UserInputAccepted(AgentEvent):
 
 
 @dataclass(frozen=True)
+class InjectionCommitted(AgentEvent):
+    """Queued guidance was committed into the running turn it targeted."""
+
+    context: RuntimeEventContext
+
+
+@dataclass(frozen=True)
 class TurnRuntimeAdmitted(AgentEvent):
     """The immutable model runtime selected for one admitted turn."""
 
@@ -184,6 +191,22 @@ class RuntimeEventPublisher:
     ) -> None:
         await self.bus.publish(
             SessionTurnStarted(
+                context=self._context(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=session_key,
+                    metadata=msg.metadata,
+                ),
+            )
+        )
+
+    async def injection_committed(
+        self,
+        msg: InboundMessage,
+        session_key: str,
+    ) -> None:
+        await self.bus.publish(
+            InjectionCommitted(
                 context=self._context(
                     channel=msg.channel,
                     chat_id=msg.chat_id,

@@ -17,6 +17,7 @@ from nanobot.bus.outbound_events import (
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import (
+    InjectionCommitted,
     RuntimeEventContext,
     SessionTurnStarted,
     TurnRuntimeAdmitted,
@@ -366,6 +367,69 @@ async def test_session_turn_started_publishes_owner_admission_receipt(tmp_path) 
     assert outbound.event.session_key == "websocket:chat-a"
     assert outbound.event.session_incarnation
     assert outbound.event.starts_turn is True
+
+
+@pytest.mark.asyncio
+async def test_injection_committed_publishes_receipt_for_the_steer_turn(tmp_path) -> None:
+    """A committed steer acknowledges its own turn and keeps the running turn."""
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    await bus.publish(InjectionCommitted(
+        context=RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-steer"},
+        ),
+    ))
+
+    outbound = bus.publish_outbound.await_args.args[0]
+    assert outbound.channel == "websocket"
+    assert outbound.chat_id == "chat-a"
+    assert isinstance(outbound.event, MessageAdmittedEvent)
+    assert outbound.event.turn_id == "turn-steer"
+    assert outbound.event.attempt_id == "turn-steer"
+    assert outbound.event.session_key == "websocket:chat-a"
+    assert outbound.event.session_incarnation
+    assert outbound.event.starts_turn is False
+
+
+@pytest.mark.asyncio
+async def test_injection_committed_ignores_non_browser_and_unnamed_turns(tmp_path) -> None:
+    """Only browser guidance with a turn identity produces a receipt."""
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    for context in (
+        RuntimeEventContext(
+            channel="telegram",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-steer"},
+        ),
+        RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True},
+        ),
+    ):
+        await bus.publish(InjectionCommitted(context=context))
+
+    bus.publish_outbound.assert_not_awaited()
 
 
 @pytest.mark.asyncio
