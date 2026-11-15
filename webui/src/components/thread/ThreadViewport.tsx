@@ -64,6 +64,7 @@ interface ThreadViewportProps {
   activeTurnStartedHere?: boolean;
   conversationKey?: string | null;
   conversationReady?: boolean;
+  conversationLoading?: boolean;
   showScrollToBottomButton?: boolean;
   cliApps?: CliAppInfo[];
   mcpPresets?: McpPresetInfo[];
@@ -88,8 +89,9 @@ const EXTERNAL_COMPOSER_SCROLL_BUTTON_BOTTOM_PX = 16;
 const SCROLL_BUTTON_COMPOSER_GAP_PX = 16;
 const SOFT_KEYBOARD_MIN_INSET_PX = 80;
 const SESSION_HANDOFF_EXIT_DURATION_MS = 80;
-const SESSION_HANDOFF_ENTER_DURATION_MS = 140;
+const SESSION_HANDOFF_ENTER_DURATION_MS = 180;
 const SESSION_HANDOFF_OPACITY = 0.82;
+const SESSION_HANDOFF_VISIBLE_TAIL_PX = 48;
 export const INITIAL_HISTORY_WINDOW = 160;
 export const HISTORY_WINDOW_INCREMENT = 120;
 
@@ -250,6 +252,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   activeTurnStartedHere = false,
   conversationKey = null,
   conversationReady = true,
+  conversationLoading = false,
   showScrollToBottomButton = true,
   cliApps = [],
   mcpPresets = [],
@@ -275,7 +278,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const composerDockRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastConversationKeyRef = useRef<string | null>(conversationKey);
-  const conversationHandoffPendingRef = useRef(false);
+  const conversationHandoffPendingRef = useRef(conversationKey !== null);
   const conversationHandoffAnimationRef = useRef<Animation | null>(null);
   const pendingConversationScrollRef = useRef(true);
   const pendingPromptJumpRef = useRef<string | null>(null);
@@ -334,6 +337,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     });
   }
   const hasMessages = messages.length > 0;
+  const dockedLayout = hasMessages || conversationLoading;
   useLayoutEffect(() => {
     scrollRef.current = hasMessages
       ? messageRegionRef.current
@@ -611,7 +615,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     lastConversationKeyRef.current = conversationKey;
     conversationHandoffAnimationRef.current?.cancel();
     conversationHandoffAnimationRef.current = null;
-    conversationHandoffPendingRef.current = true;
+    conversationHandoffPendingRef.current = conversationKey !== null;
     pendingConversationScrollRef.current = true;
     historyScrollAnchorRef.current = null;
     restoreScrollAfterPrependRef.current = null;
@@ -619,7 +623,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     setAtBottom(true);
     setVisibleMessageCount(INITIAL_HISTORY_WINDOW);
 
-    const surface = hasMessages ? messageRegionRef.current : emptyStateRef.current;
+    const surface = messageRegionRef.current;
     const reduceMotion = typeof window.matchMedia === "function"
       && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!surface || reduceMotion || typeof surface.animate !== "function") return;
@@ -720,17 +724,24 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   ]);
 
   useLayoutEffect(() => {
-    if (!conversationReady || !conversationHandoffPendingRef.current) return;
+    if (!conversationReady || conversationLoading || !conversationHandoffPendingRef.current) return;
     conversationHandoffPendingRef.current = false;
     conversationHandoffAnimationRef.current?.cancel();
     conversationHandoffAnimationRef.current = null;
-    const surface = hasMessages ? messageRegionRef.current : emptyStateRef.current;
+    const surface = messageRegionRef.current;
+    const content = messageContentRef.current;
     const reduceMotion = typeof window.matchMedia === "function"
       && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!surface || reduceMotion || typeof surface.animate !== "function") return;
+    if (!surface || !content || reduceMotion || typeof surface.animate !== "function") return;
 
+    // Start at the last visible message even when the transcript is shorter than the viewport.
+    const contentBottom = content.getBoundingClientRect().bottom - surface.getBoundingClientRect().top;
+    const revealTop = Math.max(0, Math.min(contentBottom, surface.clientHeight) - SESSION_HANDOFF_VISIBLE_TAIL_PX);
     const animation = surface.animate(
-      [{ opacity: SESSION_HANDOFF_OPACITY }, { opacity: 1 }],
+      [
+        { clipPath: `inset(${revealTop}px 0 0 0)`, opacity: SESSION_HANDOFF_OPACITY },
+        { clipPath: "inset(0px 0 0 0)", opacity: 1 },
+      ],
       {
         duration: SESSION_HANDOFF_ENTER_DURATION_MS,
         easing: "cubic-bezier(0.2, 0, 0, 1)",
@@ -744,7 +755,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     };
     animation.onfinish = clearAnimation;
     animation.oncancel = clearAnimation;
-  }, [conversationReady, hasMessages]);
+  }, [conversationLoading, conversationReady, hasMessages]);
 
   useLayoutEffect(() => {
     threadMotionRef.current?.invalidateGeometry();
@@ -920,11 +931,11 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
       >
         <div
           ref={contentRef}
-          data-testid={!hasMessages ? "thread-welcome-layout" : undefined}
-          data-layout={hasComposer ? (hasMessages ? "thread" : "hero") : "external"}
+          data-testid={!dockedLayout ? "thread-welcome-layout" : undefined}
+          data-layout={hasComposer ? (dockedLayout ? "thread" : "hero") : "external"}
           className={cn(
             "thread-layout mx-auto grid min-h-full w-full",
-            hasMessages
+            dockedLayout
               ? "h-full max-w-[64rem]"
               : "max-w-[72rem] px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-6 sm:px-4 sm:py-12",
           )}
@@ -975,7 +986,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
               data-testid="thread-empty-region"
               className={cn(
                 "row-start-1 flex min-h-0 min-w-0 w-full items-center justify-center",
-                hasComposer && "sm:items-end sm:pb-8",
+                hasComposer && !dockedLayout && "sm:items-end sm:pb-8",
               )}
             >
               {emptyState}
@@ -1007,12 +1018,12 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
               }}
               className={cn(
                 "row-start-2 z-10 w-full",
-                hasMessages ? "thread-composer-dock relative" : "relative self-center",
+                dockedLayout ? "thread-composer-dock relative" : "relative self-center",
               )}
             >
               <div
                 className={cn(
-                  hasMessages
+                  dockedLayout
                     ? "px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-4"
                     : "",
                 )}

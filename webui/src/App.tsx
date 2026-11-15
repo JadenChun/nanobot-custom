@@ -2754,6 +2754,7 @@ function Shell({
                     return (
                       <ThreadShell
                         session={activeSession}
+                        openingConversation={activeKey !== null && activeSession === null}
                         sessions={sessions}
                         title={headerTitle}
                         temporary={temporaryChatRequested}

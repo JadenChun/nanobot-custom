@@ -6462,6 +6462,67 @@ describe("ThreadShell", () => {
     expect(screen.queryByText("from chat a")).not.toBeInTheDocument();
   });
 
+  it("shows the transcript while delegated activity loads and ignores the old chat's reply", async () => {
+    const client = makeClient();
+    const childRequests = new Map<string, (response: ReturnType<typeof httpJson>) => void>();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      for (const chat of ["a", "b"]) {
+        const path = `websocket%3Aopening-${chat}/`;
+        if (url.includes(path + "webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "assistant", content: `Saved reply in chat ${chat}` },
+          ])));
+        }
+        if (url.includes(path + "delegated-children")) {
+          return new Promise<ReturnType<typeof httpJson>>((resolve) => {
+            childRequests.set(chat, resolve);
+          });
+        }
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    }));
+
+    const open = (chat: string) => wrap(client, (
+      <ThreadShell session={session(`opening-${chat}`)} title={`Chat ${chat}`} onToggleSidebar={() => {}} />
+    ));
+    const { rerender } = render(open("a"));
+    expect(await screen.findByText("Saved reply in chat a")).toBeVisible();
+    expect(childRequests.has("a")).toBe(true);
+    expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
+
+    rerender(open("b"));
+    expect(await screen.findByText("Saved reply in chat b")).toBeVisible();
+    expect(childRequests.has("b")).toBe(true);
+    expect(screen.queryByText("Saved reply in chat a")).not.toBeInTheDocument();
+
+    await act(async () => {
+      childRequests.get("a")?.(httpJson({
+        schemaVersion: 1,
+        parentSessionKey: "websocket:opening-a",
+        children: [{
+          history_kind: "summary",
+          parent_session_key: "websocket:opening-a",
+          root_key: "websocket:opening-a",
+          child_session_key: "delegated:late", child_id: "late",
+          profile: "worker", state: "completed", outcome: "completed",
+          task_label: "Late activity from chat a", task_label_truncated: false,
+          result_summary: null, result_summary_truncated: false,
+          runtime_generation: null, parent_run_id: null, child_run_id: null,
+          parent_store_identity: null, parent_incarnation: null, parent_generation: null,
+          root_store_identity: null, root_incarnation: null, root_generation: null,
+          child_store_identity: null, child_incarnation: null, child_generation: null,
+          run_sequence: null, state_sequence: null, control_epoch: null, can_stop: false,
+        }],
+      }));
+      childRequests.get("b")?.({ ok: false, status: 503, json: async () => ({}) });
+    });
+
+    expect(await screen.findByText(/Delegated activity could not be fully verified/)).toBeVisible();
+    expect(screen.getByText("Saved reply in chat b")).toBeVisible();
+    expect(screen.queryByLabelText("Late activity from chat a")).not.toBeInTheDocument();
+  });
+
   it("updates @ CLI app suggestions when settings broadcasts an install", async () => {
     const client = makeClient();
     render(wrap(

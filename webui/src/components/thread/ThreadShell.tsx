@@ -695,6 +695,7 @@ type FilePreviewAvailabilityCacheEntry = {
 
 interface ThreadShellProps {
   session: ChatSummary | null;
+  openingConversation?: boolean;
   sessions?: ChatSummary[];
   title: string;
   temporary?: boolean;
@@ -1003,6 +1004,7 @@ function useInstalledSettingItems<Payload, Item>({
 
 export function ThreadShell({
   session,
+  openingConversation = false,
   sessions = [],
   title,
   temporary = false,
@@ -1062,6 +1064,7 @@ export function ThreadShell({
   );
   const {
     messages: historical,
+    openingPage,
     loading,
     error: historyError,
     loadingOlder,
@@ -1092,6 +1095,7 @@ export function ThreadShell({
     version: historyVersion,
     forkBoundaryMessageCount,
   } = useSessionHistory(historyKey);
+  const [appliedHistoryVersion, setAppliedHistoryVersion] = useState(0);
   const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
   const pendingRecoveryResolveRef = useRef<PendingRecoveryResolve | null>(null);
   const recoveryRefreshGenerationRef = useRef(0);
@@ -1314,7 +1318,7 @@ export function ThreadShell({
   const currentUiMessagesRef = useRef<UIMessage[] | null>(null);
   const uiRevisionRef = useRef(0);
   const showTemporaryChatControl =
-    !hideHeader && !session && !loading && !!onTemporaryChatEnabledChange;
+    !hideHeader && !session && !openingConversation && !!onTemporaryChatEnabledChange;
 
   const clearPendingChildApproval = useCallback((approvalId: string): void => {
     pendingChildApprovalTurnsRef.current.delete(approvalId);
@@ -1865,7 +1869,25 @@ export function ThreadShell({
     historyKey,
   ]);
 
-  const showHeroComposer = displayMessages.length === 0 && !loading;
+  // Fetch completion comes before the history effect updates the displayed messages.
+  const historyIsPending = historyKey !== null && (
+    loading || !messagesReady || historyVersion !== appliedHistoryVersion
+  );
+  const showingOpeningPage = historyIsPending && messagesReady && displayMessages.length === 0;
+  const openingMessages = useMemo(() => {
+    if (!showingOpeningPage) return [];
+    const pendingMessages = loading ? openingPage?.messages : historical;
+    return projectWebuiThreadMessages(
+      (pendingMessages ?? []).filter((message) => message.kind !== "delegated_child"),
+    );
+  }, [historical, loading, openingPage, showingOpeningPage]);
+  const viewportMessages = messagesReady
+    ? (showingOpeningPage ? openingMessages : displayMessages)
+    : openingMessages;
+  const conversationLoading = openingConversation || (
+    historyIsPending && viewportMessages.length === 0
+  );
+  const showHeroComposer = viewportMessages.length === 0 && !conversationLoading;
   const composerVariant = showHeroComposer ? emptyComposerVariant : "thread";
   const wasShowingHeroComposerRef = useRef(showHeroComposer);
   const sessionModelPreset = session?.modelPreset?.trim() || null;
@@ -2012,6 +2034,7 @@ export function ThreadShell({
 
   useEffect(() => {
     if (!historyKey || !chatId || loading) return;
+    setAppliedHistoryVersion(historyVersion);
     const cached = messageCacheRef.current.get(chatId);
     const pendingCanonicalHydrate = pendingCanonicalHydrateRef.current.get(chatId);
     const hasNewCanonicalHistory = (
@@ -3038,7 +3061,7 @@ export function ThreadShell({
         ) : null}
         <ThreadComposer
           onSend={handleWelcomeSend}
-          disabled={booting || preparingFull}
+          disabled={openingConversation || booting || preparingFull}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
           onDraftFullAccess={
@@ -3049,7 +3072,9 @@ export function ThreadShell({
           placeholder={
             booting || preparingFull
               ? t("thread.composer.placeholderOpening")
-              : t("thread.composer.placeholderHero")
+              : t(openingConversation
+                ? "thread.composer.placeholderThread"
+                : "thread.composer.placeholderHero")
           }
           modelLabel={modelBadgeLabel}
           modelDetail={modelBadge.model}
@@ -3066,7 +3091,7 @@ export function ThreadShell({
           }
           contextUsage={composerContextUsage}
           recentRoundUsage={composerRoundUsage}
-          variant="hero"
+          variant={composerVariant}
           slashCommands={availableSlashCommands}
           cliApps={cliApps}
           mcpPresets={mcpPresets}
@@ -3095,8 +3120,8 @@ export function ThreadShell({
     </>
   );
 
-  const emptyState = loading ? (
-    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+  const emptyState = conversationLoading ? (
+    <div role="status" className="text-sm text-muted-foreground">
       {t("thread.loadingConversation")}
     </div>
   ) : (
@@ -3181,7 +3206,7 @@ export function ThreadShell({
       hideThemeButton={hideThemeButton}
       hideTitle={hideHeaderTitle}
       actions={headerActions}
-      minimal={!session && !loading}
+      minimal={!session && !conversationLoading}
       promptNavigatorAction={promptNavigatorAction}
       sessionInfoAction={sessionInfoAction}
       generatedAssetsAction={generatedAssetsAction}
@@ -3216,7 +3241,7 @@ export function ThreadShell({
         >
           <ThreadViewport
             ref={viewportRef}
-            messages={displayMessages}
+            messages={viewportMessages}
             temporary={temporary}
             obscured={inspectorModal}
             isStreaming={turnActive}
@@ -3232,6 +3257,7 @@ export function ThreadShell({
             activeTurnStartedHere={activeTurnStartedHere}
             conversationKey={historyKey}
             conversationReady={messagesReady}
+            conversationLoading={conversationLoading}
             showScrollToBottomButton={!!session}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
@@ -3239,10 +3265,12 @@ export function ThreadShell({
             forkBoundaryMessageCount={forkBoundaryMessageCount}
             hasMoreBefore={hasMoreBefore}
             loadingOlder={loadingOlder}
-            userMessageOffset={userMessageOffset}
+            userMessageOffset={showingOpeningPage && loading
+              ? openingPage?.userMessageOffset ?? 0
+              : userMessageOffset}
             onLoadOlder={loadOlder}
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
-            onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
+            onForkFromMessage={onForkChat && !showingOpeningPage ? handleForkFromMessage : undefined}
             onOpenChildHistory={handleOpenChildHistory}
             delegatedStatusAvailable={delegatedStatusAvailable}
             onQuoteSelection={session ? handleQuoteSelection : undefined}

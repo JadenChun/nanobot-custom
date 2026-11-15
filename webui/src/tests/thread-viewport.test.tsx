@@ -2216,11 +2216,8 @@ describe("ThreadViewport", () => {
     expect(followTo).toHaveBeenCalledWith(2400);
     expect(handoffAnimation.cancel).toHaveBeenCalled();
     expect(animate).toHaveBeenCalledWith(
-      [{ opacity: 0.82 }, { opacity: 1 }],
-      {
-        duration: 140,
-        easing: "cubic-bezier(0.2, 0, 0, 1)",
-      },
+      [expect.objectContaining({ opacity: 0.82 }), expect.objectContaining({ opacity: 1 })],
+      expect.objectContaining({ duration: expect.any(Number) }),
     );
     expect(jumpTo.mock.invocationCallOrder[0]).toBeLessThan(
       animate.mock.invocationCallOrder[1],

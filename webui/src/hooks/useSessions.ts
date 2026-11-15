@@ -32,7 +32,7 @@ import type {
 } from "@/lib/types";
 
 const EMPTY_MESSAGES: UIMessage[] = [];
-const INITIAL_HISTORY_PAGE_LIMIT = 80;
+const INITIAL_HISTORY_PAGE_LIMIT = 40;
 const OLDER_HISTORY_PAGE_LIMIT = 120;
 const DELEGATED_CHILD_PAGE_LIMIT = 120;
 const CHAT_CREATE_TIMEOUT_MS = 60_000;
@@ -47,6 +47,11 @@ function isAbortError(error: unknown): boolean {
 }
 
 export type SessionHistoryContinuity = "initial" | "overlap" | "reset";
+
+type OpeningHistoryPage = {
+  messages: UIMessage[];
+  userMessageOffset: number;
+};
 
 function mergePermissionProjection(
   current: WorkspacePermissionProjection | null,
@@ -398,6 +403,7 @@ export function useSessions(): {
 /** Lazy-load a session's on-disk messages the first time the UI displays it. */
 export function useSessionHistory(key: string | null): {
   messages: UIMessage[];
+  openingPage: OpeningHistoryPage | null;
   loading: boolean;
   loadingOlder: boolean;
   error: string | null;
@@ -449,6 +455,7 @@ export function useSessionHistory(key: string | null): {
   const [state, setState] = useState<{
     key: string | null;
     messages: UIMessage[];
+    openingPage: OpeningHistoryPage | null;
     loading: boolean;
     loadingOlder: boolean;
     error: string | null;
@@ -474,6 +481,7 @@ export function useSessionHistory(key: string | null): {
   }>({
     key: null,
     messages: [],
+    openingPage: null,
     loading: false,
     loadingOlder: false,
     error: null,
@@ -512,6 +520,7 @@ export function useSessionHistory(key: string | null): {
       setState({
         key: null,
         messages: [],
+        openingPage: null,
         loading: false,
         loadingOlder: false,
         error: null,
@@ -549,6 +558,7 @@ export function useSessionHistory(key: string | null): {
     setState((prev) => prev.key === key
       ? {
           ...prev,
+          openingPage: null,
           loading: true,
           loadingOlder: false,
           error: null,
@@ -560,6 +570,7 @@ export function useSessionHistory(key: string | null): {
       : {
           key,
           messages: [],
+          openingPage: null,
           loading: true,
           loadingOlder: false,
           error: null,
@@ -591,17 +602,22 @@ export function useSessionHistory(key: string | null): {
           signal: controller.signal,
         });
         if (cancelled) return;
-        let childPages = {
-          children: [] as DelegatedChildReference[],
-          stopTarget: null as StopExpectation | null,
-          stopTargetSnapshotAvailable: false,
-          incomplete: false,
-        };
-        try {
-          childPages = await fetchAllDelegatedChildren(getToken, key, controller.signal);
-        } catch {
-          childPages = { ...childPages, incomplete: true };
+        const persisted = persistedMessagesToUi(body?.messages ?? []);
+        const userMessageOffset = Math.max(0, body?.page?.user_message_offset ?? 0);
+        if (persisted.length > 0) {
+          // Show the transcript while the delegated activity lookup runs.
+          // Only the verified page below can update the live chat state.
+          setState((prev) => prev.key === key && prev.version === 0
+            ? { ...prev, openingPage: { messages: persisted, userMessageOffset } }
+            : prev);
         }
+        const childPages = await fetchAllDelegatedChildren(getToken, key, controller.signal)
+          .catch(() => ({
+            children: [],
+            stopTarget: null,
+            stopTargetSnapshotAvailable: false,
+            incomplete: true,
+          }));
         if (cancelled) return;
         historyVersionRef.current += 1;
         const responseVersion = historyVersionRef.current;
@@ -614,7 +630,7 @@ export function useSessionHistory(key: string | null): {
           ? parseStopExpectation(body?.stop_target)
           : childPages.stopTarget;
         const hydrated = hydrateDelegatedChildren(
-          persistedMessagesToUi(body?.messages ?? []),
+          persisted,
           childPages.children,
           key,
           stopTarget?.source ?? null,
@@ -640,6 +656,7 @@ export function useSessionHistory(key: string | null): {
           return {
             key,
             messages: merged.messages,
+            openingPage: null,
             loading: false,
             loadingOlder: false,
             error: null,
@@ -656,7 +673,7 @@ export function useSessionHistory(key: string | null): {
               : body?.page?.has_more_before === true,
             userMessageOffset: retainedPrefix
               ? prev.userMessageOffset
-              : Math.max(0, body?.page?.user_message_offset ?? 0),
+              : userMessageOffset,
             version: responseVersion,
             continuity: merged.continuity,
             lineage: merged.continuity === "overlap"
@@ -690,6 +707,7 @@ export function useSessionHistory(key: string | null): {
         });
       } catch (e) {
         if (cancelled || isAbortError(e)) return;
+        controller.abort();
         if (e instanceof ApiError && e.status === 404) {
           historyVersionRef.current += 1;
           const responseVersion = historyVersionRef.current;
@@ -700,6 +718,7 @@ export function useSessionHistory(key: string | null): {
             return {
               key,
               messages: [],
+              openingPage: null,
               loading: false,
               loadingOlder: false,
               error: null,
@@ -728,6 +747,7 @@ export function useSessionHistory(key: string | null): {
           setState((prev) => ({
             key,
             messages: [],
+            openingPage: null,
             loading: false,
             loadingOlder: false,
             error: (e as Error).message,
@@ -953,6 +973,7 @@ export function useSessionHistory(key: string | null): {
   if (!key) {
     return {
       messages: EMPTY_MESSAGES,
+      openingPage: null,
       loading: false,
       loadingOlder: false,
       error: null,
@@ -990,6 +1011,7 @@ export function useSessionHistory(key: string | null): {
   if (state.key !== key) {
     return {
       messages: EMPTY_MESSAGES,
+      openingPage: null,
       loading: true,
       loadingOlder: false,
       error: null,
@@ -1024,6 +1046,7 @@ export function useSessionHistory(key: string | null): {
 
   return {
     messages: state.messages,
+    openingPage: state.openingPage,
     loading: state.loading,
     loadingOlder: state.loadingOlder,
     error: state.error,

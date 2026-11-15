@@ -950,7 +950,7 @@ describe("useSessions", () => {
       "tok",
       "websocket:paged",
       expect.objectContaining({
-        limit: 80,
+        limit: 40,
         direction: "latest",
         signal: expect.any(AbortSignal),
       }),
