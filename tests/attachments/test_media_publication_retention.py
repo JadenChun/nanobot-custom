@@ -327,6 +327,59 @@ def test_workspace_relocation_requires_current_owner_binding(tmp_path: Path, bin
     assert path.is_file() and path.with_suffix(".json").is_file()
 
 
+def remount(store, *, device_offset: int = 4096) -> None:
+    registry = json.loads(store.custody.registry.read_text())
+    for row in registry["roots"]:
+        row["identity"][0] += device_offset
+        if row["kind"] == "sessions":
+            row["workspace_identity"][0] += device_offset
+    store.custody.registry.write_text(json.dumps(registry, sort_keys=True))
+
+
+def test_persisted_roots_carry_across_a_filesystem_remount(tmp_path: Path) -> None:
+    backend, store, _record, path = orphan(tmp_path)
+    remount(store)
+    registry_before = store.custody.registry.read_bytes()
+
+    reopened = JsonlSessionStore(backend.workspace, sessions_root=backend.sessions_root)
+
+    assert reopened.sessions_dir == backend.sessions_dir
+    assert store.custody.registry.read_bytes() == registry_before
+    with store.custody.maintenance() as (_gate, evidence):
+        assert evidence.complete, evidence.reasons
+    assert path.is_file()
+
+
+def test_workspace_relocation_after_a_remount_keeps_its_identity(tmp_path: Path) -> None:
+    backend, store, _record, path = orphan(tmp_path)
+    remount(store)
+    moved = tmp_path / "workspace-moved"
+    backend.workspace.rename(moved)
+
+    reopened = JsonlSessionStore(moved, sessions_root=backend.sessions_root)
+
+    assert reopened.sessions_dir == backend.sessions_dir
+    with store.custody.maintenance() as (_gate, evidence):
+        assert evidence.complete, evidence.reasons
+    assert path.is_file()
+
+
+def test_filesystem_remount_does_not_refresh_a_replaced_root(tmp_path: Path) -> None:
+    _backend, store, _record, path = orphan(tmp_path)
+    remount(store)
+    registry = json.loads(store.custody.registry.read_text())
+    sessions = next(row for row in registry["roots"] if row["kind"] == "sessions")
+    sessions["identity"][1] += 1
+    store.custody.registry.write_text(json.dumps(registry, sort_keys=True))
+    before = store.custody.registry.read_bytes()
+
+    with store.custody.maintenance() as (_gate, evidence):
+        assert not evidence.complete and evidence.reasons
+
+    assert store.custody.registry.read_bytes() == before
+    assert path.is_file()
+
+
 def test_identical_hashes_have_independent_exact_publication_transfers(tmp_path: Path) -> None:
     backend, store = backend_store(tmp_path)
     first = store.commit(store.stage_bytes(b"same", mime="text/plain", name="a.txt", source="telegram"))

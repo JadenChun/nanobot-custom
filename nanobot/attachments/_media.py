@@ -356,7 +356,48 @@ class MediaCustody:
                         raise MediaRetentionError("invalid session media declaration")
                 if Path(path).parent != Path(cast(str, row["sessions_root"])):
                     raise MediaRetentionError("invalid namespace declaration")
+        self._carry_remounted_identities(value)
         return value, raw
+
+    def _carry_remounted_identities(self, value: dict[str, object]) -> None:
+        """Carry persisted root identities across a filesystem remount.
+
+        The kernel assigns a new st_dev when it mounts a filesystem, while the
+        inode and path remain. Every declaration recorded on one device must
+        resolve to one device now; a split mapping still means a root was
+        replaced, and a changed inode keeps its original rejection. A path that
+        a relocation already moved away inherits its recorded device group.
+        """
+        observed: dict[int, int] = {}
+        pairs: list[tuple[dict[str, object], str, list[int], tuple[int, int] | None]] = []
+        for item in cast(list[dict[str, object]], value["roots"]):
+            names = ("identity", "workspace_identity") if item["kind"] == "sessions" else ("identity",)
+            for name in names:
+                path = Path(cast(str, item["path"] if name == "identity" else item["workspace"]))
+                recorded = cast(list[int], item[name])
+                current = self._resolved_identity(path)
+                pairs.append((item, name, recorded, current))
+                if current is None or current[1] != recorded[1]:
+                    continue
+                device = observed.setdefault(recorded[0], current[0])
+                if device != current[0]:
+                    raise MediaRetentionError("declared media root was replaced")
+        for item, name, recorded, current in pairs:
+            device = observed.get(recorded[0])
+            if device is None or (current is not None and current[1] != recorded[1]):
+                continue
+            cast(list[int], item[name])[0] = device
+
+    @staticmethod
+    def _resolved_identity(path: Path) -> tuple[int, int] | None:
+        try:
+            descriptor = directory_fd(path)
+            try:
+                return identity(os.fstat(descriptor))
+            finally:
+                os.close(descriptor)
+        except OSError:
+            return None
 
     def declare(self, kind: str, path: Path, *, sessions_root: Path | None = None,
                 workspace: Path | None = None) -> None:
