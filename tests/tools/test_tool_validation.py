@@ -911,3 +911,83 @@ def test_cast_nullable_param_no_crash() -> None:
     assert result["name"] == "hello"
     result = tool.cast_params({"name": None})
     assert result["name"] is None
+
+
+_NUMERIC_CONSTRAINT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "steps": {"type": "number", "multipleOf": 2.5},
+        "threshold": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "share": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 100,
+        },
+    },
+    "required": ["steps"],
+}
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"steps": 5},
+        {"steps": 2.5},
+        {"steps": -5},
+        {"steps": 7.5},
+        {"steps": 5, "threshold": None},
+        {"steps": 5, "threshold": 1e-9},
+        {"steps": 5, "share": 0.001},
+        {"steps": 5, "share": 99.999},
+    ],
+)
+def test_validate_numeric_constraints_accept_valid_values(params: dict[str, Any]) -> None:
+    tool = CastTestTool(_NUMERIC_CONSTRAINT_SCHEMA)
+
+    assert tool.validate_params(params) == []
+
+
+@pytest.mark.parametrize(
+    ("params", "message"),
+    [
+        ({"steps": 2.6}, "must be a multiple of"),
+        ({"steps": 7.6}, "must be a multiple of"),
+        ({"steps": 5, "threshold": 0}, "must be >"),
+        ({"steps": 5, "threshold": -1}, "must be >"),
+        ({"steps": 5, "share": 0}, "must be >"),
+        ({"steps": 5, "share": 100}, "must be <"),
+        ({"steps": 5, "share": 100.5}, "must be <"),
+        ({"steps": 5, "share": -0.5}, "must be >= 0"),
+    ],
+)
+def test_validate_numeric_constraints_reject_invalid_values(
+    params: dict[str, Any], message: str
+) -> None:
+    tool = CastTestTool(_NUMERIC_CONSTRAINT_SCHEMA)
+
+    errors = tool.validate_params(params)
+
+    assert errors
+    assert any(message in error for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_registry_does_not_dispatch_out_of_range_numeric_arguments() -> None:
+    calls: list[dict[str, Any]] = []
+
+    class _NumericTool(CastTestTool):
+        async def execute(self, **kwargs: Any) -> str:
+            calls.append(kwargs)
+            return "ok"
+
+    registry = ToolRegistry()
+    registry.register(_NumericTool(_NUMERIC_CONSTRAINT_SCHEMA))
+
+    invalid = await registry.execute("cast_test", {"steps": 5, "share": 100})
+    valid = await registry.execute("cast_test", {"steps": 5, "share": 99.5})
+
+    assert "Invalid parameters" in str(invalid)
+    assert str(valid) == "ok"
+    assert calls == [{"steps": 5, "share": 99.5}]

@@ -32,11 +32,41 @@ _JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
 # keyword would be advertised to the model but silently ignored before dispatch.
 _ENFORCED_JSON_SCHEMA_KEYS = frozenset({
     "type", "properties", "required", "additionalProperties", "items",
-    "enum", "minimum", "maximum", "minLength", "maxLength", "minItems",
-    "maxItems", "nullable",
+    "enum", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+    "multipleOf", "minLength", "maxLength", "minItems", "maxItems",
+    "nullable",
 })
-_JSON_SCHEMA_ANNOTATION_KEYS = frozenset({"description", "title", "default"})
+_JSON_SCHEMA_ANNOTATION_KEYS = frozenset({"description", "title", "default", "$schema"})
 _SUPPORTED_JSON_SCHEMA_TYPES = frozenset({*_JSON_TYPE_MAP, "null"})
+_NUMERIC_LIMIT_KEYS = ("multipleOf", "exclusiveMinimum", "exclusiveMaximum")
+
+
+def numeric_limit_value(value: Any) -> int | float | None:
+    """Return ``value`` as a numeric JSON Schema limit, or ``None`` when it is not one.
+
+    Booleans are excluded because ``bool`` is an ``int`` subclass in Python.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, int):
+        return value
+    return value if math.isfinite(value) else None
+
+
+def invalid_numeric_limit(
+    mapping: dict[str, Any],
+    key: str,
+    *,
+    path: str = "",
+) -> str | None:
+    """Return an error when a numeric constraint keyword carries an unusable limit."""
+    if key not in mapping:
+        return None
+    if numeric_limit_value(mapping[key]) is None:
+        return f"{path or 'schema'} requires a numeric {key!r}"
+    if key == "multipleOf" and cast(int | float, mapping[key]) <= 0:
+        return f"{path or 'schema'} requires a positive {key!r}"
+    return None
 
 
 def unsupported_json_schema_constraint(schema: Any, *, path: str = "") -> str | None:
@@ -53,6 +83,14 @@ def unsupported_json_schema_constraint(schema: Any, *, path: str = "") -> str | 
     for key in mapping:
         if key not in _ENFORCED_JSON_SCHEMA_KEYS and key not in _JSON_SCHEMA_ANNOTATION_KEYS:
             return f"{path or 'schema'} uses unsupported keyword {key!r}"
+    if "$schema" in mapping:
+        dialect = mapping["$schema"]
+        if not isinstance(dialect, str) or not dialect.strip():
+            return f"{path or 'schema'} requires a non-empty string '$schema'"
+    for key in _NUMERIC_LIMIT_KEYS:
+        error = invalid_numeric_limit(mapping, key, path=path)
+        if error:
+            return error
     raw_type = mapping.get("type")
     if raw_type is not None:
         types: list[Any] = (
@@ -137,6 +175,28 @@ class Schema(ABC):
                 errors.append(f"{label} must be >= {schema['minimum']}")
             if "maximum" in schema and val > schema["maximum"]:
                 errors.append(f"{label} must be <= {schema['maximum']}")
+            number_value = cast(int | float, val)
+            multiple_of = numeric_limit_value(schema.get("multipleOf"))
+            if multiple_of is not None and multiple_of > 0:
+                if isinstance(number_value, int) and isinstance(multiple_of, int):
+                    is_multiple = number_value % multiple_of == 0
+                else:
+                    try:
+                        quotient = number_value / multiple_of
+                    except OverflowError:
+                        is_multiple = False
+                    else:
+                        is_multiple = math.isclose(
+                            quotient, round(quotient), rel_tol=1e-9, abs_tol=1e-9
+                        )
+                if not is_multiple:
+                    errors.append(f"{label} must be a multiple of {multiple_of}")
+            exclusive_minimum = numeric_limit_value(schema.get("exclusiveMinimum"))
+            if exclusive_minimum is not None and number_value <= exclusive_minimum:
+                errors.append(f"{label} must be > {exclusive_minimum}")
+            exclusive_maximum = numeric_limit_value(schema.get("exclusiveMaximum"))
+            if exclusive_maximum is not None and number_value >= exclusive_maximum:
+                errors.append(f"{label} must be < {exclusive_maximum}")
         if t == "string":
             string_value = cast(str, val)
             if "minLength" in schema and len(string_value) < schema["minLength"]:

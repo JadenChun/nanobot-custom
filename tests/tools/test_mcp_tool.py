@@ -20,6 +20,7 @@ from nanobot.agent.tools.mcp import (
     _normalize_windows_stdio_command,
     _sanitize_mcp_tool_name,
     _sanitize_name,
+    _validate_mcp_schema,
     connect_mcp_servers,
 )
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
@@ -2184,6 +2185,104 @@ async def test_connect_mcp_servers_rejects_unsupported_schema_before_publication
         await stack.aclose()
 
     assert registry.tool_names == ["mcp_test_valid"]
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_admits_draft7_annotations_and_numeric_constraints(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    draft7 = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "width": {"type": "integer", "minimum": 512, "maximum": 6272, "multipleOf": 32},
+            "threshold": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        },
+        "required": ["width"],
+    }
+    admitted_tool = SimpleNamespace(name="admitted", description="admitted", inputSchema=draft7)
+
+    async def initialize() -> None:
+        return None
+
+    async def list_tools() -> SimpleNamespace:
+        return SimpleNamespace(tools=[admitted_tool])
+
+    fake_mcp_runtime["session"] = SimpleNamespace(initialize=initialize, list_tools=list_tools)
+    registry = ToolRegistry()
+
+    stacks = await connect_mcp_servers({"test": MCPServerConfig(command="fake")}, registry)
+    for stack in stacks.values():
+        await stack.aclose()
+
+    assert registry.tool_names == ["mcp_test_admitted"]
+
+
+@pytest.mark.parametrize(
+    ("keyword", "limit"),
+    [
+        ("multipleOf", 0),
+        ("multipleOf", -1),
+        ("multipleOf", True),
+        ("multipleOf", "2"),
+        ("multipleOf", None),
+        ("exclusiveMinimum", True),
+        ("exclusiveMinimum", "0"),
+        ("exclusiveMinimum", None),
+        ("exclusiveMaximum", False),
+        ("exclusiveMaximum", "100"),
+        ("exclusiveMaximum", None),
+    ],
+)
+def test_validate_mcp_schema_refuses_unusable_numeric_limits(keyword: str, limit: object) -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "number", keyword: limit}},
+        "required": ["value"],
+    }
+
+    error = _validate_mcp_schema(schema)
+
+    assert error is not None
+    assert keyword in error
+
+
+@pytest.mark.parametrize(
+    ("keyword", "limit"),
+    [
+        ("multipleOf", 1),
+        ("multipleOf", 0.5),
+        ("exclusiveMinimum", 0),
+        ("exclusiveMinimum", -1),
+        ("exclusiveMaximum", 0),
+        ("exclusiveMaximum", 100.5),
+    ],
+)
+def test_validate_mcp_schema_admits_enforceable_numeric_limits(
+    keyword: str, limit: float
+) -> None:
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "number", keyword: limit}},
+        "required": ["value"],
+    }
+
+    assert _validate_mcp_schema(schema) is None
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"$schema": 7, "type": "object"},
+        {"$schema": {}, "type": "object"},
+        {"$schema": "", "type": "object"},
+    ],
+)
+def test_validate_mcp_schema_refuses_malformed_dialect_annotation(schema: dict[str, object]) -> None:
+    error = _validate_mcp_schema(schema)
+
+    assert error is not None
+    assert "$schema" in error
 
 
 @pytest.mark.asyncio

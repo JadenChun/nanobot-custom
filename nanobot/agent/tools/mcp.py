@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 import httpx
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.base import Tool, ToolResult, invalid_numeric_limit
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.security.network import (
     PinnedDNSAsyncTransport,
@@ -500,8 +500,9 @@ def _normalize_nullable_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 _SUPPORTED_MCP_SCHEMA_KEYS = frozenset({
     "type", "properties", "required", "additionalProperties", "items",
-    "enum", "minimum", "maximum", "minLength", "maxLength", "minItems",
-    "maxItems", "nullable", "description", "title", "default", "$ref",
+    "enum", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+    "multipleOf", "minLength", "maxLength", "minItems", "maxItems",
+    "nullable", "description", "title", "default", "$ref", "$schema",
     "definitions", "anyOf",
 })
 
@@ -519,6 +520,14 @@ def _validate_mcp_schema(schema: Any, *, path: str = "") -> str | None:
     for key in mapping:
         if key not in _SUPPORTED_MCP_SCHEMA_KEYS:
             return f"{path or 'schema'} uses unsupported keyword {key!r}"
+    if "$schema" in mapping:
+        dialect = mapping["$schema"]
+        if not isinstance(dialect, str) or not dialect.strip():
+            return f"{path or 'schema'} requires a non-empty string '$schema'"
+    for key in ("multipleOf", "exclusiveMinimum", "exclusiveMaximum"):
+        error = invalid_numeric_limit(mapping, key, path=path)
+        if error:
+            return error
     raw_type = mapping.get("type")
     if raw_type is not None:
         types: list[Any] = (
