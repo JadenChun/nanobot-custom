@@ -519,6 +519,18 @@ class CustodyStore(context: Context) {
 
     @Synchronized
     fun clear() {
+        runCatching { load()?.installationId }.getOrNull()?.let {
+            purgeNetworkState(appContext, it)
+        }
+        runCatching {
+            if (pendingInstallationFile().exists()) {
+                pendingInstallationFile().readText(Charsets.UTF_8).trim()
+            } else {
+                ""
+            }
+        }.getOrNull()?.takeIf { it.isNotBlank() }?.let {
+            purgeNetworkState(appContext, it)
+        }
         recordFile.delete()
         File(custodyDir, "record.tmp").delete()
         pendingInstallationFile().delete()
@@ -664,6 +676,11 @@ class CustodyStore(context: Context) {
     }
 
     companion object {
+        fun purgeNetworkState(context: Context, installationId: String) {
+            val safe = installationId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
+            File(context.filesDir, "network-state").resolve(safe).deleteRecursively()
+        }
+
         private const val ALIAS = "nanobot.mobile.custody.v1"
         private const val DEVICE_PROOF_ALIAS = "nanobot.mobile.device-proof.v1"
         private const val MAGIC = "NBC1"

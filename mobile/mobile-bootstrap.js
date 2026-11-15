@@ -861,7 +861,9 @@
         var status = await plugin.status();
         if (status && status.state === "ready") return;
         if (status && status.state === "needs_login") throw new Error("tailnet login required");
-        if (status && status.state === "error") throw new Error("native transport failed");
+        if (status && status.state === "error") {
+          throw new Error("native transport failed" + (status.message ? ": " + status.message : ""));
+        }
         await new Promise(function (resolve) { setTimeout(resolve, 500); });
       }
       throw new Error("native transport readiness timeout");

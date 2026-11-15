@@ -64,6 +64,7 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @Volatile private var transportHandle: Long = 0L
+    private var stateRecoveryAttempted = false
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val retryExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val retryTimer = ScheduledRetryTimer(retryExecutor)
@@ -1451,11 +1452,21 @@ class NativeNetworkPlugin : Plugin() {
                     "ws_closed ws=${event.optLong("ws_id")} code=${event.optInt("code")} " +
                         "reason=${event.optString("reason")}",
                 )
-            "node_state" ->
+            "node_state" -> {
+                val nodeState = event.optString("state")
+                val message = event.optString("message")
                 Log.i(
                     TAG,
-                    "node_state state=${event.optString("state")} login_url=${event.optString("login_url")}",
+                    "node_state state=$nodeState login_url=${event.optString("login_url")} " +
+                        "message=$message",
                 )
+                if (nodeState == "ready") stateRecoveryAttempted = false
+                if (nodeState == "error" &&
+                    (message.contains("cannot be decrypted") || message.contains("ReadState"))
+                ) {
+                    recoverCorruptNetworkState()
+                }
+            }
             "http_error" ->
                 Log.w(
                     TAG,
@@ -1658,6 +1669,25 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @Synchronized
+    private fun recoverCorruptNetworkState() {
+        synchronized(this) {
+            if (stateRecoveryAttempted) return
+            stateRecoveryAttempted = true
+        }
+        operationExecutor.execute {
+            try {
+                val record = custody.load() ?: return@execute
+                CustodyStore.purgeNetworkState(context, record.installationId)
+                synchronized(this) {
+                    stopInternal()
+                    startTransport(record)
+                }
+            } catch (_: Exception) {
+                // The pairing page still offers Retry and a fresh link.
+            }
+        }
+    }
+
     private fun stopInternal() {
         pairingApproval = null
         admission.close()
