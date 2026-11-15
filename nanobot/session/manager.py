@@ -3406,6 +3406,10 @@ class SessionManager:
             return None
         return cast(dict[str, Any] | None, self._store.read_metadata(key))
 
+    def read_raw_session_metadata(self, key: str) -> dict[str, Any] | None:
+        """Read persisted metadata without session-mode admission."""
+        return cast(dict[str, Any] | None, self._store.read_metadata(key))
+
     def update_session_metadata(
         self,
         key: str,

@@ -56,3 +56,57 @@ async def test_malformed_child_fences_only_its_own_root(tmp_path) -> None:
     # The failure is attributed to the chat that owns the record, so another
     # chat is not fenced by it.
     assert restored.recovery_error_child_keys() == frozenset({parent.key})
+
+
+@pytest.mark.asyncio
+async def test_legacy_terminal_child_retires_without_fencing_any_chat(tmp_path) -> None:
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+    child = await _reserve(
+        tree,
+        parent,
+        assignment="legacy completed worker",
+        attempt_id="attempt-legacy-terminal",
+    )
+    legacy = child.metadata()
+    for name in ("source_state", "parent_source_state", "root_source_state"):
+        legacy.pop(name, None)
+    legacy["state"] = "completed"
+    legacy["outcome"] = "completed"
+    legacy["holds_capacity"] = False
+    for name in ("pending_approval_id", "pending_effect_id", "blocked_run_id"):
+        legacy.pop(name, None)
+    assert sessions.upsert_session_metadata(
+        child.session_key,
+        {DELEGATION_CHILD_METADATA_KEY: legacy},
+    )
+
+    _restored_sessions, restored = _new_tree(tmp_path)
+
+    assert restored.recovery_error is None
+    assert restored.recovery_error_child_keys() == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_legacy_live_child_still_fences_its_root(tmp_path) -> None:
+    sessions, tree = _new_tree(tmp_path)
+    parent = _new_parent(sessions)
+    child = await _reserve(
+        tree,
+        parent,
+        assignment="legacy live worker",
+        attempt_id="attempt-legacy-live",
+    )
+    legacy = child.metadata()
+    for name in ("source_state", "parent_source_state", "root_source_state"):
+        legacy.pop(name, None)
+    legacy["state"] = "active"
+    assert sessions.upsert_session_metadata(
+        child.session_key,
+        {DELEGATION_CHILD_METADATA_KEY: legacy},
+    )
+
+    _restored_sessions, restored = _new_tree(tmp_path)
+
+    assert restored.recovery_error is not None
+    assert restored.recovery_error_child_keys() == frozenset({parent.key})
