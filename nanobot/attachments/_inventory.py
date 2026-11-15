@@ -146,6 +146,16 @@ class References:
                 self.scan(row[name], key=name, depth=depth + 1)
         elif isinstance(value, (list, tuple)):
             for item in cast(list[object] | tuple[object, ...], value):
+                if key == "reference_images" and isinstance(item, dict):
+                    # Image-edit tools also persist references with a role.
+                    reference = cast(dict[object, object], item)
+                    path, role = reference.get("path"), reference.get("role")
+                    if set(reference) != {"path", "role"} or not (
+                        isinstance(path, str) and isinstance(role, str) and role
+                    ):
+                        raise MediaRetentionError("invalid image reference")
+                    self.scan(path, key="path", depth=depth + 1)
+                    continue
                 if key in {"media", "media_paths", "source_images", "reference_images"} and not isinstance(item, str):
                     raise MediaRetentionError("invalid media path collection")
                 if key in {"attachments", "media_artifacts", "artifacts", "media_publications"} and not isinstance(item, dict):
