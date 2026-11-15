@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useClient } from "@/providers/ClientProvider";
-import { normalizeWorkbenchState } from "@/components/workbench/workbench-model";
 import { fetchSidebarState } from "@/lib/api";
 import type { ChatSummary, SidebarStatePayload } from "@/lib/types";
 
@@ -14,7 +13,6 @@ const DEFAULT_SIDEBAR_STATE: SidebarStatePayload = {
   project_name_overrides: {},
   tags_by_key: {},
   collapsed_groups: {},
-  workbench: { version: 1, tabs: {} },
   view: {
     density: "comfortable",
     show_previews: false,
@@ -95,7 +93,6 @@ function normalizeSidebarState(raw: unknown): SidebarStatePayload {
     project_name_overrides: stringMap(value.project_name_overrides),
     tags_by_key: tagsMap(value.tags_by_key),
     collapsed_groups: boolMap(value.collapsed_groups),
-    workbench: normalizeWorkbenchState(value.workbench),
     view: {
       density,
       show_previews: Boolean(view.show_previews),
