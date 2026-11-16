@@ -693,6 +693,31 @@ def test_long_raw_tool_json_keeps_references_beyond_retrieval_preview(tmp_path: 
     assert result["deleted"] == 0 and Path(artifact["path"]).is_file()
 
 
+def test_shell_output_with_media_path_and_dimensions_stays_text(tmp_path: Path) -> None:
+    backend, _store = backend_store(tmp_path)
+    image = store_generated_image_artifact(PNG, prompt="preview", model="fixture")
+    path = Path(image["path"])
+    image_bytes = path.read_bytes()
+    output = f"{path} 1280x720\n0"
+    key = "websocket:preview"
+    snapshot = publish(backend, key, [
+        {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "preview", "type": "function",
+            "function": {"name": "exec", "arguments": "{}"},
+        }]},
+        {"role": "tool", "name": "exec", "tool_call_id": "preview", "content": output},
+    ])
+    reply = new_source_event({"role": "assistant", "content": "Preview ready."}, run_id="preview")
+    backend.source.append_source_events(key, snapshot.state, [reply])
+
+    reopened = JsonlSessionStore(backend.workspace, sessions_root=backend.sessions_root)
+    events = reopened.source.load_source_snapshot(key).events
+    assert [(event["role"], event["content"]) for event in events[-2:]] == [
+        ("tool", output), ("assistant", "Preview ready."),
+    ]
+    assert path.read_bytes() == image_bytes
+
+
 def test_publication_before_delete_is_excluded_by_real_namespace_lock(tmp_path: Path, monkeypatch) -> None:
     backend, store = backend_store(tmp_path)
     record = store.commit(store.stage_bytes(b"publication first", mime="text/plain", name="a.txt", source="telegram"))

@@ -203,8 +203,8 @@ class References:
                         self.scan(target, key="url", depth=depth + 1)
                     elif not target.startswith(("http:", "https:", "data:")):
                         self.path(target)
-                # Plain source text can itself be an exact managed path.
-                if text.startswith(str(self.root) + "/"):
+                # A bare media path occupies one line. Shell output can start with a path.
+                if "\n" not in text and "\r" not in text and text.startswith(str(self.root) + "/"):
                     self.path(text)
         elif key in _MEDIA_LISTS or key in {"path", "storage_key", "sha256"}:
             raise MediaRetentionError("unsupported media reference value")
