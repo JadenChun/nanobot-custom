@@ -1,20 +1,76 @@
 # A3 implementation correction handoff
 
-## Git checkpoint: completed fixes committed — 2026-11-16
+## Git checkpoint: fixes synced to origin — 2026-11-16
 
-The completed macOS Stop/tooling, queue/Steer, mobile reconnect and bounded CUI-7
-owner-seam fixes, their regressions and qualification records are committed locally
-on `codex/staging-audit-implementation`. Author and committer:
-**Jaden <changherng.jc@gmail.com>**. Earlier local/uncommitted statements below
-describe historical qualification checkpoints, not the current Git state.
+The restored-queue anti-replay fix is committed and published at
+`185c3729bc0f28f3225837aa6d75142a9e82ffd6` on
+`origin/codex/staging-audit-implementation`. This includes the previously accepted
+macOS Stop/tooling, queue/Steer, mobile reconnect and bounded CUI-7 owner-seam base
+`b1d7eb24873b02bb5f52036cabf2bcc80957a873`, published in the same sync. Both commits
+use author and committer **Jaden <changherng.jc@gmail.com>**. This progress record
+accompanies the code checkpoint and preserves its validation and remaining work.
+Historical local/uncommitted and no-push statements below refer to qualification
+before this sync, not the current Git state.
 
-The committed code matches the qualified owner-seam snapshot plus the subsequently
-tested flat queue/Steer presentation. This commit does not close the remaining
-restored-attempt/safe-Retry, device or independent client UX work below. No next-fix
-implementation was started before this checkpoint. No push, staging merge, PR or
-deployment occurred; staging remains at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+Continue from `origin/codex/staging-audit-implementation`, not staging. Local and
+origin staging remain at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`; no staging
+merge, PR, service change or deployment occurred. The next independent UI task is
+CUI-6 reasoning expansion; general safe Retry and authoritative restart recovery
+remain open as detailed below. Keep qualification to single-device scope.
 
-## Latest presentation: flat queue and Steer — 2026-11-16
+## Final CUI-7 restored-queue anti-replay — 2026-11-16
+
+**Bounded validation PASS; broader CUI-7 recovery remains open.** The existing
+queue row carries content-free submission provenance and the existing
+`NanobotClient` remains the only outcome owner. Submitted/unknown rows stay held
+through same-device remount, chat switching and recreated-client restoration.
+Exact original receipts consume only their matching row after durable projection;
+canonical-fenced or timestamp-less running events, generic errors and missing
+owner outcomes do not authorize replay. The package adds no second ledger, new wire
+field, prompt/media store or automatic retry path. Legacy rows without trustworthy
+provenance remain held and some genuinely unsent legacy rows may be stranded.
+
+Parent's final source qualification reported **1,624 WebUI tests / 105 files**,
+**4 external baseline tests / 2 files**, TypeScript/Vite build PASS with the existing
+chunk-size advisory, and final lint PASS. A narrow reviewer found the original
+defects resolved and no remaining production defect. The affected owner/storage
+tests passed **16/16** after the final edit. Full suite, external baselines and build
+used the frozen source immediately before correction round 2's sole test-only
+change (removing an unused import); production hashes were unchanged. Parent reran
+the owner/storage focus and lint after that edit. Both correction rounds are closed.
+
+The browser fixture for the single-device scope used actual `ThreadShell`,
+`useNanobotStream`, `NanobotClient` and app styles with fake socket/fetch, no
+gateway/provider/model, at **604 × 852** and **390 × 844**. It confirms remount
+hold; an offscreen exact A
+receipt preserves B's current draft and consumes only A on return; stale receipts
+preserve the current later draft; and a recreated client keeps its submitted row
+held with mutation controls disabled and no automatic drain. Narrow layout had no
+horizontal overflow. Exact active-Steer receipt behavior and late canonical-idle
+running proof with next-row/draft preservation are covered in separate tests, not
+one combined matrix. Browser evidence does not claim rich draft persistence across
+view remount/recreation. No multi-device, cross-tab or simultaneous-client matrix
+was requested or run.
+
+Raw final evidence: `/private/tmp/nb-cui7-restored-20261116-f4f8t2qi/`, including
+`root-full-webui-final.log`, `root-external-final.log`, `root-build-final.log`,
+`root-lint-qualified.log`, `root-focused-qualified.log`,
+`browser-final-observations.json`, `preview-stopped.json`, and four
+`queue-*.jpg` screenshots. Preview PID **63691** was stopped and the viewport was
+reset. Python manifest inputs remained **1,515 unchanged files** and the
+**216-distribution Python 3.13.12 environment** remained unchanged; Python tests,
+strict checks, wheel packaging and native app qualification were not rerun for this
+client-only package. The bounded review is complete.
+
+**Open:** general safe Retry, canonical same-attempt deduplication/readback, and
+authoritative exact-outcome recovery after same-device restart remain unimplemented.
+A recreated client's UNKNOWN row stays held instead of auto-retrying. Physical
+Android/native-client and macOS Full/process-tree qualification also remain open.
+This bounded PASS is not complete CUI-7, A3, P6, release or merge acceptance.
+CUI-6 reasoning expansion is next, followed by CUI-2–5; no code work on them was
+started here.
+
+## Earlier presentation checkpoint: flat queue and Steer — 2026-11-16 (historical)
 
 **Bounded presentation PASS.** The queue remains outside the input card but now
 touches it as a flat, subtly bordered strip: no panel shadow/backdrop blur, no
@@ -26,14 +82,17 @@ Final full WebUI **1,606 tests / 102 files**, build and lint passed. Desktop,
 390 × 844 and light-hero actual-component previews verified flat styling, bounded
 scrolling, pending locks and a preserved later draft. No installed-wheel/backend
 or physical-device qualification was repeated. See [the bounded record](client-ux-followups.md#flat-queue-and-steer-presentation-follow-up--2026-11-16).
-The CUI-7 limits and remaining tasks below are unchanged. All changes remain
-local/uncommitted; no Git publication, staging merge or deployment occurred.
+The flat presentation change did not alter the bounded CUI-7 behavior recorded
+above. General safe-Retry/device limits remain open. At that presentation
+checkpoint, its source changes were local/uncommitted; no Git publication, staging
+merge or deployment occurred then.
 
-## Latest: CUI-7 owner seams qualified, broader recovery still open — 2026-11-16
+## Earlier CUI-7 owner-seam qualification — 2026-11-16 (historical)
 
-**Bounded PASS**, including fresh integrated review and final installed macOS
-browser verification. This supersedes the two defects in the historical review
-hold below; it does **not** close all CUI-7/mobile recovery, A3 or P6.
+**Owner-seam PASS at this checkpoint.** The restored-row replay gap was still open
+then; the final restored-queue qualification above supersedes that status. The
+owner-seam findings remain qualified, while broader safe Retry, restart recovery,
+device qualification, A3 and P6 remain open.
 
 - New-turn owner receipts now follow successful user input append through one
   typed `UserInputCommitted` fact. Lifecycle start remains separate. Active Steer's
@@ -63,23 +122,25 @@ next send or draft loss. A separate active-at-reconnect case completed once afte
 Desktop/narrow UI had no phantom busy state; all disposable processes exited and
 the viewport was reset. No external/paid LLM or user gateway/device was used.
 
-**Remaining safety work:** queue-key switch/remount and reload/restart currently
-lose restored queue held/attempt identity, so manual same-row resend can become
-possible. Durable attempt binding/readback/deduplication, preserved outstanding
-metadata and general safe Retry are not implemented. Do not promote this bounded
-PASS into stable remote-mobile/restart acceptance. Physical Android/native-app and
-macOS Full/process-tree qualification remain open. CUI-6 reasoning access and
-CUI-2 context accounting, CUI-3 general folder controls, CUI-4 notifications/icons
-and CUI-5 progressive word reveal remain separate unstarted work.
+**Historical remaining safety work at that checkpoint:** queue-key switch/remount
+and reload/restart could lose restored-row held identity. The final bounded
+qualification above closes that specific blind-replay gap for submitted/unknown
+rows in the single-device scope: recreated-client UNKNOWN stays held and does not
+auto-retry. Authoritative exact-outcome recovery after restart, canonical
+same-attempt deduplication/readback and general safe Retry remain open. Physical
+Android/native-app and macOS Full/process-tree qualification also remain open.
+CUI-6 reasoning access and CUI-2–5 remain separate UI work.
 
-See [the self-contained qualification and remaining boundary](client-ux-followups.md#cui-7-owner-seam-qualification--2026-11-16).
+See [the final bounded qualification and remaining boundary](client-ux-followups.md#cui-7-bounded-owner-seam-and-restored-queue-qualification--2026-11-16).
 Raw local evidence: `/private/tmp/nb-cui7-seams-20261116-xy1unsld/`, particularly
 `acceptance.json`, `integrated-review-recheck.md` and `browser-final-observations.json`.
 Temporary evidence is not automatically available on another device.
 
-All work is **local/uncommitted** on `codex/staging-audit-implementation`, HEAD
-`de2e0fec517203d0f2c45fa83ecf7c591fa2ab4b`. Staging remains separate/unchanged;
-no commit, push, merge, PR or deployment occurred. Git identity is
+At this earlier checkpoint the work was **local/uncommitted** on
+`codex/staging-audit-implementation`, HEAD
+`de2e0fec517203d0f2c45fa83ecf7c591fa2ab4b`. The current base and local package
+state are recorded at the top of this handoff. No commit, push, merge, PR or
+deployment occurred at that checkpoint. Git identity is
 `Jaden <changherng.jc@gmail.com>`.
 
 ## Queue outside the input card — 2026-11-16
@@ -91,14 +152,15 @@ tests**, TypeScript/Vite build and lint passed; actual desktop/narrow and light-
 component previews verified spacing, bounded scrolling and a preserved later draft.
 See [the layout qualification](client-ux-followups.md#queue-placement-follow-up--2026-11-16)
 for scope/evidence. This is local/uncommitted, not an installed-app/device qualification
-or deployment. The mobile admission/projection hold below is still open.
+or deployment. General safe Retry, authoritative same-device restart recovery and
+native/physical-device qualification remain open as recorded above.
 
 ## Cumulative simplicity review hold — 2026-11-16
 
 **Historical checkpoint**, superseded for its two defects by the latest bounded
 qualification above. Its evidence and broader recovery limits remain recorded.
 
-**HELD / requires correction.** The user requested review of our accumulated work
+**At that checkpoint: HELD / requires correction.** The user requested review of our accumulated work
 before further patches. The current Mac Stop, active-Steer and native reconnect
 corrections are appropriately scoped root-cause fixes; no wholesale removal or new
 recovery framework is recommended. CUI-7 owner-seam implementation remains frozen;
@@ -3017,3 +3079,37 @@ Correction QA contains `context.json`, `graph.json`, `progress.json`, `contracts
 safety mappings. `pause-backup` preserves the original dirty tree, index state and hashes
 before checkpoint commits. Keep raw QA and ignored build/toolchain artifacts outside Git;
 do not commit a stack of logs or silently turn this status into architectural approval.
+
+## Earlier restored-queue implementation snapshot — historical evidence
+
+This snapshot was written before parent final validation. Its implementation notes
+remain useful; its acceptance status and test counts are superseded by the
+[final CUI-7 record above](#final-cui-7-restored-queue-anti-replay--2026-11-16).
+
+The WebUI implementation adds versioned per-row queue submission provenance,
+pre-send persistence of the original queued binding, and exact outcome joining through
+the existing `NanobotClient.pendingMessageSends` owner. New rows are `ready`; rows with
+missing/malformed provenance normalize to read-only `unknown`; submitted rows remain
+held across queue switches and same-client remounts. A client recreated by restarting
+the same app/device has no trusted owner record and leaves the restored row held. Exact
+admission removes one matching row after persistence; exact correlated `not_admitted`
+with a reason permits a manual-only retry. Generic failures, route acknowledgements,
+idle/history, storage failure and capacity exclusion do not authorize dispatch or replay.
+
+The queue remains its only content store and preserves its existing 20-row / 4,000-
+character limits. Storage denial, serialization failure, or a cap that would exclude a
+protected row blocks send/upload/frame dispatch and preserves every existing row. Null
+temporary queues remain in memory only. No backend, wire protocol, restart ledger,
+direct prompt/media storage, or general Retry behavior is added.
+
+Focused regressions cover actual-client A→B→A, exact admission after remount and while
+offscreen, exact offscreen refusal/manual-only recovery, same-app recreated-client
+holds, legacy/malformed quarantine, and storage quota/serialization/21-row protection.
+The pre-edit RED is
+`/private/tmp/nb-cui7-restored-20261116-f4f8t2qi/pre-edit-red.log`; the final focused
+run passed 156 tests across six files, with its raw log at
+`/private/tmp/nb-cui7-restored-20261116-f4f8t2qi/focused-green-final.log`. This is an
+earlier focused snapshot; final parent validation is recorded above. This scope targets
+single-device use and does not test simultaneous clients, cross-tab coordination,
+multiple devices or physical-device behavior. General safe Retry, authoritative recovery
+after process restart, A3 and release acceptance remain open.
