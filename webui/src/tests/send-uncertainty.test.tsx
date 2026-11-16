@@ -125,6 +125,63 @@ describe("send uncertainty integration", () => {
 });
 
 
+describe("admission refused for session recovery", () => {
+  function renderChat(chatId: string) {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })));
+    const client = new NanobotClient({ url: "ws://test", reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
+    clients.push(client);
+    client.connect();
+    const socket = FakeSocket.instances[0]!;
+    socket.fakeOpen();
+    render(<ClientProvider client={client} token="tok"><ThreadShell
+      session={{ key: `websocket:${chatId}`, chatId, channel: "websocket", createdAt: null,
+        updatedAt: null, preview: "" }} title="Preview chat" onToggleSidebar={() => {}}
+    /></ClientProvider>);
+    return { client, socket };
+  }
+
+  it("shows the recovery notice and keeps the refused input in the chat", async () => {
+    const chatId = "chat-needs-recovery";
+    const { socket } = renderChat(chatId);
+    const content = "Continue the preview.";
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: content } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    const sent = socket.sent.map((frame) => JSON.parse(frame)).find((frame) => frame.type === "message");
+    expect(sent).toBeDefined();
+    act(() => socket.fakeMessage({ event: "error", chat_id: chatId, turn_id: sent.turn_id,
+      detail: "not_admitted", reason: "session_recovery_required" }));
+
+    expect(await screen.findByText("Chat needs recovery")).toBeVisible();
+    expect(screen.getByText("Nanobot paused this chat after an interrupted turn. Start a new chat to continue.")).toBeVisible();
+    expect(screen.getByText(content)).toBeVisible();
+    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: /^Working for / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Working for / })).not.toBeInTheDocument();
+  });
+
+  it("keeps newer work active when an older turn receives a recovery rejection", async () => {
+    const chatId = "chat-recovery-rejection-race";
+    const { client, socket } = renderChat(chatId);
+    act(() => client.sendMessage(chatId, "older attempt", undefined, { turnId: "turn-old" }));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "newer attempt" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    const newer = socket.sent.map((frame) => JSON.parse(frame))
+      .find((frame) => frame.type === "message" && frame.turn_id !== "turn-old");
+    expect(newer).toBeDefined();
+    act(() => {
+      socket.fakeMessage({ event: "message_admitted", chat_id: chatId, turn_id: newer.turn_id,
+        active_turn_id: newer.turn_id, starts_turn: true });
+      socket.fakeMessage({ event: "goal_status", chat_id: chatId, turn_id: newer.turn_id,
+        status: "running", started_at: Date.now() / 1000 });
+    });
+    expect(await screen.findByRole("status", { name: /^Working for / })).toBeVisible();
+    act(() => socket.fakeMessage({ event: "error", chat_id: chatId, turn_id: "turn-old",
+      detail: "not_admitted", reason: "session_recovery_required" }));
+    expect(screen.getByRole("status", { name: /^Working for / })).toBeVisible();
+  });
+});
+
 describe("canonical activity projection over the actual client and shell", () => {
   it.each([false, true])("repairs idle history without admitting/replaying an unknown attempt (omitted=%s)", async (omitted) => {
     await preloadMarkdownText();

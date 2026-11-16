@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { resolveModelRequestFailureCopy } from "@/lib/model-request-failure";
 import { cn } from "@/lib/utils";
-import type { StreamError } from "@/lib/nanobot-client";
+import { messageDeliveryErrorKind, type StreamError } from "@/lib/nanobot-client";
 
 interface StreamErrorNoticeProps {
   error: StreamError;
@@ -68,11 +68,15 @@ function resolveCopy(
         title: t("errors.workspaceScopeRejected.title"),
         body: t("errors.workspaceScopeRejected.body"),
       };
-    case "turn_rejected":
+    case "turn_rejected": {
+      const key = messageDeliveryErrorKind(error) === "session_recovery_required"
+        ? "errors.sessionRecoveryRequired"
+        : "errors.turnRejected";
       return {
-        title: t("errors.turnRejected.title"),
-        body: t("errors.turnRejected.body"),
+        title: t(`${key}.title`),
+        body: t(`${key}.body`),
       };
+    }
     case "connection_closed":
       return {
         title: t("errors.connectionClosed.title"),

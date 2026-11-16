@@ -1,9 +1,14 @@
 """Post-append WebUI admission receipts for the live turn owners."""
 
+import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from urllib.parse import quote
 
 import pytest
+from websockets.datastructures import Headers
+from websockets.http11 import Request
 
 from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind
 from nanobot.agent.tools.registry import ToolRegistry
@@ -13,6 +18,12 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.outbound_events import MessageAdmittedEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import UserInputCommitted
+from nanobot.channels.websocket.runtime import WebSocketChannel
+from nanobot.channels.websocket.tests.test_websocket_channel import (
+    _authenticate_local_webui_connection,
+    _basic_handler,
+    _sent_ws_payloads,
+)
 from nanobot.command.builtin import USER_SHELL_COMMAND
 from nanobot.providers.base import LLMResponse
 from nanobot.session.manager import SessionManager, SessionPolicy
@@ -20,8 +31,74 @@ from nanobot.session.webui_turns import WebuiTurnCoordinator
 from tests.agent import test_migration_engine as engine_fixtures
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
+from tests.session.test_execution_auto_recovery import add_unresolved_call
 
 engine_config = engine_fixtures.engine_config
+
+
+async def test_interrupted_exec_refuses_the_next_browser_send_with_its_turn_id(
+    engine_config, monkeypatch,
+):
+    monkeypatch.setattr("nanobot.agent.tools.sandbox.managed_bwrap_available", lambda: False)
+    chat_id = "chat-recovery"
+    key = f"websocket:{chat_id}"
+    provider = ScriptedProvider([])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop, key)
+    add_unresolved_call(backend, key, tool="exec")
+    before = backend.source.load_source_snapshot(key).events
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        loop.bus,
+        gateway=_basic_handler(
+            loop.bus, session_manager=loop.sessions, workspace_path=engine_config.workspace_path,
+        ),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    channel._attach(conn, chat_id)
+    try:
+        await channel._dispatch_envelope(conn, "webui-client", {
+            "type": "message", "chat_id": chat_id, "turn_id": "attempt-after-exec",
+            "content": "Continue the preview.", "webui": True,
+        })
+        assert loop.bus.inbound_size == 1
+        await loop._dispatch(await loop.bus.consume_inbound())
+        while loop.bus.outbound_size:
+            await channel.send(await loop.bus.consume_outbound())
+
+        frames = _sent_ws_payloads(conn)
+        assert [frame for frame in frames if frame["event"] == "error"] == [{
+            "event": "error", "chat_id": chat_id, "turn_id": "attempt-after-exec",
+            "detail": "not_admitted", "reason": "session_recovery_required",
+        }]
+        assert not any(frame["event"] == "message_admitted" for frame in frames)
+        assert provider.calls == []
+        assert backend.source.load_source_snapshot(key).events == before
+
+        await channel._cleanup_connection(conn)
+        reconnected = AsyncMock()
+        _authenticate_local_webui_connection(channel, reconnected)
+        await channel._dispatch_envelope(reconnected, "webui-client", {
+            "type": "attach", "chat_id": chat_id,
+        })
+        channel.gateway.tokens.api_tokens["thread-reader"] = time.monotonic() + 30
+        request = Request(
+            f"/api/sessions/{quote(key, safe='')}/webui-thread",
+            Headers([("Authorization", "Bearer thread-reader")]),
+        )
+        response = await channel.gateway.http.dispatch(reconnected, request)
+        assert response.status_code == 200
+        assert json.loads(response.body)["active_turn_id"] is None
+        assert not any(
+            frame["event"] == "goal_status" and frame.get("status") == "running"
+            for frame in _sent_ws_payloads(reconnected)
+        )
+    finally:
+        try:
+            await channel.stop()
+        finally:
+            await loop.aclose()
 
 
 @pytest.mark.parametrize("source_mode", [False, True], ids=["legacy", "source"])

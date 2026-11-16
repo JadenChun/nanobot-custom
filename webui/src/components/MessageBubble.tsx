@@ -254,6 +254,11 @@ function deliveryErrorCopy(
         title: t("errors.connectionClosed.title"),
         body: t("errors.connectionClosed.body"),
       };
+    case "session_recovery_required":
+      return {
+        title: t("errors.sessionRecoveryRequired.title"),
+        body: t("errors.sessionRecoveryRequired.body"),
+      };
     case "turn_rejected":
     case undefined:
       return {
@@ -347,6 +352,14 @@ function UserDeliveryStatus({
 
   const label = t("message.delivery.failed");
   const { title, body } = deliveryErrorCopy(errorKind, t);
+  if (errorKind === "session_recovery_required") {
+    return (
+      <div role="alert" className="max-w-72 break-words text-right text-[12px] leading-4 text-destructive">
+        <p className="font-medium">{title}</p>
+        <p>{body}</p>
+      </div>
+    );
+  }
   return (
     <>
       <Tooltip>

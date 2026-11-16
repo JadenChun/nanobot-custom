@@ -3,6 +3,7 @@ import type {
   ApprovalDecisionPayload,
   ConnectionStatus,
   InboundEvent,
+  MessageDeliveryErrorKind,
   Outbound,
   OutboundCliAppMention,
   OutboundMcpPresetMention,
@@ -146,6 +147,16 @@ export type StreamError =
       chatId: string;
       turnId: string;
     };
+
+export function messageDeliveryErrorKind(error: StreamError): MessageDeliveryErrorKind | undefined {
+  if (error.kind === "model_request_failed") return undefined;
+  if (
+    error.kind === "turn_rejected"
+    && error.detail === "not_admitted"
+    && error.reason === "session_recovery_required"
+  ) return "session_recovery_required";
+  return error.kind;
+}
 
 type ErrorHandler = (error: StreamError) => void;
 

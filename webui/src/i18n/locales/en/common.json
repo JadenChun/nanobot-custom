@@ -1591,6 +1591,10 @@
       "title": "Message was not sent",
       "body": "The gateway rejected this message. Review its text or attachments, then try again."
     },
+    "sessionRecoveryRequired": {
+      "title": "Chat needs recovery",
+      "body": "Nanobot paused this chat after an interrupted turn. Start a new chat to continue."
+    },
     "modelRequestFailed": {
       "billingTitle": "Model provider quota is unavailable",
       "billingBody": "Add credit or check billing for the provider account, then try again.",

@@ -64,7 +64,7 @@ import {
   installedMcpPresetsFromPayload,
   isMcpPresetsPayload,
 } from "@/lib/mcp-preset-events";
-import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
+import { messageDeliveryErrorKind, type CanonicalRunSnapshot, type StreamError } from "@/lib/nanobot-client";
 import { inferProviderFromModelName, providerDisplayLabel } from "@/lib/provider-brand";
 import { parseRiskyApprovalPrompt } from "@/lib/risky-approval";
 import {
@@ -657,11 +657,13 @@ function hasInlineDeliveryError(
   error: StreamError | null,
 ): boolean {
   if (!error?.turnId) return false;
+  const kind = messageDeliveryErrorKind(error);
+  if (!kind) return false;
   return messages.some((message) => (
     message.role === "user"
     && message.turnId === error.turnId
     && (message.deliveryStatus === "failed" || message.deliveryStatus === "unknown")
-    && message.deliveryErrorKind === error.kind
+    && message.deliveryErrorKind === kind
   ));
 }
 

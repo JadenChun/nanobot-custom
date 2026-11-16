@@ -604,6 +604,13 @@ class _SourceActivityAdmission:
             raise asyncio.CancelledError
 
 
+class _SourceSessionRecoveryRequiredError(RuntimeError):
+    """The saved session needs recovery before it can accept another turn."""
+
+    def __init__(self) -> None:
+        super().__init__("Source session requires recovery before execution")
+
+
 @dataclass(frozen=True)
 class _TurnExecutionOptions:
     """Trusted adapter options; never reconstructed from inbound metadata."""
@@ -3679,7 +3686,7 @@ class AgentLoop:
             ) -> SourceInjectionBinding | dict[str, object] | None:
                 steering_rejection = self._webui_steering_rejection(pending_msg)
                 if steering_rejection is not None:
-                    await self._reject_webui_steering(
+                    await self._reject_webui_admission(
                         pending_msg,
                         *steering_rejection,
                     )
@@ -4090,7 +4097,7 @@ class AgentLoop:
                     continue
                 steering_rejection = self._webui_steering_rejection(msg)
                 if steering_rejection is not None:
-                    await self._reject_webui_steering(msg, *steering_rejection)
+                    await self._reject_webui_admission(msg, *steering_rejection)
                     continue
                 continuation = workspace_access_continuation(msg, session_key=effective_key)
                 protocol_stop = (
@@ -4623,12 +4630,12 @@ class AgentLoop:
         try:
             decision = ApprovalDecision.from_mapping(msg.metadata["approval_decision"])
         except (TypeError, ValueError):
-            await self._reject_webui_steering(msg, "not_admitted", "invalid_approval_decision")
+            await self._reject_webui_admission(msg, "not_admitted", "invalid_approval_decision")
             return True
         snapshot = await self.approval_admission.snapshot_decision(key, decision)
         pending = snapshot.pending
         if snapshot.action not in {"affirmative", "negative"} or pending is None:
-            await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+            await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
             return True
         if pending.session_key == key:
             # Root approvals retain their existing canonical admission path.
@@ -4641,7 +4648,7 @@ class AgentLoop:
             if tree is not None and child is not None else None
         )
         if expected is None or not self._child_approval_control_is_current(msg, key, snapshot, expected):
-            await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+            await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
             return True
 
         async def resume_child() -> None:
@@ -4653,7 +4660,7 @@ class AgentLoop:
                     or current.action not in {"affirmative", "negative"}
                     or not self._child_approval_control_is_current(msg, key, current, expected)
                 ):
-                    await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+                    await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
                     return
                 # Carry the original chat route into child activity publication.
                 with request_context(RequestContext(
@@ -4669,12 +4676,12 @@ class AgentLoop:
                         approval_target=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id),
                     )
                 if result is None or result.stop_reason == "approval_stale":
-                    await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+                    await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Child approval control could not be resumed for {}", key)
-                await self._reject_webui_steering(msg, "not_admitted", "approval_stale")
+                await self._reject_webui_admission(msg, "not_admitted", "approval_stale")
 
         # The manager attaches the actual execution to the resolved child. This
         # waiter is shutdown-tracked, never a parent _active_tasks/root wrapper,
@@ -4712,7 +4719,7 @@ class AgentLoop:
             return ("not_admitted", "steering_target_changed")
         return None
 
-    async def _reject_webui_steering(
+    async def _reject_webui_admission(
         self,
         msg: InboundMessage,
         detail: str,
@@ -4802,6 +4809,25 @@ class AgentLoop:
                 ))
         except asyncio.CancelledError:
             raise
+        except _SourceSessionRecoveryRequiredError:
+            raw_turn_id = msg.metadata.get(WEBUI_TURN_METADATA_KEY)
+            if (
+                not bus_scope_created
+                and msg.channel == "websocket"
+                and msg.is_user_input
+                and msg.metadata.get("webui") is True
+                and isinstance(raw_turn_id, str)
+                and raw_turn_id
+            ):
+                from nanobot.session.webui_turns import clear_websocket_turn_if_current
+
+                owner = msg.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
+                if isinstance(owner, str):
+                    clear_websocket_turn_if_current(msg.chat_id, owner)
+                await self._reject_webui_admission(msg, "not_admitted", "session_recovery_required")
+                logger.warning("Session {} requires recovery before execution.", registration_key)
+            else:
+                logger.exception('Bus turn failed for {}', registration_key)
         except SourceOriginMismatchError as exc:
             # Only this typed rejection settles automation before the bus scope
             # exists; admitted computation and delivery keep their sole notifier.
@@ -5231,9 +5257,7 @@ class AgentLoop:
                             or checkpoint.exists()
                             or checkpoint.is_symlink()
                         ):
-                            raise RuntimeError(
-                                "Source session requires recovery before execution"
-                            )
+                            raise _SourceSessionRecoveryRequiredError()
                     elif self.sessions.read_session_snapshot(key) is None:
                         raise RuntimeError("Managed session source is unavailable")
             yield
@@ -5289,7 +5313,7 @@ class AgentLoop:
             # Recovery may only enter the explicit reset route. Never consume an
             # approval or request a model while uncertain effects remain.
             if owner.recovery_required and not reset:
-                raise RuntimeError("Source session requires recovery before execution")
+                raise _SourceSessionRecoveryRequiredError()
             if workspace_full_reference is not None:
                 state = owner.read_snapshot().state
                 source_binding: PermissionSourceBinding = {

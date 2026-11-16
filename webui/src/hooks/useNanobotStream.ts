@@ -16,10 +16,11 @@ import {
   parseDelegatedChildPayload,
   parseStopExpectation,
 } from "@/lib/delegated-child-projection";
-import type {
-  QueuedAttemptBinding,
-  QueuedAttemptOutcome,
-  StreamError,
+import {
+  messageDeliveryErrorKind,
+  type QueuedAttemptBinding,
+  type QueuedAttemptOutcome,
+  type StreamError,
 } from "@/lib/nanobot-client";
 import {
   closeReasoningStream,
@@ -654,7 +655,7 @@ export function useNanobotStream(
         return [{
           ...message,
           deliveryStatus: "failed",
-          deliveryErrorKind: err.kind,
+          deliveryErrorKind: messageDeliveryErrorKind(err),
         }];
       });
     });

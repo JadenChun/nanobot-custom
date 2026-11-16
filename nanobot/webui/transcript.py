@@ -582,7 +582,10 @@ def validate_retained_webui_thread(data: dict[str, object]) -> None:
         "activityKind": {"model"}, "compactReply": {"empty", "failed"},
         "turnPhase": {"user", "reasoning", "activity", "answer", "complete"},
         "deliveryStatus": {"sending", "accepted", "failed"},
-        "deliveryErrorKind": {"message_too_big", "workspace_scope_rejected", "connection_closed", "turn_rejected"},
+        "deliveryErrorKind": {
+            "message_too_big", "workspace_scope_rejected", "connection_closed",
+            "session_recovery_required", "turn_rejected",
+        },
     }
     known = strings | numbers | booleans | objects | records | set(choices) | {"traces", "images", "media"}
     for raw in cast(list[object], data["messages"]):
