@@ -1255,6 +1255,7 @@
       },
       "queued": {
         "label": "Hướng dẫn đang chờ",
+        "awaitingConfirmation": "Đang chờ xác nhận",
         "guide": "Hướng dẫn",
         "delete": "Xóa hướng dẫn",
         "edit": "Sửa hướng dẫn",
@@ -1459,7 +1460,8 @@
     "streaming": "đang truyền",
     "delivery": {
       "sending": "Đang gửi…",
-      "failed": "Chưa gửi"
+      "failed": "Chưa gửi",
+      "awaitingConfirmation": "Đang chờ xác nhận"
     },
     "assistantTyping": "Trợ lý đang nhập",
     "toolSingle": "Đang dùng một công cụ",
@@ -1598,8 +1600,8 @@
       "body": "Hãy kiểm tra cấu hình hoặc trạng thái dịch vụ của nhà cung cấp rồi thử lại."
     },
     "connectionClosed": {
-      "title": "Tin nhắn chưa được gửi",
-      "body": "Kết nối đã đóng trước khi cổng kết nối chấp nhận tin nhắn này. Hãy kiểm tra thiết bị này vẫn đang kết nối, rồi gửi lại."
+      "title": "Đang chờ xác nhận",
+      "body": "Kết nối bị ngắt trước khi có xác nhận. Máy chủ có thể đã nhận được tin nhắn này. Hãy kết nối lại và kiểm tra trạng thái; đừng gửi lại chỉ vì kết nối bị ngắt."
     }
   },
   "workspace": {

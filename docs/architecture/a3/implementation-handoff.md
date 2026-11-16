@@ -1,5 +1,186 @@
 # A3 implementation correction handoff
 
+## Git checkpoint: completed fixes committed — 2026-11-16
+
+The completed macOS Stop/tooling, queue/Steer, mobile reconnect and bounded CUI-7
+owner-seam fixes, their regressions and qualification records are committed locally
+on `codex/staging-audit-implementation`. Author and committer:
+**Jaden <changherng.jc@gmail.com>**. Earlier local/uncommitted statements below
+describe historical qualification checkpoints, not the current Git state.
+
+The committed code matches the qualified owner-seam snapshot plus the subsequently
+tested flat queue/Steer presentation. This commit does not close the remaining
+restored-attempt/safe-Retry, device or independent client UX work below. No next-fix
+implementation was started before this checkpoint. No push, staging merge, PR or
+deployment occurred; staging remains at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+
+## Latest presentation: flat queue and Steer — 2026-11-16
+
+**Bounded presentation PASS.** The queue remains outside the input card but now
+touches it as a flat, subtly bordered strip: no panel shadow/backdrop blur, no
+visible heading/count, and one-line ellipsized previews with full text retained
+through title/accessibility and Edit. The English action is **Steer**, not Guide.
+No queue/admission/recovery handlers or shared animation behavior changed.
+
+Final full WebUI **1,606 tests / 102 files**, build and lint passed. Desktop,
+390 × 844 and light-hero actual-component previews verified flat styling, bounded
+scrolling, pending locks and a preserved later draft. No installed-wheel/backend
+or physical-device qualification was repeated. See [the bounded record](client-ux-followups.md#flat-queue-and-steer-presentation-follow-up--2026-11-16).
+The CUI-7 limits and remaining tasks below are unchanged. All changes remain
+local/uncommitted; no Git publication, staging merge or deployment occurred.
+
+## Latest: CUI-7 owner seams qualified, broader recovery still open — 2026-11-16
+
+**Bounded PASS**, including fresh integrated review and final installed macOS
+browser verification. This supersedes the two defects in the historical review
+hold below; it does **not** close all CUI-7/mobile recovery, A3 or P6.
+
+- New-turn owner receipts now follow successful user input append through one
+  typed `UserInputCommitted` fact. Lifecycle start remains separate. Active Steer's
+  correctly ordered receipt, Mac Stop cleanup and native reconnect ownership remain.
+- Explicit authorized idle history can show committed replies and clear main/sidebar
+  activity without admitting UNKNOWN or replaying its input. Original pending queue
+  rows, later inputs and rich drafts are retained. Workspace selection/recovery and
+  access-mode mutations stay blocked while UNKNOWN; known-active controls remain.
+- A late exact receipt dequeues only its own original row; it cannot revive the
+  old run or trigger the next queued send. The external queue layout is preserved.
+  No extra ledger, reconnect owner, persistence schema or recovery framework was added.
+
+Final independent checks: **18,492 Python passes, 68 skips, 6 subtests**, plus
+**129 serial CLI passes**; **1,606 WebUI passes / 102 files**; build and both lints
+pass; strict **547 files / zero diagnostics**, zero new diagnostic signatures,
+unchanged Python 3.13.12 / 216 distributions and Bun 1.4.2. The initial incomplete
+test-double failures and a concurrent full WebUI timeout/cascade run are retained;
+the identical source/command passed after the full Python run ended. The exact
+concurrent-run failure cause remains unproven, not silently dismissed.
+
+Final wheel SHA-256:
+`641f5be5bc869a17bc4c046d02d725eb90d43a1fc417aeaa29fb3a767bc51d86`.
+All 547 Python and 590 WebUI packaged files matched source and installation. The
+offline installed fixture proved queued completion before actual reconnect with
+UNKNOWN retained; exact delayed receipt changed queue 2 → 1 with no automatic
+next send or draft loss. A separate active-at-reconnect case completed once afterward.
+Desktop/narrow UI had no phantom busy state; all disposable processes exited and
+the viewport was reset. No external/paid LLM or user gateway/device was used.
+
+**Remaining safety work:** queue-key switch/remount and reload/restart currently
+lose restored queue held/attempt identity, so manual same-row resend can become
+possible. Durable attempt binding/readback/deduplication, preserved outstanding
+metadata and general safe Retry are not implemented. Do not promote this bounded
+PASS into stable remote-mobile/restart acceptance. Physical Android/native-app and
+macOS Full/process-tree qualification remain open. CUI-6 reasoning access and
+CUI-2 context accounting, CUI-3 general folder controls, CUI-4 notifications/icons
+and CUI-5 progressive word reveal remain separate unstarted work.
+
+See [the self-contained qualification and remaining boundary](client-ux-followups.md#cui-7-owner-seam-qualification--2026-11-16).
+Raw local evidence: `/private/tmp/nb-cui7-seams-20261116-xy1unsld/`, particularly
+`acceptance.json`, `integrated-review-recheck.md` and `browser-final-observations.json`.
+Temporary evidence is not automatically available on another device.
+
+All work is **local/uncommitted** on `codex/staging-audit-implementation`, HEAD
+`de2e0fec517203d0f2c45fa83ecf7c591fa2ab4b`. Staging remains separate/unchanged;
+no commit, push, merge, PR or deployment occurred. Git identity is
+`Jaden <changherng.jc@gmail.com>`.
+
+## Queue outside the input card — 2026-11-16
+
+The user's screenshot-based queue placement request is implemented as a **layout-only
+follow-up**: the existing queue is a separate, inset panel above the input card.
+Queue state, callbacks and admission/recovery behavior were not changed. **129 focused
+tests**, TypeScript/Vite build and lint passed; actual desktop/narrow and light-hero
+component previews verified spacing, bounded scrolling and a preserved later draft.
+See [the layout qualification](client-ux-followups.md#queue-placement-follow-up--2026-11-16)
+for scope/evidence. This is local/uncommitted, not an installed-app/device qualification
+or deployment. The mobile admission/projection hold below is still open.
+
+## Cumulative simplicity review hold — 2026-11-16
+
+**Historical checkpoint**, superseded for its two defects by the latest bounded
+qualification above. Its evidence and broader recovery limits remain recorded.
+
+**HELD / requires correction.** The user requested review of our accumulated work
+before further patches. The current Mac Stop, active-Steer and native reconnect
+corrections are appropriately scoped root-cause fixes; no wholesale removal or new
+recovery framework is recommended. CUI-7 owner-seam implementation remains frozen;
+the layout-only follow-up above does not resume those corrections. See the
+[client UX review checkpoint](client-ux-followups.md#cui-7-cumulative-review-checkpoint)
+for exact scope, evidence and limits.
+
+Two concrete owner-boundary defects remain:
+
+1. CUI-7's UNKNOWN admission guard also blocks the entire authorized history refresh.
+   A real installed-browser test recorded one original input/model call, canonical
+   completion **before actual reconnect**, and an idle thread response with the
+   assistant reply. The browser still showed Connected + Working, hid the reply and
+   disabled the project picker. Keep UNKNOWN/no-replay safety, but separate attempt
+   disposition from appropriately fenced transcript/current-activity projection.
+2. The fresh-turn `message_admitted` producer runs from `SessionTurnStarted` before
+   the canonical input append. This producer defect predates our diff; newly
+   forwarding the receipt exposes queued new-turn prompts to premature removal.
+   Emit admission only after successful input commit. Keep active Steer's correctly
+   ordered post-append `InjectionCommitted` path.
+
+At that frozen review snapshot, checks passed **536 focused / 9 files**, **1,579 full WebUI /
+102 files**, TypeScript/Vite build and lint. These results do **not** close the
+installed reconnect defect. Python/accepted queue source and the 216-distribution
+environment remain unchanged; no full Python rerun, installed correction1 wheel or
+physical-phone acceptance is claimed. The latest uncertainty correction fixed two
+weak-proof bypasses and touch detail access, not the newly reproduced history seam.
+
+**Next: settle one coherent correction contract at these existing owner seams,
+not another layer of local exceptions.** Preserve source/lineage/run/UI-revision
+fences, unresolved attempts and later drafts. No second ledger, competing reconnect
+loop, blind replay or null-Stop-target inference. General Retry still needs original
+attempt reconciliation/deduplication through the canonical source and existing read
+owners; it is not implemented. Restart-persistent pending metadata is also open.
+CUI-6 reasoning expansion follows independently; CUI-2–5 are not started.
+
+All changes remain **local/uncommitted** on `codex/staging-audit-implementation`
+at `de2e0fec517203d0f2c45fa83ecf7c591fa2ab4b`; staging remains separate and
+unchanged. Effective Git identity remains `Jaden <changherng.jc@gmail.com>`.
+No commit, push, merge, PR, deployment or operator-gateway replacement occurred.
+Local raw review/command/browser evidence is in
+`/private/tmp/nb-cui7-20261116-4kzzm322/`; the progress record is self-contained
+because temporary evidence is not automatically available on another device.
+
+## Client queue/Steer correction qualified — 2026-11-16
+
+**CUI-1 passed** independent final tests, installed macOS browser checks and fresh
+integrated review. The client now delivers owner-admission receipts to the queue;
+only the matching admitted row disappears, while a later draft survives. Pending
+submissions cannot be sent twice, exact rejection permits explicit recovery even
+beyond five pending attempts, and multiline rows no longer overlap in the bounded
+queue at desktop or narrow widths.
+
+Final checks: **440 focused tests / 5 files**, **1,541 full WebUI tests / 100 files**,
+TypeScript/Vite build and ESLint passed. A matching isolated installed wheel was
+verified with six rows at desktop and 390 × 844; a real steer receipt removed one
+row (6 → 5) without clearing the newer draft. No external/paid model was used.
+See [client UX qualification and remaining work](client-ux-followups.md) for exact
+artifact/evidence details and limits.
+
+All work remains **local/uncommitted** on `codex/staging-audit-implementation`;
+staging is unchanged. The latest intake prioritizes **CUI-7 mobile delivery**, then
+**CUI-6 reasoning access**, before CUI-2 context accounting and the remaining reports.
+Those issues are not closed by this active-Steer qualification. The cumulative
+review above additionally holds fresh-turn receipt ordering and reconnect projection;
+no full A3/merge acceptance or native macOS Full support is implied.
+
+## macOS correction qualification and client intake — 2026-11-16
+
+The bounded macOS Stop/test/tooling correction package passed independent checks and
+fresh integrated review. Full Python passed 18,471 cases plus 129 serial CLI cases;
+strict checking is clean in 547 files. The real installed Mac browser now returns to
+idle and restores project controls after original-chat Stop without a reload.
+See the [qualification record](macos-qualification-2026-11-16.md) for exact snapshots,
+test-only final strengthening, artifact identity and remaining capability limits.
+
+This is local uncommitted work on `codex/staging-audit-implementation`, not a staging
+merge or full A3 release acceptance. Native macOS Full/process-tree support remains
+unavailable. The separately tracked [sequential client UX follow-ups](client-ux-followups.md)
+record active-Steer qualification and the newer CUI-7 review hold. Current priority
+is the mobile admission/projection seam, then reasoning access and context accounting.
+
 ## Steer admission and access-mode switch 2026-11-15
 
 **Queued guidance never committed.** The WebUI queue holds a steer until its

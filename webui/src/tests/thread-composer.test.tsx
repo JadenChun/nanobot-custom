@@ -2632,7 +2632,7 @@ describe("ThreadComposer", () => {
 
     expect(screen.getByTestId("composer-session-mention-Plan")).toHaveTextContent("@Plan");
     fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
 
     expect(onSend).toHaveBeenCalledWith("@Plan", undefined, {
       sessionMentions: [{
@@ -3205,7 +3205,7 @@ describe("ThreadComposer", () => {
     expect(input).toHaveValue("");
     expect(screen.getByText("keep the UI minimal")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
 
     expect(onSend).toHaveBeenCalledWith(
       "keep the UI minimal",
@@ -3402,10 +3402,11 @@ describe("ThreadComposer", () => {
     expect(screen.queryByText("guide this one now")).not.toBeInTheDocument();
   });
 
-  it("keeps queued guidance attached to the composer and sends it one item at a time", async () => {
+  it.each(["thread", "hero"] as const)("keeps queued guidance above and outside the %s input card while sending one item at a time", async (variant) => {
     const onSend = vi.fn();
     const { rerender } = render(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming
@@ -3421,15 +3422,36 @@ describe("ThreadComposer", () => {
 
     const queue = screen.getByRole("group", { name: "Queued guidance" });
     expect(queue).toHaveClass("composer-status-strip");
-    expect(queue).toHaveClass("mx-3");
-    expect(queue.parentElement?.className).toContain("group/composer");
+    const surface = input.closest(".thread-composer-surface");
+    expect(surface).not.toBeNull();
+    expect(surface).not.toContainElement(queue);
+    expect(queue.parentElement?.isSameNode(surface!.parentElement)).toBe(true);
+    expect(queue.nextElementSibling?.isSameNode(surface)).toBe(true);
+    expect(queue).toHaveClass("mx-auto", "-mb-px", "w-[calc(100%-1.5rem)]", "rounded-t-floating", "bg-muted");
+    expect(queue.className).not.toMatch(/(?:shadow|backdrop-blur)/);
+    expect(within(queue).queryByText("Queued guidance")).not.toBeInTheDocument();
+    expect(within(queue).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(queue).queryByText("2")).not.toBeInTheDocument();
+    expect(queue.querySelector(".queued-prompt-list")).toHaveClass(
+      "max-h-[216px]",
+      "overflow-y-auto",
+    );
+    const queuedRows = queue.querySelectorAll("[data-queued-prompt-row='true']");
+    expect(queuedRows).toHaveLength(2);
+    for (const row of Array.from(queuedRows)) {
+      expect(row).toHaveClass("shrink-0");
+      const preview = row.querySelector("p");
+      expect(preview).toHaveClass("w-full", "truncate");
+      expect(preview).toHaveAttribute("title", preview!.textContent);
+    }
     expect(within(queue).getByText("first follow-up")).toBeInTheDocument();
     expect(within(queue).getByText("second follow-up")).toBeInTheDocument();
     expect(within(queue).getAllByRole("button", { name: "Edit guidance" })).toHaveLength(2);
-    expect(within(queue).getAllByRole("button", { name: "Guide" })).toHaveLength(2);
+    expect(within(queue).getAllByRole("button", { name: "Steer" })).toHaveLength(2);
 
     rerender(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
@@ -3446,6 +3468,7 @@ describe("ThreadComposer", () => {
 
     rerender(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming
@@ -3454,6 +3477,7 @@ describe("ThreadComposer", () => {
     );
     rerender(
       <ThreadComposer
+        variant={variant}
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
@@ -3466,6 +3490,44 @@ describe("ThreadComposer", () => {
     });
     expect(onSend).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
+  });
+
+  it("submits a queued prompt at most once before pending state rerenders", () => {
+    const admission = new Promise<boolean>(() => undefined);
+    const onSend = vi.fn(() => ({
+      turnId: "turn-pending-guide",
+      userMessageId: "user-pending-guide",
+      sideChannel: false,
+      admission,
+    }));
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "submit this once" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const guide = screen.getByRole("button", { name: "Steer" });
+
+    act(() => {
+      fireEvent.click(guide);
+      fireEvent.click(guide);
+    });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit guidance" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete guidance" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Drag to reorder" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("sends a queued prompt without capturing a workspace snapshot", async () => {
@@ -3889,7 +3951,7 @@ describe("ThreadComposer", () => {
     expect(await screen.findByText("remember this edited follow-up")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
     expect(onSend).toHaveBeenCalledWith(
       "remember this edited follow-up",
       undefined,
@@ -4145,6 +4207,36 @@ describe("composer access control semantics", () => {
 });
 
 describe("settings during a running turn", () => {
+  it.each(["restricted", "full"] as const)(
+    "blocks UNKNOWN %s access mutations without disabling supported known-active mode controls",
+    async (mode) => {
+      const user = userEvent.setup();
+      const scope: WorkspaceScopePayload = { project_path: "/tmp/project", project_name: "project",
+        access_mode: mode, restrict_to_workspace: mode === "restricted" };
+      const onModeChange = vi.fn().mockResolvedValue(undefined);
+      const view = (unknown: boolean) => <ThreadComposer onSend={vi.fn()} isStreaming
+        workspaceScope={scope} workspaceDefaultScope={scope} workspaceScopeDisabled
+        workspaceAccessModeUnknownBlocked={unknown}
+        workspaces={permissionV2Workspaces(scope)} workspacePermissions={permissionProjection({ mode })}
+        persistentWorkspaceChat onWorkspaceAccessModeChange={onModeChange} />;
+      const { rerender } = render(view(true));
+      const accessName = mode === "full" ? "Workspace access mode: Full access" : "Workspace access mode: Sandbox";
+      expect(screen.getByRole("button", { name: accessName })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: accessName }));
+      expect(onModeChange).not.toHaveBeenCalled();
+      rerender(view(false));
+      expect(screen.getByRole("button", { name: accessName })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: accessName }));
+      if (mode === "full") {
+        await user.click(screen.getByRole("button", { name: "Return to Sandbox" }));
+      } else {
+        await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+        await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+      }
+      await waitFor(() => expect(onModeChange).toHaveBeenCalledWith(mode === "full" ? "restricted" : "full"));
+    },
+  );
+
   it("keeps access and project controls usable while streaming", async () => {
     const user = userEvent.setup();
     const scope = {
@@ -4316,7 +4408,7 @@ describe("queued prompt retention after busy admission rejection", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(screen.getByText("queued follow-up")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
     expect(onSend).toHaveBeenLastCalledWith(
@@ -4339,6 +4431,43 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
       resolve,
     };
   }
+
+  it("consumes a blocked idle edge without draining later when availability changes", async () => {
+    const onSend = vi.fn();
+    const view = (streaming: boolean, blocked: boolean) => <ThreadComposer onSend={onSend}
+      isStreaming={streaming} automaticQueueSendBlocked={blocked} />;
+    const { rerender } = render(view(true, false));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "queued item" } });
+    fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
+    rerender(view(false, true));
+    expect(onSend).not.toHaveBeenCalled();
+    rerender(view(false, false));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.getByText("queued item")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["independent send", "slash Stop"])("retains an awaiting-owner row during %s cleanup", async (action) => {
+    const first = deferredAdmission("held-turn", "held-user");
+    const onSend = vi.fn().mockReturnValueOnce(first.submitted);
+    const onStop = vi.fn();
+    const view = (streaming: boolean) => <ThreadComposer onSend={onSend} onStop={onStop}
+      isStreaming={streaming} slashCommands={COMMANDS} pendingQueueKey="held-cleanup" />;
+    const { rerender } = render(view(true));
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "awaiting original" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(view(false));
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    if (action === "slash Stop") rerender(view(true));
+    fireEvent.change(input, { target: { value: action === "slash Stop" ? "/stop" : "independent" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send message|Add to queue/ }));
+    expect(screen.getByText("awaiting original")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+    await act(async () => first.resolve(true));
+    expect(screen.queryByText("awaiting original")).not.toBeInTheDocument();
+  });
 
   it("U1 keeps an attachment-only head in FIFO order until each owner receipt", async () => {
     mockBlobUrls();
@@ -4529,6 +4658,8 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     await act(async () => { await Promise.resolve(); });
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(screen.getByText("exact payload")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
 
     rerender(
       <ThreadComposer
@@ -4549,5 +4680,382 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     await act(async () => { await Promise.resolve(); });
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(screen.getByText("exact payload")).toBeInTheDocument();
+  });
+
+  it("ignores a late admission result after the composer switches to another chat queue", async () => {
+    let resolveAdmission!: (admitted: boolean) => void;
+    const admission = new Promise<boolean>((resolve) => {
+      resolveAdmission = resolve;
+    });
+    const onSend = vi.fn(() => ({
+      turnId: "turn-old-chat",
+      userMessageId: "user-old-chat",
+      sideChannel: false,
+      admission,
+    }));
+    window.localStorage.setItem(
+      "nanobot.webui.composerQueuedGuidance.v1:chat-b",
+      JSON.stringify([{ id: "other-chat-prompt", text: "other chat remains" }]),
+    );
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-a"
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "old chat attempt" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        pendingQueueKey="chat-a"
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-b"
+        placeholder="Type your message..."
+      />,
+    );
+    expect(await screen.findByText("other chat remains")).toBeInTheDocument();
+    await act(async () => resolveAdmission(true));
+
+    expect(screen.getByText("other chat remains")).toBeInTheDocument();
+    expect(screen.queryByText("old chat attempt")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps correlations for six unresolved manual guides until the exact refusal arrives", async () => {
+    const attempts = Array.from({ length: 7 }, (_, index) => (
+      deferredAdmission(`turn-six-${index}`, `user-six-${index}`)
+    ));
+    let nextAttempt = 0;
+    const onSend = vi.fn(() => {
+      const attempt = attempts[nextAttempt];
+      if (!attempt) throw new Error("unexpected queued send");
+      nextAttempt += 1;
+      return attempt.submitted;
+    });
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    for (let index = 0; index < 6; index += 1) {
+      fireEvent.change(input, { target: { value: `queued snapshot ${index}` } });
+      fireEvent.keyDown(input, { key: "Enter" });
+    }
+
+    for (let index = 0; index < 6; index += 1) {
+      const row = screen.getAllByText(`queued snapshot ${index}`)[0]
+        .closest("[data-queued-prompt-row='true']");
+      expect(row).toBeTruthy();
+      fireEvent.click(within(row!).getByRole("button", { name: "Steer" }));
+    }
+    expect(onSend).toHaveBeenCalledTimes(6);
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={{ turnId: "turn-six-0" }}
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    const rejectedRow = screen.getByText("queued snapshot 0")
+      .closest("[data-queued-prompt-row='true']");
+    expect(rejectedRow).toBeTruthy();
+    expect(within(rejectedRow!).getByRole("button", { name: "Steer" })).toBeEnabled();
+    expect(within(rejectedRow!).getByRole("button", { name: "Edit guidance" })).toBeEnabled();
+    expect(within(rejectedRow!).getByRole("button", { name: "Delete guidance" })).toBeEnabled();
+    expect(within(screen.getByText("queued snapshot 1").closest("[data-queued-prompt-row='true']")!)
+      .getByRole("button", { name: "Steer" })).toBeDisabled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        admissionRejectedTurn={{ turnId: "turn-six-0" }}
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={{ turnId: "turn-six-0" }}
+        pendingQueueKey="chat-six-unresolved"
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(6);
+
+    fireEvent.click(within(rejectedRow!).getByRole("button", { name: "Steer" }));
+    expect(onSend).toHaveBeenCalledTimes(7);
+    expect(onSend).toHaveBeenLastCalledWith("queued snapshot 0", undefined, undefined);
+    expect(screen.getByText("queued snapshot 0")).toBeInTheDocument();
+    expect(within(rejectedRow!).getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+
+  it("does not resend or reorder an awaiting row through keyboard and drag gestures", () => {
+    const admission = new Promise<boolean>(() => undefined);
+    const onSend = vi.fn(() => ({
+      turnId: "turn-keyboard-drag",
+      userMessageId: "user-keyboard-drag",
+      sideChannel: false,
+      admission,
+    }));
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "locked follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "other follow-up" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    const pendingRow = screen.getByText("locked follow-up")
+      .closest("[data-queued-prompt-row='true']");
+    const otherRow = screen.getByText("other follow-up")
+      .closest("[data-queued-prompt-row='true']");
+    expect(pendingRow).toBeTruthy();
+    expect(otherRow).toBeTruthy();
+    fireEvent.click(within(pendingRow!).getByRole("button", { name: "Steer" }));
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    const dataTransfer = {
+      effectAllowed: "",
+      dropEffect: "",
+      setData: vi.fn(),
+      getData: vi.fn(),
+    };
+    const pendingHandle = within(pendingRow!).getByRole("button", { name: "Drag to reorder" });
+    expect(pendingHandle).toHaveAttribute("draggable", "false");
+    fireEvent.dragStart(pendingHandle, { dataTransfer });
+    fireEvent.dragEnter(otherRow!, { dataTransfer });
+    fireEvent.drop(otherRow!, { dataTransfer });
+    fireEvent.dragEnd(pendingHandle, { dataTransfer });
+
+    const rows = screen.getAllByRole("group", { name: "Queued guidance" })[0]
+      .querySelectorAll("[data-queued-prompt-row='true']");
+    expect(rows[0]).toHaveTextContent("locked follow-up");
+    expect(rows[1]).toHaveTextContent("other follow-up");
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+
+  it.each(["false", "null"] as const)(
+    "keeps the exact queued item unresolved when local send returns %s",
+    async (outcome) => {
+      const onSend = vi.fn(() => outcome === "false" ? false : null);
+      const { rerender } = render(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      const input = screen.getByLabelText("Message input");
+      fireEvent.change(input, { target: { value: "uncertain local result" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          placeholder="Type your message..."
+        />,
+      );
+
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+      expect(screen.getByText("uncertain local result")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+      expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
+
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          placeholder="Type your message..."
+        />,
+      );
+      await act(async () => { await Promise.resolve(); });
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("uncertain local result")).toBeInTheDocument();
+    },
+  );
+
+  it.each(["false", "rejected"] as const)(
+    "keeps the queued row awaiting confirmation when admission is %s",
+    async (outcome) => {
+      let resolveAdmission!: (value: boolean) => void;
+      let rejectAdmission!: (reason: Error) => void;
+      const admission = new Promise<boolean>((resolve, reject) => {
+        resolveAdmission = resolve;
+        rejectAdmission = reject;
+      });
+      const onSend = vi.fn(() => ({
+        turnId: "turn-unresolved-outcome",
+        userMessageId: "user-unresolved-outcome",
+        sideChannel: false,
+        admission,
+      }));
+      const { rerender } = render(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      const input = screen.getByLabelText("Message input");
+      fireEvent.change(input, { target: { value: "unconfirmed owner result" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          placeholder="Type your message..."
+        />,
+      );
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        if (outcome === "false") resolveAdmission(false);
+        else rejectAdmission(new Error("owner connection lost"));
+        await Promise.resolve();
+      });
+      expect(screen.getByText("unconfirmed owner result")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+      expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
+
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming
+          placeholder="Type your message..."
+        />,
+      );
+      rerender(
+        <ThreadComposer
+          onSend={onSend}
+          onStop={vi.fn()}
+          isStreaming={false}
+          placeholder="Type your message..."
+        />,
+      );
+      await act(async () => { await Promise.resolve(); });
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("unconfirmed owner result")).toBeInTheDocument();
+    },
+  );
+
+  it("unlocks controls only after the correlated not-admitted receipt and still waits for an explicit retry", async () => {
+    const admission = new Promise<boolean>(() => undefined);
+    const submitted = {
+      turnId: "turn-explicit-retry",
+      userMessageId: "user-explicit-retry",
+      sideChannel: false,
+      admission,
+    };
+    const onSend = vi.fn(() => submitted);
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "retry only when authorized" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={{ turnId: submitted.turnId }}
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.getByText("retry only when authorized")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Steer" })).toBeEnabled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        admissionRejectedTurn={{ turnId: submitted.turnId }}
+        placeholder="Type your message..."
+      />,
+    );
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        admissionRejectedTurn={{ turnId: submitted.turnId }}
+        placeholder="Type your message..."
+      />,
+    );
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    expect(onSend).toHaveBeenCalledTimes(2);
   });
 });

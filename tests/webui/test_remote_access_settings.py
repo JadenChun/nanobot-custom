@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from websockets.http11 import Request as WsRequest
 
 from nanobot.config.loader import save_config
 from nanobot.config.schema import Config
+from nanobot.remote.auth import AuthRejectedError
 from nanobot.remote.owner import RemoteAccessOwner
 from nanobot.webui.settings_remote import handle_remote_access
 from nanobot.webui.settings_services import WebUISettingsConfig
@@ -69,7 +71,9 @@ def test_remote_access_settings_routes(tmp_path: Path) -> None:
             "/api/settings/remote-access/revoke",
         )
         assert revoked.status_code == 200
-        assert owner.store.get_device("settings-install").revoked
+        assert owner.store.get_device("settings-install") is None
+        with pytest.raises(AuthRejectedError):
+            owner.tokens.validate_access(pair.access_token)
     finally:
         owner.stop()
 

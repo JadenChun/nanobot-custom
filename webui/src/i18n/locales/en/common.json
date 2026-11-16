@@ -1255,7 +1255,8 @@
       },
       "queued": {
         "label": "Queued guidance",
-        "guide": "Guide",
+        "awaitingConfirmation": "Awaiting confirmation",
+        "guide": "Steer",
         "delete": "Delete guidance",
         "edit": "Edit guidance",
         "drag": "Drag to reorder"
@@ -1459,7 +1460,8 @@
     "streaming": "streaming",
     "delivery": {
       "sending": "Sending…",
-      "failed": "Not sent"
+      "failed": "Not sent",
+      "awaitingConfirmation": "Awaiting confirmation"
     },
     "assistantTyping": "Assistant is typing",
     "toolSingle": "Using a tool",
@@ -1581,8 +1583,8 @@
       "body": "The gateway rejected this project or access mode. Choose an existing project or a different access mode, then try again."
     },
     "connectionClosed": {
-      "title": "Message was not sent",
-      "body": "The connection closed before the gateway accepted this message. Check that this device is still connected, then send it again."
+      "title": "Awaiting confirmation",
+      "body": "The connection closed before confirmation. The server may already have received this message. Reconnect and check its status; do not send it again just because of the disconnect."
     },
     "turnRejected": {
       "title": "Message was not sent",

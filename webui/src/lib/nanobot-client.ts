@@ -211,6 +211,8 @@ export interface NanobotClientOptions {
 }
 
 export interface CanonicalRunSnapshot {
+  /** Explicit, well-typed live root activity fields from the matching HTTP response. */
+  activitySnapshotAvailable: boolean;
   /** User turn ids present in the canonical transcript page. */
   observedTurnIds: readonly string[];
   /** Whether the server still considers the transcript tail active. */
@@ -453,12 +455,20 @@ export class NanobotClient {
     observed: ReadonlySet<string>,
     snapshot?: CanonicalRunSnapshot,
   ): boolean {
-    if (completed.has(turnId)) return true;
-    if (!snapshot || snapshot.activeTurnId === turnId) return false;
-    if (snapshot.hasPendingToolCalls) return false;
-    if (observed.has(turnId)) return true;
     const pending = this.pendingMessageSends.get(this.runSendKey(chatId, turnId));
-    return pending?.state === "unknown" || pending?.state === "accepted";
+    // Activity and attempt disposition are different facts. An authorized idle
+    // reset may retire optimistic activity even when its input is not on this
+    // page, but cannot decide whether the UNKNOWN input was admitted.
+    if (snapshot && (
+      !snapshot.activitySnapshotAvailable
+      || snapshot.activeTurnId !== null
+      || snapshot.hasPendingToolCalls
+    )) return false;
+    if (pending?.state === "unknown") return snapshot !== undefined;
+    if (completed.has(turnId)) return true;
+    if (!snapshot) return false;
+    if (observed.has(turnId)) return true;
+    return pending?.state === "accepted";
   }
 
   private settleNonLifecycleCanonicalSends(
@@ -468,7 +478,7 @@ export class NanobotClient {
     snapshot?: CanonicalRunSnapshot,
   ): void {
     for (const pending of [...this.pendingMessageSends.values()]) {
-      if (pending.chatId !== chatId || pending.startsNewRun) continue;
+      if (pending.chatId !== chatId || pending.startsNewRun || pending.state === "unknown") continue;
       if (!this.canonicalTurnWillSettle(
         chatId,
         pending.turnId,
@@ -503,6 +513,11 @@ export class NanobotClient {
     completedTurnIds: readonly string[],
     snapshot?: CanonicalRunSnapshot,
   ): boolean {
+    if (snapshot && (
+      !snapshot.activitySnapshotAvailable
+      || snapshot.activeTurnId !== null
+      || snapshot.hasPendingToolCalls
+    )) return false;
     const completed = new Set(this.canonicalCompletedTurnIdsByChatId.get(chatId));
     for (const turnId of completedTurnIds) {
       if (turnId) completed.add(turnId);
@@ -605,18 +620,31 @@ export class NanobotClient {
           snapshot,
         )) continue;
         unsettledTurnIds.delete(turnId);
-        this.clearPendingMessageSend(chatId, turnId);
+        // Fence omitted optimistic turns too: a later output frame must not
+        // silently consume their uncertainty or revive the retired cursor.
+        fences.add(turnId);
+        this.prunePendingInboundTurn(chatId, turnId);
+        if (!this.isUnknownPendingMessageSend(chatId, turnId)) {
+          this.clearPendingMessageSend(chatId, turnId);
+        }
         this.runStartedAtByTurnKey.delete(this.runSendKey(chatId, turnId));
       }
       if (unsettledTurnIds.size === 0) this.unsettledRunTurnIdsByChatId.delete(chatId);
     }
     this.settleNonLifecycleCanonicalSends(chatId, completed, observed, snapshot);
+    while (fences.size > NanobotClient.COMPLETED_TURN_FENCE_MAX) {
+      const oldest = fences.values().next().value;
+      if (typeof oldest !== "string") break;
+      fences.delete(oldest);
+    }
+    if (fences.size > 0) this.canonicalCompletedTurnIdsByChatId.set(chatId, fences);
     this.clearOwnedRuns(chatId);
     this.clearSideChannelTurns(chatId);
     stopMobileRunKeepAlive(chatId);
-    if (this.runStartedAtByChatId.delete(chatId)) {
-      this.emitRunStatus(chatId, null);
-    }
+    this.runStartedAtByChatId.delete(chatId);
+    // Other consumers can learn running from HTTP without seeing a local WS
+    // clock. Every accepted current idle commit must settle that projection.
+    this.emitRunStatus(chatId, null);
     return true;
   }
 
@@ -639,7 +667,9 @@ export class NanobotClient {
 
   private settleRunTurn(chatId: string, turnId?: string): void {
     if (!turnId) return;
-    this.clearPendingMessageSend(chatId, turnId);
+    if (!this.isUnknownPendingMessageSend(chatId, turnId)) {
+      this.clearPendingMessageSend(chatId, turnId);
+    }
     this.runStartedAtByTurnKey.delete(this.runSendKey(chatId, turnId));
     const unsettled = this.unsettledRunTurnIdsByChatId.get(chatId);
     if (!unsettled) return;
@@ -805,14 +835,36 @@ export class NanobotClient {
     ));
   }
 
-  private recordRunAcceptance(chatId: string, turnId?: string): void {
+  /** Admission uncertainty is owned by attempts, not the currently displayed page. */
+  hasUnknownMessageSend(chatId: string): boolean {
+    return [...this.pendingMessageSends.values()].some((pending) => (
+      pending.chatId === chatId && pending.state === "unknown"
+    ));
+  }
+
+  private isUnknownPendingMessageSend(chatId: string, turnId: string): boolean {
+    return this.pendingMessageSends.get(this.runSendKey(chatId, turnId))?.state === "unknown";
+  }
+
+  private recordRunAcceptance(
+    chatId: string,
+    turnId?: string,
+    ownerReceipt = false,
+  ): void {
     if (!turnId) return;
     const key = this.runSendKey(chatId, turnId);
     const pending = this.pendingMessageSends.get(key);
     if (!pending) return;
+    // A route ACK or display echo cannot turn a lost-ACK send into a known
+    // admission. Keep the attempt held until the owner receipt or live output.
+    if (pending.state === "unknown" && !ownerReceipt) return;
     this.socketPendingMessageSendKeys.delete(key);
-    if (!pending.startsNewRun) {
-      this.pendingMessageSends.delete(key);
+    if (
+      !pending.startsNewRun
+      || !this.unsettledRunTurnIdsByChatId.get(chatId)?.has(turnId)
+      || this.canonicalCompletedTurnIdsByChatId.get(chatId)?.has(turnId)
+    ) {
+      this.clearPendingMessageSend(chatId, turnId);
       return;
     }
     pending.state = "accepted";
@@ -831,8 +883,12 @@ export class NanobotClient {
     // The gateway admits exactly one owner and classifies the other message as
     // steering. Replace the local guess before its ACK can preserve the wrong
     // run identity.
+    const pendingAttempt = ev.turn_id
+      ? this.pendingMessageSends.get(this.runSendKey(ev.chat_id, ev.turn_id))
+      : undefined;
+    if (pendingAttempt?.state === "unknown" && ev.event !== "message_admitted") return;
     if (ev.turn_id && ev.turn_id !== activeTurnId) {
-      const pending = this.pendingMessageSends.get(this.runSendKey(ev.chat_id, ev.turn_id));
+      const pending = pendingAttempt;
       if (pending?.startsNewRun) {
         this.settleRunTurn(ev.chat_id, ev.turn_id);
         if (this.isOwnedRun(ev.chat_id, ev.turn_id)) {
@@ -867,6 +923,7 @@ export class NanobotClient {
     if (!turnId) return;
     const rejectedOwned = this.isOwnedRun(chatId, turnId);
     const rejectedLatest = this.latestRunTurnIdByChatId.get(chatId) === turnId;
+    this.clearPendingMessageSend(chatId, turnId);
     this.settleRunTurn(chatId, turnId);
     this.prunePendingInboundTurn(chatId, turnId);
     this.consumeSideChannelTurn(chatId, turnId);
@@ -1554,22 +1611,47 @@ export class NanobotClient {
       && !parsed.turn_id
     ) {
       const fallbackTurnId = this.uniqueUnsettledTurnId(parsed.chat_id);
-      if (fallbackTurnId) parsed = { ...parsed, turn_id: fallbackTurnId };
+      if (
+        fallbackTurnId
+        && !this.isUnknownPendingMessageSend(parsed.chat_id, fallbackTurnId)
+      ) {
+        parsed = { ...parsed, turn_id: fallbackTurnId };
+      }
     }
 
     const turnId = "turn_id" in parsed && typeof parsed.turn_id === "string"
       ? parsed.turn_id
       : null;
-    if (
-      parsed.event === "message_accepted"
-      || parsed.event === "message_admitted"
-      || parsed.event === "user_message"
-    ) {
-      this.recordCanonicalTurnOwnership(parsed);
-    }
+    const correlatedChatId = (parsed as { chat_id?: string }).chat_id;
+    const completedTurnEvent = correlatedChatId !== undefined
+      && this.isCanonicalCompletedTurnEvent(correlatedChatId, parsed);
     if (parsed.event === "message_admitted") {
-      this.recordRunAcceptance(parsed.chat_id, parsed.turn_id);
+      // An exact late receipt still repairs its own attempt/queue after the
+      // activity fence, but must not reinstall that old run as the live owner.
+      const latestTurnId = this.latestRunTurnIdByChatId.get(parsed.chat_id);
+      const retiredActiveTurn = parsed.active_turn_id
+        ? this.canonicalCompletedTurnIdsByChatId.get(parsed.chat_id)?.has(parsed.active_turn_id)
+        : false;
+      const pendingAttempt = parsed.turn_id
+        ? this.pendingMessageSends.get(this.runSendKey(parsed.chat_id, parsed.turn_id))
+        : undefined;
+      const supersededAttempt = latestTurnId !== undefined
+        && latestTurnId !== parsed.turn_id
+        && (pendingAttempt?.startsNewRun === true || latestTurnId !== parsed.active_turn_id);
+      this.recordRunAcceptance(parsed.chat_id, parsed.turn_id, true);
+      if (!completedTurnEvent && !retiredActiveTurn && !supersededAttempt) {
+        this.recordCanonicalTurnOwnership(parsed);
+      }
+      if (!isSystemCommandTurnId(turnId)) {
+        this.dispatch(parsed.chat_id, parsed);
+      }
       return;
+    }
+    // Output proof is useful only while the live activity still accepts it.
+    // Filtering later would consume UNKNOWN invisibly behind the UI fence.
+    if (completedTurnEvent && parsed.event !== "error") return;
+    if (parsed.event === "message_accepted" || parsed.event === "user_message") {
+      this.recordCanonicalTurnOwnership(parsed);
     }
     if (parsed.event === "message_accepted") {
       if (!isSystemCommandTurnId(turnId)) {
@@ -1589,7 +1671,6 @@ export class NanobotClient {
       return;
     }
 
-    const correlatedChatId = (parsed as { chat_id?: string }).chat_id;
     if (parsed.event === "error" && correlatedChatId && turnId) {
       this.recordRunRejection(correlatedChatId, turnId);
       if (parsed.detail !== "workspace_scope_rejected") {
@@ -1604,7 +1685,13 @@ export class NanobotClient {
     } else if (parsed.event !== "error" && correlatedChatId && turnId) {
       // Lifecycle traffic is also an implicit acceptance signal for clients
       // connected to an older gateway that doesn't emit message_accepted.
-      this.recordRunAcceptance(correlatedChatId, turnId);
+      this.recordRunAcceptance(
+        correlatedChatId,
+        turnId,
+        parsed.event !== "user_message"
+          && parsed.event !== "turn_end"
+          && (parsed.event !== "goal_status" || parsed.status === "running"),
+      );
     }
 
     if (parsed.event === "ready") {
@@ -1849,11 +1936,13 @@ export class NanobotClient {
       const current = this.pendingMessageSends.get(
         this.runSendKey(pending.chatId, pending.turnId),
       );
-      if (current?.state === "sent") current.state = "unknown";
+      if (current?.state === "sent") {
+        current.state = "unknown";
+        this.canonicalCompletedTurnIdsByChatId.get(pending.chatId)?.delete(pending.turnId);
+      }
       if (willReconnect) {
-        // The frame left the socket but never got an acknowledgement. Mark the
-        // optimistic row failed so the composer unlocks and the user can resend
-        // instead of waiting on a "Sending…" bubble forever.
+        // The frame left the socket but never got an acknowledgement. Keep the
+        // attempt unresolved until owner proof arrives.
         this.emitError({
           kind: "connection_closed",
           chatId: pending.chatId,

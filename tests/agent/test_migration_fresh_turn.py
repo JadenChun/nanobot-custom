@@ -21,7 +21,10 @@ def stage():
     ctx = StageContext(msg=InboundMessage(channel='telegram', chat_id='42', sender_id='cron', content='/new'),
                        session_key=session.key, turn_id='run', kind=TurnKind.USER,
                        runtime=SimpleNamespace(), session=session,
-                       delivery=SimpleNamespace(runtime_admitted=AsyncMock()))
+                       delivery=SimpleNamespace(
+                           runtime_admitted=AsyncMock(),
+                           input_committed=AsyncMock(),
+                       ))
     ctx.run_context = TurnContext(request=request)
     return ctx
 

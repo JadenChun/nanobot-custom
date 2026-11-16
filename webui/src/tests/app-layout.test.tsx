@@ -274,6 +274,7 @@ vi.mock("@/lib/nanobot-client", async (importOriginal) => {
     getRunGeneration = () => 0;
     canReconcileCanonicalCompletion = () => false;
     hasUnsettledRun = () => false;
+    hasUnknownMessageSend = () => false;
     getGoalState = () => undefined;
     sendMessage = sendMessageSpy;
     newChat = vi.fn();

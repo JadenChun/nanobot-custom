@@ -6,7 +6,6 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
 from mcp.shared.auth import OAuthToken
 
 from nanobot.agent.tools.mcp_oauth import (

@@ -14,6 +14,7 @@ from nanobot.bus.runtime_events import (
     TurnCompleted,
     TurnRunStatusChanged,
     TurnRuntimeAdmitted,
+    UserInputCommitted,
 )
 from nanobot.providers.base import LLMUsage
 
@@ -184,6 +185,31 @@ async def test_runtime_event_publisher_builds_context_from_inbound_message() -> 
     assert isinstance(running, TurnRunStatusChanged)
     assert running.status == "running"
     assert running.started_at == 12.5
+
+
+@pytest.mark.asyncio
+async def test_runtime_event_publisher_reports_committed_user_input() -> None:
+    bus = MessageBus()
+    seen: list[object] = []
+    publisher = RuntimeEventPublisher(bus)
+    msg = InboundMessage(
+        channel="websocket",
+        sender_id="user",
+        chat_id="chat-a",
+        content="input must not be copied into the fact",
+        metadata={"webui": True, "webui_turn_id": "turn-a"},
+    )
+    bus.subscribe(seen.append)
+
+    await publisher.user_input_committed(msg, "websocket:chat-a")
+
+    event = seen[0]
+    assert isinstance(event, UserInputCommitted)
+    assert event.context.channel == "websocket"
+    assert event.context.chat_id == "chat-a"
+    assert event.context.session_key == "websocket:chat-a"
+    assert event.context.metadata == {"webui": True, "webui_turn_id": "turn-a"}
+    assert event.context.metadata is not msg.metadata
 
 
 @pytest.mark.asyncio

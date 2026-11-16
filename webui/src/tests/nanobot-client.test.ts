@@ -571,6 +571,44 @@ describe("NanobotClient", () => {
     expect(handler).toHaveBeenCalledTimes(3);
   });
 
+  it("forwards owner admission receipts to the matching chat subscriber", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    const handler = vi.fn();
+    const otherChatHandler = vi.fn();
+    client.onChat("chat-admission", handler);
+    client.onChat("chat-other", otherChatHandler);
+    client.connect();
+    lastSocket().fakeOpen();
+
+    lastSocket().fakeMessage({
+      event: "message_admitted",
+      chat_id: "chat-admission",
+      turn_id: "attempt-steer",
+      active_turn_id: "root-active",
+      starts_turn: false,
+    });
+    lastSocket().fakeMessage({
+      event: "message_admitted",
+      chat_id: "chat-admission",
+      turn_id: "webui-system:internal",
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      event: "message_admitted",
+      chat_id: "chat-admission",
+      turn_id: "attempt-steer",
+      active_turn_id: "root-active",
+      starts_turn: false,
+    }));
+    expect(otherChatHandler).not.toHaveBeenCalled();
+    expect(client.getRunTurnId("chat-admission")).toBe("root-active");
+  });
+
   it("records goal_status run strip without an onChat subscriber", () => {
     const client = new NanobotClient({
       url: "ws://test",
@@ -1041,10 +1079,10 @@ describe("NanobotClient", () => {
     expect(client.hasUnsettledRun("chat-before-audio")).toBe(true);
   });
 
-  it("settles an unknown send absent from an idle canonical snapshot after disconnect", () => {
+  it("holds an unknown send through idle and history evidence until owner admission", () => {
     const client = new NanobotClient({
       url: "ws://test",
-      reconnect: false,
+      maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
     });
     client.connect();
@@ -1057,15 +1095,28 @@ describe("NanobotClient", () => {
     lastSocket().close();
 
     const snapshot = {
-      observedTurnIds: [],
-      hasPendingToolCalls: false,
+      observedTurnIds: ["turn-never-arrived"],
+      activitySnapshotAvailable: true, hasPendingToolCalls: false,
       activeTurnId: null,
     };
+    lastSocket().fakeMessage({
+      event: "message_accepted",
+      chat_id: "chat-never-arrived",
+      turn_id: "turn-never-arrived",
+    });
+    lastSocket().fakeMessage({
+      event: "user_message",
+      chat_id: "chat-never-arrived",
+      turn_id: "turn-never-arrived",
+      text: "question",
+      starts_turn: true,
+    });
+
     expect(
       client.canReconcileCanonicalCompletion(
         "chat-never-arrived",
         requestGeneration,
-        [],
+        ["turn-never-arrived"],
         snapshot,
       ),
     ).toBe(true);
@@ -1073,17 +1124,127 @@ describe("NanobotClient", () => {
       client.reconcileCanonicalCompletion(
         "chat-never-arrived",
         requestGeneration,
-        [],
+        ["turn-never-arrived"],
         snapshot,
       ),
     ).toBe(true);
     expect(client.hasUnsettledRun("chat-never-arrived")).toBe(false);
+    expect(client.hasUnknownMessageSend("chat-never-arrived")).toBe(true);
+
+    vi.advanceTimersByTime(500);
+    lastSocket().fakeOpen();
+    const messageFrames = FakeSocket.instances.flatMap((socket) => socket.sent)
+      .map((serialized) => JSON.parse(serialized) as { type?: string })
+      .filter((frame) => frame.type === "message");
+    expect(messageFrames).toHaveLength(1);
+
+    lastSocket().fakeMessage({
+      event: "message_admitted",
+      chat_id: "chat-never-arrived",
+      turn_id: "turn-never-arrived",
+    });
+    expect(
+      client.reconcileCanonicalCompletion(
+        "chat-never-arrived",
+        requestGeneration,
+        [],
+        { observedTurnIds: [], activitySnapshotAvailable: true, hasPendingToolCalls: false, activeTurnId: null },
+      ),
+    ).toBe(true);
+    expect(client.hasUnsettledRun("chat-never-arrived")).toBe(false);
+    expect(client.hasUnknownMessageSend("chat-never-arrived")).toBe(false);
   });
 
-  it("keeps an ACK-lost observed turn active, then settles it from an idle snapshot", () => {
+  it.each(["message_accepted", "user_message"] as const)(
+    "keeps an unknown send when a replacement socket reports %s for another owner's run",
+    (event) => {
+      const client = new NanobotClient({
+        url: "ws://test",
+        maxBackoffMs: 500,
+        socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+      });
+      client.connect();
+      const originalSocket = lastSocket();
+      originalSocket.fakeOpen();
+      client.sendMessage("chat-owner-remap", "question", undefined, {
+        turnId: "turn-uncertain-owner-remap",
+      });
+      const generation = client.getRunGeneration("chat-owner-remap");
+
+      originalSocket.close();
+      vi.advanceTimersByTime(500);
+      const replacementSocket = lastSocket();
+      expect(replacementSocket).not.toBe(originalSocket);
+      replacementSocket.fakeOpen();
+      replacementSocket.fakeMessage({
+        event,
+        chat_id: "chat-owner-remap",
+        turn_id: "turn-uncertain-owner-remap",
+        active_turn_id: "turn-owned-by-another-client",
+        starts_turn: false,
+        ...(event === "user_message" ? { text: "question" } : {}),
+      });
+
+      expect(client.getRunTurnId("chat-owner-remap")).toBe("turn-uncertain-owner-remap");
+      expect(client.hasUnsettledRun("chat-owner-remap")).toBe(true);
+      expect(
+        client.canReconcileCanonicalCompletion(
+          "chat-owner-remap",
+          generation,
+          ["turn-owned-by-another-client"],
+          { observedTurnIds: [], activitySnapshotAvailable: true, hasPendingToolCalls: false, activeTurnId: null },
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each([
+    ["goal_status", { status: "idle" }],
+    ["turn_end", {}],
+  ] as const)(
+    "does not infer an unknown attempt from unkeyed %s traffic",
+    (event, payload) => {
+      const client = new NanobotClient({
+        url: "ws://test",
+        maxBackoffMs: 500,
+        socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+      });
+      client.connect();
+      const originalSocket = lastSocket();
+      originalSocket.fakeOpen();
+      client.sendMessage("chat-unkeyed-unknown", "question", undefined, {
+        turnId: "turn-unkeyed-unknown",
+      });
+      const generation = client.getRunGeneration("chat-unkeyed-unknown");
+
+      originalSocket.close();
+      vi.advanceTimersByTime(500);
+      const replacementSocket = lastSocket();
+      expect(replacementSocket).not.toBe(originalSocket);
+      replacementSocket.fakeOpen();
+      replacementSocket.fakeMessage({
+        event,
+        chat_id: "chat-unkeyed-unknown",
+        ...payload,
+      });
+
+      expect(client.getRunTurnId("chat-unkeyed-unknown")).toBe("turn-unkeyed-unknown");
+      expect(client.hasUnsettledRun("chat-unkeyed-unknown")).toBe(true);
+      expect(
+        client.canReconcileCanonicalCompletion(
+          "chat-unkeyed-unknown",
+          generation,
+          ["turn-from-other-client"],
+          { observedTurnIds: [], activitySnapshotAvailable: true, hasPendingToolCalls: false, activeTurnId: null },
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("keeps an ACK-lost observed turn unresolved when only idle history is available", () => {
     const client = new NanobotClient({
       url: "ws://test",
-      reconnect: false,
+      maxBackoffMs: 500,
       socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
     });
     client.connect();
@@ -1101,6 +1262,7 @@ describe("NanobotClient", () => {
         [],
         {
           observedTurnIds: ["turn-ack-lost"],
+          activitySnapshotAvailable: true,
           hasPendingToolCalls: true,
           activeTurnId: "turn-ack-lost",
         },
@@ -1110,15 +1272,36 @@ describe("NanobotClient", () => {
       client.reconcileCanonicalCompletion(
         "chat-ack-lost",
         requestGeneration,
-        [],
+        ["turn-ack-lost"],
         {
           observedTurnIds: ["turn-ack-lost"],
-          hasPendingToolCalls: false,
+          activitySnapshotAvailable: true, hasPendingToolCalls: false,
           activeTurnId: null,
         },
       ),
     ).toBe(true);
     expect(client.hasUnsettledRun("chat-ack-lost")).toBe(false);
+    expect(client.hasUnknownMessageSend("chat-ack-lost")).toBe(true);
+
+    vi.advanceTimersByTime(500);
+    lastSocket().fakeOpen();
+    lastSocket().fakeMessage({
+      event: "delta",
+      chat_id: "chat-ack-lost",
+      turn_id: "turn-ack-lost",
+      text: "reply",
+    });
+    expect(client.hasUnknownMessageSend("chat-ack-lost")).toBe(true);
+    expect(
+      client.reconcileCanonicalCompletion(
+        "chat-ack-lost",
+        requestGeneration,
+        ["turn-ack-lost"],
+        { observedTurnIds: [], activitySnapshotAvailable: true, hasPendingToolCalls: false, activeTurnId: null },
+      ),
+    ).toBe(true);
+    expect(client.hasUnsettledRun("chat-ack-lost")).toBe(false);
+    expect(client.hasUnknownMessageSend("chat-ack-lost")).toBe(true);
   });
 
   it("settles an accepted turn that never reached running from canonical idle", () => {
@@ -1146,12 +1329,52 @@ describe("NanobotClient", () => {
         [],
         {
           observedTurnIds: ["turn-accepted-idle"],
+          activitySnapshotAvailable: true,
           hasPendingToolCalls: false,
           activeTurnId: null,
         },
       ),
     ).toBe(true);
     expect(client.hasUnsettledRun("chat-accepted-idle")).toBe(false);
+  });
+
+  it("keeps known accepted settlement available beside an unresolved side-channel send", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-known-and-unknown", "accepted", undefined, {
+      turnId: "turn-known",
+    });
+    lastSocket().fakeMessage({
+      event: "message_admitted",
+      chat_id: "chat-known-and-unknown",
+      turn_id: "turn-known",
+    });
+    client.sendMessage("chat-known-and-unknown", "side-channel", undefined, {
+      turnId: "turn-side-channel",
+      startsNewRun: false,
+    });
+    const requestGeneration = client.getRunGeneration("chat-known-and-unknown");
+    lastSocket().close();
+
+    expect(
+      client.reconcileCanonicalCompletion(
+        "chat-known-and-unknown",
+        requestGeneration,
+        ["turn-known"],
+        {
+          observedTurnIds: ["turn-known"],
+          activitySnapshotAvailable: true,
+          hasPendingToolCalls: false,
+          activeTurnId: null,
+        },
+      ),
+    ).toBe(true);
+    expect(client.hasUnsettledRun("chat-known-and-unknown")).toBe(false);
   });
 
   it("does not let a pre-send idle response erase a newly accepted turn", () => {
@@ -1179,12 +1402,92 @@ describe("NanobotClient", () => {
         [],
         {
           observedTurnIds: [],
+          activitySnapshotAvailable: true,
           hasPendingToolCalls: false,
           activeTurnId: null,
         },
       ),
     ).toBe(false);
     expect(client.hasUnsettledRun("chat-stale-idle")).toBe(true);
+  });
+
+  it("retires omitted unknown activity without admitting it and fences late proof from a newer run", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      maxBackoffMs: 500,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-retired", "first", undefined, { turnId: "old-attempt" });
+    const generation = client.getRunGeneration("chat-retired");
+    lastSocket().close();
+    vi.advanceTimersByTime(500);
+    lastSocket().fakeOpen();
+    const idle = { observedTurnIds: [], activitySnapshotAvailable: true,
+      hasPendingToolCalls: false, activeTurnId: null };
+    expect(client.reconcileCanonicalCompletion("chat-retired", generation, [], idle)).toBe(true);
+    expect(client.hasUnknownMessageSend("chat-retired")).toBe(true);
+    expect(client.hasUnsettledRun("chat-retired")).toBe(false);
+    const received = vi.fn();
+    client.onChat("chat-retired", received);
+    lastSocket().fakeMessage({ event: "delta", chat_id: "chat-retired",
+      turn_id: "old-attempt", text: "delayed" });
+    expect(client.hasUnknownMessageSend("chat-retired")).toBe(true);
+    expect(received).not.toHaveBeenCalled();
+    client.sendMessage("chat-retired", "second", undefined, { turnId: "new-attempt" });
+    const newerGeneration = client.getRunGeneration("chat-retired");
+    lastSocket().fakeMessage({ event: "message_admitted", chat_id: "chat-retired",
+      turn_id: "old-attempt", active_turn_id: "old-attempt", starts_turn: true,
+      started_at: 100 });
+    expect(client.hasUnknownMessageSend("chat-retired")).toBe(false);
+    expect(client.getRunTurnId("chat-retired")).toBe("new-attempt");
+    expect(client.getRunGeneration("chat-retired")).toBe(newerGeneration);
+    expect(client.getRunStartedAt("chat-retired")).toBeNull();
+    expect(received).toHaveBeenCalledWith(expect.objectContaining({ event: "message_admitted" }));
+  });
+
+  it("repairs a superseded receipt without rewriting the newer owner's clock", () => {
+    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-old-receipt", "first", undefined, { turnId: "old" });
+    lastSocket().close();
+    vi.advanceTimersByTime(500);
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-old-receipt", "new", undefined, { turnId: "new" });
+    lastSocket().fakeMessage({ event: "goal_status", chat_id: "chat-old-receipt",
+      status: "running", started_at: 200, turn_id: "new" });
+    const generation = client.getRunGeneration("chat-old-receipt");
+    lastSocket().fakeMessage({ event: "message_admitted", chat_id: "chat-old-receipt",
+      turn_id: "old", active_turn_id: "new", starts_turn: false, started_at: 100 });
+    expect(client.hasUnknownMessageSend("chat-old-receipt")).toBe(false);
+    expect(client.getRunTurnId("chat-old-receipt")).toBe("new");
+    expect(client.getRunGeneration("chat-old-receipt")).toBe(generation);
+    expect(client.getRunStartedAt("chat-old-receipt")).toBe(200);
+  });
+
+  it("rejects a newer unrepresented unknown run and snapshots without explicit idle authority", () => {
+    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
+    client.connect();
+    lastSocket().fakeOpen();
+    const generation = client.getRunGeneration("chat-newer-unknown");
+    client.sendMessage("chat-newer-unknown", "newer", undefined, { turnId: "newer" });
+    lastSocket().close();
+    const idle = { observedTurnIds: [], activitySnapshotAvailable: true,
+      hasPendingToolCalls: false, activeTurnId: null };
+    expect(client.canReconcileCanonicalCompletion("chat-newer-unknown", generation, [], idle)).toBe(false);
+    for (const snapshot of [
+      { ...idle, activitySnapshotAvailable: false },
+      { ...idle, activeTurnId: "newer" },
+      { ...idle, hasPendingToolCalls: true },
+    ]) {
+      expect(client.canReconcileCanonicalCompletion("chat-newer-unknown",
+        client.getRunGeneration("chat-newer-unknown"), ["newer"], snapshot)).toBe(false);
+    }
+    expect(client.hasUnknownMessageSend("chat-newer-unknown")).toBe(true);
   });
 
   it("correlates a legacy rejection only to one currently sent turn", () => {
@@ -1600,6 +1903,44 @@ describe("NanobotClient", () => {
     expect(chatHandler).toHaveBeenCalledWith(
       expect.objectContaining({ event: "delta", text: "still live" }),
     );
+  });
+
+  it("notifies accepted canonical idle without a local clock, but not preflight or stale rejection", () => {
+    const client = new NanobotClient({ url: "ws://test", maxBackoffMs: 500,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-http-running", "input", undefined, { turnId: "unknown-input" });
+    const requestGeneration = client.getRunGeneration("chat-http-running");
+    lastSocket().close();
+    vi.advanceTimersByTime(500);
+    lastSocket().fakeOpen();
+    // App can have learned running from HTTP without observing a WS clock.
+    let sidebarRunning = true;
+    const runStatus = vi.fn((_chatId: string, startedAt: number | null) => {
+      sidebarRunning = startedAt !== null;
+    });
+    client.onRunStatus(runStatus);
+    expect(client.getRunStartedAt("chat-http-running")).toBeNull();
+    const idle = { activitySnapshotAvailable: true, observedTurnIds: ["unknown-input"],
+      hasPendingToolCalls: false, activeTurnId: null };
+    expect(client.canReconcileCanonicalCompletion("chat-http-running", requestGeneration,
+      ["unknown-input"], idle)).toBe(true);
+    expect(runStatus).not.toHaveBeenCalled();
+    expect(client.reconcileCanonicalCompletion("chat-http-running", requestGeneration,
+      ["unknown-input"], idle)).toBe(true);
+    expect(runStatus).toHaveBeenCalledTimes(1);
+    expect(runStatus).toHaveBeenLastCalledWith("chat-http-running", null);
+    expect(sidebarRunning).toBe(false);
+    expect(client.hasUnknownMessageSend("chat-http-running")).toBe(true);
+    client.sendMessage("chat-http-running", "new input", undefined, { turnId: "new-input" });
+    sidebarRunning = true;
+    expect(client.reconcileCanonicalCompletion("chat-http-running", requestGeneration,
+      ["unknown-input"], idle)).toBe(false);
+    expect(runStatus).toHaveBeenCalledTimes(1);
+    expect(sidebarRunning).toBe(true);
+    expect(client.hasUnknownMessageSend("chat-http-running")).toBe(true);
+    expect(client.hasUnsettledRun("chat-http-running")).toBe(true);
   });
 
   it("clears the run cache and fences delayed frames after canonical completion", () => {

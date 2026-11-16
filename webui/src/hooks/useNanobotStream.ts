@@ -240,6 +240,7 @@ function transitionTurnDelivery(
   messages: UIMessage[],
   turnId: string,
   status: MessageDeliveryStatus,
+  repairUncertain = false,
 ): UIMessage[] {
   let changed = false;
   const next = messages.map((message) => {
@@ -247,12 +248,27 @@ function transitionTurnDelivery(
       message.role !== "user"
       || message.turnId !== turnId
       || message.deliveryStatus === status
-      || (status === "accepted" && message.deliveryStatus !== "sending")
+      || (status === "accepted"
+        && message.deliveryStatus !== "sending"
+        && !(
+          repairUncertain
+          && (
+            message.deliveryStatus === "unknown"
+            || (
+              message.deliveryStatus === "failed"
+              && message.deliveryErrorKind === "connection_closed"
+            )
+          )
+        ))
     ) {
       return message;
     }
     changed = true;
-    return { ...message, deliveryStatus: status };
+    return {
+      ...message,
+      deliveryStatus: status,
+      ...(status === "accepted" ? { deliveryErrorKind: undefined } : {}),
+    };
   });
   return changed ? next : messages;
 }
@@ -301,6 +317,8 @@ export function useNanobotStream(
   dismissStopNotice: () => void;
   stopTarget: StopExpectation | null;
   connectionOpen: boolean;
+  /** At least one input still awaits exact owner disposition, independent of activity. */
+  hasUnknownMessageSend: boolean;
   /** Unix epoch seconds when the current user turn started (WebSocket ``goal_status``). */
   runStartedAt: number | null;
   /** Transient model retry state for the active turn. */
@@ -330,6 +348,8 @@ export function useNanobotStream(
   const { client } = useClient();
   const initialRunStartedAt = chatId ? client.getRunStartedAt(chatId) : null;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [messageOwnerChatId, setMessageOwnerChatId] = useState(chatId);
   /** If history ends in unfinished agent activity, keep the loading spinner alive. */
   const initialStreaming = hasPendingAgentActivity(initialMessages);
@@ -350,6 +370,16 @@ export function useNanobotStream(
   const [stopNotice, setStopNotice] = useState<"stale_target" | "unavailable" | null>(null);
   const [stopTargetRequiresRefresh, setStopTargetRequiresRefresh] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState(client.status);
+  const [unknownMessageSend, setUnknownMessageSend] = useState(() => ({
+    chatId,
+    value: chatId ? client.hasUnknownMessageSend(chatId) : false,
+  }));
+  const refreshUnknownMessageSend = useCallback(() => {
+    const value = chatId ? client.hasUnknownMessageSend(chatId) : false;
+    setUnknownMessageSend((current) => current.chatId === chatId && current.value === value
+      ? current
+      : { chatId, value });
+  }, [chatId, client]);
   const buffer = useRef<StreamBuffer | null>(null);
   const activeAssistantRef = useRef<ActiveAssistantCursor | null>(null);
   const closedAssistantStreamIdsRef = useRef<Set<string>>(new Set());
@@ -416,7 +446,10 @@ export function useNanobotStream(
     resolve(admitted);
   }, []);
 
-  useEffect(() => client.onStatus(setConnectionStatus), [client]);
+  useEffect(() => client.onStatus((status) => {
+    setConnectionStatus(status);
+    refreshUnknownMessageSend();
+  }), [client, refreshUnknownMessageSend]);
 
   useEffect(() => {
     if (!chatId || liveStopTargetSeenRef.current) return;
@@ -525,10 +558,43 @@ export function useNanobotStream(
     // belongs only to its target chat. An uncorrelated transport close can
     // still be shown in the mounted thread, but cannot roll back any turn.
     if (!chatId || (err.chatId && err.chatId !== chatId)) return;
+    if (err.kind === "connection_closed") {
+      const currentRow = messagesRef.current.find((message) => (
+        message.role === "user" && message.turnId === err.turnId
+      ));
+      const alreadyUncertain = (
+        currentRow?.deliveryStatus === "unknown"
+        && currentRow.deliveryErrorKind === "connection_closed"
+      );
+      const legacyUncertain = (
+        currentRow?.deliveryStatus === "failed"
+        && currentRow.deliveryErrorKind === "connection_closed"
+      );
+      if (
+        currentRow
+        && currentRow.deliveryStatus !== "sending"
+        && !alreadyUncertain
+        && !legacyUncertain
+      ) return;
+      setStreamError(err);
+      setMessages((prev) => prev.map((message) => (
+        message.role === "user"
+        && message.turnId === err.turnId
+        && message.deliveryStatus === "sending"
+          ? {
+              ...message,
+              deliveryStatus: "unknown",
+              deliveryErrorKind: "connection_closed",
+            }
+          : message
+      )));
+      return;
+    }
     setStreamError(err);
     if (err.kind === "model_request_failed") return;
     if (!err.turnId) return;
 
+    resolveAdmission(err.turnId, false);
     const rejectedTurnId = err.turnId;
     deferredAnswersRef.current.delete(rejectedTurnId);
     pendingStreamEventsRef.current = pendingStreamEventsRef.current.filter(
@@ -585,9 +651,12 @@ export function useNanobotStream(
     setRunStartedAt(remainingStartedAt);
     setIsStreaming(hasRemainingRun);
     if (!hasRemainingRun) mediaReplyTextsRef.current.clear();
-  }, [chatId, client]);
+  }, [chatId, client, resolveAdmission]);
 
-  useEffect(() => client.onError(applyStreamError), [applyStreamError, client]);
+  useEffect(() => client.onError((error) => {
+    refreshUnknownMessageSend();
+    applyStreamError(error);
+  }), [applyStreamError, client, refreshUnknownMessageSend]);
 
   const resolveActiveAssistantIndex = useCallback((
     prev: UIMessage[],
@@ -854,6 +923,7 @@ export function useNanobotStream(
       || restoredRunStartedAt !== null,
     );
     setStreamError(null);
+    refreshUnknownMessageSend();
     setRunStartedAt(restoredRunStartedAt);
     setRetryStatus(null);
     setGoalState(chatId ? client.getGoalState(chatId) : undefined);
@@ -949,6 +1019,9 @@ export function useNanobotStream(
     };
 
     const handle = (ev: InboundEvent) => {
+      // Read the attempt owner after every existing callback, including receipt
+      // early returns; transcript hydration never supplies this safety fact.
+      refreshUnknownMessageSend();
       if (ev.event === "error") {
         resolveAdmission(ev.turn_id, false);
         if (
@@ -993,7 +1066,25 @@ export function useNanobotStream(
       }
       const turnId = eventTurnId(ev);
       if (turnId) {
-        setMessages((prev) => transitionTurnDelivery(prev, turnId, "accepted"));
+        const repairsUncertain = (
+          ev.event !== "message_accepted"
+          && ev.event !== "user_message"
+          && ev.event !== "turn_end"
+          && (ev.event !== "goal_status" || ev.status === "running")
+        );
+        setMessages((prev) => transitionTurnDelivery(
+          prev,
+          turnId,
+          "accepted",
+          repairsUncertain,
+        ));
+        if (repairsUncertain) {
+          setStreamError((current) => (
+            current?.kind === "connection_closed" && current.turnId === turnId
+              ? null
+              : current
+          ));
+        }
       }
       if (ev.event === "message_accepted") return;
       if (ev.event === "message_admitted") {
@@ -1256,7 +1347,6 @@ export function useNanobotStream(
         const completedTurnId = typeof ev.turn_id === "string" ? ev.turn_id : null;
         // A turn that ends without an owner receipt cannot be treated as
         // admitted; keep the queued item unresolved and held.
-        resolveAdmission(completedTurnId, false);
         if (completedTurnId) sideChannelTurnIdsRef.current.delete(completedTurnId);
         if ("goal_state" in ev && ev.goal_state != null && typeof ev.goal_state === "object") {
           setGoalState(ev.goal_state);
@@ -1357,8 +1447,6 @@ export function useNanobotStream(
 
       if (ev.event === "attached") {
         if ("stop_target" in ev) acceptStopTarget(ev.stop_target);
-        const activeTurnId = client.getRunTurnId(chatId);
-        if (activeTurnId) resolveAdmission(activeTurnId, true);
         setRecoveryState(ev.recovery_state ?? null);
         if (ev.recovery_state?.status === "resuming") {
           setRunStartedAt((current) => current ?? Date.now() / 1000);
@@ -1596,6 +1684,7 @@ export function useNanobotStream(
     isSideChannelEvent,
     onTurnEnd,
     resolveAdmission,
+    refreshUnknownMessageSend,
     schedulePendingStreamFlush,
     expectedRootSessionKey,
     initialStopTarget,
@@ -1815,6 +1904,9 @@ export function useNanobotStream(
     dismissStopNotice,
     stopTarget,
     connectionOpen,
+    hasUnknownMessageSend: unknownMessageSend.chatId === chatId
+      ? unknownMessageSend.value
+      : chatId ? client.hasUnknownMessageSend(chatId) : false,
     runStartedAt,
     retryStatus,
     goalState,

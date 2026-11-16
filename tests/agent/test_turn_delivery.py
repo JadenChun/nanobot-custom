@@ -6,7 +6,7 @@ from nanobot.agent.turn_delivery import TurnDeliveryFactory
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.outbound_events import ContextCompactionEvent
 from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import TurnCompleted
+from nanobot.bus.runtime_events import TurnCompleted, UserInputCommitted
 from nanobot.events import RetryStatusEvent
 from nanobot.providers.base import LLMProvider, ProviderCallContext
 from nanobot.session.manager import SessionManager
@@ -147,6 +147,80 @@ async def test_delivery_maps_model_error_to_failed_turn_completion() -> None:
     assert seen[0].failure_kind == "model"
     assert seen[0].failure_error_kind == "billing"
     assert bus.outbound_size == 0
+
+
+async def test_cancelled_terminal_uses_lifecycle_route_without_synthetic_output(tmp_path: Path) -> None:
+    bus = MessageBus()
+    seen: list[TurnCompleted] = []
+    bus.subscribe(seen.append, TurnCompleted)
+    sessions = SessionManager(tmp_path / "sessions")
+    session = sessions.get_or_create("websocket:target")
+    session.metadata["webui"] = True
+    sessions.save(session)
+    factory = TurnDeliveryFactory(
+        bus,
+        route_policy=WebuiTurnRoutePolicy(sessions),
+    )
+    msg = InboundMessage(
+        channel="system",
+        sender_id="session",
+        chat_id="websocket:target",
+        content="Review this",
+        metadata={"webui": True, WEBUI_TURN_METADATA_KEY: "parent-turn"},
+        session_key_override="websocket:target",
+        input_role="user",
+    )
+    suppressed = factory.create(msg, msg.session_key, suppress_channel_output=True)
+
+    assert suppressed.suppress_channel_output
+    assert suppressed.route.publish_lifecycle
+    lifecycle_turn_id = suppressed.lifecycle_message.metadata[WEBUI_TURN_METADATA_KEY]
+    assert lifecycle_turn_id.startswith("session-input:")
+    await suppressed.publish_cancelled_terminal()
+
+    assert len(seen) == 1
+    assert seen[0].context.metadata[WEBUI_TURN_METADATA_KEY] == lifecycle_turn_id
+    assert seen[0].outcome == "completed"
+    assert seen[0].failure_kind is None and seen[0].failure_error_kind is None
+    assert bus.outbound.empty()
+
+    child = factory.create(InboundMessage(
+        channel="system",
+        sender_id="subagent",
+        chat_id="delegated:child",
+        content="child work",
+    ), "delegated:child", suppress_channel_output=True)
+    silent = factory.silent(InboundMessage(
+        channel="websocket",
+        sender_id="cron",
+        chat_id="target",
+        content="scheduled work",
+    ), "websocket:target")
+    await child.publish_cancelled_terminal()
+    await silent.publish_cancelled_terminal()
+
+    assert len(seen) == 1
+    assert bus.outbound.empty()
+
+
+async def test_input_committed_uses_the_routed_lifecycle_message() -> None:
+    bus = MessageBus()
+    seen: list[UserInputCommitted] = []
+    bus.subscribe(seen.append, UserInputCommitted)
+    msg = InboundMessage(
+        channel="websocket",
+        sender_id="user",
+        chat_id="chat-a",
+        content="input",
+        metadata={WEBUI_TURN_METADATA_KEY: "turn-a"},
+    )
+    delivery = TurnDeliveryFactory(bus).create(msg, msg.session_key)
+
+    await delivery.input_committed()
+
+    assert len(seen) == 1
+    assert seen[0].context.session_key == "websocket:chat-a"
+    assert seen[0].context.metadata == {WEBUI_TURN_METADATA_KEY: "turn-a"}
 
 
 @pytest.mark.asyncio

@@ -23,7 +23,7 @@ def context(session, content='task', run_id='current'):
     return StageContext(
         msg=InboundMessage(channel='cli', chat_id='test', sender_id='user', content=content),
         session_key=session.key, session=session, turn_id='upstream-id', kind=TurnKind.USER,
-        runtime=None, delivery=SimpleNamespace(),
+        runtime=None, delivery=SimpleNamespace(input_committed=AsyncMock()),
         run_context=TurnContext(request=TurnRequest(content=content), run_id=run_id),
     )
 
@@ -125,7 +125,10 @@ async def test_fresh_build_tags_current_input_without_relabeling_retained_histor
     ctx = context(session)
     ctx.run_context.request = TurnRequest(content='task', history_mode=HistoryMode.FRESH)
     ctx.runtime = SimpleNamespace()
-    ctx.delivery = SimpleNamespace(runtime_admitted=AsyncMock())
+    ctx.delivery = SimpleNamespace(
+        runtime_admitted=AsyncMock(),
+        input_committed=AsyncMock(),
+    )
     loop._request_context_for_turn = lambda ctx: None
     loop._resolve_runtime_context_for_turn = AsyncMock(return_value=[])
     await loop._build_turn(ctx)

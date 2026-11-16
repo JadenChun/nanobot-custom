@@ -1255,6 +1255,7 @@
       },
       "queued": {
         "label": "佇列中的引導訊息",
+        "awaitingConfirmation": "等待確認",
         "guide": "引導",
         "delete": "刪除引導",
         "edit": "編輯引導",
@@ -1459,7 +1460,8 @@
     "streaming": "串流輸出中",
     "delivery": {
       "sending": "傳送中…",
-      "failed": "未傳送"
+      "failed": "未傳送",
+      "awaitingConfirmation": "等待確認"
     },
     "assistantTyping": "助理正在輸入",
     "toolSingle": "正在使用工具",
@@ -1598,8 +1600,8 @@
       "body": "請檢查供應商設定或服務狀態後再試。"
     },
     "connectionClosed": {
-      "title": "訊息未傳送",
-      "body": "連線在閘道接收此訊息之前已關閉。請確認此裝置仍保持連線，然後重新傳送。"
+      "title": "等待確認",
+      "body": "連線在收到確認前已中斷。伺服器可能已經收到這則訊息。請重新連線並查看狀態；不要只因連線中斷就再次傳送。"
     }
   },
   "workspace": {

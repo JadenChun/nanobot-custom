@@ -423,6 +423,8 @@ export function useSessionHistory(key: string | null): {
   lineage: number;
   /** Exact active turn when supplied by a current gateway. */
   activeTurnId: string | null;
+  /** The matching root response explicitly supplied both live activity fields. */
+  activitySnapshotAvailable: boolean;
   /** Live root-scoped snapshot used only for an explicitly requested Stop. */
   stopTarget: StopExpectation | null;
   /** True when authenticated history explicitly included the live Stop field, even when null. */
@@ -469,6 +471,7 @@ export function useSessionHistory(key: string | null): {
     continuity: SessionHistoryContinuity;
     lineage: number;
     activeTurnId: string | null;
+    activitySnapshotAvailable: boolean;
     stopTarget: StopExpectation | null;
     stopTargetSnapshotAvailable: boolean;
     delegatedChildrenError: boolean;
@@ -495,6 +498,7 @@ export function useSessionHistory(key: string | null): {
     continuity: "initial",
     lineage: 0,
     activeTurnId: null,
+    activitySnapshotAvailable: false,
     stopTarget: null,
     stopTargetSnapshotAvailable: false,
     delegatedChildrenError: false,
@@ -534,6 +538,7 @@ export function useSessionHistory(key: string | null): {
         continuity: "initial",
         lineage: 0,
         activeTurnId: null,
+        activitySnapshotAvailable: false,
         stopTarget: null,
         stopTargetSnapshotAvailable: false,
         delegatedChildrenError: false,
@@ -562,6 +567,7 @@ export function useSessionHistory(key: string | null): {
           loading: true,
           loadingOlder: false,
           error: null,
+          activitySnapshotAvailable: false,
           workspaceAccessRequestLoading: true,
           workspaceAccessRequestError: false,
           workspacePermissionsLoading: true,
@@ -584,6 +590,7 @@ export function useSessionHistory(key: string | null): {
           continuity: "initial",
           lineage: 0,
           activeTurnId: null,
+          activitySnapshotAvailable: false,
           stopTarget: null,
           stopTargetSnapshotAvailable: false,
           delegatedChildrenError: false,
@@ -682,6 +689,14 @@ export function useSessionHistory(key: string | null): {
             activeTurnId: typeof body?.active_turn_id === "string"
               ? body.active_turn_id
               : null,
+            activitySnapshotAvailable: body !== null
+              && (body.sessionKey === undefined || body.sessionKey === key)
+              && (body.source === undefined || body.source === null || body.source.session_key === key)
+              && body.history_kind !== "summary"
+              && body.parent_session_key === undefined
+              && (body.root_key === undefined || body.root_key === key)
+              && (body.active_turn_id === null || typeof body.active_turn_id === "string")
+              && typeof body.has_pending_tool_calls === "boolean",
             stopTarget,
             stopTargetSnapshotAvailable,
             delegatedChildrenError,
@@ -732,6 +747,7 @@ export function useSessionHistory(key: string | null): {
               continuity,
               lineage: responseVersion,
               activeTurnId: null,
+              activitySnapshotAvailable: false,
               stopTarget: null,
               stopTargetSnapshotAvailable: false,
               delegatedChildrenError: false,
@@ -761,6 +777,7 @@ export function useSessionHistory(key: string | null): {
             continuity: prev.key === key ? prev.continuity : "initial",
             lineage: prev.key === key ? prev.lineage : 0,
             activeTurnId: prev.key === key ? prev.activeTurnId : null,
+            activitySnapshotAvailable: false,
             stopTarget: prev.key === key ? prev.stopTarget : null,
             stopTargetSnapshotAvailable: prev.key === key
               ? prev.stopTargetSnapshotAvailable
@@ -988,6 +1005,7 @@ export function useSessionHistory(key: string | null): {
       continuity: "initial",
       lineage: 0,
       activeTurnId: null,
+      activitySnapshotAvailable: false,
       stopTarget: null,
       stopTargetSnapshotAvailable: false,
       delegatedChildrenError: false,
@@ -1026,6 +1044,7 @@ export function useSessionHistory(key: string | null): {
       continuity: "initial",
       lineage: 0,
       activeTurnId: null,
+      activitySnapshotAvailable: false,
       stopTarget: null,
       stopTargetSnapshotAvailable: false,
       delegatedChildrenError: false,
@@ -1061,6 +1080,7 @@ export function useSessionHistory(key: string | null): {
     continuity: state.continuity,
     lineage: state.lineage,
     activeTurnId: state.activeTurnId,
+    activitySnapshotAvailable: state.activitySnapshotAvailable,
     stopTarget: state.stopTarget,
     stopTargetSnapshotAvailable: state.stopTargetSnapshotAvailable,
     delegatedChildrenError: state.delegatedChildrenError,

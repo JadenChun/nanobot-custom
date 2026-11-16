@@ -275,6 +275,80 @@ describe("MessageBubble", () => {
     expect(screen.getByRole("alert")).toHaveClass("sr-only");
   });
 
+  it("renders uncertain delivery neutrally with truthful disconnect details", async () => {
+    const message: UIMessage = {
+      id: "u-uncertain-delivery",
+      role: "user",
+      content: "hello",
+      createdAt: Date.now(),
+      deliveryStatus: "unknown",
+      deliveryErrorKind: "connection_closed",
+    };
+    render(<MessageBubble message={message} />);
+
+    const status = screen.getByRole("button", { name: "Awaiting confirmation" });
+    expect(status).toHaveTextContent("Awaiting confirmation");
+    expect(status).toHaveClass(
+      "text-amber-700",
+      "dark:text-amber-300",
+      "max-w-full",
+      "flex-wrap",
+    );
+    expect(screen.queryByRole("button", { name: /Not sent/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry|send again/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Message was not sent")).not.toBeInTheDocument();
+
+    fireEvent.focus(status);
+
+    const details = await screen.findByRole("tooltip");
+    expect(details).toHaveTextContent("Awaiting confirmation");
+    expect(details).toHaveTextContent(
+      "The connection closed before confirmation. The server may already have received this message. Reconnect and check its status; do not send it again just because of the disconnect.",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
+  });
+
+  it("reveals uncertain delivery details to coarse-pointer users and supports keyboard dismissal", async () => {
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: query === "(hover: none) and (pointer: coarse)",
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    const user = userEvent.setup();
+    const message: UIMessage = {
+      id: "u-uncertain-touch-details",
+      role: "user",
+      content: "hello",
+      createdAt: Date.now(),
+      deliveryStatus: "unknown",
+      deliveryErrorKind: "connection_closed",
+    };
+    const { unmount } = render(<MessageBubble message={message} />);
+    try {
+      const status = screen.getByRole("button", { name: "Awaiting confirmation" });
+      expect(status).toHaveAttribute("aria-haspopup", "dialog");
+      await user.click(status);
+      let details = await screen.findByRole("dialog");
+      expect(details).toHaveTextContent("The server may already have received this message.");
+      expect(details).toHaveTextContent("do not send it again just because of the disconnect.");
+
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      await user.keyboard("{Enter}");
+      details = await screen.findByRole("dialog");
+      expect(details).toHaveTextContent("The server may already have received this message.");
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    } finally {
+      unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("styles only generated quoted context in user messages", () => {
     const message: UIMessage = {
       id: "u-quote",

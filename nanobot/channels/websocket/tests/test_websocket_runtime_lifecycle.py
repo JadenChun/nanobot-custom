@@ -44,6 +44,7 @@ class _FakeServer:
 def _channel() -> WebSocketChannel:
     gateway = MagicMock()
     gateway.session_manager = None
+    gateway.remote_owner = None
     return WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"]},
         MessageBus(),

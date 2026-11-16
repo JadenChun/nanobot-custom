@@ -1255,6 +1255,7 @@
       },
       "queued": {
         "label": "Panduan antrean",
+        "awaitingConfirmation": "Menunggu konfirmasi",
         "guide": "Pandu",
         "delete": "Hapus panduan",
         "edit": "Ubah panduan",
@@ -1459,7 +1460,8 @@
     "streaming": "sedang mengalir",
     "delivery": {
       "sending": "Mengirim…",
-      "failed": "Belum terkirim"
+      "failed": "Belum terkirim",
+      "awaitingConfirmation": "Menunggu konfirmasi"
     },
     "assistantTyping": "Asisten sedang mengetik",
     "toolSingle": "Menggunakan sebuah alat",
@@ -1598,8 +1600,8 @@
       "body": "Periksa konfigurasi atau status layanan penyedia, lalu coba lagi."
     },
     "connectionClosed": {
-      "title": "Pesan tidak terkirim",
-      "body": "Koneksi terputus sebelum gateway menerima pesan ini. Pastikan perangkat ini masih terhubung, lalu kirim ulang."
+      "title": "Menunggu konfirmasi",
+      "body": "Koneksi terputus sebelum ada konfirmasi. Server mungkin sudah menerima pesan ini. Sambungkan kembali dan periksa statusnya; jangan kirim ulang hanya karena koneksi terputus."
     }
   },
   "workspace": {

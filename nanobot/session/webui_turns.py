@@ -37,6 +37,7 @@ from nanobot.bus.runtime_events import (
     TurnRunStatusChanged,
     TurnRuntimeAdmitted,
     UserInputAccepted,
+    UserInputCommitted,
 )
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import LLMProvider, LLMUsage, ProviderCallContext
@@ -774,6 +775,10 @@ class WebuiTurnCoordinator:
                 SessionTurnStarted,
             ),
             self.bus.subscribe(
+                self._handle_user_input_committed,
+                UserInputCommitted,
+            ),
+            self.bus.subscribe(
                 self._handle_run_status_changed,
                 TurnRunStatusChanged,
             ),
@@ -898,8 +903,16 @@ class WebuiTurnCoordinator:
             return
         session = self.sessions.get_or_create(event.context.session_key)
         mark_webui_session(session, event.context.metadata)
+
+    async def _handle_user_input_committed(self, event: UserInputCommitted) -> None:
+        """Publish an admission receipt only after a named browser input was appended."""
+        if not self._is_websocket_event(event.context):
+            return
         raw_turn_id = event.context.metadata.get(WEBUI_TURN_METADATA_KEY)
         turn_id = raw_turn_id if isinstance(raw_turn_id, str) and raw_turn_id else None
+        if event.context.metadata.get(WEBUI_SESSION_METADATA_KEY) is not True or turn_id is None:
+            return
+        session = self.sessions.get_or_create(event.context.session_key)
         active_turn_id = websocket_turn_id(event.context.chat_id)
         await self.bus.publish_outbound(
             outbound_message_for_event(

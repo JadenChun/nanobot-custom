@@ -13,7 +13,7 @@ export interface UIContextCompaction extends ContextCompaction {
 }
 
 export type UITurnPhase = "user" | "reasoning" | "activity" | "answer" | "complete";
-export type MessageDeliveryStatus = "sending" | "accepted" | "failed";
+export type MessageDeliveryStatus = "sending" | "accepted" | "failed" | "unknown";
 export type MessageDeliveryErrorKind =
   | "message_too_big"
   | "workspace_scope_rejected"

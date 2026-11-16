@@ -1370,6 +1370,7 @@ async def test_continue_binding_is_rechecked_after_existing_source_preflight(
             run_id: str,
             expected_source=None,
             validate_snapshot=None,
+            reconcile_stale: bool = False,
         ):
             handle.sessions.reset_session(prepared.key)
             reset_complete.set()
@@ -1379,6 +1380,7 @@ async def test_continue_binding_is_rechecked_after_existing_source_preflight(
                 run_id=run_id,
                 expected_source=expected_source,
                 validate_snapshot=validate_snapshot,
+                reconcile_stale=reconcile_stale,
             ) as owner:
                 yield owner
 

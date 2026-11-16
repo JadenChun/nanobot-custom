@@ -2236,9 +2236,7 @@ async def test_webui_steering_matching_target_still_dispatches(tmp_path):
 @pytest.mark.asyncio
 async def test_injection_receipt_is_published_only_for_a_committed_steer(tmp_path):
     """A steer acknowledges its own turn; a plain message acknowledges nothing here."""
-    from nanobot.agent.loop import AgentLoop
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.runtime_events import InjectionCommitted
     from nanobot.webui.metadata import (
         WEBUI_REQUEST_INTENT_METADATA_KEY,
         WEBUI_TURN_METADATA_KEY,

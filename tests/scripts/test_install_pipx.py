@@ -57,7 +57,7 @@ def _make_installer_fixture(tmp_path: Path, *, create_executable: bool) -> dict[
 
     create_line = ""
     if create_executable:
-        create_line = f"""
+        create_line = """
 /bin/mkdir -p "$PIPX_BIN_DIR"
 /bin/cat > "$PIPX_BIN_DIR/nanobot" <<'INSTALLED'
 #!/bin/sh

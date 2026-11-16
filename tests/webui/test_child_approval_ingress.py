@@ -13,16 +13,19 @@ import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.outbound_events import WebUIAdmissionRejectedEvent
-from nanobot.bus.runtime_events import TurnCompleted, TurnRuntimeAdmitted
+from nanobot.bus.outbound_events import StreamDeltaEvent, TurnEndEvent, WebUIAdmissionRejectedEvent
+from nanobot.bus.runtime_events import TurnCompleted, TurnRunStatusChanged, TurnRuntimeAdmitted
 from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig, _parse_envelope
 from nanobot.channels.websocket.tests.test_websocket_channel import (
     _authenticate_local_webui_connection,
 )
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.session import webui_turns as turns
+from nanobot.session.execution_owner import ExecutionBusyError
 from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
 from nanobot.webui.gateway_services import build_gateway_services
+from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
+from nanobot.webui.transcript import read_transcript_lines
 from tests.agent.test_migration_engine import ScriptedProvider
 from tests.agent.test_migration_source_engine import upgrade
 
@@ -36,6 +39,7 @@ class SiblingProvider(ScriptedProvider):
         super().__init__([])
         self.parent_started = asyncio.Event()
         self.parent_release = asyncio.Event()
+        self.parent_partial_streamed = asyncio.Event()
         self.alpha_held = asyncio.Event()
         self.alpha_release = asyncio.Event()
         self.parent_calls = 0
@@ -67,6 +71,18 @@ class SiblingProvider(ScriptedProvider):
             self.alpha_held.set()
             await self.alpha_release.wait()
         return LLMResponse(content=f"finished {name}")
+
+    async def chat_stream(self, *args, **kwargs):
+        messages = kwargs.get("messages", args[0] if args else [])
+        on_content_delta = kwargs.get("on_content_delta")
+        if (
+            self.parent_calls >= 1
+            and not any("Worker Role" in str(row.get("content")) for row in messages)
+            and on_content_delta is not None
+        ):
+            await on_content_delta("partial parent response")
+            self.parent_partial_streamed.set()
+        return await LLMProvider.chat_stream(self, *args, **kwargs)
 
 
 def frames(connection):
@@ -327,6 +343,7 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
         errors = [frame for frame in frames(connection) if frame.get("event") == "error"]
         assert not errors, errors
         await wait_child_approval(loop, provider.alpha_held, channel=channel)
+        assert provider.parent_partial_streamed.is_set()
         assert parent_facts(loop, channel) == facts
         assert not provider.parent_release.is_set() and not provider.alpha_release.is_set()
         accepted = [frame for frame in frames(connection) if frame.get("event") == "message_accepted"]
@@ -356,8 +373,13 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
         assert [messages for messages, _, _ in provider.calls
                 if not any("Worker Role" in str(row.get("content")) for row in messages)] == parent_inputs
         assert not [event for event in lifecycle if event.context.session_key == KEY]
+        partial_streams = []
         while loop.bus.outbound_size:
-            await channel.send(loop.bus.outbound.get_nowait())
+            outbound = loop.bus.outbound.get_nowait()
+            if isinstance(outbound.event, StreamDeltaEvent):
+                partial_streams.append(outbound.event)
+            await channel.send(outbound)
+        assert any(event.content == "partial parent response" for event in partial_streams)
         live_updates = {
             (frame["child_session_key"], frame["state"])
             for frame in frames(connection)
@@ -383,13 +405,150 @@ async def test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_r
         assert not any(frame.get("event") == "user" and frame.get("text") == "approval_decision" for frame in frames(connection))
         target = loop.stop_target_for_key(KEY)
         assert target is not None
-        await channel._dispatch_envelope(connection, "client", {
-            "type": "message", "chat_id": CHAT, "content": "/stop", "webui": True,
-            "turn_id": "stop-siblings", "request_settings_version": 1, "request_intent": "new",
-            "stop_expectation": target,
-        })
-        await asyncio.wait_for(asyncio.gather(*facts["tasks"], return_exceptions=True), timeout=5)
-        assert not provider.parent_release.is_set() and not provider.alpha_release.is_set()
+        child_sessions = {pending["alpha"].session_key, pending["beta"].session_key}
+        child_completions_before_stop = [
+            event for event in lifecycle
+            if isinstance(event, TurnCompleted) and event.context.session_key in child_sessions
+        ]
+        parent_run_id = next(iter(facts["bindings"].values())).run_id
+        parent_task = next(iter(facts["tasks"]))
+        source_backend = loop.sessions.source_backend(KEY)
+        assert source_backend is not None
+        source_path = source_backend.get_session_path(KEY)
+        run_statuses = []
+        loop.bus.subscribe(run_statuses.append, TurnRunStatusChanged)
+        terminal_entered, terminal_cancelled, release_terminal = (
+            asyncio.Event(), asyncio.Event(), asyncio.Event(),
+        )
+        terminal_order = []
+
+        async def hold_terminal(event):
+            if event.context.session_key != KEY:
+                return
+            terminal_order.append("terminal-start")
+            terminal_entered.set()
+            try:
+                await release_terminal.wait()
+            except asyncio.CancelledError:
+                terminal_cancelled.set()
+                await release_terminal.wait()
+            terminal_order.append("terminal-finish")
+
+        unsubscribe_terminal = loop.bus.subscribe(hold_terminal, TurnCompleted)
+        import nanobot.agent.loop as loop_module
+
+        monkeypatch.setattr(loop_module, "_BUS_CLEANUP_TIMEOUT_SECONDS", 0.02)
+        monkeypatch.setattr(loop_module, "STOP_SETTLE_TIMEOUT", 0.05)
+        stop_result_settled = asyncio.Event()
+        stop_results = []
+        publish_outbound = loop.bus.publish_outbound
+
+        async def observe_stop_result(outbound):
+            await publish_outbound(outbound)
+            if (
+                outbound.metadata.get(WEBUI_TURN_METADATA_KEY) == "stop-siblings"
+                and outbound.event is None
+            ):
+                stop_results.append(outbound)
+                stop_result_settled.set()
+
+        monkeypatch.setattr(loop.bus, "publish_outbound", observe_stop_result)
+        try:
+            await channel._dispatch_envelope(connection, "client", {
+                "type": "message", "chat_id": CHAT, "content": "/stop", "webui": True,
+                "turn_id": "stop-siblings", "request_settings_version": 1, "request_intent": "new",
+                "stop_expectation": target,
+            })
+            await asyncio.wait_for(terminal_entered.wait(), timeout=1)
+            await asyncio.wait_for(terminal_cancelled.wait(), timeout=1)
+            await asyncio.wait_for(stop_result_settled.wait(), timeout=1)
+            assert len(stop_results) == 1
+            assert stop_results[0].content.startswith("Stopped ")
+            assert stop_results[0].metadata[WEBUI_TURN_METADATA_KEY] == "stop-siblings"
+            assert not release_terminal.is_set()
+            assert terminal_cancelled.is_set()
+            assert not parent_task.done()
+            assert loop._get_session_lock(KEY).locked()
+            assert not [
+                event for event in run_statuses
+                if event.context.session_key == KEY
+                and event.status in {"idle", "interrupted"}
+            ]
+            assert loop.sessions.source_backend(KEY) is source_backend
+            assert source_path.is_file()
+            assert loop.sessions.read_existing_canonical_source(KEY) is not None
+            source_at_terminal = source_backend.source.load_source_snapshot(KEY)
+            with pytest.raises(ExecutionBusyError):
+                loop.sessions.reset_session(KEY)
+            with pytest.raises(ExecutionBusyError):
+                loop.sessions.delete_session(KEY)
+            assert loop.sessions.source_backend(KEY) is source_backend
+            assert source_backend.source.load_source_snapshot(KEY) == source_at_terminal
+
+            discard = asyncio.create_task(loop.discard_session(KEY))
+            await asyncio.sleep(0)
+            discard_waited_for_owner = not discard.done()
+            release_terminal.set()
+            discard_done, _ = await asyncio.wait({discard}, timeout=2)
+            assert discard_done, "discard did not settle after cancellation terminal release"
+            assert discard_waited_for_owner
+            await asyncio.wait_for(asyncio.gather(*facts["tasks"], return_exceptions=True), timeout=5)
+            assert not provider.parent_release.is_set() and not provider.alpha_release.is_set()
+            assert terminal_order == ["terminal-start", "terminal-finish"]
+            assert any(
+                event.context.session_key == KEY and event.status == "idle"
+                for event in run_statuses
+            )
+            assert parent_task.done()
+            parent_completed = [
+                event for event in lifecycle
+                if isinstance(event, TurnCompleted) and event.context.session_key == KEY
+            ]
+            child_completions_after_stop = [
+                event for event in lifecycle
+                if isinstance(event, TurnCompleted) and event.context.session_key in child_sessions
+            ]
+            assert child_completions_after_stop == child_completions_before_stop
+            assert len(parent_completed) == 1
+            assert parent_completed[0].context.metadata[WEBUI_TURN_METADATA_KEY] == "parent-turn"
+            assert parent_completed[0].outcome == "completed"
+            record = loop.run_store.load(parent_run_id)
+            assert record.status.value == "cancelled" and record.stop_reason == "cancelled"
+            completed_messages = []
+            while loop.bus.outbound_size:
+                outbound = loop.bus.outbound.get_nowait()
+                if isinstance(outbound.event, TurnEndEvent):
+                    completed_messages.append(outbound)
+                await channel.send(outbound)
+            assert len(completed_messages) == 1
+            assert completed_messages[0].metadata[WEBUI_TURN_METADATA_KEY] == "parent-turn"
+            completed_frames = [
+                frame for frame in frames(connection)
+                if frame.get("event") == "turn_end" and frame.get("turn_id") == "parent-turn"
+            ]
+            assert len(completed_frames) == 1
+            assert "outcome" not in completed_frames[0]
+            persisted_turn_ends = [
+                row for row in read_transcript_lines(KEY)
+                if row.get("event") == "turn_end" and row.get("turn_id") == "parent-turn"
+            ]
+            assert len(persisted_turn_ends) == 1
+            loop.sessions.reset_session(KEY)
+            assert loop.sessions.delete_session(KEY)
+            await loop.bus.drain()
+            while loop.bus.outbound_size:
+                await channel.send(loop.bus.outbound.get_nowait())
+            await loop.bus.drain()
+            assert not source_path.exists()
+            assert loop.sessions.get_cached(KEY) is None
+            assert loop.sessions.read_existing_canonical_source(KEY) is None
+            assert len([
+                event for event in lifecycle
+                if isinstance(event, TurnCompleted) and event.context.session_key == KEY
+            ]) == 1
+        finally:
+            release_terminal.set()
+            unsubscribe_terminal()
 
 
 @pytest.mark.parametrize("pending_turn_id", [None, "child-inner-turn"])

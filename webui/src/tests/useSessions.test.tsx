@@ -826,6 +826,27 @@ describe("useSessions", () => {
 
     expect(result.current.messages).toEqual([]);
     expect(result.current.hasPendingToolCalls).toBe(false);
+    expect(result.current.activitySnapshotAvailable).toBe(false);
+  });
+
+  it.each([
+    ["idle root", { sessionKey: "websocket:activity", active_turn_id: null, has_pending_tool_calls: false }, true],
+    ["active root", { active_turn_id: "live", has_pending_tool_calls: true }, true],
+    ["null Stop only", { stop_target: null }, false],
+    ["missing pending", { active_turn_id: null }, false],
+    ["invalid pending", { active_turn_id: null, has_pending_tool_calls: "false" }, false],
+    ["invalid active", { active_turn_id: 12, has_pending_tool_calls: false }, false],
+    ["other session", { sessionKey: "websocket:other", active_turn_id: null, has_pending_tool_calls: false }, false],
+    ["child summary", { history_kind: "summary", active_turn_id: null, has_pending_tool_calls: false }, false],
+  ])("exposes root activity availability only for a valid %s response", async (_label, fields, expected) => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValue({
+      schemaVersion: 3, messages: [], ...fields,
+    } as Awaited<ReturnType<typeof api.fetchWebuiThread>>);
+    const { result } = renderHook(() => useSessionHistory("websocket:activity"), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.activitySnapshotAvailable).toBe(expected);
   });
 
   it("preserves an explicit null Stop target from authenticated history", async () => {

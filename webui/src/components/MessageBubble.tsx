@@ -11,6 +11,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  CircleHelp,
   Clock3,
   Copy,
   ImageIcon,
@@ -35,6 +36,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import {
@@ -268,7 +275,8 @@ function UserDeliveryStatus({
   errorKind: MessageDeliveryErrorKind | undefined;
 }) {
   const { t } = useTranslation();
-  if (status !== "sending" && status !== "failed") return null;
+  const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)", true);
+  if (status !== "sending" && status !== "failed" && status !== "unknown") return null;
   if (status === "sending") {
     return (
       <span
@@ -278,6 +286,62 @@ function UserDeliveryStatus({
         <Clock3 className="h-3.5 w-3.5" aria-hidden />
         {t("message.delivery.sending")}
       </span>
+    );
+  }
+
+  if (status === "unknown") {
+    const label = t("message.delivery.awaitingConfirmation");
+    const { title, body } = deliveryErrorCopy(errorKind ?? "connection_closed", t);
+    const trigger = (
+      <button
+        type="button"
+        aria-label={label}
+        className={cn(
+          "inline-flex max-w-full flex-wrap items-center gap-1 rounded-sm text-right",
+          "text-[12px] leading-4 text-amber-700 transition-colors hover:text-amber-800",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "dark:text-amber-300 dark:hover:text-amber-200",
+        )}
+      >
+        <CircleHelp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        {label}
+      </button>
+    );
+    const details = (
+      <>
+        <p className="font-medium text-popover-foreground">{title}</p>
+        <p className="mt-1 leading-relaxed text-muted-foreground">{body}</p>
+      </>
+    );
+    return (
+      <>
+        {finePointer ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+            <TooltipContent
+              side="top"
+              align="end"
+              className="max-w-72 px-3 py-2.5 text-left"
+            >
+              {details}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Popover>
+            <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+            <PopoverContent
+              side="top"
+              align="end"
+              className="max-w-72 px-3 py-2.5 text-left"
+            >
+              {details}
+            </PopoverContent>
+          </Popover>
+        )}
+        <span role="status" aria-live="polite" className="sr-only">
+          {label}. {title}. {body}
+        </span>
+      </>
     );
   }
 
@@ -437,7 +501,9 @@ export function MessageBubble({
     const userContent = parsedMessage.content;
     const hasText = userContent.trim().length > 0;
     const showDeliveryStatus =
-      message.deliveryStatus === "sending" || message.deliveryStatus === "failed";
+      message.deliveryStatus === "sending"
+      || message.deliveryStatus === "failed"
+      || message.deliveryStatus === "unknown";
     const createdAtLabel = message.timestampAvailable === false
       ? ""
       : formatMessageEndTime(message.createdAt);

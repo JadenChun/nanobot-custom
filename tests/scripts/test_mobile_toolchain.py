@@ -128,6 +128,16 @@ def test_matching_toolchain_reports_every_lock_entry(tmp_path: Path) -> None:
     assert "21.0.13" in output
     assert "1.27.3" in output
     assert "unavailable" in output.lower()  # no Gradle archive in the fixture
+    expected_image_path = (
+        mobile
+        / "toolchain"
+        / "android-sdk"
+        / "system-images"
+        / "android-36"
+        / "google_apis"
+        / "x86_64"
+    )
+    assert f"({expected_image_path})" in output
 
 
 def test_wrong_jdk_version_is_refused(tmp_path: Path) -> None:

@@ -526,6 +526,8 @@ function snapshotPreservesMessage(
 }
 
 function durableMessageShape(message: UIMessage): MessageShape | null {
+  // A local uncertain input is retained for display, not durable-tail proof.
+  if (message.role === "user" && message.deliveryStatus === "unknown") return null;
   if (message.kind === "trace") return null;
   if (message.role !== "user" && message.role !== "assistant") return null;
   if (message.role === "assistant" && !message.content.trim() && !message.media?.length) {
@@ -658,9 +660,46 @@ function hasInlineDeliveryError(
   return messages.some((message) => (
     message.role === "user"
     && message.turnId === error.turnId
-    && message.deliveryStatus === "failed"
+    && (message.deliveryStatus === "failed" || message.deliveryStatus === "unknown")
     && message.deliveryErrorKind === error.kind
   ));
+}
+
+function preserveUnknownDeliveryStatus(
+  current: UIMessage[],
+  snapshot: UIMessage[],
+): UIMessage[] {
+  const uncertainRows = new Map<string, UIMessage>();
+  for (const message of current) {
+    if (
+      message.role === "user"
+      && message.turnId
+      && message.deliveryStatus === "unknown"
+      && message.deliveryErrorKind === "connection_closed"
+    ) {
+      uncertainRows.set(message.turnId, message);
+    }
+  }
+  if (uncertainRows.size === 0) return snapshot;
+
+  const restored = new Set<string>();
+  const projected = snapshot.map<UIMessage>((message) => {
+    const turnId = message.role === "user" ? message.turnId : undefined;
+    if (!turnId || restored.has(turnId)) return message;
+    const uncertain = uncertainRows.get(turnId);
+    if (!uncertain) return message;
+    restored.add(turnId);
+    return {
+      ...message,
+      deliveryStatus: "unknown",
+      deliveryErrorKind: uncertain.deliveryErrorKind,
+    };
+  });
+  // A bounded/reset page can omit an UNKNOWN attempt. Retain its local row
+  // only for display; canonical execution/source evidence still uses snapshot.
+  return [...projected, ...[...uncertainRows].flatMap(([turnId, message]) => (
+    restored.has(turnId) ? [] : [message]
+  ))];
 }
 
 function completedAssistantTurnIds(messages: UIMessage[]): string[] {
@@ -675,6 +714,7 @@ function canonicalRunSnapshot(
   messages: UIMessage[],
   hasPendingToolCalls: boolean,
   activeTurnId: string | null,
+  activitySnapshotAvailable: boolean,
 ): CanonicalRunSnapshot {
   return {
     observedTurnIds: Array.from(new Set(
@@ -684,6 +724,7 @@ function canonicalRunSnapshot(
     )),
     hasPendingToolCalls,
     activeTurnId,
+    activitySnapshotAvailable,
   };
 }
 
@@ -1076,6 +1117,7 @@ export function ThreadShell({
     continuity: historyContinuity,
     lineage: historyLineage,
     activeTurnId: historyActiveTurnId,
+    activitySnapshotAvailable: historyActivitySnapshotAvailable,
     stopTarget: historyStopTarget,
     stopTargetSnapshotAvailable: historyStopTargetSnapshotAvailable,
     delegatedChildrenError,
@@ -1312,7 +1354,6 @@ export function ThreadShell({
   const pendingHistoryLineageCommitRef = useRef<Map<string, PendingHistoryLineageCommit>>(
     new Map(),
   );
-  const completedCanonicalHydrateVersionRef = useRef<Map<string, number>>(new Map());
   const committedHistoryLineageRef = useRef<Map<string, number>>(new Map());
   const sessionKeyByChatIdRef = useRef<Map<string, string>>(new Map());
   const currentUiMessagesRef = useRef<UIMessage[] | null>(null);
@@ -1370,6 +1411,7 @@ export function ThreadShell({
     dismissStopNotice,
     stopTarget,
     connectionOpen,
+    hasUnknownMessageSend,
     runStartedAt,
     retryStatus,
     goalState,
@@ -2040,6 +2082,7 @@ export function ThreadShell({
     // whatever the history endpoint currently knows about. Once a fresh
     // canonical replay arrives (e.g. after ``session_updated`` refresh), prefer it
     // so rendering converges to the same shape as a manual refresh.
+    const historySource = messagesReady ? messages : cached ?? [];
     const normalizedHistory = projectWebuiThreadMessages(historical);
     const keepLiveMessages = (current: UIMessage[]) => projectWebuiThreadMessages(current);
     if (hasNewCanonicalHistory && pendingCanonicalHydrate) {
@@ -2047,7 +2090,11 @@ export function ThreadShell({
       // Never adopt it while the turn is active: even if no assistant delta
       // arrived locally yet, the next resumed delta must create/continue the
       // live cursor rather than append to an immutable replay row.
-      if (hasPendingToolCalls) {
+      if (
+        !historyActivitySnapshotAvailable
+        || historyActiveTurnId !== null
+        || hasPendingToolCalls
+      ) {
         setMessages((current) => keepLiveMessages(current));
         return;
       }
@@ -2088,6 +2135,7 @@ export function ThreadShell({
         normalizedHistory,
         hasPendingToolCalls,
         historyActiveTurnId,
+        historyActivitySnapshotAvailable,
       );
       if (!client.canReconcileCanonicalCompletion(
         chatId,
@@ -2098,6 +2146,10 @@ export function ThreadShell({
         setMessages((current) => keepLiveMessages(current));
         return;
       }
+      const canonicalMessages = preserveUnknownDeliveryStatus(
+        historySource,
+        normalizedHistory,
+      );
       pendingCanonicalCommitRef.current.set(chatId, {
         canonicalSnapshot,
         completedTurnIds: canonicalCompletedTurnIds,
@@ -2105,7 +2157,7 @@ export function ThreadShell({
         historyLineage,
         historyVersion,
         hydrate: pendingCanonicalHydrate,
-        messages: normalizedHistory,
+        messages: canonicalMessages,
         previousMessages: messages,
       });
       setMessages((current) => {
@@ -2117,10 +2169,11 @@ export function ThreadShell({
         ) {
           return keepLiveMessages(current);
         }
-        return normalizedHistory;
+        return canonicalMessages;
       });
       return;
     }
+    const mergedHistory = preserveUnknownDeliveryStatus(historySource, normalizedHistory);
     const adoptsNormalizedHistory = cached && cached.length > 0
       ? (
           normalizedHistory.length > cached.length
@@ -2130,7 +2183,7 @@ export function ThreadShell({
     if (adoptsNormalizedHistory) {
       pendingHistoryLineageCommitRef.current.set(chatId, {
         lineage: historyLineage,
-        messages: normalizedHistory,
+        messages: mergedHistory,
       });
     }
     setMessages((current) => {
@@ -2139,13 +2192,13 @@ export function ThreadShell({
           normalizedHistory.length > cached.length
           && !isStaleThreadSnapshot(current, normalizedHistory)
         ) {
-          return normalizedHistory;
+          return mergedHistory;
         }
         return isStaleThreadSnapshot(current, cached) ? keepLiveMessages(current) : cached;
       }
       return isStaleThreadSnapshot(current, normalizedHistory)
         ? keepLiveMessages(current)
-        : normalizedHistory;
+        : mergedHistory;
     });
   }, [
     loading,
@@ -2156,7 +2209,9 @@ export function ThreadShell({
     historyVersion,
     historyContinuity,
     historyLineage,
+    messagesReady,
     historyActiveTurnId,
+    historyActivitySnapshotAvailable,
     hasPendingToolCalls,
     historyKey,
   ]);
@@ -2199,15 +2254,11 @@ export function ThreadShell({
     pendingCanonicalHydrateRef.current.delete(chatId);
     pendingCanonicalCommitRef.current.delete(chatId);
     committedHistoryLineageRef.current.set(chatId, historyLineage);
-    completedCanonicalHydrateVersionRef.current.set(chatId, historyVersion);
-  }, [chatId, client, historyKey, historyLineage, historyVersion, messages, setMessages]);
-
-  useEffect(() => {
-    if (!historyKey || !chatId || hasPendingToolCalls) return;
-    if (completedCanonicalHydrateVersionRef.current.get(chatId) !== historyVersion) return;
-    completedCanonicalHydrateVersionRef.current.delete(chatId);
+    // Clear the cursor in the same accepted final commit, before effects can
+    // start an independent send and make this idle projection stale.
     reconcileTurnComplete();
-  }, [chatId, hasPendingToolCalls, historyKey, historyVersion, messages, reconcileTurnComplete]);
+  }, [chatId, client, historyKey, historyLineage, historyVersion, messages,
+    reconcileTurnComplete, setMessages]);
 
   const refreshCanonicalHistory = useCallback(() => {
     if (!historyKey || !chatId) return;
@@ -2823,7 +2874,6 @@ export function ThreadShell({
       if (!forkedChatId) return;
       messageCacheRef.current.delete(forkedChatId);
       pendingCanonicalHydrateRef.current.delete(forkedChatId);
-      completedCanonicalHydrateVersionRef.current.delete(forkedChatId);
     },
     [chatId, onForkChat],
   );
@@ -2959,7 +3009,7 @@ export function ThreadShell({
             request={workspaceAccessRequest}
             requestLoading={workspaceAccessRequestLoading}
             requestRefreshFailed={workspaceAccessRequestError}
-            busy={turnActive || workspaceScopeDisabled}
+            busy={turnActive || hasUnknownMessageSend || workspaceScopeDisabled}
             workspaces={workspaces}
             onUpdateRequest={updateWorkspaceAccessRequest}
             workspacePermissions={workspacePermissions}
@@ -2988,6 +3038,7 @@ export function ThreadShell({
           disabled={!chatId}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
+          automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
           stopAvailable={hasOwnedWork}
           stopDisabled={!stopCanBeSent}
           stopPending={stopPending}
@@ -3026,7 +3077,8 @@ export function ThreadShell({
           workspaceControls={workspaceControls}
           workspaces={workspaces}
           onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled || turnActive}
+          workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
+          workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
           workspaceError={workspaceError}
           onPickWorkspaceFolder={
             workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
@@ -3062,6 +3114,7 @@ export function ThreadShell({
           disabled={openingConversation || booting || preparingFull}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
+          automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
           onDraftFullAccess={
             temporary || (isMobileRuntimeActive() && !mobileOwnerCapability())
               ? undefined
@@ -3104,7 +3157,8 @@ export function ThreadShell({
           workspaceControls={workspaceControls}
           workspaces={workspaces}
           onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled || turnActive}
+          workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
+          workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
           workspaceError={workspaceError}
           onPickWorkspaceFolder={
             workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined

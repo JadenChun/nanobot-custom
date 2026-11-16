@@ -220,6 +220,8 @@ interface ThreadComposerProps {
   placeholder?: string;
   inputAriaLabel?: string;
   isStreaming?: boolean;
+  /** Blocks only the streaming-to-idle automatic queue drain, not independent sends. */
+  automaticQueueSendBlocked?: boolean;
   /** A server-owned root/child snapshot permits Stop after the root reply. */
   stopAvailable?: boolean;
   stopDisabled?: boolean;
@@ -255,6 +257,8 @@ interface ThreadComposerProps {
   workspaces?: WorkspacesPayload | null;
   onRefreshWorkspaces?: () => Promise<void>;
   workspaceScopeDisabled?: boolean;
+  /** UNKNOWN input disposition blocks persistent-chat access mutations, not known live controls. */
+  workspaceAccessModeUnknownBlocked?: boolean;
   workspaceError?: string | null;
   onPickWorkspaceFolder?: () => Promise<string | null>;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
@@ -938,6 +942,7 @@ export function ThreadComposer({
   placeholder,
   inputAriaLabel,
   isStreaming = false,
+  automaticQueueSendBlocked = false,
   stopAvailable = false,
   stopDisabled = false,
   stopPending = false,
@@ -971,6 +976,7 @@ export function ThreadComposer({
   workspaces = null,
   onRefreshWorkspaces,
   workspaceScopeDisabled = false,
+  workspaceAccessModeUnknownBlocked = false,
   workspaceError = null,
   onPickWorkspaceFolder,
   onWorkspaceScopeChange,
@@ -1013,6 +1019,9 @@ export function ThreadComposer({
   const [cursorPosition, setCursorPosition] = useState(0);
   const [recentSlashCommands, setRecentSlashCommands] = useState<string[]>(() => readSlashRecents());
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
+  const [awaitingConfirmationPromptIds, setAwaitingConfirmationPromptIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const hasTouchPrimaryPointer = useMediaQuery("(hover: none) and (pointer: coarse)");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -1023,7 +1032,12 @@ export function ThreadComposer({
   const secondEnterPromptIdRef = useRef<string | null>(null);
   const draggedQueuedPromptIdRef = useRef<string | null>(null);
   const queuedSendSnapshotsRef = useRef(new Map<string, QueuedPrompt>());
+  const unresolvedQueuedSendTurnIdsRef = useRef(new Set<string>());
   const heldQueuedPromptIdsRef = useRef(new Set<string>());
+  const awaitingConfirmationPromptIdsRef = useRef(new Set<string>());
+  const queuedSubmissionInProgressRef = useRef(new Set<string>());
+  const currentPendingQueueKeyRef = useRef(pendingQueueKey);
+  currentPendingQueueKeyRef.current = pendingQueueKey;
   const previousPendingQueueKeyRef = useRef(pendingQueueKey);
   const wasStreamingRef = useRef(isStreaming);
   const skipNextQueuedFlushRef = useRef(false);
@@ -1036,6 +1050,22 @@ export function ThreadComposer({
     () => queuedPromptsStorageKey(pendingQueueKey),
     [pendingQueueKey],
   );
+  const setPromptAwaitingConfirmation = useCallback((
+    promptId: string,
+    queueKey: string | null,
+    awaiting: boolean,
+  ) => {
+    if (currentPendingQueueKeyRef.current !== queueKey) return;
+    if (awaiting) awaitingConfirmationPromptIdsRef.current.add(promptId);
+    else awaitingConfirmationPromptIdsRef.current.delete(promptId);
+    setAwaitingConfirmationPromptIds((current) => {
+      if (current.has(promptId) === awaiting) return current;
+      const next = new Set(current);
+      if (awaiting) next.add(promptId);
+      else next.delete(promptId);
+      return next;
+    });
+  }, []);
   const projectPickerAvailable =
     !!workspaceDefaultScope
     && !!onWorkspaceScopeChange;
@@ -1045,7 +1075,11 @@ export function ThreadComposer({
     secondEnterPromptIdRef.current = null;
     skipQueuedPromptPersistRef.current = true;
     heldQueuedPromptIdsRef.current.clear();
+    awaitingConfirmationPromptIdsRef.current.clear();
+    queuedSubmissionInProgressRef.current.clear();
     queuedSendSnapshotsRef.current.clear();
+    unresolvedQueuedSendTurnIdsRef.current.clear();
+    setAwaitingConfirmationPromptIds(new Set());
     setQueuedPrompts(queuedPromptStorageKey ? readQueuedPrompts(queuedPromptStorageKey) : []);
   }, [pendingQueueKey, queuedPromptStorageKey]);
 
@@ -1064,6 +1098,8 @@ export function ThreadComposer({
     const prompt = queuedSendSnapshotsRef.current.get(rejectedTurnId);
     if (!prompt) return;
     queuedSendSnapshotsRef.current.delete(rejectedTurnId);
+    unresolvedQueuedSendTurnIdsRef.current.delete(rejectedTurnId);
+    setPromptAwaitingConfirmation(prompt.id, currentPendingQueueKeyRef.current, false);
     // A busy target or replaced steering turn cannot accept this prompt yet.
     // Keep its full settings in the waiting stack and only retry on an
     // explicit user action, never on the next idle transition.
@@ -1072,7 +1108,11 @@ export function ThreadComposer({
       items.some((item) => item.id === prompt.id) ? items : [...items, prompt]
     ));
     onAdmissionRejectedPromptRestored?.(rejectedTurnId);
-  }, [admissionRejectedTurn?.turnId, onAdmissionRejectedPromptRestored]);
+  }, [
+    admissionRejectedTurn?.turnId,
+    onAdmissionRejectedPromptRestored,
+    setPromptAwaitingConfirmation,
+  ]);
 
   const resolvedPlaceholder = isStreaming
     ? t("thread.composer.placeholderStreaming")
@@ -1944,8 +1984,16 @@ export function ThreadComposer({
 
   const moveQueuedPrompt = useCallback((dragId: string, targetId: string) => {
     if (dragId === targetId) return;
+    if (
+      awaitingConfirmationPromptIdsRef.current.has(dragId)
+      || awaitingConfirmationPromptIdsRef.current.has(targetId)
+    ) return;
     secondEnterPromptIdRef.current = null;
     setQueuedPrompts((items) => {
+      if (
+        awaitingConfirmationPromptIdsRef.current.has(dragId)
+        || awaitingConfirmationPromptIdsRef.current.has(targetId)
+      ) return items;
       const from = items.findIndex((item) => item.id === dragId);
       const to = items.findIndex((item) => item.id === targetId);
       if (from === -1 || to === -1) return items;
@@ -1956,11 +2004,24 @@ export function ThreadComposer({
     });
   }, []);
 
-  const rememberQueuedSend = useCallback((submitted: SubmittedTurn, prompt: QueuedPrompt) => {
+  const rememberQueuedSend = useCallback((
+    submitted: SubmittedTurn,
+    prompt: QueuedPrompt,
+    awaitingOwnerConfirmation: boolean,
+  ) => {
     const snapshots = queuedSendSnapshotsRef.current;
     snapshots.set(submitted.turnId, prompt);
-    while (snapshots.size > 5) {
-      const oldest = snapshots.keys().next().value;
+    if (awaitingOwnerConfirmation) {
+      unresolvedQueuedSendTurnIdsRef.current.add(submitted.turnId);
+    }
+    // Unknown in-flight attempts stay correlated until an owner receipt or an
+    // authoritative refusal. Bound only legacy submissions that have no
+    // admission promise and cannot remain unresolved in this queue projection.
+    const legacyTurnIds = [...snapshots.keys()].filter(
+      (turnId) => !unresolvedQueuedSendTurnIdsRef.current.has(turnId),
+    );
+    while (legacyTurnIds.length > 5) {
+      const oldest = legacyTurnIds.shift();
       if (oldest === undefined) break;
       snapshots.delete(oldest);
     }
@@ -1975,34 +2036,51 @@ export function ThreadComposer({
   const settleQueuedSubmission = useCallback((
     submitted: SubmittedTurn | boolean | null | void | Promise<boolean | void>,
     prompt: QueuedPrompt,
+    queueKey: string | null,
   ) => {
     if (!isSubmittedTurn(submitted)) {
+      if (submitted === null || submitted === false) return;
+      if (currentPendingQueueKeyRef.current !== queueKey) return;
+      setPromptAwaitingConfirmation(prompt.id, queueKey, false);
       heldQueuedPromptIdsRef.current.delete(prompt.id);
       setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
       return;
     }
-    rememberQueuedSend(submitted, prompt);
     const admission = submitted.admission;
+    rememberQueuedSend(submitted, prompt, !!admission);
     if (!admission) {
+      if (currentPendingQueueKeyRef.current !== queueKey) return;
+      setPromptAwaitingConfirmation(prompt.id, queueKey, false);
       heldQueuedPromptIdsRef.current.delete(prompt.id);
       setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
       return;
     }
     void admission.then((admitted) => {
       if (!admitted) return;
+      if (currentPendingQueueKeyRef.current !== queueKey) return;
       queuedSendSnapshotsRef.current.delete(submitted.turnId);
+      unresolvedQueuedSendTurnIdsRef.current.delete(submitted.turnId);
+      setPromptAwaitingConfirmation(prompt.id, queueKey, false);
       heldQueuedPromptIdsRef.current.delete(prompt.id);
       setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
     }).catch(() => {
       // An unresolved attempt stays held; never resubmit it automatically.
     });
-  }, [rememberQueuedSend]);
+  }, [rememberQueuedSend, setPromptAwaitingConfirmation]);
 
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt) => {
-      if (workspaceFullRetiring) return;
+      if (
+        workspaceFullRetiring
+        || awaitingConfirmationPromptIdsRef.current.has(prompt.id)
+        || queuedSubmissionInProgressRef.current.has(prompt.id)
+      ) return;
+      queuedSubmissionInProgressRef.current.add(prompt.id);
+      requestAnimationFrame(() => queuedSubmissionInProgressRef.current.delete(prompt.id));
+      const queueKey = currentPendingQueueKeyRef.current;
       secondEnterPromptIdRef.current = null;
       heldQueuedPromptIdsRef.current.add(prompt.id);
+      setPromptAwaitingConfirmation(prompt.id, queueKey, true);
       const text = prompt.text.trim();
       const queuedImages = queuedImagesToSendImages(prompt.images);
       if (text || queuedImages?.length) {
@@ -2031,14 +2109,21 @@ export function ThreadComposer({
           requestAnimationFrame(() => textareaRef.current?.focus());
           return;
         }
-        settleQueuedSubmission(submitted, prompt);
+        settleQueuedSubmission(submitted, prompt, queueKey);
       } else {
+        setPromptAwaitingConfirmation(prompt.id, queueKey, false);
         heldQueuedPromptIdsRef.current.delete(prompt.id);
         setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
       }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    [isStreaming, onSend, settleQueuedSubmission, workspaceFullRetiring],
+    [
+      isStreaming,
+      onSend,
+      setPromptAwaitingConfirmation,
+      settleQueuedSubmission,
+      workspaceFullRetiring,
+    ],
   );
 
   const sendNextQueuedPrompt = useCallback(() => {
@@ -2051,7 +2136,13 @@ export function ThreadComposer({
       (prompt) => prompt.text.trim().length > 0 || (prompt.images?.length ?? 0) > 0,
     );
     if (!nextPrompt || heldQueuedPromptIdsRef.current.has(nextPrompt.id)) return;
+    if (awaitingConfirmationPromptIdsRef.current.has(nextPrompt.id)) return;
+    if (queuedSubmissionInProgressRef.current.has(nextPrompt.id)) return;
+    queuedSubmissionInProgressRef.current.add(nextPrompt.id);
+    requestAnimationFrame(() => queuedSubmissionInProgressRef.current.delete(nextPrompt.id));
+    const queueKey = currentPendingQueueKeyRef.current;
     heldQueuedPromptIdsRef.current.add(nextPrompt.id);
+    setPromptAwaitingConfirmation(nextPrompt.id, queueKey, true);
     const queuedImages = queuedImagesToSendImages(nextPrompt.images);
     const options: SendOptions | undefined = (
       nextPrompt.quotedContext
@@ -2084,21 +2175,28 @@ export function ThreadComposer({
       requestAnimationFrame(() => textareaRef.current?.focus());
       return;
     }
-    settleQueuedSubmission(submitted, nextPrompt);
+    settleQueuedSubmission(submitted, nextPrompt, queueKey);
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [onSend, queuedPrompts, settleQueuedSubmission, workspaceFullRetiring]);
+  }, [
+    onSend,
+    queuedPrompts,
+    setPromptAwaitingConfirmation,
+    settleQueuedSubmission,
+    workspaceFullRetiring,
+  ]);
 
   useEffect(() => {
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
     if (!isStreaming) secondEnterPromptIdRef.current = null;
     if (!wasStreaming || isStreaming || queuedPrompts.length === 0 || workspaceFullRetiring) return;
+    if (automaticQueueSendBlocked) return;
     if (skipNextQueuedFlushRef.current) {
       skipNextQueuedFlushRef.current = false;
       return;
     }
     sendNextQueuedPrompt();
-  }, [sendNextQueuedPrompt, isStreaming, queuedPrompts.length, workspaceFullRetiring]);
+  }, [automaticQueueSendBlocked, sendNextQueuedPrompt, isStreaming, queuedPrompts.length, workspaceFullRetiring]);
 
   const handleStop = useCallback(() => {
     secondEnterPromptIdRef.current = null;
@@ -2166,7 +2264,9 @@ export function ThreadComposer({
       && onStop
     ) {
       handleStop();
-      setQueuedPrompts([]);
+      setQueuedPrompts((items) => items.filter((item) => (
+        awaitingConfirmationPromptIdsRef.current.has(item.id)
+      )));
       clear();
       clearComposerText();
       onQuotedContextChange?.(null);
@@ -2177,7 +2277,9 @@ export function ThreadComposer({
       slashLifecycle === "finalize_active_turn";
     const finishSend = () => {
       if (hasTouchPrimaryPointer) textareaRef.current?.blur();
-      setQueuedPrompts([]);
+      setQueuedPrompts((items) => items.filter((item) => (
+        awaitingConfirmationPromptIdsRef.current.has(item.id)
+      )));
       // Bubble owns the data URL copy; safe to revoke every staged blob
       // preview here without affecting the rendered message.
       clear();
@@ -2428,7 +2530,7 @@ export function ThreadComposer({
       permissions={workspacePermissions}
       loading={workspacePermissionsLoading}
       error={workspacePermissionsError}
-      disabled={persistentWorkspaceChat && interactionDisabled}
+      disabled={persistentWorkspaceChat && (interactionDisabled || workspaceAccessModeUnknownBlocked)}
       persistentChat={persistentWorkspaceChat}
       draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
       onRequestFullAccess={
@@ -2546,6 +2648,34 @@ export function ThreadComposer({
           ) : null}
         </div>
       ) : null}
+      {queuedPrompts.length > 0 ? (
+        <QueuedPromptStack
+          prompts={queuedPrompts}
+          awaitingConfirmationPromptIds={awaitingConfirmationPromptIds}
+          isHero={isHero}
+          className={interactionDisabled ? "opacity-60" : undefined}
+          label={t("thread.composer.queued.label")}
+          awaitingConfirmationLabel={t("thread.composer.queued.awaitingConfirmation")}
+          guideLabel={t("thread.composer.queued.guide")}
+          deleteLabel={t("thread.composer.queued.delete")}
+          dragLabel={t("thread.composer.queued.drag")}
+          editLabel={t("thread.composer.queued.edit")}
+          onGuide={sendQueuedPrompt}
+          onDelete={removeQueuedPrompt}
+          onEdit={editQueuedPrompt}
+          onDragStart={(id) => {
+            secondEnterPromptIdRef.current = null;
+            draggedQueuedPromptIdRef.current = id;
+          }}
+          onDragEnd={() => {
+            draggedQueuedPromptIdRef.current = null;
+          }}
+          onDrop={(targetId) => {
+            const dragId = draggedQueuedPromptIdRef.current;
+            if (dragId) moveQueuedPrompt(dragId, targetId);
+          }}
+        />
+      ) : null}
       <div
         ref={surfaceRef}
         className={cn(
@@ -2560,31 +2690,6 @@ export function ThreadComposer({
             "goal-shell-glow ring-1 ring-sky-400/35 motion-reduce:ring-sky-400/25 dark:ring-sky-400/45",
         )}
       >
-        {queuedPrompts.length > 0 ? (
-          <QueuedPromptStack
-            prompts={queuedPrompts}
-            isHero={isHero}
-            label={t("thread.composer.queued.label")}
-            guideLabel={t("thread.composer.queued.guide")}
-            deleteLabel={t("thread.composer.queued.delete")}
-            dragLabel={t("thread.composer.queued.drag")}
-            editLabel={t("thread.composer.queued.edit")}
-            onGuide={sendQueuedPrompt}
-            onDelete={removeQueuedPrompt}
-            onEdit={editQueuedPrompt}
-            onDragStart={(id) => {
-              secondEnterPromptIdRef.current = null;
-              draggedQueuedPromptIdRef.current = id;
-            }}
-            onDragEnd={() => {
-              draggedQueuedPromptIdRef.current = null;
-            }}
-            onDrop={(targetId) => {
-              const dragId = draggedQueuedPromptIdRef.current;
-              if (dragId) moveQueuedPrompt(dragId, targetId);
-            }}
-          />
-        ) : null}
         {images.length > 0 ? (
           <div
             className="flex flex-wrap gap-2 px-3 pt-3"
@@ -2905,8 +3010,11 @@ export function ThreadComposer({
 
 function QueuedPromptStack({
   prompts,
+  awaitingConfirmationPromptIds,
   isHero,
+  className,
   label,
+  awaitingConfirmationLabel,
   guideLabel,
   deleteLabel,
   dragLabel,
@@ -2919,8 +3027,11 @@ function QueuedPromptStack({
   onDrop,
 }: {
   prompts: QueuedPrompt[];
+  awaitingConfirmationPromptIds: ReadonlySet<string>;
   isHero: boolean;
+  className?: string;
   label: string;
+  awaitingConfirmationLabel: string;
   guideLabel: string;
   deleteLabel: string;
   dragLabel: string;
@@ -2932,29 +3043,29 @@ function QueuedPromptStack({
   onDragEnd: () => void;
   onDrop: (targetId: string) => void;
 }) {
-  const stripMaxHeight = Math.min(240, 14 + prompts.length * 34 + Math.max(0, prompts.length - 1) * 4);
-
   return (
     <div
       role="group"
       data-state="enter"
       className={cn(
-        "composer-status-strip relative z-20 mx-3 mt-3 overflow-hidden rounded-floating",
-        "border border-black/[0.05] bg-popover/90 p-1.5",
-        "shadow-[0_10px_28px_rgba(15,23,42,0.07)] backdrop-blur-md",
-        "dark:border-white/[0.08] dark:bg-popover/90 dark:shadow-[0_14px_34px_rgba(0,0,0,0.30)]",
-        isHero ? "max-w-none" : "max-w-none",
+        "composer-status-strip relative z-0 mx-auto -mb-px w-[calc(100%-1.5rem)] overflow-hidden rounded-t-floating",
+        "border border-b-0 border-black/[0.06] bg-muted p-1.5",
+        "dark:border-white/[0.08]",
+        isHero ? "max-w-[56.5rem]" : "max-w-[48rem]",
+        className,
       )}
-      style={{ "--composer-strip-max-height": `${stripMaxHeight}px` } as CSSProperties}
+      style={{ "--composer-strip-max-height": "260px" } as CSSProperties}
       aria-label={label}
     >
-      <div className="flex max-h-[216px] flex-col gap-1 overflow-y-auto">
+      <div className="queued-prompt-list flex max-h-[216px] flex-col gap-1 overflow-y-auto">
         {prompts.map((prompt) => (
           <QueuedPromptRow
             key={prompt.id}
             prompt={prompt}
+            awaitingConfirmation={awaitingConfirmationPromptIds.has(prompt.id)}
             isHero={isHero}
             guideLabel={guideLabel}
+            awaitingConfirmationLabel={awaitingConfirmationLabel}
             deleteLabel={deleteLabel}
             dragLabel={dragLabel}
             editLabel={editLabel}
@@ -2973,8 +3084,10 @@ function QueuedPromptStack({
 
 function QueuedPromptRow({
   prompt,
+  awaitingConfirmation,
   isHero,
   guideLabel,
+  awaitingConfirmationLabel,
   deleteLabel,
   dragLabel,
   editLabel,
@@ -2986,8 +3099,10 @@ function QueuedPromptRow({
   onDrop,
 }: {
   prompt: QueuedPrompt;
+  awaitingConfirmation: boolean;
   isHero: boolean;
   guideLabel: string;
+  awaitingConfirmationLabel: string;
   deleteLabel: string;
   dragLabel: string;
   editLabel: string;
@@ -3005,29 +3120,35 @@ function QueuedPromptRow({
       data-queued-prompt-row="true"
       onDragEnter={(event) => {
         event.preventDefault();
-        onDrop(prompt.id);
+        if (!awaitingConfirmation) onDrop(prompt.id);
       }}
       onDragOver={(event) => {
         event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
+        event.dataTransfer.dropEffect = awaitingConfirmation ? "none" : "move";
       }}
       onDrop={(event) => {
         event.preventDefault();
-        onDrop(prompt.id);
+        if (!awaitingConfirmation) onDrop(prompt.id);
       }}
       onDragEnd={onDragEnd}
+      aria-busy={awaitingConfirmation || undefined}
       className={cn(
-        "queued-prompt-row group/queued flex min-h-8 items-center gap-1.5 rounded-control px-2 py-0.5",
+        "queued-prompt-row group/queued flex min-h-8 shrink-0 items-start gap-1.5 rounded-control px-2 py-0.5",
         "text-[13px] transition-colors hover:bg-muted/55 dark:hover:bg-white/[0.055]",
         isHero && "text-[13.5px]",
       )}
     >
       <span
-        draggable
+        draggable={!awaitingConfirmation}
         role="button"
-        tabIndex={0}
+        tabIndex={awaitingConfirmation ? -1 : 0}
         aria-label={dragLabel}
+        aria-disabled={awaitingConfirmation || undefined}
         onDragStart={(event) => {
+          if (awaitingConfirmation) {
+            event.preventDefault();
+            return;
+          }
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("text/plain", prompt.id);
           suppressNativeDragPreview(event.dataTransfer);
@@ -3038,25 +3159,32 @@ function QueuedPromptRow({
           "inline-flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-lg",
           "text-muted-foreground/45 transition-colors hover:bg-background/80 hover:text-muted-foreground",
           "active:cursor-grabbing dark:hover:bg-white/[0.06]",
+          awaitingConfirmation && "cursor-default opacity-50",
         )}
       >
         <GripVertical className="pointer-events-none h-3.5 w-3.5" aria-hidden />
       </span>
-      <div className="flex min-h-7 min-w-0 flex-1 items-center">
+      <div className="flex min-h-7 min-w-0 flex-1 flex-col items-start justify-center">
         <p
           title={displayLabel}
           className={cn(
-            "line-clamp-3 whitespace-pre-wrap break-words font-medium leading-[1.28] text-foreground/88",
+            "w-full truncate font-medium leading-[1.28] text-foreground/88",
             isHero && "text-[13.5px]",
           )}
         >
           {displayLabel}
         </p>
+        {awaitingConfirmation ? (
+          <span role="status" className="pt-0.5 text-[10px] leading-3 text-muted-foreground">
+            {awaitingConfirmationLabel}
+          </span>
+        ) : null}
       </div>
       <Button
         type="button"
         variant="ghost"
         size="sm"
+        disabled={awaitingConfirmation}
         className="h-7 shrink-0 rounded-full px-2 text-[11.5px] font-medium text-muted-foreground hover:bg-muted/70 hover:text-foreground dark:hover:bg-white/[0.07]"
         onClick={() => onGuide(prompt)}
       >
@@ -3067,6 +3195,7 @@ function QueuedPromptRow({
         type="button"
         variant="ghost"
         size="icon"
+        disabled={awaitingConfirmation}
         aria-label={editLabel}
         title={editLabel}
         className="h-7 w-7 shrink-0 rounded-full text-muted-foreground hover:bg-background/85 hover:text-foreground dark:hover:bg-white/[0.07]"
@@ -3078,6 +3207,7 @@ function QueuedPromptRow({
         type="button"
         variant="ghost"
         size="icon"
+        disabled={awaitingConfirmation}
         aria-label={deleteLabel}
         className="h-7 w-7 shrink-0 rounded-full text-muted-foreground hover:bg-background/85 hover:text-destructive dark:hover:bg-white/[0.07]"
         onClick={() => onDelete(prompt.id)}

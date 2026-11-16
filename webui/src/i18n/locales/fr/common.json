@@ -1255,6 +1255,7 @@
       },
       "queued": {
         "label": "Guidage en attente",
+        "awaitingConfirmation": "En attente de confirmation",
         "guide": "Guider",
         "delete": "Supprimer le guidage",
         "edit": "Modifier le guidage",
@@ -1459,7 +1460,8 @@
     "streaming": "en cours de génération",
     "delivery": {
       "sending": "Envoi…",
-      "failed": "Non envoyé"
+      "failed": "Non envoyé",
+      "awaitingConfirmation": "En attente de confirmation"
     },
     "assistantTyping": "L’assistant est en train d’écrire",
     "toolSingle": "Utilisation d’un outil",
@@ -1598,8 +1600,8 @@
       "body": "Vérifiez la configuration ou l’état du fournisseur, puis réessayez."
     },
     "connectionClosed": {
-      "title": "Le message n'a pas été envoyé",
-      "body": "La connexion s'est fermée avant que la passerelle n'accepte ce message. Vérifiez que cet appareil est toujours connecté, puis renvoyez-le."
+      "title": "En attente de confirmation",
+      "body": "La connexion s'est interrompue avant confirmation. Le serveur a peut-être déjà reçu ce message. Reconnectez-vous et vérifiez son état ; ne le renvoyez pas uniquement à cause de cette déconnexion."
     }
   },
   "workspace": {

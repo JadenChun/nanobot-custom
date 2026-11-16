@@ -1255,6 +1255,7 @@
       },
       "queued": {
         "label": "Guía en cola",
+        "awaitingConfirmation": "Esperando confirmación",
         "guide": "Guiar",
         "delete": "Eliminar guía",
         "edit": "Editar guía",
@@ -1459,7 +1460,8 @@
     "streaming": "transmitiendo",
     "delivery": {
       "sending": "Enviando…",
-      "failed": "No enviado"
+      "failed": "No enviado",
+      "awaitingConfirmation": "Esperando confirmación"
     },
     "assistantTyping": "El asistente está escribiendo",
     "toolSingle": "Usando una herramienta",
@@ -1598,8 +1600,8 @@
       "body": "Revisa la configuración o el estado del proveedor y vuelve a intentarlo."
     },
     "connectionClosed": {
-      "title": "El mensaje no se envió",
-      "body": "La conexión se cerró antes de que la puerta de enlace aceptara este mensaje. Comprueba que este dispositivo siga conectado y vuelve a enviarlo."
+      "title": "Esperando confirmación",
+      "body": "La conexión se cerró antes de recibir confirmación. Es posible que el servidor ya haya recibido este mensaje. Vuelve a conectarte y comprueba su estado; no lo envíes de nuevo solo por esta desconexión."
     }
   },
   "workspace": {

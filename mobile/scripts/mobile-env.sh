@@ -195,7 +195,7 @@ _mobile_check_android_components() {
   ndk="$(_mobile_lock_value android_sdk.ndk)"
   cmake="$(_mobile_lock_value android_sdk.cmake)"
   system_image="$(_mobile_lock_value android_sdk.system_image)"
-  system_image="${system_image//;/\/}"
+  system_image="$(printf '%s' "${system_image}" | tr ';' '/')"
 
   _mobile_check_cmdline_tools || failed=1
   _mobile_android_component "android build-tools" \

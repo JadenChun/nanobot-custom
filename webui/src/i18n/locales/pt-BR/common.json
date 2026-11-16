@@ -1255,6 +1255,7 @@
       },
       "queued": {
         "label": "Guia em fila",
+        "awaitingConfirmation": "Aguardando confirmação",
         "guide": "Guiar",
         "delete": "Excluir guia",
         "edit": "Editar guia",
@@ -1459,7 +1460,8 @@
     "streaming": "transmitindo",
     "delivery": {
       "sending": "Enviando…",
-      "failed": "Não enviada"
+      "failed": "Não enviada",
+      "awaitingConfirmation": "Aguardando confirmação"
     },
     "assistantTyping": "Assistente está digitando",
     "toolSingle": "Usando uma ferramenta",
@@ -1598,8 +1600,8 @@
       "body": "Verifique a configuração ou o status do provedor e tente novamente."
     },
     "connectionClosed": {
-      "title": "A mensagem não foi enviada",
-      "body": "A conexão foi encerrada antes que o gateway aceitasse esta mensagem. Verifique se este dispositivo continua conectado e envie novamente."
+      "title": "Aguardando confirmação",
+      "body": "A conexão foi encerrada antes da confirmação. O servidor pode já ter recebido esta mensagem. Reconecte e verifique o status; não a envie novamente apenas por causa da desconexão."
     }
   },
   "workspace": {

@@ -22,6 +22,7 @@ from nanobot.bus.runtime_events import (
     SessionTurnStarted,
     TurnRuntimeAdmitted,
     UserInputAccepted,
+    UserInputCommitted,
 )
 from nanobot.providers.base import GenerationSettings
 from nanobot.session import webui_turns as wth
@@ -341,7 +342,7 @@ async def test_session_input_is_projected_by_the_webui_coordinator(
 
 
 @pytest.mark.asyncio
-async def test_session_turn_started_publishes_owner_admission_receipt(tmp_path) -> None:
+async def test_session_turn_started_only_marks_the_webui_session(tmp_path) -> None:
     bus = MessageBus()
     bus.publish_outbound = AsyncMock()
     coordinator = wth.WebuiTurnCoordinator(
@@ -360,6 +361,31 @@ async def test_session_turn_started_publishes_owner_admission_receipt(tmp_path) 
         ),
     ))
 
+    bus.publish_outbound.assert_not_awaited()
+    session = coordinator.sessions.get_or_create("websocket:chat-a")
+    assert session.metadata["webui"] is True
+
+
+@pytest.mark.asyncio
+async def test_user_input_committed_projects_owner_admission_receipt(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    await bus.publish(UserInputCommitted(
+        context=RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-a"},
+        ),
+    ))
+
     outbound = bus.publish_outbound.await_args.args[0]
     assert isinstance(outbound.event, MessageAdmittedEvent)
     assert outbound.event.turn_id == "turn-a"
@@ -367,6 +393,42 @@ async def test_session_turn_started_publishes_owner_admission_receipt(tmp_path) 
     assert outbound.event.session_key == "websocket:chat-a"
     assert outbound.event.session_incarnation
     assert outbound.event.starts_turn is True
+
+
+@pytest.mark.asyncio
+async def test_user_input_committed_ignores_non_browser_or_unnamed_attempts(tmp_path) -> None:
+    bus = MessageBus()
+    bus.publish_outbound = AsyncMock()
+    coordinator = wth.WebuiTurnCoordinator(
+        bus=bus,
+        sessions=SessionManager(tmp_path),
+        schedule_background=lambda coro: coro.close(),
+    )
+    coordinator.subscribe()
+
+    for context in (
+        RuntimeEventContext(
+            channel="telegram",
+            chat_id="chat-a",
+            session_key="telegram:chat-a",
+            metadata={"webui": True, "webui_turn_id": "turn-a"},
+        ),
+        RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui": True},
+        ),
+        RuntimeEventContext(
+            channel="websocket",
+            chat_id="chat-a",
+            session_key="websocket:chat-a",
+            metadata={"webui_turn_id": "turn-a"},
+        ),
+    ):
+        await bus.publish(UserInputCommitted(context=context))
+
+    bus.publish_outbound.assert_not_awaited()
 
 
 @pytest.mark.asyncio

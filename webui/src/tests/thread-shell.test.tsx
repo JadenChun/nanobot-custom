@@ -147,6 +147,7 @@ function makeClient() {
       latestRunTurnIdByChatId.delete(chatId);
     }),
     hasUnsettledRun: () => false,
+    hasUnknownMessageSend: () => false,
     getRunGeneration: (chatId: string) => runGenerationByChatId.get(chatId) ?? 0,
     canReconcileCanonicalCompletion,
     reconcileCanonicalCompletion,
@@ -283,9 +284,11 @@ function session(chatId: string, modelPreset?: string | null) {
 
 function transcriptFromSimpleMessages(
   rows: Array<{ role: "user" | "assistant"; content: string; turnId?: string }>,
-): { schemaVersion: number; messages: UIMessage[] } {
+): { schemaVersion: number; messages: UIMessage[]; active_turn_id: null; has_pending_tool_calls: boolean } {
   return {
     schemaVersion: 3,
+    active_turn_id: null,
+    has_pending_tool_calls: false,
     messages: rows.map((m, i) => ({
       id: `m-${i}`,
       role: m.role,
@@ -3003,7 +3006,7 @@ describe("ThreadShell", () => {
                     },
                   ],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         return {
@@ -3042,6 +3045,7 @@ describe("ThreadShell", () => {
       expect.arrayContaining([canonicalTurnId]),
       {
         observedTurnIds: [canonicalTurnId],
+        activitySnapshotAvailable: true,
         hasPendingToolCalls: false,
         activeTurnId: null,
       },
@@ -3063,7 +3067,7 @@ describe("ThreadShell", () => {
                 ? [{ role: "assistant", content: "committed old lineage" }]
                 : [{ role: "assistant", content: "disjoint new lineage" }],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         if (url.includes("websocket%3Alineage-chat-b/webui-thread")) {
@@ -3165,7 +3169,7 @@ describe("ThreadShell", () => {
         ...transcriptFromSimpleMessages([
           { role: "assistant", content: "disjoint canonical reset row" },
         ]),
-        has_pending_tool_calls: false,
+        active_turn_id: null, has_pending_tool_calls: false,
       }));
       await Promise.resolve();
     });
@@ -3183,6 +3187,7 @@ describe("ThreadShell", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         if (String(input).includes("websocket%3Aempty-reset-chat/webui-thread")) {
           historyCalls += 1;
+          return httpJson(transcriptFromSimpleMessages([]));
         }
         return {
           ok: false,
@@ -3210,7 +3215,12 @@ describe("ThreadShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(screen.getByText("rejected local turn")).toBeInTheDocument());
 
-    act(() => client._emitSessionUpdate("empty-reset-chat", "thread"));
+    act(() => {
+      const turnId = client.sendMessage.mock.calls[0]![3]!.turnId!;
+      client._emitChat("empty-reset-chat", { event: "error", chat_id: "empty-reset-chat",
+        turn_id: turnId, detail: "not_admitted", reason: "stale_turn" });
+      client._emitSessionUpdate("empty-reset-chat", "thread");
+    });
 
     await waitFor(() => expect(historyCalls).toBe(2));
     await waitFor(() =>
@@ -3222,6 +3232,7 @@ describe("ThreadShell", () => {
       [],
       {
         observedTurnIds: [],
+        activitySnapshotAvailable: true,
         hasPendingToolCalls: false,
         activeTurnId: null,
       },
@@ -3412,7 +3423,7 @@ describe("ThreadShell", () => {
               ];
           return httpJson({
             ...transcriptFromSimpleMessages(rows),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         if (url.includes("websocket%3Achat-version-b/webui-thread")) {
@@ -3554,7 +3565,7 @@ describe("ThreadShell", () => {
           { role: "user", content: "old question", turnId: oldTurnId },
           { role: "assistant", content: "old answer", turnId: oldTurnId },
         ]),
-        has_pending_tool_calls: false,
+        active_turn_id: null, has_pending_tool_calls: false,
       }));
       await Promise.resolve();
     });
@@ -3582,7 +3593,7 @@ describe("ThreadShell", () => {
                     { role: "assistant", content: "canonical complete answer", turnId },
                   ],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         return {
@@ -3669,7 +3680,7 @@ describe("ThreadShell", () => {
                     { role: "assistant", content: "completed while hidden", turnId },
                   ],
             ),
-            has_pending_tool_calls: false,
+            active_turn_id: null, has_pending_tool_calls: false,
           });
         }
         if (url.includes("websocket%3Avisibility-complete-b/webui-thread")) {
@@ -4317,6 +4328,67 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("live half-parsed | markdown")).toBeInTheDocument());
     expect(screen.queryByText("canonical markdown answer")).not.toBeInTheDocument();
     expect(historyCalls).toBe(1);
+  });
+
+  it("keeps one uncertain user row and its details when canonical history echoes the attempt", async () => {
+    const client = makeClient();
+    const content = "check uncertain history";
+    let historyCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("websocket%3Auncertain-history/webui-thread")) {
+          historyCalls += 1;
+          return httpJson(transcriptFromSimpleMessages(
+            historyCalls === 1
+              ? []
+              : [{ role: "user", content, turnId: String(client.sendMessage.mock.calls[0]?.[3]?.turnId ?? "") }],
+          ));
+        }
+        return { ok: false, status: 404, json: async () => ({}) };
+      }),
+    );
+
+    render(
+      wrap(
+        client,
+        <ThreadShell
+          session={session("uncertain-history")}
+          title="Uncertain history"
+          onToggleSidebar={() => {}}
+          onNewChat={() => {}}
+        />,
+      ),
+    );
+
+    await waitFor(() => expect(historyCalls).toBe(1));
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: content } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expectSendMessageWithTurn(client, "uncertain-history", content));
+    const sendOptions = client.sendMessage.mock.calls[0]?.[3] as { turnId?: string } | undefined;
+    expect(sendOptions?.turnId).toBeTruthy();
+
+    act(() => client._emitError({
+      kind: "connection_closed",
+      chatId: "uncertain-history",
+      turnId: sendOptions!.turnId!,
+    }));
+    const status = screen.getByRole("button", { name: /Awaiting confirmation/ });
+    expect(status).toBeInTheDocument();
+
+    act(() => client._emitSessionUpdate("uncertain-history", "thread"));
+    await waitFor(() => expect(historyCalls).toBe(2));
+    await waitFor(() => expect(screen.getAllByText(content)).toHaveLength(1));
+
+    const retainedStatus = screen.getByRole("button", {
+      name: "Awaiting confirmation",
+    });
+    fireEvent.focus(retainedStatus);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "The server may already have received this message",
+    );
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps rendered media mounted for metadata-only session updates", async () => {

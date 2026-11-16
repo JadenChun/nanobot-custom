@@ -4353,6 +4353,7 @@ class AgentLoop:
         if current is not None and key != original.session_key:
             self._track_active_task(key, current)
         stage_entered = False
+        cancellation_cleanup_ready: bool | None = None
 
         def notify(error: BaseException | None = None) -> None:
             for _, coordinator in self._automation_turn_coordinators:
@@ -4385,6 +4386,39 @@ class AgentLoop:
                             task.exception()
                     operation.add_done_callback(finished)
 
+        async def settle_cancellation_operation(
+            awaitable: Awaitable[Any],
+            description: str,
+        ) -> bool:
+            """Request cancellation by one deadline, then join under this turn owner."""
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + _BUS_CLEANUP_TIMEOUT_SECONDS
+            operation = asyncio.ensure_future(awaitable)
+            cancellation_requested = False
+            while not operation.done():
+                remaining = deadline - loop.time()
+                if remaining <= 0 and not cancellation_requested:
+                    operation.cancel()
+                    cancellation_requested = True
+                    continue
+                try:
+                    await asyncio.wait(
+                        {operation},
+                        timeout=None if cancellation_requested else remaining,
+                    )
+                except asyncio.CancelledError:
+                    # Keep the admitted owner alive through repeated cancellation.
+                    continue
+            try:
+                operation.result()
+            except asyncio.CancelledError:
+                logger.warning('{} was cancelled for {}', description, key)
+                return False
+            except Exception as exc:
+                logger.warning('{} failed for {}: {}', description, key, type(exc).__name__)
+                return False
+            return True
+
         async def cleanup() -> None:
             if self._pending_queues.get(key) is pending:
                 self._pending_queues.pop(key)
@@ -4406,12 +4440,20 @@ class AgentLoop:
                     break
             self._stopped_pending_followup_ids.pop(key, None)
             try:
-                if not continuing():
+                if not continuing() and cancellation_cleanup_ready is None:
                     await bounded(delivery.idle())
             except Exception:
                 logger.warning('Bus idle publication failed for {}', key)
             try:
-                if not continuing():
+                if not continuing() and cancellation_cleanup_ready is None:
+                    self.runtime_event_publisher.clear_turn(key)
+                elif (
+                    not continuing()
+                    and cancellation_cleanup_ready
+                    and await settle_cancellation_operation(
+                        delivery.idle(), 'Cancellation idle publication',
+                    )
+                ):
                     self.runtime_event_publisher.clear_turn(key)
             except Exception:
                 logger.warning('Bus turn clearing failed for {}', key)
@@ -4438,11 +4480,11 @@ class AgentLoop:
             await self._publish_stop_target_for_key(key)
             yield io
         except asyncio.CancelledError:
+            cancellation_cleanup_ready = False
             notify(asyncio.CancelledError())
-            try:
-                await bounded(delivery.abort_stream())
-            except Exception:
-                logger.warning('Stream abort failed for {}', key)
+            abort_succeeded = await settle_cancellation_operation(
+                delivery.abort_stream(), 'Stream abort',
+            )
             if stage_entered and key not in self._discarding_sessions and not self._preserve_inflight_turns_on_shutdown:
                 try:
                     session = self.sessions.get_or_create(key)
@@ -4451,11 +4493,26 @@ class AgentLoop:
                         self.sessions.save(session)
                 except Exception:
                     logger.warning('Cancelled checkpoint restoration failed for {}', key)
-            if normalize_command_text(msg.content).lower() == '/compact':
-                try:
-                    await bounded(delivery.complete(None, publish_completion=True))
-                except Exception:
-                    logger.warning('Cancelled compact completion failed for {}', key)
+            is_compact = normalize_command_text(msg.content).lower() == '/compact'
+            ordinary_terminal_required = (
+                stage_entered
+                and io.result is None
+                and key not in self._discarding_sessions
+                and not continuing()
+            )
+            if abort_succeeded:
+                if is_compact:
+                    cancellation_cleanup_ready = await settle_cancellation_operation(
+                        delivery.complete(None, publish_completion=True),
+                        'Cancelled compact completion',
+                    )
+                elif ordinary_terminal_required:
+                    cancellation_cleanup_ready = await settle_cancellation_operation(
+                        delivery.publish_cancelled_terminal(),
+                        'Cancelled terminal publication',
+                    )
+                else:
+                    cancellation_cleanup_ready = True
             raise
         except Exception as exc:
             notify(exc)
@@ -6591,6 +6648,8 @@ class AgentLoop:
                     run_id=ctx.run_context.run_id if ctx.run_context else None,
                     trace_owner=ctx,
                 )
+                if ctx.input_persisted_early:
+                    await ctx.delivery.input_committed()
                 session.add_message(
                     "assistant", result.content, _command=True,
                     **({"_run_id": ctx.run_context.run_id} if ctx.run_context and ctx.run_context.run_id else {})
@@ -6634,6 +6693,8 @@ class AgentLoop:
                 # Shell effects must not precede their durable input record.
                 ctx.input_persisted_early = self._persist_user_message_early(
                     ctx.msg, ctx.require_session(), trace_owner=ctx, _command=True)
+                if ctx.input_persisted_early:
+                    await ctx.delivery.input_committed()
             if command in {'/help', '/model', '/history', '/status', USER_SHELL_COMMAND}:
                 result = await self.commands.dispatch(CommandContext(
                     msg=ctx.msg, session=ctx.session, key=ctx.session_key, raw=raw,
@@ -6646,7 +6707,11 @@ class AgentLoop:
             else:
                 text = 'This command is not available for source sessions in this migration candidate yet.'
             if command != USER_SHELL_COMMAND:
-                self._persist_user_message_early(ctx.msg, ctx.require_session(), trace_owner=ctx, _command=True)
+                ctx.input_persisted_early = self._persist_user_message_early(
+                    ctx.msg, ctx.require_session(), trace_owner=ctx, _command=True,
+                )
+                if ctx.input_persisted_early:
+                    await ctx.delivery.input_committed()
             writer.append_message({'role': 'assistant', 'content': text, '_command': True})
         ctx.outbound = OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id, content=text,
                                        metadata=metadata)
@@ -6670,6 +6735,8 @@ class AgentLoop:
         ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         ctx.input_persisted_early = self._persist_user_message_early(
             ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
+        if ctx.kind is TurnKind.USER and ctx.input_persisted_early:
+            await ctx.delivery.input_committed()
         if pending_followup_id(ctx.msg) is not None:
             await self._publish_stop_target_for_session(ctx.session_key)
         # Keep the full recovery history until the runner has admitted its
@@ -6803,6 +6870,8 @@ class AgentLoop:
                 run_id=ctx.run_context.run_id if ctx.run_context else None,
                 trace_owner=ctx,
             )
+            if ctx.input_persisted_early:
+                await ctx.delivery.input_committed()
             if staged_provider_state and not ctx.input_persisted_early:
                 session.provider_state = stored_state
         elif subagent_followup_persisted and staged_provider_state:

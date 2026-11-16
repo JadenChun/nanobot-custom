@@ -1254,6 +1254,7 @@
       },
       "queued": {
         "label": "排队中的引导消息",
+        "awaitingConfirmation": "等待确认",
         "guide": "引导",
         "delete": "删除引导",
         "edit": "编辑引导",
@@ -1459,7 +1460,8 @@
     "streaming": "流式输出中",
     "delivery": {
       "sending": "发送中…",
-      "failed": "未发送"
+      "failed": "未发送",
+      "awaitingConfirmation": "等待确认"
     },
     "assistantTyping": "助手正在输入",
     "toolSingle": "正在使用工具",
@@ -1598,8 +1600,8 @@
       "body": "请检查提供商配置或服务状态后重试。"
     },
     "connectionClosed": {
-      "title": "消息未发送",
-      "body": "连接在网关接收此消息之前已关闭。请确认此设备仍处于连接状态，然后重新发送。"
+      "title": "等待确认",
+      "body": "连接在收到确认前已断开。服务器可能已经收到这条消息。请重新连接并查看状态；不要仅因连接断开就再次发送。"
     }
   },
   "workspace": {

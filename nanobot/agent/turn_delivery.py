@@ -281,6 +281,13 @@ class TurnDelivery:
                 self.session_key,
             )
 
+    async def input_committed(self) -> None:
+        if self.route.publish_lifecycle:
+            await self.runtime_event_publisher.user_input_committed(
+                self.delivery_message,
+                self.session_key,
+            )
+
     async def running(self, *, started_at: float) -> None:
         if self.route.publish_lifecycle:
             await self.runtime_event_publisher.run_status_changed(
@@ -386,6 +393,17 @@ class TurnDelivery:
                     self._retry_status.attempt if failure_kind == "model" and self._retry_status else None
                 ),
             )
+
+    async def publish_cancelled_terminal(self) -> None:
+        """Close an admitted lifecycle without inventing a user response."""
+        if not self.route.publish_lifecycle:
+            return
+        await self.runtime_event_publisher.turn_completed(
+            channel=self.lifecycle_message.channel,
+            chat_id=self.lifecycle_message.chat_id,
+            session_key=self.session_key,
+            metadata=self.lifecycle_message.metadata,
+        )
 
     async def fail(self, *, publish_completion: bool, error: Exception | None = None) -> None:
         from nanobot.agent.context_governance import ContextWindowExceededError

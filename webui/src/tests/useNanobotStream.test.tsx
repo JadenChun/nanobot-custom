@@ -135,6 +135,7 @@ function fakeClient() {
       getGoalState(chatId: string) {
         return goalStateByChatId.get(chatId);
       },
+      hasUnknownMessageSend() { return false; },
       hasUnsettledRun(chatId: string) {
         return unsettledRunByChatId.get(chatId) === true;
       },
@@ -2627,6 +2628,207 @@ describe("useNanobotStream", () => {
       kind: "turn_rejected",
       turnId: first!.turnId,
     });
+  });
+
+  it("marks only the matching sending row unknown and preserves partial turn activity on disconnect", () => {
+    const fake = fakeClient();
+    const partialMessages: UIMessage[] = [
+      {
+        id: "u-uncertain",
+        role: "user",
+        content: "question",
+        createdAt: 1,
+        turnId: "turn-uncertain",
+        deliveryStatus: "sending",
+      },
+      {
+        id: "a-partial",
+        role: "assistant",
+        content: "partial answer",
+        createdAt: 2,
+        turnId: "turn-uncertain",
+        isStreaming: true,
+      },
+      {
+        id: "tool-partial",
+        role: "tool",
+        content: "tool activity",
+        createdAt: 3,
+        turnId: "turn-uncertain",
+      },
+      {
+        id: "u-other-turn",
+        role: "user",
+        content: "another question",
+        createdAt: 4,
+        turnId: "turn-other",
+        deliveryStatus: "sending",
+      },
+      {
+        id: "a-activity",
+        role: "assistant",
+        kind: "trace",
+        content: "working",
+        createdAt: 5,
+        turnId: "turn-uncertain",
+      },
+    ];
+    const { result } = renderHook(
+      () => useNanobotStream("chat-uncertain", partialMessages),
+      { wrapper: wrap(fake.client) },
+    );
+    fake.setUnsettled("chat-uncertain", true);
+
+    act(() => {
+      fake.emitError({
+        kind: "connection_closed",
+        chatId: "another-chat",
+        turnId: "turn-uncertain",
+      });
+      fake.emitError({
+        kind: "connection_closed",
+        chatId: "chat-uncertain",
+        turnId: "turn-missing",
+      });
+    });
+
+    expect(result.current.messages).toEqual(partialMessages);
+    expect(result.current.isStreaming).toBe(true);
+
+    act(() => {
+      fake.emitError({
+        kind: "connection_closed",
+        chatId: "chat-uncertain",
+        turnId: "turn-uncertain",
+      });
+      fake.emitError({
+        kind: "connection_closed",
+        chatId: "chat-uncertain",
+        turnId: "turn-uncertain",
+      });
+    });
+
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({
+        id: "u-uncertain",
+        deliveryStatus: "unknown",
+        deliveryErrorKind: "connection_closed",
+      }),
+      partialMessages[1],
+      partialMessages[2],
+      partialMessages[3],
+      partialMessages[4],
+    ]);
+    expect(result.current.streamError).toMatchObject({
+      kind: "connection_closed",
+      chatId: "chat-uncertain",
+      turnId: "turn-uncertain",
+    });
+    expect(result.current.isStreaming).toBe(true);
+  });
+
+  it("repairs only unknown or legacy connection-closed rows from owner or live-turn proof", () => {
+    const fake = fakeClient();
+    const initial: UIMessage[] = [
+      {
+        id: "u-unknown",
+        role: "user",
+        content: "unknown send",
+        createdAt: 1,
+        turnId: "turn-unknown",
+        deliveryStatus: "unknown",
+        deliveryErrorKind: "connection_closed",
+      },
+      {
+        id: "u-legacy-unknown",
+        role: "user",
+        content: "legacy unknown send",
+        createdAt: 2,
+        turnId: "turn-legacy-unknown",
+        deliveryStatus: "failed",
+        deliveryErrorKind: "connection_closed",
+      },
+      {
+        id: "u-refused",
+        role: "user",
+        content: "refused send",
+        createdAt: 3,
+        turnId: "turn-refused",
+        deliveryStatus: "failed",
+        deliveryErrorKind: "turn_rejected",
+      },
+    ];
+    const { result } = renderHook(
+      () => useNanobotStream("chat-repair", initial),
+      { wrapper: wrap(fake.client) },
+    );
+
+    act(() => {
+      fake.emit("chat-repair", {
+        event: "message_accepted",
+        chat_id: "chat-repair",
+        turn_id: "turn-unknown",
+      });
+      fake.emit("chat-repair", {
+        event: "user_message",
+        chat_id: "chat-repair",
+        text: "unknown send",
+        turn_id: "turn-unknown",
+        starts_turn: true,
+      });
+    });
+    expect(result.current.messages[0]).toMatchObject({
+      deliveryStatus: "unknown",
+      deliveryErrorKind: "connection_closed",
+    });
+
+    act(() => {
+      fake.emit("chat-repair", {
+        event: "message_admitted",
+        chat_id: "chat-repair",
+        turn_id: "turn-unknown",
+      });
+      fake.emit("chat-repair", {
+        event: "goal_status",
+        chat_id: "chat-repair",
+        status: "running",
+        turn_id: "turn-legacy-unknown",
+        started_at: 5,
+      });
+      fake.emit("chat-repair", {
+        event: "message_admitted",
+        chat_id: "chat-repair",
+        turn_id: "turn-refused",
+      });
+      fake.emitError({
+        kind: "connection_closed",
+        chatId: "chat-repair",
+        turnId: "turn-unknown",
+      });
+      fake.emitError({
+        kind: "connection_closed",
+        chatId: "chat-repair",
+        turnId: "turn-refused",
+      });
+    });
+
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({
+        id: "u-unknown",
+        deliveryStatus: "accepted",
+        deliveryErrorKind: undefined,
+      }),
+      expect.objectContaining({
+        id: "u-legacy-unknown",
+        deliveryStatus: "accepted",
+        deliveryErrorKind: undefined,
+      }),
+      expect.objectContaining({
+        id: "u-refused",
+        deliveryStatus: "failed",
+        deliveryErrorKind: "turn_rejected",
+      }),
+    ]);
   });
 
   it("falls back to the previous running turn when the newer turn is rejected", () => {

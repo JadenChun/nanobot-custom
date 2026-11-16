@@ -33,6 +33,13 @@ class SessionTurnStarted(AgentEvent):
 
 
 @dataclass(frozen=True)
+class UserInputCommitted(AgentEvent):
+    """This invocation's user input append returned successfully."""
+
+    context: RuntimeEventContext
+
+
+@dataclass(frozen=True)
 class UserInputAccepted(AgentEvent):
     """User input was accepted for dispatch or injection into a session."""
 
@@ -191,6 +198,22 @@ class RuntimeEventPublisher:
     ) -> None:
         await self.bus.publish(
             SessionTurnStarted(
+                context=self._context(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=session_key,
+                    metadata=msg.metadata,
+                ),
+            )
+        )
+
+    async def user_input_committed(
+        self,
+        msg: InboundMessage,
+        session_key: str,
+    ) -> None:
+        await self.bus.publish(
+            UserInputCommitted(
                 context=self._context(
                     channel=msg.channel,
                     chat_id=msg.chat_id,

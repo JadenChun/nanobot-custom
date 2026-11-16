@@ -23,7 +23,10 @@ def bus_host(tmp_path):
     loop._preserve_inflight_turns_on_shutdown = True
     loop.bus = SimpleNamespace(publish_inbound_nowait=Mock())
     loop.runtime_event_publisher = SimpleNamespace(clear_turn=Mock(), run_status_changed=AsyncMock())
-    delivery = SimpleNamespace(complete=AsyncMock(), idle=AsyncMock(), fail=AsyncMock(), abort_stream=AsyncMock())
+    delivery = SimpleNamespace(
+        complete=AsyncMock(), idle=AsyncMock(), fail=AsyncMock(), abort_stream=AsyncMock(),
+        publish_cancelled_terminal=AsyncMock(),
+    )
     loop.turn_delivery_factory = SimpleNamespace(unrouted=Mock(return_value=delivery), create=Mock(return_value=delivery))
     loop._publish_next_deferred_automation_turn = AsyncMock()
     coordinator = SimpleNamespace(complete=Mock())
@@ -80,6 +83,7 @@ async def test_waiting_bus_cancellation_has_no_lifecycle_effects(tmp_path):
     assert not loop._pending_queues
     delivery.idle.assert_not_awaited()
     delivery.complete.assert_not_awaited()
+    delivery.publish_cancelled_terminal.assert_not_awaited()
     coordinator.complete.assert_not_called()
     loop._publish_next_deferred_automation_turn.assert_not_awaited()
     lock.release()
@@ -146,6 +150,7 @@ async def test_admitted_cancellation_cleans_owned_queue_and_preserves_shutdown_c
         await task
     assert not loop._pending_queues
     delivery.abort_stream.assert_awaited_once()
+    delivery.publish_cancelled_terminal.assert_awaited_once()
     delivery.idle.assert_awaited_once()
     coordinator.complete.assert_called_once()
 
@@ -227,6 +232,7 @@ async def test_completion_cancellation_preserves_computation_and_aborts_stream(t
     assert record.status.value == 'completed'
     assert record.metadata['delivery_error_type'] == 'CancelledError'
     assert not loop._pending_queues
+    delivery.publish_cancelled_terminal.assert_not_awaited()
 
 
 async def test_hung_cleanup_is_bounded_retains_input_and_releases_lock(tmp_path, monkeypatch):
@@ -280,9 +286,11 @@ async def test_redirected_cancel_uses_effective_key_and_compact_completes(tmp_pa
     assert loop.turn_delivery_factory.create.call_args.args[1] == 'cron:job'
     assert not loop._pending_queues
     assert loop.runtime_event_publisher.clear_turn.call_args.args == ('cron:job',)
+    delivery.publish_cancelled_terminal.assert_awaited_once()
     with pytest.raises(asyncio.CancelledError):
         await loop._dispatch(message('/compact'))
     delivery.complete.assert_awaited_once_with(None, publish_completion=True)
+    delivery.publish_cancelled_terminal.assert_awaited_once()
 
 
 @pytest.mark.parametrize('compact', [False, True])
@@ -419,28 +427,240 @@ async def test_real_bus_leftovers_are_enqueued_once_in_fifo_order(tmp_path):
     assert not loop._pending_republish
 
 
-async def test_repeated_cancellation_fences_unfinished_stream_abort(tmp_path):
+async def test_repeated_cancellation_fences_unfinished_stream_abort(tmp_path, monkeypatch):
+    import nanobot.agent.loop as module
+
+    monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
     loop, delivery, _ = bus_host(tmp_path)
-    entered, release = asyncio.Event(), asyncio.Event()
+    entered, cancellation_requested, release = (
+        asyncio.Event(), asyncio.Event(), asyncio.Event(),
+    )
+    order = []
+
     async def abort():
+        order.append('abort-start')
         entered.set()
         try:
             await release.wait()
         except asyncio.CancelledError:
+            cancellation_requested.set()
             await release.wait()
+        order.append('abort-finish')
+
+    async def terminal():
+        order.append('terminal-finish')
+
+    async def idle():
+        order.append('idle')
+
+    async def stage(msg, **kwargs):
+        if msg.content == 'cancel':
+            raise asyncio.CancelledError()
+        order.append('successor-stage')
+        return SimpleNamespace(
+            run_result=AgentRunResult(final_content='answer', messages=[]), outbound=None,
+        )
+
     delivery.abort_stream.side_effect = abort
-    loop._process_turn.side_effect = asyncio.CancelledError()
-    owner = asyncio.create_task(loop._dispatch(message()))
+    delivery.publish_cancelled_terminal.side_effect = terminal
+    delivery.idle.side_effect = idle
+    loop.runtime_event_publisher.clear_turn.side_effect = lambda key: order.append('clear')
+    loop._process_turn.side_effect = stage
+    owner = asyncio.create_task(loop._dispatch(message('cancel')))
     await entered.wait()
     owner.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await owner
-    loop._process_turn.side_effect = None
-    successor = asyncio.create_task(loop.process_direct('next', session_key='telegram:42'))
+    await cancellation_requested.wait()
+    owner.cancel()
     await asyncio.sleep(0)
+    assert not owner.done()
+    assert loop._get_session_lock('telegram:42').locked()
+    assert delivery.publish_cancelled_terminal.await_count == 0
+    assert delivery.idle.await_count == 0
+
+    successor = asyncio.create_task(loop._dispatch(message('successor')))
     await asyncio.sleep(0)
     assert not successor.done()
     assert loop._process_turn.await_count == 1
+
     release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(owner, 1)
     await asyncio.wait_for(successor, 1)
     assert loop._process_turn.await_count == 2
+    assert delivery.publish_cancelled_terminal.await_count == 1
+    assert order[:6] == [
+        'abort-start', 'abort-finish', 'terminal-finish', 'idle', 'clear',
+        'successor-stage',
+    ]
+
+
+async def test_repeated_cancellation_waits_for_one_terminal_before_idle_or_admission(
+    tmp_path, monkeypatch,
+):
+    import nanobot.agent.loop as module
+
+    monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
+    loop, delivery, _ = bus_host(tmp_path)
+    abort_entered, terminal_entered, terminal_cancelled, release_terminal = (
+        asyncio.Event(), asyncio.Event(), asyncio.Event(), asyncio.Event(),
+    )
+    order = []
+
+    async def abort_stream():
+        order.append('abort')
+        abort_entered.set()
+
+    async def publish_terminal():
+        order.append('terminal-start')
+        terminal_entered.set()
+        try:
+            await release_terminal.wait()
+        except asyncio.CancelledError:
+            terminal_cancelled.set()
+            await release_terminal.wait()
+            order.append('terminal-cancelled-then-finished')
+            return
+        order.append('terminal-finish')
+
+    async def idle():
+        order.append('idle')
+
+    async def stage(msg, **kwargs):
+        if msg.content == 'cancel':
+            raise asyncio.CancelledError()
+        order.append('successor-stage')
+        return SimpleNamespace(
+            run_result=AgentRunResult(final_content='answer', messages=[]), outbound=None,
+        )
+
+    delivery.abort_stream.side_effect = abort_stream
+    delivery.publish_cancelled_terminal.side_effect = publish_terminal
+    delivery.idle.side_effect = idle
+    loop.runtime_event_publisher.clear_turn.side_effect = lambda key: order.append('clear')
+    loop._process_turn.side_effect = stage
+    owner = asyncio.create_task(loop._dispatch(message('cancel')))
+    await abort_entered.wait()
+    await terminal_entered.wait()
+    owner.cancel()
+    await terminal_cancelled.wait()
+    owner.cancel()
+    await asyncio.sleep(0)
+    assert not owner.done()
+    assert order == ['abort', 'terminal-start']
+    successor = asyncio.create_task(loop._dispatch(message('successor')))
+    await asyncio.sleep(0)
+    assert not successor.done()
+    assert delivery.idle.await_count == 0
+
+    release_terminal.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(owner, 1)
+    await asyncio.wait_for(successor, 1)
+    assert delivery.publish_cancelled_terminal.await_count == 1
+    assert order[:6] == [
+        'abort', 'terminal-start', 'terminal-cancelled-then-finished', 'idle',
+        'clear', 'successor-stage',
+    ]
+    assert order.index('terminal-cancelled-then-finished') < order.index('idle')
+
+
+async def test_cancellation_idle_joins_after_deadline_before_clear_or_admission(tmp_path, monkeypatch):
+    import nanobot.agent.loop as module
+
+    monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
+    loop, delivery, _ = bus_host(tmp_path)
+    idle_entered, idle_cancelled, release_idle = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    order = []
+    idle_calls = []
+
+    async def idle():
+        idle_calls.append(None)
+        if len(idle_calls) > 1:
+            return
+        order.append('idle-start')
+        idle_entered.set()
+        try:
+            await release_idle.wait()
+        except asyncio.CancelledError:
+            idle_cancelled.set()
+            await release_idle.wait()
+        order.append('idle-finish')
+
+    async def stage(msg, **kwargs):
+        if msg.content == 'cancel':
+            raise asyncio.CancelledError()
+        order.append('successor-stage')
+        return SimpleNamespace(
+            run_result=AgentRunResult(final_content='answer', messages=[]), outbound=None,
+        )
+
+    delivery.idle.side_effect = idle
+    loop._process_turn.side_effect = stage
+    loop.runtime_event_publisher.clear_turn.side_effect = lambda key: order.append('clear')
+    owner = asyncio.create_task(loop._dispatch(message('cancel')))
+    await idle_entered.wait()
+    await idle_cancelled.wait()
+    owner.cancel()
+    await asyncio.sleep(0)
+    assert not owner.done()
+    assert loop._get_session_lock('telegram:42').locked()
+    loop.runtime_event_publisher.clear_turn.assert_not_called()
+
+    successor = asyncio.create_task(loop._dispatch(message('successor')))
+    await asyncio.sleep(0)
+    assert not successor.done()
+    release_idle.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(owner, 1)
+    await asyncio.wait_for(successor, 1)
+    assert order == ['idle-start', 'idle-finish', 'clear', 'successor-stage', 'clear']
+    assert delivery.idle.await_count == 2
+
+
+async def test_discarded_admitted_cancellation_does_not_publish_terminal(tmp_path):
+    loop, delivery, _ = bus_host(tmp_path)
+    loop._discarding_sessions.add('telegram:42')
+    loop._process_turn.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await loop._dispatch(message())
+    delivery.publish_cancelled_terminal.assert_not_awaited()
+
+
+@pytest.mark.parametrize('phase', ['abort', 'terminal'])
+async def test_cooperative_cancellation_cleanup_timeout_fails_closed(tmp_path, monkeypatch, phase):
+    import nanobot.agent.loop as module
+
+    monkeypatch.setattr(module, '_BUS_CLEANUP_TIMEOUT_SECONDS', 0.01)
+    loop, delivery, _ = bus_host(tmp_path)
+    operation_cancelled = asyncio.Event()
+    never = asyncio.Event()
+
+    async def abort():
+        if phase == 'abort':
+            try:
+                await never.wait()
+            except asyncio.CancelledError:
+                operation_cancelled.set()
+                raise
+
+    async def terminal():
+        if phase == 'terminal':
+            try:
+                await never.wait()
+            except asyncio.CancelledError:
+                operation_cancelled.set()
+                raise
+
+    delivery.abort_stream.side_effect = abort
+    delivery.publish_cancelled_terminal.side_effect = terminal
+    loop._process_turn.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(loop._dispatch(message()), 1)
+
+    assert operation_cancelled.is_set()
+    assert delivery.publish_cancelled_terminal.await_count == (phase == 'terminal')
+    delivery.idle.assert_not_awaited()
+    loop.runtime_event_publisher.clear_turn.assert_not_called()
+    assert not loop._bus_cleanup_tasks.get('telegram:42')
+    assert not loop._pending_queues
+    assert not loop._get_session_lock('telegram:42').locked()
