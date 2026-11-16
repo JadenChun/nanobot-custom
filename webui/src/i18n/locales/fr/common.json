@@ -1223,6 +1223,7 @@
       "placeholderOpening": "Ouverture d’un nouveau sujet…",
       "placeholderStreaming": "Le modèle est en train de répondre…",
       "queueGuidance": "Ajouter à la file",
+      "queuePersistenceError": "Impossible d’enregistrer les messages en attente en toute sécurité. Réessayez avant l’envoi.",
       "inputAria": "Champ de message",
       "inputAriaFor": "Message pour {{title}}",
       "sendHint": "Entrée pour envoyer · Maj+Entrée pour un retour à la ligne",

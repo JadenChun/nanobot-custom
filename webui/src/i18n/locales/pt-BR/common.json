@@ -1223,6 +1223,7 @@
       "placeholderOpening": "Abrindo um novo tópico…",
       "placeholderStreaming": "O modelo está respondendo…",
       "queueGuidance": "Adicionar à fila",
+      "queuePersistenceError": "Não foi possível salvar com segurança as mensagens da fila. Tente novamente antes de enviar.",
       "inputAria": "Campo de mensagem",
       "inputAriaFor": "Mensagem para {{title}}",
       "sendHint": "Enter para enviar · Shift+Enter para nova linha",

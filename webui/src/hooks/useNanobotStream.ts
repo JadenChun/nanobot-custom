@@ -16,7 +16,11 @@ import {
   parseDelegatedChildPayload,
   parseStopExpectation,
 } from "@/lib/delegated-child-projection";
-import type { StreamError } from "@/lib/nanobot-client";
+import type {
+  QueuedAttemptBinding,
+  QueuedAttemptOutcome,
+  StreamError,
+} from "@/lib/nanobot-client";
 import {
   closeReasoningStream,
   filterCoveredFileEditToolEvents,
@@ -220,6 +224,8 @@ export interface SendOptions {
   finalizeActiveTurn?: boolean;
   /** Append guidance to the running turn without detaching its active answer segment. */
   continueActiveTurn?: boolean;
+  /** Content-free client binding for one persisted queued submission. */
+  queuedAttempt?: QueuedAttemptBinding;
 }
 
 export interface SubmittedTurn {
@@ -333,6 +339,10 @@ export function useNanobotStream(
     images?: SendAttachment[],
     options?: SendOptions,
   ) => SubmittedTurn | null;
+  joinQueuedAttempt: (
+    binding: QueuedAttemptBinding,
+  ) => Promise<QueuedAttemptOutcome> | null;
+  consumeQueuedAttempt: (binding: QueuedAttemptBinding) => boolean;
   transcribeAudio: (dataUrl: string, options?: { durationMs?: number }) => Promise<string>;
   stop: () => void;
   /** Mark an accepted canonical snapshot as the definitive end of the active turn. */
@@ -346,6 +356,12 @@ export function useNanobotStream(
   dismissStreamError: () => void;
 } {
   const { client } = useClient();
+  const joinQueuedAttempt = useCallback((binding: QueuedAttemptBinding) => (
+    chatId ? client.waitForQueuedAttempt(chatId, binding) : null
+  ), [chatId, client]);
+  const consumeQueuedAttempt = useCallback((binding: QueuedAttemptBinding) => (
+    chatId ? client.consumeQueuedAttempt(chatId, binding) : false
+  ), [chatId, client]);
   const initialRunStartedAt = chatId ? client.getRunStartedAt(chatId) : null;
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const messagesRef = useRef(messages);
@@ -1699,6 +1715,13 @@ export function useNanobotStream(
       // them via ``media`` paths.
       if (!hasAttachments && !content.trim()) return null;
 
+      const queuedAttempt = options?.queuedAttempt;
+      const startsNewRun = !options?.sideChannel && !options?.continueActiveTurn;
+      if (
+        queuedAttempt
+        && !client.prepareQueuedAttempt(chatId, queuedAttempt, startsNewRun)
+      ) return null;
+
       setStreamError(null);
       const sideChannel = options?.sideChannel === true;
       const finalizeActiveTurn = options?.finalizeActiveTurn === true;
@@ -1711,9 +1734,9 @@ export function useNanobotStream(
         setIsStreaming(false);
         setRetryStatus(null);
       }
-      const turnId = crypto.randomUUID();
+      const turnId = queuedAttempt?.turnId ?? crypto.randomUUID();
       const userMessageId = crypto.randomUUID();
-      const admission = sideChannel
+      const admission = sideChannel || queuedAttempt
         ? undefined
         : new Promise<boolean>((resolve) => {
             admissionWaitersRef.current.set(turnId, resolve);
@@ -1764,6 +1787,7 @@ export function useNanobotStream(
         ...(targetTurnId ? { targetTurnId } : {}),
         ...((sideChannel || continueActiveTurn) ? { startsNewRun: false } : {}),
       };
+      delete clientOptions.queuedAttempt;
       delete clientOptions.quotedContext;
       delete clientOptions.finalizeActiveTurn;
       delete clientOptions.continueActiveTurn;
@@ -1914,6 +1938,8 @@ export function useNanobotStream(
     continueRecovery,
     dismissRecovery,
     send,
+    joinQueuedAttempt,
+    consumeQueuedAttempt,
     transcribeAudio,
     stop,
     reconcileTurnComplete,

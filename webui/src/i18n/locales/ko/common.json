@@ -1223,6 +1223,7 @@
       "placeholderOpening": "새 주제를 여는 중…",
       "placeholderStreaming": "모델이 응답 중입니다…",
       "queueGuidance": "대기열에 추가",
+      "queuePersistenceError": "대기 메시지를 안전하게 저장하지 못했습니다. 보내기 전에 다시 시도해 주세요.",
       "inputAria": "메시지 입력",
       "inputAriaFor": "{{title}}에게 보내는 메시지",
       "sendHint": "Enter로 전송 · Shift+Enter로 줄바꿈",

@@ -1223,6 +1223,7 @@
       "placeholderOpening": "Membuka topik baru…",
       "placeholderStreaming": "Model sedang merespons…",
       "queueGuidance": "Tambahkan ke antrean",
+      "queuePersistenceError": "Pesan antrean tidak dapat disimpan dengan aman. Coba lagi sebelum mengirim.",
       "inputAria": "Input pesan",
       "inputAriaFor": "Pesan {{title}}",
       "sendHint": "Enter untuk kirim · Shift+Enter untuk baris baru",

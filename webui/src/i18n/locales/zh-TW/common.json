@@ -1223,6 +1223,7 @@
       "placeholderOpening": "正在開啟新話題…",
       "placeholderStreaming": "模型正在回覆…",
       "queueGuidance": "加入佇列",
+      "queuePersistenceError": "無法安全儲存佇列訊息。請在傳送前重試。",
       "inputAria": "訊息輸入框",
       "inputAriaFor": "傳送訊息給 {{title}}",
       "sendHint": "Enter 送出 · Shift+Enter 換行",

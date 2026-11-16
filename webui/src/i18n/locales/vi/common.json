@@ -1223,6 +1223,7 @@
       "placeholderOpening": "Đang mở chủ đề mới…",
       "placeholderStreaming": "Mô hình đang trả lời…",
       "queueGuidance": "Thêm vào hàng đợi",
+      "queuePersistenceError": "Không thể lưu an toàn tin nhắn trong hàng đợi. Hãy thử lại trước khi gửi.",
       "inputAria": "Ô nhập tin nhắn",
       "inputAriaFor": "Nhắn cho {{title}}",
       "sendHint": "Enter để gửi · Shift+Enter để xuống dòng",

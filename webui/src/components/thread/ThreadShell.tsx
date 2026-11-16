@@ -1419,6 +1419,8 @@ export function ThreadShell({
     continueRecovery,
     dismissRecovery,
     send,
+    joinQueuedAttempt,
+    consumeQueuedAttempt,
     transcribeAudio,
     stop,
     reconcileTurnComplete,
@@ -3033,6 +3035,8 @@ export function ThreadShell({
         ) : null}
         <ThreadComposer
           onSend={handleThreadSend}
+          onJoinQueuedAttempt={joinQueuedAttempt}
+          onConsumeQueuedAttempt={consumeQueuedAttempt}
           admissionRejectedTurn={admissionRejectedTurn}
           onAdmissionRejectedPromptRestored={handleAdmissionRejectedPromptRestored}
           disabled={!chatId}

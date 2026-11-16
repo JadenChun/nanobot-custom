@@ -8,7 +8,12 @@ import { ThreadCameraController } from "@/components/thread/thread-camera";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import i18n from "@/i18n";
 import { CLI_APPS_CHANGED_EVENT } from "@/lib/cli-app-events";
-import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
+import type {
+  CanonicalRunSnapshot,
+  QueuedAttemptBinding,
+  QueuedAttemptOutcome,
+  StreamError,
+} from "@/lib/nanobot-client";
 import { ClientProvider } from "@/providers/ClientProvider";
 import type {
   CliAppsPayload,
@@ -51,6 +56,14 @@ function makeClient() {
   const runGenerationByChatId = new Map<string, number>();
   const latestRunTurnIdByChatId = new Map<string, string>();
   const completedTurnIdsByChatId = new Map<string, Set<string>>();
+  const queuedAttemptObservations = new Map<string, {
+    chatId: string;
+    binding: QueuedAttemptBinding;
+    outcome?: QueuedAttemptOutcome;
+    promise: Promise<QueuedAttemptOutcome>;
+    resolve: (outcome: QueuedAttemptOutcome) => void;
+    consumed: boolean;
+  }>();
   const goalStateByChatId = new Map<string, import("@/lib/types").GoalStateWsPayload>();
   let approvalDecisionIndex = 0;
   let status: ConnectionStatus = "open";
@@ -69,6 +82,24 @@ function makeClient() {
       advanceRunGeneration(chatId, options.turnId);
     }
   });
+  const queuedAttemptKey = (chatId: string, binding: QueuedAttemptBinding) => (
+    `${chatId}\u0000${binding.turnId}`
+  );
+  const sameQueuedBinding = (left: QueuedAttemptBinding, right: QueuedAttemptBinding) => (
+    left.queueKey === right.queueKey
+    && left.promptId === right.promptId
+    && left.turnId === right.turnId
+  );
+  const recordQueuedOutcome = (
+    chatId: string,
+    turnId: string,
+    outcome: QueuedAttemptOutcome,
+  ) => {
+    const observation = queuedAttemptObservations.get(`${chatId}\u0000${turnId}`);
+    if (!observation || observation.outcome) return;
+    observation.outcome = outcome;
+    observation.resolve(outcome);
+  };
   const canReconcileCanonicalCompletion = vi.fn((
     chatId: string,
     expectedRunGeneration: number,
@@ -189,7 +220,31 @@ function makeClient() {
     },
     _emitChat(chatId: string, ev: import("@/lib/types").InboundEvent) {
       const turnId = "turn_id" in ev && typeof ev.turn_id === "string" ? ev.turn_id : null;
-      if (turnId && completedTurnIdsByChatId.get(chatId)?.has(turnId)) return;
+      const completed = turnId !== null
+        && completedTurnIdsByChatId.get(chatId)?.has(turnId) === true;
+      if (turnId) {
+        if (ev.event === "message_admitted") {
+          recordQueuedOutcome(chatId, turnId, { kind: "admitted" });
+        } else if (
+          ev.event === "goal_status"
+          && ev.status === "running"
+          && typeof ev.started_at === "number"
+          && !completed
+        ) {
+          recordQueuedOutcome(chatId, turnId, { kind: "admitted" });
+        } else if (
+          ev.event === "error"
+          && ev.detail === "not_admitted"
+          && typeof ev.reason === "string"
+          && ev.reason.trim()
+        ) {
+          recordQueuedOutcome(chatId, turnId, {
+            kind: "not_admitted",
+            reason: ev.reason.trim(),
+          });
+        }
+      }
+      if (completed && ev.event !== "message_admitted" && ev.event !== "error") return;
       if (
         ev.event === "goal_status"
         && ev.status === "running"
@@ -226,6 +281,52 @@ function makeClient() {
       void action;
       void payload;
       return {} as T;
+    }),
+    prepareQueuedAttempt: vi.fn((chatId: string, binding: QueuedAttemptBinding) => {
+      if (
+        !chatId
+        || (binding.queueKey !== null && binding.queueKey !== chatId)
+        || !binding.promptId.trim()
+        || !binding.turnId.trim()
+      ) return false;
+      const key = queuedAttemptKey(chatId, binding);
+      if (queuedAttemptObservations.has(key)) return false;
+      let resolve!: (outcome: QueuedAttemptOutcome) => void;
+      const promise = new Promise<QueuedAttemptOutcome>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      queuedAttemptObservations.set(key, {
+        chatId,
+        binding: { ...binding },
+        promise,
+        resolve,
+        consumed: false,
+      });
+      return true;
+    }),
+    waitForQueuedAttempt: vi.fn((chatId: string, binding: QueuedAttemptBinding) => {
+      if (binding.queueKey !== null && binding.queueKey !== chatId) return null;
+      const observation = queuedAttemptObservations.get(queuedAttemptKey(chatId, binding));
+      if (
+        !observation
+        || observation.consumed
+        || !sameQueuedBinding(observation.binding, binding)
+      ) return null;
+      return observation.promise;
+    }),
+    consumeQueuedAttempt: vi.fn((chatId: string, binding: QueuedAttemptBinding) => {
+      const key = queuedAttemptKey(chatId, binding);
+      const observation = queuedAttemptObservations.get(key);
+      if (
+        !observation
+        || observation.chatId !== chatId
+        || observation.consumed
+        || !observation.outcome
+        || !sameQueuedBinding(observation.binding, binding)
+      ) return false;
+      observation.consumed = true;
+      queuedAttemptObservations.delete(key);
+      return true;
     }),
     sendMessage,
     sendSystemCommand: vi.fn().mockResolvedValue(undefined),

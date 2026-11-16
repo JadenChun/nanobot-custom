@@ -43,6 +43,8 @@ function IntegrationComposer({ chatId }: { chatId: string }) {
   return (
     <ThreadComposer
       onSend={stream.send}
+      onJoinQueuedAttempt={stream.joinQueuedAttempt}
+      onConsumeQueuedAttempt={stream.consumeQueuedAttempt}
       isStreaming={stream.isStreaming}
       automaticQueueSendBlocked={stream.hasUnknownMessageSend || !stream.connectionOpen}
       pendingQueueKey={chatId}

@@ -232,11 +232,31 @@ export interface ApprovalDecisionIdentity {
 
 type PendingMessageState = "queued" | "sent" | "unknown" | "accepted";
 
+export interface QueuedAttemptBinding {
+  queueKey: string | null;
+  promptId: string;
+  turnId: string;
+}
+
+export type QueuedAttemptOutcome =
+  | { kind: "admitted" }
+  | { kind: "not_admitted"; reason: string };
+
+interface QueuedAttemptObservation {
+  binding: QueuedAttemptBinding;
+  outcome?: QueuedAttemptOutcome;
+  promise: Promise<QueuedAttemptOutcome>;
+  resolve: (outcome: QueuedAttemptOutcome) => void;
+  consumed: boolean;
+}
+
 interface PendingMessageSend {
   chatId: string;
   turnId: string;
   startsNewRun: boolean;
   state: PendingMessageState;
+  transportSettled?: boolean;
+  queuedAttempt?: QueuedAttemptObservation;
 }
 
 /**
@@ -816,17 +836,115 @@ export class NanobotClient {
     startsNewRun: boolean,
   ): void {
     const key = this.runSendKey(chatId, turnId);
+    const existing = this.pendingMessageSends.get(key);
+    if (existing?.queuedAttempt) {
+      existing.startsNewRun = startsNewRun;
+      existing.state = "queued";
+      existing.transportSettled = false;
+      return;
+    }
+    this.pendingMessageSends.set(key, { chatId, turnId, startsNewRun, state: "queued" });
+  }
+
+  private sameQueuedAttempt(
+    left: QueuedAttemptBinding,
+    right: QueuedAttemptBinding,
+  ): boolean {
+    return left.queueKey === right.queueKey
+      && left.promptId === right.promptId
+      && left.turnId === right.turnId;
+  }
+
+  /** Reserve one exact queued binding before upload or transport can begin. */
+  prepareQueuedAttempt(
+    chatId: string,
+    binding: QueuedAttemptBinding,
+    startsNewRun: boolean,
+  ): boolean {
+    if (
+      !chatId
+      || (binding.queueKey !== null && binding.queueKey !== chatId)
+      || !binding.promptId.trim()
+      || !binding.turnId.trim()
+    ) return false;
+    const key = this.runSendKey(chatId, binding.turnId);
+    if (this.pendingMessageSends.has(key)) return false;
+    let resolve!: (outcome: QueuedAttemptOutcome) => void;
+    const promise = new Promise<QueuedAttemptOutcome>((resolvePromise) => {
+      resolve = resolvePromise;
+    });
     this.pendingMessageSends.set(key, {
       chatId,
-      turnId,
+      turnId: binding.turnId,
       startsNewRun,
       state: "queued",
+      queuedAttempt: {
+        binding: { ...binding },
+        promise,
+        resolve,
+        consumed: false,
+      },
     });
+    return true;
+  }
+
+  /** Read-join only; this never creates a pending send or submits a frame. */
+  waitForQueuedAttempt(
+    chatId: string,
+    binding: QueuedAttemptBinding,
+  ): Promise<QueuedAttemptOutcome> | null {
+    if (binding.queueKey !== null && binding.queueKey !== chatId) return null;
+    const pending = this.pendingMessageSends.get(this.runSendKey(chatId, binding.turnId));
+    const observation = pending?.queuedAttempt;
+    if (
+      !observation
+      || observation.consumed
+      || !this.sameQueuedAttempt(observation.binding, binding)
+    ) return null;
+    return observation.promise;
+  }
+
+  /** Consume only after the composer durably projected this exact outcome. */
+  consumeQueuedAttempt(chatId: string, binding: QueuedAttemptBinding): boolean {
+    const key = this.runSendKey(chatId, binding.turnId);
+    const pending = this.pendingMessageSends.get(key);
+    const observation = pending?.queuedAttempt;
+    if (
+      !observation
+      || observation.consumed
+      || !observation.outcome
+      || !this.sameQueuedAttempt(observation.binding, binding)
+    ) return false;
+    observation.consumed = true;
+    pending.queuedAttempt = undefined;
+    if (pending.transportSettled) this.pendingMessageSends.delete(key);
+    return true;
+  }
+
+  private recordQueuedAttemptOutcome(
+    chatId: string,
+    turnId: string,
+    outcome: QueuedAttemptOutcome,
+  ): void {
+    const observation = this.pendingMessageSends.get(
+      this.runSendKey(chatId, turnId),
+    )?.queuedAttempt;
+    if (!observation || observation.outcome) return;
+    observation.outcome = outcome;
+    observation.resolve(outcome);
   }
 
   private clearPendingMessageSend(chatId: string, turnId: string): void {
     const key = this.runSendKey(chatId, turnId);
-    this.pendingMessageSends.delete(key);
+    const pending = this.pendingMessageSends.get(key);
+    if (pending?.queuedAttempt && !pending.queuedAttempt.consumed) {
+      pending.transportSettled = true;
+      // It no longer participates in transport rejection attribution or run
+      // activity, but its typed queue receipt remains joinable until consumed.
+      pending.state = "queued";
+    } else {
+      this.pendingMessageSends.delete(key);
+    }
     this.socketPendingMessageSendKeys.delete(key);
     this.sendQueue = this.sendQueue.filter((frame) => !(
       frame.type === "message"
@@ -1549,6 +1667,10 @@ export class NanobotClient {
       console.log("[nanobot ws inbound]", summarizeInboundWsPayload(parsed));
     }
 
+    const receivedTurnId = "turn_id" in parsed && typeof parsed.turn_id === "string"
+      ? parsed.turn_id
+      : null;
+
     if (parsed.event === "error" && parsed.request_id) {
       const pending = this.pendingAttachmentUploads.get(parsed.request_id);
       if (pending) {
@@ -1625,6 +1747,11 @@ export class NanobotClient {
     const correlatedChatId = (parsed as { chat_id?: string }).chat_id;
     const completedTurnEvent = correlatedChatId !== undefined
       && this.isCanonicalCompletedTurnEvent(correlatedChatId, parsed);
+    if (parsed.event === "message_admitted" && correlatedChatId && receivedTurnId) {
+      // Exact owner receipts remain valid after canonical activity completion;
+      // this repairs the attempt without reviving the retired run below.
+      this.recordQueuedAttemptOutcome(correlatedChatId, receivedTurnId, { kind: "admitted" });
+    }
     if (parsed.event === "message_admitted") {
       // An exact late receipt still repairs its own attempt/queue after the
       // activity fence, but must not reinstall that old run as the live owner.
@@ -1650,6 +1777,27 @@ export class NanobotClient {
     // Output proof is useful only while the live activity still accepts it.
     // Filtering later would consume UNKNOWN invisibly behind the UI fence.
     if (completedTurnEvent && parsed.event !== "error") return;
+    if (correlatedChatId && receivedTurnId) {
+      if (
+        parsed.event === "goal_status"
+        && parsed.status === "running"
+        && typeof parsed.started_at === "number"
+      ) {
+        // Use the exact running proof accepted by the stream hook, and only
+        // after the canonical completion fence above has permitted the event.
+        this.recordQueuedAttemptOutcome(correlatedChatId, receivedTurnId, { kind: "admitted" });
+      } else if (
+        parsed.event === "error"
+        && parsed.detail === "not_admitted"
+        && typeof parsed.reason === "string"
+        && parsed.reason.trim()
+      ) {
+        this.recordQueuedAttemptOutcome(correlatedChatId, receivedTurnId, {
+          kind: "not_admitted",
+          reason: parsed.reason.trim(),
+        });
+      }
+    }
     if (parsed.event === "message_accepted" || parsed.event === "user_message") {
       this.recordCanonicalTurnOwnership(parsed);
     }

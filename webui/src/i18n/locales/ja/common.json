@@ -1223,6 +1223,7 @@
       "placeholderOpening": "新しいトピックを開いています…",
       "placeholderStreaming": "モデルが応答しています…",
       "queueGuidance": "キューに追加",
+      "queuePersistenceError": "キュー内のメッセージを安全に保存できませんでした。送信する前にもう一度お試しください。",
       "inputAria": "メッセージ入力欄",
       "inputAriaFor": "{{title}} へのメッセージ",
       "sendHint": "Enter で送信 · Shift+Enter で改行",

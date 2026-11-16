@@ -101,6 +101,10 @@ import type {
   SendOptions,
   SubmittedTurn,
 } from "@/hooks/useNanobotStream";
+import type {
+  QueuedAttemptBinding,
+  QueuedAttemptOutcome,
+} from "@/lib/nanobot-client";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
 import { getMobileRuntime } from "@/lib/mobile-runtime";
 import type {
@@ -149,14 +153,6 @@ function formatBytes(n: number): string {
 
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
-}
-
-function isSubmittedTurn(value: unknown): value is SubmittedTurn {
-  return (
-    typeof value === "object"
-    && value !== null
-    && typeof (value as { turnId?: unknown }).turnId === "string"
-  );
 }
 
 function isVoiceShortcutDown(event: KeyboardEvent): boolean {
@@ -213,6 +209,10 @@ interface ThreadComposerProps {
     images?: SendAttachment[],
     options?: SendOptions,
   ) => SubmittedTurn | null | boolean | void | Promise<boolean | void>;
+  onJoinQueuedAttempt?: (
+    binding: QueuedAttemptBinding,
+  ) => Promise<QueuedAttemptOutcome> | null;
+  onConsumeQueuedAttempt?: (binding: QueuedAttemptBinding) => boolean;
   /** A queued send lost its admission and should return to the waiting stack. */
   admissionRejectedTurn?: { turnId: string; reason?: string } | null;
   onAdmissionRejectedPromptRestored?: (turnId: string) => void;
@@ -354,10 +354,22 @@ interface SlashPaletteLayout {
 interface QueuedPrompt {
   id: string;
   text: string;
+  submission: QueuedPromptSubmission;
   images?: QueuedPromptImage[];
   quotedContext?: string;
   sessionMentions?: SessionMention[];
 }
+
+type QueuedPromptSubmission =
+  | { version: 1; state: "ready" }
+  | { version: 1; state: "submitted"; binding: QueuedAttemptBinding }
+  | {
+      version: 1;
+      state: "not_admitted";
+      binding: QueuedAttemptBinding;
+      reason: string;
+    }
+  | { version: 1; state: "unknown" };
 
 interface QueuedPromptImage {
   dataUrl: string;
@@ -504,6 +516,45 @@ function normalizeQueuedSessionMentions(value: unknown): SessionMention[] {
   }).slice(0, SESSION_MENTIONS_LIMIT);
 }
 
+function normalizeQueuedAttemptBinding(value: unknown, promptId: string): QueuedAttemptBinding | null {
+  if (!value || typeof value !== "object") return null;
+  const binding = value as Partial<QueuedAttemptBinding>;
+  if (
+    (binding.queueKey !== null && typeof binding.queueKey !== "string")
+    || binding.promptId !== promptId
+    || typeof binding.turnId !== "string"
+    || !binding.turnId.trim()
+  ) return null;
+  return {
+    queueKey: binding.queueKey,
+    promptId,
+    turnId: binding.turnId,
+  };
+}
+
+function normalizeQueuedPromptSubmission(value: unknown, promptId: string): QueuedPromptSubmission {
+  if (!value || typeof value !== "object") return { version: 1, state: "unknown" };
+  const candidate = value as {
+    version?: unknown;
+    state?: unknown;
+    binding?: unknown;
+    reason?: unknown;
+  };
+  if (candidate.version !== 1) return { version: 1, state: "unknown" };
+  if (candidate.state === "ready") return { version: 1, state: "ready" };
+  if (candidate.state === "unknown") return { version: 1, state: "unknown" };
+  if (candidate.state !== "submitted" && candidate.state !== "not_admitted") {
+    return { version: 1, state: "unknown" };
+  }
+  const binding = normalizeQueuedAttemptBinding(candidate.binding, promptId);
+  if (!binding) return { version: 1, state: "unknown" };
+  if (candidate.state === "submitted") return { version: 1, state: "submitted", binding };
+  const reason = typeof candidate.reason === "string" ? candidate.reason.trim().slice(0, 512) : "";
+  return reason
+    ? { version: 1, state: "not_admitted", binding, reason }
+    : { version: 1, state: "unknown" };
+}
+
 function normalizeQueuedPrompt(item: unknown, index: number): QueuedPrompt | null {
   if (!item || typeof item !== "object") return null;
   const record = item as Partial<QueuedPrompt>;
@@ -541,6 +592,7 @@ function normalizeQueuedPrompt(item: unknown, index: number): QueuedPrompt | nul
   return {
     id,
     text,
+    submission: normalizeQueuedPromptSubmission(record.submission, id),
     ...(images.length > 0 ? { images } : {}),
     ...(quotedContext ? { quotedContext } : {}),
     ...(sessionMentions.length > 0 ? { sessionMentions } : {}),
@@ -555,36 +607,43 @@ function readQueuedPrompts(storageKey: string): QueuedPrompt[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((item, index) => normalizeQueuedPrompt(item, index))
-      .filter((item): item is QueuedPrompt => item != null)
-      .slice(0, QUEUED_PROMPTS_LIMIT);
+      .filter((item): item is QueuedPrompt => item != null);
   } catch {
     return [];
   }
 }
 
-function storeQueuedPrompts(storageKey: string, prompts: QueuedPrompt[]): void {
-  if (typeof window === "undefined") return;
+function storeQueuedPrompts(storageKey: string, prompts: QueuedPrompt[]): boolean {
+  if (typeof window === "undefined" || prompts.length > QUEUED_PROMPTS_LIMIT) return false;
   try {
     if (prompts.length === 0) {
       window.localStorage.removeItem(storageKey);
-      return;
+      return window.localStorage.getItem(storageKey) === null;
     }
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify(
-        prompts.slice(0, QUEUED_PROMPTS_LIMIT).map((prompt) => ({
-          id: prompt.id,
-          text: prompt.text.slice(0, QUEUED_PROMPT_MAX_CHARS),
-          ...(prompt.images?.length ? { images: prompt.images.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) } : {}),
-          ...(prompt.quotedContext ? { quotedContext: prompt.quotedContext } : {}),
-          ...(prompt.sessionMentions?.length
-            ? { sessionMentions: prompt.sessionMentions.slice(0, SESSION_MENTIONS_LIMIT) }
-            : {}),
-        })),
-      ),
-    );
+    const serialized = JSON.stringify(prompts.map((prompt) => ({
+      id: prompt.id,
+      text: prompt.text.slice(0, QUEUED_PROMPT_MAX_CHARS),
+      ...(prompt.images?.length ? { images: prompt.images.slice(0, MAX_ATTACHMENTS_PER_MESSAGE) } : {}),
+      ...(prompt.quotedContext ? { quotedContext: prompt.quotedContext } : {}),
+      ...(prompt.sessionMentions?.length
+        ? { sessionMentions: prompt.sessionMentions.slice(0, SESSION_MENTIONS_LIMIT) }
+        : {}),
+      submission: prompt.submission,
+    })));
+    window.localStorage.setItem(storageKey, serialized);
+    const stored = window.localStorage.getItem(storageKey);
+    if (stored !== serialized) return false;
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed) || parsed.length !== prompts.length) return false;
+    return parsed.every((item, index) => {
+      if (!item || typeof item !== "object") return false;
+      const candidate = item as { id?: unknown; submission?: unknown };
+      const expected = prompts[index];
+      return candidate.id === expected?.id
+        && JSON.stringify(candidate.submission) === JSON.stringify(expected.submission);
+    });
   } catch {
-    // localStorage persistence is a convenience; the in-memory queue still works.
+    return false;
   }
 }
 
@@ -936,6 +995,8 @@ function GoalStateStrip({
 
 export function ThreadComposer({
   onSend,
+  onJoinQueuedAttempt,
+  onConsumeQueuedAttempt,
   admissionRejectedTurn = null,
   onAdmissionRejectedPromptRestored,
   disabled,
@@ -1019,6 +1080,7 @@ export function ThreadComposer({
   const [cursorPosition, setCursorPosition] = useState(0);
   const [recentSlashCommands, setRecentSlashCommands] = useState<string[]>(() => readSlashRecents());
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
+  const queuedPromptsRef = useRef<QueuedPrompt[]>([]);
   const [awaitingConfirmationPromptIds, setAwaitingConfirmationPromptIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1031,17 +1093,16 @@ export function ThreadComposer({
   // Only the prompt queued by the immediately preceding Enter can use the second-Enter shortcut.
   const secondEnterPromptIdRef = useRef<string | null>(null);
   const draggedQueuedPromptIdRef = useRef<string | null>(null);
-  const queuedSendSnapshotsRef = useRef(new Map<string, QueuedPrompt>());
-  const unresolvedQueuedSendTurnIdsRef = useRef(new Set<string>());
   const heldQueuedPromptIdsRef = useRef(new Set<string>());
   const awaitingConfirmationPromptIdsRef = useRef(new Set<string>());
   const queuedSubmissionInProgressRef = useRef(new Set<string>());
+  const queuedAttemptJoinKeysRef = useRef(new Set<string>());
+  const queueViewGenerationRef = useRef(0);
   const currentPendingQueueKeyRef = useRef(pendingQueueKey);
   currentPendingQueueKeyRef.current = pendingQueueKey;
   const previousPendingQueueKeyRef = useRef(pendingQueueKey);
   const wasStreamingRef = useRef(isStreaming);
   const skipNextQueuedFlushRef = useRef(false);
-  const skipQueuedPromptPersistRef = useRef(false);
   const voiceShortcutDownRef = useRef(false);
   const voiceErrorFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isHero = variant === "hero";
@@ -1066,53 +1127,127 @@ export function ThreadComposer({
       return next;
     });
   }, []);
+
+  const commitQueuedPrompts = useCallback((next: QueuedPrompt[]): boolean => {
+    if (next === queuedPromptsRef.current) return true;
+    if (queuedPromptStorageKey && !storeQueuedPrompts(queuedPromptStorageKey, next)) {
+      setInlineError(t("thread.composer.queuePersistenceError", {
+        defaultValue: "Queued messages could not be saved safely. Try again before sending.",
+      }));
+      return false;
+    }
+    queuedPromptsRef.current = next;
+    setQueuedPrompts(next);
+    return true;
+  }, [queuedPromptStorageKey, t]);
+
+  const applyQueuedAttemptOutcome = useCallback((
+    binding: QueuedAttemptBinding,
+    outcome: QueuedAttemptOutcome,
+  ) => {
+    if (currentPendingQueueKeyRef.current !== binding.queueKey) return;
+    const current = queuedPromptsRef.current;
+    const promptIndex = current.findIndex((prompt) => (
+      prompt.id === binding.promptId
+      && prompt.submission.state === "submitted"
+      && prompt.submission.binding.queueKey === binding.queueKey
+      && prompt.submission.binding.promptId === binding.promptId
+      && prompt.submission.binding.turnId === binding.turnId
+    ));
+    if (promptIndex < 0) return;
+    const prompt = current[promptIndex];
+    if (!prompt) return;
+    const next = outcome.kind === "admitted"
+      ? current.filter((item) => item.id !== binding.promptId)
+      : current.map((item, index) => index === promptIndex
+          ? {
+              ...item,
+              submission: {
+                version: 1 as const,
+                state: "not_admitted" as const,
+                binding,
+                reason: outcome.reason,
+              },
+            }
+          : item);
+    if (!commitQueuedPrompts(next)) return;
+    setPromptAwaitingConfirmation(prompt.id, binding.queueKey, false);
+    heldQueuedPromptIdsRef.current.delete(prompt.id);
+    onConsumeQueuedAttempt?.(binding);
+    if (outcome.kind === "not_admitted") {
+      onAdmissionRejectedPromptRestored?.(binding.turnId);
+    }
+  }, [
+    commitQueuedPrompts,
+    onAdmissionRejectedPromptRestored,
+    onConsumeQueuedAttempt,
+    setPromptAwaitingConfirmation,
+  ]);
+
+  const observeQueuedAttempt = useCallback((binding: QueuedAttemptBinding) => {
+    if (!onJoinQueuedAttempt) return;
+    const joinKey = JSON.stringify(binding);
+    if (queuedAttemptJoinKeysRef.current.has(joinKey)) return;
+    const joined = onJoinQueuedAttempt(binding);
+    if (!joined) return;
+    queuedAttemptJoinKeysRef.current.add(joinKey);
+    const generation = queueViewGenerationRef.current;
+    void joined.then((outcome) => {
+      if (queueViewGenerationRef.current !== generation) return;
+      applyQueuedAttemptOutcome(binding, outcome);
+    }).catch(() => {
+      // Lost observation remains held; only an exact owner outcome can unlock it.
+    });
+  }, [applyQueuedAttemptOutcome, onJoinQueuedAttempt]);
+
+  useEffect(() => {
+    const generation = ++queueViewGenerationRef.current;
+    secondEnterPromptIdRef.current = null;
+    heldQueuedPromptIdsRef.current.clear();
+    awaitingConfirmationPromptIdsRef.current.clear();
+    queuedSubmissionInProgressRef.current.clear();
+    queuedAttemptJoinKeysRef.current.clear();
+    const restored = queuedPromptStorageKey ? readQueuedPrompts(queuedPromptStorageKey) : [];
+    queuedPromptsRef.current = restored;
+    setQueuedPrompts(restored);
+    const awaiting = new Set<string>();
+    for (const prompt of restored) {
+      if (prompt.submission.state === "submitted" || prompt.submission.state === "unknown") {
+        awaiting.add(prompt.id);
+        heldQueuedPromptIdsRef.current.add(prompt.id);
+      }
+    }
+    awaitingConfirmationPromptIdsRef.current = awaiting;
+    setAwaitingConfirmationPromptIds(awaiting);
+    return () => {
+      if (queueViewGenerationRef.current === generation) queueViewGenerationRef.current += 1;
+    };
+  }, [pendingQueueKey, queuedPromptStorageKey]);
+
+  useEffect(() => {
+    for (const prompt of queuedPrompts) {
+      if (prompt.submission.state === "submitted") {
+        observeQueuedAttempt(prompt.submission.binding);
+      }
+    }
+  }, [observeQueuedAttempt, queuedPrompts]);
+
+  useEffect(() => {
+    const rejectedTurnId = admissionRejectedTurn?.turnId;
+    const reason = admissionRejectedTurn?.reason?.trim();
+    if (!rejectedTurnId || !reason) return;
+    const prompt = queuedPromptsRef.current.find((item) => (
+      item.submission.state === "submitted"
+      && item.submission.binding.turnId === rejectedTurnId
+    ));
+    if (!prompt || prompt.submission.state !== "submitted") return;
+    applyQueuedAttemptOutcome(prompt.submission.binding, { kind: "not_admitted", reason });
+  }, [admissionRejectedTurn?.reason, admissionRejectedTurn?.turnId, applyQueuedAttemptOutcome]);
+
   const projectPickerAvailable =
     !!workspaceDefaultScope
     && !!onWorkspaceScopeChange;
   const showWorkspacePicker = projectPickerAvailable && !workspaceControlsHidden;
-
-  useEffect(() => {
-    secondEnterPromptIdRef.current = null;
-    skipQueuedPromptPersistRef.current = true;
-    heldQueuedPromptIdsRef.current.clear();
-    awaitingConfirmationPromptIdsRef.current.clear();
-    queuedSubmissionInProgressRef.current.clear();
-    queuedSendSnapshotsRef.current.clear();
-    unresolvedQueuedSendTurnIdsRef.current.clear();
-    setAwaitingConfirmationPromptIds(new Set());
-    setQueuedPrompts(queuedPromptStorageKey ? readQueuedPrompts(queuedPromptStorageKey) : []);
-  }, [pendingQueueKey, queuedPromptStorageKey]);
-
-  useEffect(() => {
-    if (!queuedPromptStorageKey) return;
-    if (skipQueuedPromptPersistRef.current) {
-      skipQueuedPromptPersistRef.current = false;
-      return;
-    }
-    storeQueuedPrompts(queuedPromptStorageKey, queuedPrompts);
-  }, [queuedPromptStorageKey, queuedPrompts]);
-
-  useEffect(() => {
-    const rejectedTurnId = admissionRejectedTurn?.turnId;
-    if (!rejectedTurnId) return;
-    const prompt = queuedSendSnapshotsRef.current.get(rejectedTurnId);
-    if (!prompt) return;
-    queuedSendSnapshotsRef.current.delete(rejectedTurnId);
-    unresolvedQueuedSendTurnIdsRef.current.delete(rejectedTurnId);
-    setPromptAwaitingConfirmation(prompt.id, currentPendingQueueKeyRef.current, false);
-    // A busy target or replaced steering turn cannot accept this prompt yet.
-    // Keep its full settings in the waiting stack and only retry on an
-    // explicit user action, never on the next idle transition.
-    heldQueuedPromptIdsRef.current.add(prompt.id);
-    setQueuedPrompts((items) => (
-      items.some((item) => item.id === prompt.id) ? items : [...items, prompt]
-    ));
-    onAdmissionRejectedPromptRestored?.(rejectedTurnId);
-  }, [
-    admissionRejectedTurn?.turnId,
-    onAdmissionRejectedPromptRestored,
-    setPromptAwaitingConfirmation,
-  ]);
 
   const resolvedPlaceholder = isStreaming
     ? t("thread.composer.placeholderStreaming")
@@ -1921,19 +2056,18 @@ export function ThreadComposer({
     const queuedImages = readyImagesToQueuedImages(readyImages);
     queuedPromptCounterRef.current += 1;
     const id = `queued-prompt-${Date.now()}-${queuedPromptCounterRef.current}`;
+    const prompt: QueuedPrompt = {
+      id,
+      text,
+      submission: { version: 1, state: "ready" },
+      ...(queuedImages.length > 0 ? { images: queuedImages } : {}),
+      ...(normalizedQuotedContext ? { quotedContext: normalizedQuotedContext } : {}),
+      ...(activeSessionMentions.length > 0
+        ? { sessionMentions: activeSessionMentions }
+        : {}),
+    };
+    if (!commitQueuedPrompts([...queuedPromptsRef.current, prompt])) return;
     secondEnterPromptIdRef.current = id;
-    setQueuedPrompts((items) => [
-      ...items,
-      {
-        id,
-        text,
-        ...(queuedImages.length > 0 ? { images: queuedImages } : {}),
-        ...(normalizedQuotedContext ? { quotedContext: normalizedQuotedContext } : {}),
-        ...(activeSessionMentions.length > 0
-          ? { sessionMentions: activeSessionMentions }
-          : {}),
-      },
-    ]);
     clear();
     clearComposerText();
     onQuotedContextChange?.(null);
@@ -1942,6 +2076,7 @@ export function ThreadComposer({
     canQueueGuidance,
     clear,
     clearComposerText,
+    commitQueuedPrompts,
     maxTextBytes,
     normalizedQuotedContext,
     onQuotedContextChange,
@@ -1951,25 +2086,37 @@ export function ThreadComposer({
   ]);
 
   const removeQueuedPrompt = useCallback((id: string) => {
+    const current = queuedPromptsRef.current;
+    const prompt = current.find((item) => item.id === id);
+    if (!prompt || prompt.submission.state === "submitted" || prompt.submission.state === "unknown") {
+      return;
+    }
     secondEnterPromptIdRef.current = null;
+    if (!commitQueuedPrompts(current.filter((item) => item.id !== id))) return;
     heldQueuedPromptIdsRef.current.delete(id);
-    setQueuedPrompts((items) => items.filter((item) => item.id !== id));
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
+  }, [commitQueuedPrompts]);
 
   const editQueuedPrompt = useCallback((prompt: QueuedPrompt) => {
+    const current = queuedPromptsRef.current;
+    const livePrompt = current.find((item) => item.id === prompt.id);
+    if (
+      !livePrompt
+      || livePrompt.submission.state === "submitted"
+      || livePrompt.submission.state === "unknown"
+    ) return;
     secondEnterPromptIdRef.current = null;
+    if (!commitQueuedPrompts(current.filter((item) => item.id !== prompt.id))) return;
     heldQueuedPromptIdsRef.current.delete(prompt.id);
-    setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-    setValue(prompt.text);
-    setSelectedSessionMentions(prompt.sessionMentions ?? []);
+    setValue(livePrompt.text);
+    setSelectedSessionMentions(livePrompt.sessionMentions ?? []);
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
     setCursorPosition(prompt.text.length);
-    onQuotedContextChange?.(prompt.quotedContext ?? null);
-    if (prompt.images?.length) {
-      restoreReadyImages(prompt.images as RestoredReadyImage[]);
+    onQuotedContextChange?.(livePrompt.quotedContext ?? null);
+    if (livePrompt.images?.length) {
+      restoreReadyImages(livePrompt.images as RestoredReadyImage[]);
     } else {
       clear();
     }
@@ -1978,150 +2125,106 @@ export function ThreadComposer({
       const el = textareaRef.current;
       if (!el) return;
       el.focus();
-      el.setSelectionRange(prompt.text.length, prompt.text.length);
+      el.setSelectionRange(livePrompt.text.length, livePrompt.text.length);
     });
-  }, [clear, onQuotedContextChange, resizeTextarea, restoreReadyImages]);
+  }, [clear, commitQueuedPrompts, onQuotedContextChange, resizeTextarea, restoreReadyImages]);
 
   const moveQueuedPrompt = useCallback((dragId: string, targetId: string) => {
     if (dragId === targetId) return;
-    if (
-      awaitingConfirmationPromptIdsRef.current.has(dragId)
-      || awaitingConfirmationPromptIdsRef.current.has(targetId)
-    ) return;
+    const current = queuedPromptsRef.current;
+    const dragPrompt = current.find((item) => item.id === dragId);
+    const targetPrompt = current.find((item) => item.id === targetId);
+    if (!dragPrompt || !targetPrompt) return;
+    if (dragPrompt.submission.state === "submitted" || dragPrompt.submission.state === "unknown") return;
+    if (targetPrompt.submission.state === "submitted" || targetPrompt.submission.state === "unknown") return;
     secondEnterPromptIdRef.current = null;
-    setQueuedPrompts((items) => {
-      if (
-        awaitingConfirmationPromptIdsRef.current.has(dragId)
-        || awaitingConfirmationPromptIdsRef.current.has(targetId)
-      ) return items;
-      const from = items.findIndex((item) => item.id === dragId);
-      const to = items.findIndex((item) => item.id === targetId);
-      if (from === -1 || to === -1) return items;
-      const next = [...items];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
-  }, []);
+    const from = current.findIndex((item) => item.id === dragId);
+    const to = current.findIndex((item) => item.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...current];
+    const [moved] = next.splice(from, 1);
+    if (!moved) return;
+    next.splice(to, 0, moved);
+    commitQueuedPrompts(next);
+  }, [commitQueuedPrompts]);
 
-  const rememberQueuedSend = useCallback((
-    submitted: SubmittedTurn,
-    prompt: QueuedPrompt,
-    awaitingOwnerConfirmation: boolean,
-  ) => {
-    const snapshots = queuedSendSnapshotsRef.current;
-    snapshots.set(submitted.turnId, prompt);
-    if (awaitingOwnerConfirmation) {
-      unresolvedQueuedSendTurnIdsRef.current.add(submitted.turnId);
-    }
-    // Unknown in-flight attempts stay correlated until an owner receipt or an
-    // authoritative refusal. Bound only legacy submissions that have no
-    // admission promise and cannot remain unresolved in this queue projection.
-    const legacyTurnIds = [...snapshots.keys()].filter(
-      (turnId) => !unresolvedQueuedSendTurnIdsRef.current.has(turnId),
-    );
-    while (legacyTurnIds.length > 5) {
-      const oldest = legacyTurnIds.shift();
-      if (oldest === undefined) break;
-      snapshots.delete(oldest);
-    }
-  }, []);
-
-  /**
-   * A queued item leaves the queue only when the send producer proves
-   * admission. A route-level acceptance is not proof; the producer returns an
-   * admission promise that resolves on the owner receipt. While it is pending
-   * the item stays at the head and is held against automatic resubmission.
-   */
-  const settleQueuedSubmission = useCallback((
-    submitted: SubmittedTurn | boolean | null | void | Promise<boolean | void>,
-    prompt: QueuedPrompt,
-    queueKey: string | null,
-  ) => {
-    if (!isSubmittedTurn(submitted)) {
-      if (submitted === null || submitted === false) return;
-      if (currentPendingQueueKeyRef.current !== queueKey) return;
-      setPromptAwaitingConfirmation(prompt.id, queueKey, false);
-      heldQueuedPromptIdsRef.current.delete(prompt.id);
-      setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-      return;
-    }
-    const admission = submitted.admission;
-    rememberQueuedSend(submitted, prompt, !!admission);
-    if (!admission) {
-      if (currentPendingQueueKeyRef.current !== queueKey) return;
-      setPromptAwaitingConfirmation(prompt.id, queueKey, false);
-      heldQueuedPromptIdsRef.current.delete(prompt.id);
-      setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-      return;
-    }
-    void admission.then((admitted) => {
-      if (!admitted) return;
-      if (currentPendingQueueKeyRef.current !== queueKey) return;
-      queuedSendSnapshotsRef.current.delete(submitted.turnId);
-      unresolvedQueuedSendTurnIdsRef.current.delete(submitted.turnId);
-      setPromptAwaitingConfirmation(prompt.id, queueKey, false);
-      heldQueuedPromptIdsRef.current.delete(prompt.id);
-      setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
-    }).catch(() => {
-      // An unresolved attempt stays held; never resubmit it automatically.
-    });
-  }, [rememberQueuedSend, setPromptAwaitingConfirmation]);
+  const prepareQueuedPrompt = useCallback((promptId: string): {
+    prompt: QueuedPrompt;
+    binding: QueuedAttemptBinding;
+  } | null => {
+    const queueKey = currentPendingQueueKeyRef.current;
+    const current = queuedPromptsRef.current;
+    const prompt = current.find((item) => item.id === promptId);
+    if (
+      !prompt
+      || (prompt.submission.state !== "ready" && prompt.submission.state !== "not_admitted")
+    ) return null;
+    const binding: QueuedAttemptBinding = {
+      queueKey,
+      promptId: prompt.id,
+      turnId: crypto.randomUUID(),
+    };
+    const next = current.map((item) => item.id === prompt.id
+      ? {
+          ...item,
+          submission: { version: 1 as const, state: "submitted" as const, binding },
+        }
+      : item);
+    if (!commitQueuedPrompts(next)) return null;
+    const protectedPrompt = next.find((item) => item.id === prompt.id);
+    if (!protectedPrompt) return null;
+    heldQueuedPromptIdsRef.current.add(prompt.id);
+    setPromptAwaitingConfirmation(prompt.id, queueKey, true);
+    return { prompt: protectedPrompt, binding };
+  }, [commitQueuedPrompts, setPromptAwaitingConfirmation]);
 
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt) => {
       if (
         workspaceFullRetiring
-        || awaitingConfirmationPromptIdsRef.current.has(prompt.id)
         || queuedSubmissionInProgressRef.current.has(prompt.id)
       ) return;
       queuedSubmissionInProgressRef.current.add(prompt.id);
       requestAnimationFrame(() => queuedSubmissionInProgressRef.current.delete(prompt.id));
-      const queueKey = currentPendingQueueKeyRef.current;
       secondEnterPromptIdRef.current = null;
-      heldQueuedPromptIdsRef.current.add(prompt.id);
-      setPromptAwaitingConfirmation(prompt.id, queueKey, true);
-      const text = prompt.text.trim();
-      const queuedImages = queuedImagesToSendImages(prompt.images);
+      const prepared = prepareQueuedPrompt(prompt.id);
+      if (!prepared) return;
+      const { prompt: protectedPrompt, binding } = prepared;
+      const text = protectedPrompt.text.trim();
+      const queuedImages = queuedImagesToSendImages(protectedPrompt.images);
       if (text || queuedImages?.length) {
-        const options: SendOptions | undefined = (
-          prompt.quotedContext
-          || prompt.sessionMentions?.length
-          || isStreaming
-        )
-          ? {
-              ...(prompt.quotedContext ? { quotedContext: prompt.quotedContext } : {}),
-              ...(prompt.sessionMentions?.length
-                ? { sessionMentions: prompt.sessionMentions }
-                : {}),
-              ...(isStreaming ? { continueActiveTurn: true } : {}),
-            }
-          : undefined;
-        let submitted: SubmittedTurn | null | boolean | void | Promise<boolean | void>;
+        const options: SendOptions = {
+          ...(protectedPrompt.quotedContext
+            ? { quotedContext: protectedPrompt.quotedContext }
+            : {}),
+          ...(protectedPrompt.sessionMentions?.length
+            ? { sessionMentions: protectedPrompt.sessionMentions }
+            : {}),
+          ...(isStreaming ? { continueActiveTurn: true } : {}),
+          queuedAttempt: binding,
+        };
         try {
-          submitted = onSend(text, queuedImages, options);
+          const submitted = onSend(text, queuedImages, options);
+          if (submitted instanceof Promise) {
+            void submitted.catch(() => {
+              // Generic boolean failures never change the persisted hold.
+            });
+          }
         } catch {
-          // A local transport failure keeps this exact item, held.
+          // The protected row stays held when its send owner is unavailable.
           requestAnimationFrame(() => textareaRef.current?.focus());
+          observeQueuedAttempt(binding);
           return;
         }
-        if (submitted === false || submitted === null) {
-          requestAnimationFrame(() => textareaRef.current?.focus());
-          return;
-        }
-        settleQueuedSubmission(submitted, prompt, queueKey);
-      } else {
-        setPromptAwaitingConfirmation(prompt.id, queueKey, false);
-        heldQueuedPromptIdsRef.current.delete(prompt.id);
-        setQueuedPrompts((items) => items.filter((item) => item.id !== prompt.id));
+        observeQueuedAttempt(binding);
       }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
     [
       isStreaming,
       onSend,
-      setPromptAwaitingConfirmation,
-      settleQueuedSubmission,
+      observeQueuedAttempt,
+      prepareQueuedPrompt,
       workspaceFullRetiring,
     ],
   );
@@ -2129,59 +2232,15 @@ export function ThreadComposer({
   const sendNextQueuedPrompt = useCallback(() => {
     if (workspaceFullRetiring) return;
     if (queuedPrompts.length === 0) return;
-    // Queue selection accepts text, attachments, or both. Only the first
-    // eligible item is a candidate: a held head blocks later items instead of
-    // letting them skip ahead.
+    // The first row blocks later rows unless it is explicitly never-dispatched.
     const nextPrompt = queuedPrompts.find(
       (prompt) => prompt.text.trim().length > 0 || (prompt.images?.length ?? 0) > 0,
     );
-    if (!nextPrompt || heldQueuedPromptIdsRef.current.has(nextPrompt.id)) return;
-    if (awaitingConfirmationPromptIdsRef.current.has(nextPrompt.id)) return;
-    if (queuedSubmissionInProgressRef.current.has(nextPrompt.id)) return;
-    queuedSubmissionInProgressRef.current.add(nextPrompt.id);
-    requestAnimationFrame(() => queuedSubmissionInProgressRef.current.delete(nextPrompt.id));
-    const queueKey = currentPendingQueueKeyRef.current;
-    heldQueuedPromptIdsRef.current.add(nextPrompt.id);
-    setPromptAwaitingConfirmation(nextPrompt.id, queueKey, true);
-    const queuedImages = queuedImagesToSendImages(nextPrompt.images);
-    const options: SendOptions | undefined = (
-      nextPrompt.quotedContext
-      || nextPrompt.sessionMentions?.length
-    )
-      ? {
-          ...(nextPrompt.quotedContext ? { quotedContext: nextPrompt.quotedContext } : {}),
-          ...(nextPrompt.sessionMentions?.length
-            ? { sessionMentions: nextPrompt.sessionMentions }
-            : {}),
-        }
-      : undefined;
-    let submitted: SubmittedTurn | null | boolean | void | Promise<boolean | void>;
-    try {
-      if (queuedImages?.length && options) {
-        submitted = onSend(nextPrompt.text.trim(), queuedImages, options);
-      } else if (queuedImages?.length) {
-        submitted = onSend(nextPrompt.text.trim(), queuedImages);
-      } else if (options) {
-        submitted = onSend(nextPrompt.text.trim(), undefined, options);
-      } else {
-        submitted = onSend(nextPrompt.text.trim());
-      }
-    } catch {
-      // A local transport failure keeps this exact item, held.
-      requestAnimationFrame(() => textareaRef.current?.focus());
-      return;
-    }
-    if (submitted === false || submitted === null) {
-      requestAnimationFrame(() => textareaRef.current?.focus());
-      return;
-    }
-    settleQueuedSubmission(submitted, nextPrompt, queueKey);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    if (!nextPrompt || nextPrompt.submission.state !== "ready") return;
+    sendQueuedPrompt(nextPrompt);
   }, [
-    onSend,
     queuedPrompts,
-    setPromptAwaitingConfirmation,
-    settleQueuedSubmission,
+    sendQueuedPrompt,
     workspaceFullRetiring,
   ]);
 
@@ -2264,8 +2323,8 @@ export function ThreadComposer({
       && onStop
     ) {
       handleStop();
-      setQueuedPrompts((items) => items.filter((item) => (
-        awaitingConfirmationPromptIdsRef.current.has(item.id)
+      commitQueuedPrompts(queuedPromptsRef.current.filter((item) => (
+        item.submission.state !== "ready"
       )));
       clear();
       clearComposerText();
@@ -2277,8 +2336,8 @@ export function ThreadComposer({
       slashLifecycle === "finalize_active_turn";
     const finishSend = () => {
       if (hasTouchPrimaryPointer) textareaRef.current?.blur();
-      setQueuedPrompts((items) => items.filter((item) => (
-        awaitingConfirmationPromptIdsRef.current.has(item.id)
+      commitQueuedPrompts(queuedPromptsRef.current.filter((item) => (
+        item.submission.state !== "ready"
       )));
       // Bubble owns the data URL copy; safe to revoke every staged blob
       // preview here without affecting the rendered message.
@@ -2316,6 +2375,7 @@ export function ThreadComposer({
     activeSessionMentions,
     canSend,
     clear,
+    commitQueuedPrompts,
     clearComposerText,
     hasTouchPrimaryPointer,
     hasComposerContent,
@@ -2326,6 +2386,7 @@ export function ThreadComposer({
     onSend,
     onStop,
     onQuotedContextChange,
+    queuedPromptsRef,
     normalizedQuotedContext,
     readyImages,
     slashCommands,

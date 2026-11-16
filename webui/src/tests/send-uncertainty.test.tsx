@@ -296,9 +296,12 @@ describe("UNKNOWN queue and independent draft projection", () => {
     await preloadMarkdownText();
     const chatId = "queue-idle-history";
     const storageKey = `nanobot.webui.composerQueuedGuidance.v1:${chatId}`;
-    const original = { id: "original-queued", text: "original queued input",
+    const ready = { version: 1, state: "ready" } as const;
+    const original = { id: "original-queued", text: "original queued input", submission: ready,
       sessionMentions: [{ name: "context", session_key: "websocket:reference", title: "Reference" }] };
-    localStorage.setItem(storageKey, JSON.stringify([original, { id: "next-queued", text: "later queued input" }]));
+    localStorage.setItem(storageKey, JSON.stringify([original, {
+      id: "next-queued", text: "later queued input", submission: ready,
+    }]));
     let canonical: UIMessage[] = [];
     let historyReads = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -348,7 +351,14 @@ describe("UNKNOWN queue and independent draft projection", () => {
     expect(within(queue).getByRole("status")).toHaveTextContent("Awaiting confirmation");
     expect(screen.getByLabelText("Message input")).toHaveValue("rich independent draft");
     expect(screen.getByText("draft.txt")).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(storageKey)!)[0]).toEqual(original);
+    expect(JSON.parse(localStorage.getItem(storageKey)!)[0]).toMatchObject({
+      ...original,
+      submission: {
+        version: 1,
+        state: "submitted",
+        binding: { queueKey: chatId, promptId: original.id, turnId: attempt.turn_id },
+      },
+    });
     expect(screen.queryByText("Working")).not.toBeInTheDocument();
     if (action === "independent send") {
       fireEvent.click(screen.getByRole("button", { name: "Send message" }));

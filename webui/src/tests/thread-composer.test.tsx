@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import { SESSION_DRAG_TYPE } from "@/lib/session-drag";
+import type { QueuedAttemptBinding, QueuedAttemptOutcome } from "@/lib/nanobot-client";
 import {
   installMobileRuntime,
   resetMobileRuntime,
@@ -47,6 +48,43 @@ const COMMANDS: SlashCommand[] = [
     acceptsArgs: true,
   },
 ];
+
+function queuedOwnerTestAdapter() {
+  const observations = new Map<string, {
+    binding: QueuedAttemptBinding;
+    outcome?: QueuedAttemptOutcome;
+    promise: Promise<QueuedAttemptOutcome>;
+    resolve: (outcome: QueuedAttemptOutcome) => void;
+    consumed: boolean;
+  }>();
+  const key = (binding: QueuedAttemptBinding) => JSON.stringify(binding);
+  return {
+    join: (binding: QueuedAttemptBinding) => {
+      const observationKey = key(binding);
+      const existing = observations.get(observationKey);
+      if (existing && !existing.consumed) return existing.promise;
+      let resolve!: (outcome: QueuedAttemptOutcome) => void;
+      const promise = new Promise<QueuedAttemptOutcome>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      observations.set(observationKey, { binding, promise, resolve, consumed: false });
+      return promise;
+    },
+    consume: vi.fn((binding: QueuedAttemptBinding) => {
+      const observation = observations.get(key(binding));
+      if (!observation || observation.consumed || !observation.outcome) return false;
+      observation.consumed = true;
+      return true;
+    }),
+    resolve: (turnId: string, outcome: QueuedAttemptOutcome = { kind: "admitted" }) => {
+      for (const observation of observations.values()) {
+        if (observation.binding.turnId !== turnId || observation.outcome) continue;
+        observation.outcome = outcome;
+        observation.resolve(outcome);
+      }
+    },
+  };
+}
 
 const CLI_APPS: CliAppInfo[] = [
   {
@@ -2634,7 +2672,7 @@ describe("ThreadComposer", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.click(screen.getByRole("button", { name: "Steer" }));
 
-    expect(onSend).toHaveBeenCalledWith("@Plan", undefined, {
+    expect(onSend).toHaveBeenCalledWith("@Plan", undefined, expect.objectContaining({
       sessionMentions: [{
         id: session("z-target", "Plan").handle?.id,
         name: "Plan",
@@ -2642,7 +2680,7 @@ describe("ThreadComposer", () => {
         title: "Plan",
       }],
       continueActiveTurn: true,
-    });
+    }));
   });
 
   it("opens skills only from a $ reference and prioritizes the skill name", () => {
@@ -3210,9 +3248,10 @@ describe("ThreadComposer", () => {
     expect(onSend).toHaveBeenCalledWith(
       "keep the UI minimal",
       undefined,
-      { continueActiveTurn: true },
+      expect.objectContaining({ continueActiveTurn: true, queuedAttempt: expect.any(Object) }),
     );
-    expect(screen.queryByText("keep the UI minimal")).not.toBeInTheDocument();
+    expect(screen.getByText("keep the UI minimal")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
   });
 
   it("queues guidance from the primary send button while a task is running", () => {
@@ -3271,10 +3310,11 @@ describe("ThreadComposer", () => {
     expect(onSend).toHaveBeenCalledWith(
       "send this guidance now",
       undefined,
-      { continueActiveTurn: true },
+      expect.objectContaining({ continueActiveTurn: true, queuedAttempt: expect.any(Object) }),
     );
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("send this guidance now")).not.toBeInTheDocument();
+    expect(screen.getByText("send this guidance now")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
   });
 
   it("disarms the second Enter shortcut when keyboard voice recording starts", async () => {
@@ -3395,19 +3435,23 @@ describe("ThreadComposer", () => {
     expect(onSend).toHaveBeenCalledWith(
       "guide this one now",
       undefined,
-      { continueActiveTurn: true },
+      expect.objectContaining({ continueActiveTurn: true, queuedAttempt: expect.any(Object) }),
     );
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(screen.getByText("older guidance")).toBeInTheDocument();
-    expect(screen.queryByText("guide this one now")).not.toBeInTheDocument();
+    expect(screen.getByText("guide this one now")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
   });
 
   it.each(["thread", "hero"] as const)("keeps queued guidance above and outside the %s input card while sending one item at a time", async (variant) => {
     const onSend = vi.fn();
+    const owner = queuedOwnerTestAdapter();
     const { rerender } = render(
       <ThreadComposer
         variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3453,6 +3497,8 @@ describe("ThreadComposer", () => {
       <ThreadComposer
         variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
@@ -3460,16 +3506,26 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("first follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "first follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("first follow-up")).not.toBeInTheDocument();
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("first follow-up")).not.toBeInTheDocument());
     expect(screen.getByText("second follow-up")).toBeInTheDocument();
 
     rerender(
       <ThreadComposer
         variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3479,6 +3535,8 @@ describe("ThreadComposer", () => {
       <ThreadComposer
         variant={variant}
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
@@ -3486,10 +3544,14 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenLastCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledTimes(2);
     });
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument());
     expect(onSend).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
   });
 
   it("submits a queued prompt at most once before pending state rerenders", () => {
@@ -3569,7 +3631,11 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-    expect(onSend).toHaveBeenCalledWith("use the current project");
+    expect(onSend).toHaveBeenCalledWith(
+      "use the current project",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
   });
 
   it("lets users edit queued guidance before it is sent", async () => {
@@ -3607,15 +3673,22 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("polished follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "polished follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
   });
 
   it("requeues edited guidance at the end of the pending list", async () => {
     const onSend = vi.fn();
+    const owner = queuedOwnerTestAdapter();
     const { rerender } = render(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3638,6 +3711,8 @@ describe("ThreadComposer", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
@@ -3645,13 +3720,24 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "second follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
     expect(onSend).toHaveBeenCalledTimes(1);
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("second follow-up")).not.toBeInTheDocument());
 
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3660,15 +3746,20 @@ describe("ThreadComposer", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
       />,
     );
 
-    await waitFor(() => {
-      expect(onSend).toHaveBeenLastCalledWith("first follow-up edited");
-    });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("first follow-up edited")).not.toBeInTheDocument());
     expect(onSend).toHaveBeenCalledTimes(2);
   });
 
@@ -3723,6 +3814,7 @@ describe("ThreadComposer", () => {
             name: "draft.png",
           }),
         })],
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
       );
     });
   });
@@ -3730,9 +3822,12 @@ describe("ThreadComposer", () => {
   it("sends an attachment-only queued item before a later text item", async () => {
     mockBlobUrls();
     const onSend = vi.fn();
+    const owner = queuedOwnerTestAdapter();
     const { container, rerender } = render(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3757,6 +3852,8 @@ describe("ThreadComposer", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
@@ -3773,12 +3870,20 @@ describe("ThreadComposer", () => {
           name: "draft.png",
         }),
       })],
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
     );
     expect(screen.getByText("later text")).toBeInTheDocument();
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("draft.png")).not.toBeInTheDocument());
 
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -3787,6 +3892,8 @@ describe("ThreadComposer", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
@@ -3794,7 +3901,17 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
-    expect(onSend).toHaveBeenNthCalledWith(2, "later text");
+    expect(onSend).toHaveBeenNthCalledWith(
+      2,
+      "later text",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("later text")).not.toBeInTheDocument());
   });
 
   it("reorders queued guidance while dragging over another row", async () => {
@@ -3840,7 +3957,11 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "second follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
   });
 
@@ -3887,7 +4008,11 @@ describe("ThreadComposer", () => {
     );
 
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("second follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "second follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
   });
 
@@ -3936,6 +4061,12 @@ describe("ThreadComposer", () => {
     expect(await screen.findByText("remember this edited follow-up")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
     expect(onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    expect(onSend).toHaveBeenCalledWith(
+      "remember this edited follow-up",
+      undefined,
+      expect.objectContaining({ continueActiveTurn: true, queuedAttempt: expect.any(Object) }),
+    );
 
     unmount();
     const remount = render(
@@ -3950,13 +4081,8 @@ describe("ThreadComposer", () => {
 
     expect(await screen.findByText("remember this edited follow-up")).toBeInTheDocument();
     fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
-    expect(onSend).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
-    expect(onSend).toHaveBeenCalledWith(
-      "remember this edited follow-up",
-      undefined,
-      { continueActiveTurn: true },
-    );
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
 
     remount.unmount();
     render(
@@ -3968,9 +4094,8 @@ describe("ThreadComposer", () => {
         placeholder="Type your message..."
       />,
     );
-    await waitFor(() => {
-      expect(screen.queryByText("remember this edited follow-up")).not.toBeInTheDocument();
-    });
+    expect(await screen.findByText("remember this edited follow-up")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
   });
 
   it("keeps temporary chat guidance in memory only", async () => {
@@ -4361,23 +4486,31 @@ describe("queued prompt retention after busy admission rejection", () => {
       />,
     );
     await waitFor(() => {
-      expect(onSend).toHaveBeenCalledWith("queued follow-up");
+      expect(onSend).toHaveBeenCalledWith(
+        "queued follow-up",
+        undefined,
+        expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+      );
     });
-    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
+    const attempt = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
 
     rerender(
       <ThreadComposer
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
-        admissionRejectedTurn={{ turnId: "turn-busy" }}
+        admissionRejectedTurn={{ turnId: attempt.turnId, reason: "busy target" }}
         onAdmissionRejectedPromptRestored={onRestored}
         workspaceScope={scope}
         placeholder="Type your message..."
       />,
     );
 
-    await waitFor(() => expect(onRestored).toHaveBeenCalledWith("turn-busy"));
+    await waitFor(() => expect(onRestored).toHaveBeenCalledWith(attempt.turnId));
     expect(screen.getByText("queued follow-up")).toBeInTheDocument();
 
     rerender(
@@ -4414,9 +4547,14 @@ describe("queued prompt retention after busy admission rejection", () => {
     expect(onSend).toHaveBeenLastCalledWith(
       "queued follow-up",
       undefined,
-      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
     );
-    expect(screen.queryByText("queued follow-up")).not.toBeInTheDocument();
+    const retry = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    expect(retry.turnId).not.toBe(attempt.turnId);
+    expect(screen.getByText("queued follow-up")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
   });
 });
 
@@ -4466,19 +4604,19 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     expect(screen.getByText("awaiting original")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
     await act(async () => first.resolve(true));
-    expect(screen.queryByText("awaiting original")).not.toBeInTheDocument();
+    expect(screen.getByText("awaiting original")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
   });
 
   it("U1 keeps an attachment-only head in FIFO order until each owner receipt", async () => {
     mockBlobUrls();
-    const first = deferredAdmission("turn-1", "user-1");
-    const second = deferredAdmission("turn-2", "user-2");
-    const onSend = vi.fn()
-      .mockReturnValueOnce(first.submitted)
-      .mockReturnValueOnce(second.submitted);
+    const owner = queuedOwnerTestAdapter();
+    const onSend = vi.fn();
     const { container, rerender } = render(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -4500,6 +4638,8 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
@@ -4513,18 +4653,22 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
       [expect.objectContaining({
         media: expect.objectContaining({ name: "draft.png" }),
       })],
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
     );
     expect(screen.getByText("later text")).toBeInTheDocument();
-    expect(onSend.mock.calls[0]).not.toEqual(onSend.mock.calls[1]);
-
-    await act(async () => first.resolve(true));
-    expect(screen.queryByText("draft.png")).not.toBeInTheDocument();
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(firstBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("draft.png")).not.toBeInTheDocument());
     expect(screen.getByText("later text")).toBeInTheDocument();
     expect(onSend).toHaveBeenCalledTimes(1);
 
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         placeholder="Type your message..."
@@ -4533,26 +4677,31 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         placeholder="Type your message..."
       />,
     );
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
-    expect(onSend).toHaveBeenNthCalledWith(2, "later text");
-    expect(first.submitted.turnId).not.toBe(second.submitted.turnId);
-
-    await act(async () => second.resolve(true));
-    expect(screen.queryByText("later text")).not.toBeInTheDocument();
+    expect(onSend).toHaveBeenNthCalledWith(
+      2,
+      "later text",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
+    const secondBinding = (onSend.mock.calls[1] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    await act(async () => owner.resolve(secondBinding.turnId));
+    await waitFor(() => expect(screen.queryByText("later text")).not.toBeInTheDocument());
     expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
   });
 
-  it("U2 leaves the item on route acceptance without an owner receipt and never skips ahead", async () => {
+  it("U2 keeps the item held after a generic boolean promise and never auto-skips", async () => {
     const first = deferredAdmission("turn-1", "user-1");
-    const second = deferredAdmission("turn-2", "user-2");
-    const onSend = vi.fn()
-      .mockReturnValueOnce(first.submitted)
-      .mockReturnValueOnce(second.submitted);
+    const onSend = vi.fn().mockReturnValue(first.submitted);
     const { rerender } = render(
       <ThreadComposer
         onSend={onSend}
@@ -4603,7 +4752,7 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     expect(screen.getByText("first item")).toBeInTheDocument();
 
     await act(async () => first.resolve(true));
-    expect(screen.queryByText("first item")).not.toBeInTheDocument();
+    expect(screen.getByText("first item")).toBeInTheDocument();
     expect(screen.getByText("second item")).toBeInTheDocument();
     expect(onSend).toHaveBeenCalledTimes(1);
 
@@ -4623,11 +4772,10 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
         placeholder="Type your message..."
       />,
     );
-    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
-    expect(onSend).toHaveBeenNthCalledWith(2, "second item");
-
-    await act(async () => second.resolve(true));
-    expect(screen.queryByText("second item")).not.toBeInTheDocument();
+    await act(async () => { await Promise.resolve(); });
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("first item")).toBeInTheDocument();
+    expect(screen.getByText("second item")).toBeInTheDocument();
   });
 
   it("U3 keeps the exact item when the local send throws and does not resubmit it", async () => {
@@ -4682,24 +4830,22 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     expect(screen.getByText("exact payload")).toBeInTheDocument();
   });
 
-  it("ignores a late admission result after the composer switches to another chat queue", async () => {
-    let resolveAdmission!: (admitted: boolean) => void;
-    const admission = new Promise<boolean>((resolve) => {
-      resolveAdmission = resolve;
-    });
-    const onSend = vi.fn(() => ({
-      turnId: "turn-old-chat",
-      userMessageId: "user-old-chat",
-      sideChannel: false,
-      admission,
-    }));
+  it("joins an exact owner outcome after A is offscreen and consumes it once on return", async () => {
+    const owner = queuedOwnerTestAdapter();
+    const onSend = vi.fn();
     window.localStorage.setItem(
       "nanobot.webui.composerQueuedGuidance.v1:chat-b",
-      JSON.stringify([{ id: "other-chat-prompt", text: "other chat remains" }]),
+      JSON.stringify([{
+        id: "other-chat-prompt",
+        text: "other chat remains",
+        submission: { version: 1, state: "ready" },
+      }]),
     );
     const { rerender } = render(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         pendingQueueKey="chat-a"
@@ -4712,6 +4858,8 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming={false}
         pendingQueueKey="chat-a"
@@ -4723,6 +4871,8 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     rerender(
       <ThreadComposer
         onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
         onStop={vi.fn()}
         isStreaming
         pendingQueueKey="chat-b"
@@ -4730,11 +4880,41 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
       />,
     );
     expect(await screen.findByText("other chat remains")).toBeInTheDocument();
-    await act(async () => resolveAdmission(true));
+    const originalCall = onSend.mock.calls[0] as unknown as [string, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }];
+    const originalBinding = originalCall[2].queuedAttempt;
+    expect(originalBinding).toMatchObject({
+      queueKey: "chat-a",
+      promptId: expect.any(String),
+      turnId: expect.any(String),
+    });
+    await act(async () => {
+      owner.resolve(originalBinding.turnId);
+      await Promise.resolve();
+    });
 
     expect(screen.getByText("other chat remains")).toBeInTheDocument();
     expect(screen.queryByText("old chat attempt")).not.toBeInTheDocument();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(owner.consume).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onJoinQueuedAttempt={owner.join}
+        onConsumeQueuedAttempt={owner.consume}
+        onStop={vi.fn()}
+        isStreaming
+        pendingQueueKey="chat-a"
+        placeholder="Type your message..."
+      />,
+    );
+    await waitFor(() => expect(owner.consume).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("other chat remains")).not.toBeInTheDocument();
+    expect(screen.queryByText("old chat attempt")).not.toBeInTheDocument();
+    expect(owner.consume).toHaveBeenCalledTimes(1);
+    expect(owner.consume).toHaveBeenCalledWith(originalBinding);
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
@@ -4771,13 +4951,17 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
       fireEvent.click(within(row!).getByRole("button", { name: "Steer" }));
     }
     expect(onSend).toHaveBeenCalledTimes(6);
+    const firstBinding = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    const refusal = { turnId: firstBinding.turnId, reason: "busy target" };
 
     rerender(
       <ThreadComposer
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
-        admissionRejectedTurn={{ turnId: "turn-six-0" }}
+        admissionRejectedTurn={refusal}
         pendingQueueKey="chat-six-unresolved"
         placeholder="Type your message..."
       />,
@@ -4796,7 +4980,7 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming
-        admissionRejectedTurn={{ turnId: "turn-six-0" }}
+        admissionRejectedTurn={refusal}
         pendingQueueKey="chat-six-unresolved"
         placeholder="Type your message..."
       />,
@@ -4806,7 +4990,7 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
-        admissionRejectedTurn={{ turnId: "turn-six-0" }}
+        admissionRejectedTurn={refusal}
         pendingQueueKey="chat-six-unresolved"
         placeholder="Type your message..."
       />,
@@ -4816,7 +5000,11 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
 
     fireEvent.click(within(rejectedRow!).getByRole("button", { name: "Steer" }));
     expect(onSend).toHaveBeenCalledTimes(7);
-    expect(onSend).toHaveBeenLastCalledWith("queued snapshot 0", undefined, undefined);
+    expect(onSend).toHaveBeenLastCalledWith(
+      "queued snapshot 0",
+      undefined,
+      expect.objectContaining({ queuedAttempt: expect.any(Object) }),
+    );
     expect(screen.getByText("queued snapshot 0")).toBeInTheDocument();
     expect(within(rejectedRow!).getByRole("status")).toHaveTextContent("Awaiting confirmation");
   });
@@ -4925,20 +5113,11 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
   );
 
   it.each(["false", "rejected"] as const)(
-    "keeps the queued row awaiting confirmation when admission is %s",
+    "keeps the queued row awaiting confirmation when the generic send result is %s",
     async (outcome) => {
-      let resolveAdmission!: (value: boolean) => void;
-      let rejectAdmission!: (reason: Error) => void;
-      const admission = new Promise<boolean>((resolve, reject) => {
-        resolveAdmission = resolve;
-        rejectAdmission = reject;
-      });
-      const onSend = vi.fn(() => ({
-        turnId: "turn-unresolved-outcome",
-        userMessageId: "user-unresolved-outcome",
-        sideChannel: false,
-        admission,
-      }));
+      const onSend = vi.fn(() => outcome === "false"
+        ? Promise.resolve(false)
+        : Promise.reject(new Error("owner connection lost")));
       const { rerender } = render(
         <ThreadComposer
           onSend={onSend}
@@ -4959,12 +5138,7 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
         />,
       );
       await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-
-      await act(async () => {
-        if (outcome === "false") resolveAdmission(false);
-        else rejectAdmission(new Error("owner connection lost"));
-        await Promise.resolve();
-      });
+      await act(async () => { await Promise.resolve(); });
       expect(screen.getByText("unconfirmed owner result")).toBeInTheDocument();
       expect(screen.getByRole("status")).toHaveTextContent("Awaiting confirmation");
       expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
@@ -5021,13 +5195,17 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
     );
     await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "Steer" })).toBeDisabled();
+    const attempt = (onSend.mock.calls[0] as unknown as [unknown, unknown, {
+      queuedAttempt: QueuedAttemptBinding;
+    }])[2].queuedAttempt;
+    const refusal = { turnId: attempt.turnId, reason: "busy target" };
 
     rerender(
       <ThreadComposer
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
-        admissionRejectedTurn={{ turnId: submitted.turnId }}
+        admissionRejectedTurn={refusal}
         placeholder="Type your message..."
       />,
     );
@@ -5040,7 +5218,7 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming
-        admissionRejectedTurn={{ turnId: submitted.turnId }}
+        admissionRejectedTurn={refusal}
         placeholder="Type your message..."
       />,
     );
@@ -5049,7 +5227,7 @@ describe("A3-4 P3 queued admission cases (U1-U3)", () => {
         onSend={onSend}
         onStop={vi.fn()}
         isStreaming={false}
-        admissionRejectedTurn={{ turnId: submitted.turnId }}
+        admissionRejectedTurn={refusal}
         placeholder="Type your message..."
       />,
     );

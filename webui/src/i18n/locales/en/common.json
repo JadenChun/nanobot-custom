@@ -1223,6 +1223,7 @@
       "placeholderOpening": "Opening a new topic…",
       "placeholderStreaming": "Model is responding…",
       "queueGuidance": "Add to queue",
+      "queuePersistenceError": "Queued messages could not be saved safely. Try again before sending.",
       "inputAria": "Message input",
       "inputAriaFor": "Message {{title}}",
       "sendHint": "Enter to send · Shift+Enter for newline",
