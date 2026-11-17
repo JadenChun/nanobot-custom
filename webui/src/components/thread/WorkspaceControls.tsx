@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Check, ChevronDown, Folder, Loader2, Monitor, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -93,6 +101,7 @@ export function WorkspaceProjectPicker({
   isHero = false,
   connected = false,
   disabled,
+  ownerKey = null,
   scope,
   defaultScope,
   controls,
@@ -110,6 +119,7 @@ export function WorkspaceProjectPicker({
   isHero?: boolean;
   connected?: boolean;
   disabled?: boolean;
+  ownerKey?: string | null;
   scope: WorkspaceScopePayload | null;
   defaultScope: WorkspaceScopePayload | null;
   controls: WorkspacesPayload["controls"] | null;
@@ -125,6 +135,7 @@ export function WorkspaceProjectPicker({
   const [pathDraft, setPathDraft] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
   const [pickingFolder, setPickingFolder] = useState(false);
+  const pendingBrowseRef = useRef<{ cancelled: boolean } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const pathInputRef = useRef<HTMLInputElement>(null);
   const pathErrorId = useId();
@@ -139,6 +150,7 @@ export function WorkspaceProjectPicker({
     && !!onChange;
   const canChangeFocus = controls?.can_change_project !== false;
   const pickFolder = getRuntimeHost().pickFolder ?? onPickFolder;
+  const browseEligible = visible && !disabled && canChangeFocus && !!pickFolder;
   const canManage = controls?.can_manage_folders === true || controls?.can_manage_catalog === true;
 
   useEffect(() => {
@@ -192,24 +204,65 @@ export function WorkspaceProjectPicker({
     [defaultScope, onChange, scope, t, workspaces?.managed_access],
   );
 
+  const currentApplyProjectPathRef = useRef(applyProjectPath);
+  useLayoutEffect(() => {
+    currentApplyProjectPathRef.current = applyProjectPath;
+  }, [applyProjectPath]);
+
+  const revokePendingBrowse = useCallback((mounted: boolean) => {
+    const pending = pendingBrowseRef.current;
+    if (!pending) return;
+    pending.cancelled = true;
+    pendingBrowseRef.current = null;
+    if (mounted) setPickingFolder(false);
+  }, []);
+
+  const committedBrowseLifetimeRef = useRef({
+    ownerKey,
+    projectPath: currentPath,
+    accessMode: activeScope?.access_mode,
+  });
+  useLayoutEffect(() => {
+    const previous = committedBrowseLifetimeRef.current;
+    const focusChanged = previous.accessMode !== activeScope?.access_mode
+      || (previous.projectPath !== currentPath
+        && !sameWorkspacePath(previous.projectPath, currentPath));
+    const lifetimeChanged = previous.ownerKey !== ownerKey || focusChanged || !browseEligible;
+    committedBrowseLifetimeRef.current = {
+      ownerKey,
+      projectPath: currentPath,
+      accessMode: activeScope?.access_mode,
+    };
+    if (lifetimeChanged) revokePendingBrowse(true);
+  }, [activeScope?.access_mode, browseEligible, currentPath, ownerKey, revokePendingBrowse]);
+
+  useLayoutEffect(() => () => revokePendingBrowse(false), [revokePendingBrowse]);
+
   const browseForFolder = useCallback(async () => {
     if (!pickFolder || disabled) return;
+    const pending = { cancelled: false };
+    pendingBrowseRef.current = pending;
     setPickingFolder(true);
     setPathError(null);
     try {
       const picked = await pickFolder();
+      if (pending.cancelled || pendingBrowseRef.current !== pending) return;
       if (picked) {
         setPathDraft(picked);
-        applyProjectPath(picked);
+        currentApplyProjectPathRef.current(picked);
       }
     } catch (reason) {
+      if (pending.cancelled || pendingBrowseRef.current !== pending) return;
       setPathError(reason instanceof Error
         ? reason.message
         : t("workspace.dialog.browseFailed", { defaultValue: "Folder picker unavailable. Paste a path instead." }));
     } finally {
-      setPickingFolder(false);
+      if (pendingBrowseRef.current === pending) {
+        pendingBrowseRef.current = null;
+        setPickingFolder(false);
+      }
     }
-  }, [applyProjectPath, disabled, pickFolder, t]);
+  }, [disabled, pickFolder, t]);
 
   if (!visible || !defaultScope || !onChange) return null;
 

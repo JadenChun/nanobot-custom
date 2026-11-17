@@ -1247,6 +1247,10 @@
         "detailsLabel": "Abrir uso do contexto",
         "panelTitle": "Uso do contexto",
         "contextTitle": "Contexto",
+        "configuredModel": "Modelo configurado",
+        "configuredWindow": "Janela configurada",
+        "usageUnavailable": "Uso indisponível",
+        "lastKnownRequest": "Última solicitação conhecida",
         "recentRounds": "Rodadas recentes",
         "inputTrend": "Tokens de entrada",
         "input": "Tokens de entrada",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "A mensagem não foi enviada",
       "body": "O gateway rejeitou esta mensagem. Revise o texto ou os anexos e tente novamente."
+    },
+    "sessionRecoveryRequired": {
+      "title": "A conversa precisa de recuperação",
+      "body": "O Nanobot pausou esta conversa após um turno interrompido. Inicie uma nova conversa para continuar."
     },
     "modelRequestFailed": {
       "billingTitle": "A cota do provedor do modelo está indisponível",

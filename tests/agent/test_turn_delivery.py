@@ -511,3 +511,47 @@ def test_late_subagent_route_requires_webui_owned_session(tmp_path: Path) -> Non
         "injected_event": "subagent_result",
         "subagent_task_id": "sub-1",
     }
+
+
+@pytest.mark.parametrize("phase", ["started", "failed", "cancelled", "succeeded"])
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_context_slot_invalidates_before_outward_compaction_delivery(phase, cancelled) -> None:
+    import asyncio
+
+    from nanobot.events import EventSink
+    from nanobot.providers.base import ContextUsageSnapshot
+
+    factory = TurnDeliveryFactory(MessageBus())
+    delivery = factory.create(InboundMessage(channel="websocket", sender_id="u", chat_id="t", content="hello"), "t")
+    measured = ContextUsageSnapshot(5000, 12000)
+    factory.runtime_event_publisher.record_turn_context_usage("t", measured)
+    seen = []
+    factory.bus.subscribe(seen.append, TurnCompleted)
+    error = asyncio.CancelledError() if cancelled else RuntimeError("outward failed")
+
+    async def fail(_event):
+        raise error
+
+    delivery._routed_events = EventSink(fail)
+    with pytest.raises(type(error)) as caught:
+        await delivery._publish_event(ContextCompactionEvent("c", phase))
+    assert caught.value is error
+    await delivery.publish_cancelled_terminal()
+    assert seen[-1].context_usage == (ContextUsageSnapshot(None, None) if phase == "succeeded" else measured)
+
+
+async def test_silent_and_no_lifecycle_delivery_do_not_own_context_snapshot_slots() -> None:
+    from nanobot.agent.turn_delivery import TurnRoute
+
+    factory = TurnDeliveryFactory(MessageBus())
+    msg = InboundMessage(channel="cli", sender_id="u", chat_id="t", content="hello")
+    silent = factory.silent(msg, "t")
+    assert silent.context_usage_hook() is None
+    factory.route_policy = lambda *_args: TurnRoute("cli", "t", publish_lifecycle=False)
+    delivery = factory.create(msg, "t")
+    assert delivery.context_usage_hook() is None
+    seen = []
+    factory.bus.subscribe(seen.append, TurnCompleted)
+    await delivery._publish_event(ContextCompactionEvent("c", "succeeded"))
+    await factory.runtime_event_publisher.turn_completed(channel="cli", chat_id="t", session_key="t", metadata={})
+    assert seen[-1].context_usage is None

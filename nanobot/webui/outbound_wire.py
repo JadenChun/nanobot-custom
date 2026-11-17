@@ -16,6 +16,7 @@ from nanobot.bus.outbound_events import (
     TurnEndEvent,
 )
 from nanobot.events import AgentEvent
+from nanobot.providers.base import ContextUsagePayload, ContextUsageSnapshot
 from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
 
 
@@ -49,6 +50,7 @@ class TurnEndWirePayload(_ChatWirePayload):
     usage: NotRequired[dict[str, int]]
     round_usages: NotRequired[list[dict[str, int]]]
     context_window_tokens: NotRequired[int]
+    context_usage: NotRequired[ContextUsagePayload]
     outcome: NotRequired[str]
     failure_kind: NotRequired[str]
     failure_error_kind: NotRequired[str]
@@ -279,6 +281,8 @@ def encode_turn_end(
         payload["round_usages"] = [item.to_turn_dict() for item in event.round_usages]
     if event.context_window_tokens is not None:
         payload["context_window_tokens"] = int(event.context_window_tokens)
+    if event.context_usage is not None:
+        payload["context_usage"] = ContextUsageSnapshot.from_value(event.context_usage).to_dict()
     if event.outcome != "completed":
         payload["outcome"] = event.outcome
     if event.failure_kind is not None:

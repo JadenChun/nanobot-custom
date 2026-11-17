@@ -24,6 +24,7 @@ import {
 } from "@/lib/nanobot-client";
 import {
   closeReasoningStream,
+  contextUsageFromEvent,
   filterCoveredFileEditToolEvents,
   finalizeStreamedTurn,
   findActiveAssistantPlaceholderIndex,
@@ -1152,7 +1153,9 @@ export function useNanobotStream(
       }
       const sideChannelEvent = isSideChannelEvent(ev);
       if (ev.event === "context_compaction") {
-        flushPendingStreamEvents({ closeAnswerSegment: true });
+        // Compaction is activity, not an answer-stream boundary. Length recovery
+        // can keep this answer open for cumulative stream_end replacements.
+        flushPendingStreamEvents();
         clearActivitySegment();
         const compaction = {
           id: ev.compaction_id,
@@ -1396,6 +1399,7 @@ export function useNanobotStream(
           : null;
         if (modelFailure) setStreamError(modelFailure);
         const completedAt = Date.now();
+        const contextUsage = contextUsageFromEvent(ev);
         setMessages((prev) => {
           let finalized = prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m));
           const latencyMs =
@@ -1408,6 +1412,7 @@ export function useNanobotStream(
               ...(latencyMs !== undefined ? { latencyMs } : {}),
               ...(ev.usage ? { usage: ev.usage } : {}),
               ...(ev.round_usages?.length ? { roundUsages: ev.round_usages } : {}),
+              ...(contextUsage !== undefined ? { contextUsage } : {}),
               ...(typeof ev.context_window_tokens === "number"
                 ? { contextWindowTokens: ev.context_window_tokens }
                 : {}),

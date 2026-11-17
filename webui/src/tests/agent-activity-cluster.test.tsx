@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentActivityCluster } from "@/components/thread/AgentActivityCluster";
@@ -1346,6 +1346,46 @@ describe("AgentActivityCluster", () => {
     expect(screen.getByText("Planning a focused search for official sources")).toBeInTheDocument();
     expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+  });
+
+  it("discloses a reasoning row inside the existing outer activity fold", async () => {
+    await act(async () => {
+      await preloadMarkdownText();
+    });
+
+    render(
+      <AgentActivityCluster
+        messages={[{
+          id: "r-disclosure-in-fold",
+          role: "assistant",
+          content: "",
+          reasoning: "## Cluster planning\n\nFind the exact supplied source.",
+          reasoningStreaming: false,
+          createdAt: Date.now(),
+        }]}
+        isTurnStreaming={false}
+        hasBodyBelow={false}
+      />,
+    );
+
+    const outerDisclosure = screen.getByRole("button", { name: /Worked/ });
+    expect(outerDisclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Reasoning" })).not.toBeInTheDocument();
+
+    fireEvent.click(outerDisclosure);
+
+    expect(outerDisclosure).toHaveAttribute("aria-expanded", "true");
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    fireEvent.click(disclosure);
+
+    const body = document.getElementById(disclosure.getAttribute("aria-controls")!);
+    expect(body).toBeInTheDocument();
+    expect(screen.getByTestId("agent-activity-scroll")).toContainElement(body);
+    await within(body!).findByRole("heading", {
+      level: 2,
+      name: "Cluster planning",
+    });
+    expect(within(body!).getByText("Find the exact supplied source.")).toBeInTheDocument();
   });
 
   it("labels rejected CLI app calls as failed instead of ran", () => {

@@ -3486,6 +3486,7 @@ class AgentLoop:
         provider_state: ProviderConversationState | None = None,
         run_context: RunTurnContext | None = None,
         allow_pre_dispatch_recovery: bool = False,
+        context_usage_hook: AgentHook | None = None,
     ) -> AgentRunResult:
         """Run the agent iteration loop.
 
@@ -3843,6 +3844,7 @@ class AgentLoop:
             for scope in turn_scopes or ():
                 turn_scope_stack.enter_context(scope)
             hook = build_agent_turn_hook(AgentTurnHookSpec(
+                context_usage_hook=context_usage_hook,
                 events=events,
                 streaming=streaming,
                 channel=request_ctx.channel,
@@ -6930,6 +6932,7 @@ class AgentLoop:
                 provider_state=ctx.provider_state,
                 run_context=ctx.run_context,
                 events=ctx.events,
+                context_usage_hook=ctx.delivery.context_usage_hook(),
                 allow_pre_dispatch_recovery=bool(
                     self._trusted_foreground_inbound(ctx.msg)
                     and ctx.run_context is not None

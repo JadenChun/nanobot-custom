@@ -24,6 +24,7 @@ from loguru import logger
 from nanobot.agent.context import TranscriptInput
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from nanobot.providers.base import (
+    ContextUsageSnapshot,
     GenerationSettings,
     LLMResponse,
     LLMUsage,
@@ -324,6 +325,29 @@ class ModelRequestState:
     # fence.  Request preparation fills in the effective tool policy for each
     # dispatch; callers without that authority intentionally stay stateless.
     conversation_binding: ConversationRequestBinding | None = None
+    context_usage_epoch: int = 0
+    context_usage: ContextUsageSnapshot | None = None
+    prepared_context_usage_epoch: int | None = None
+    prepared_context_window_tokens: int | None = None
+
+    def invalidate_context_usage(self) -> None:
+        """A committed replacement invalidates observations, not spending history."""
+        self.context_usage_epoch += 1
+        self.context_usage = ContextUsageSnapshot(None, None)
+
+    def capture_prepared_context_usage(self, context: ProviderCallContext) -> None:
+        """Keep one receipt, only after the final payload/route has been prepared."""
+        from nanobot.providers.fallback_provider import FallbackProvider
+
+        route = context.selected_route
+        provider = self.config.provider
+        if isinstance(provider, FallbackProvider):
+            window = provider.context_usage_window_for_route(route)
+        else:
+            window = (route.context_window_tokens if route is not None and route.purpose == "main"
+                      else self.config.context_window_tokens)
+        self.prepared_context_usage_epoch = self.context_usage_epoch
+        self.prepared_context_window_tokens = window if type(window) is int and window > 0 else None
 
 
 class ContextGovernor:
@@ -375,6 +399,7 @@ class ContextGovernor:
             source.replace_projection(updated)
             compaction.raw_messages[:] = updated.messages()
             state.usage = None
+            state.invalidate_context_usage()
             state.local_usage_anchor = None
             state.messages = None
             state.source_view = None
@@ -428,6 +453,7 @@ class ContextGovernor:
             source.replace_projection(updated)
             compaction.raw_messages[:] = updated.messages()
             state.usage = None
+            state.invalidate_context_usage()
             state.local_usage_anchor = None
             state.conversation.replace_transcript(compaction.raw_messages)
         return updated.with_runtime(*notes)
@@ -653,6 +679,7 @@ class ContextGovernor:
         state.messages = deepcopy(prepared)
         state.tool_definitions = deepcopy(attempt.tool_definitions)
         state.usage = None
+        state.invalidate_context_usage()
         state.local_usage_anchor = None
         state.conversation.replace_transcript(compaction.raw_messages)
         return view
@@ -2066,6 +2093,7 @@ class ContextGovernor:
             transcript_boundary=transcript_boundary,
         )
         state.local_usage_anchor = None
+        state.invalidate_context_usage()
         await state.events.emit(
             ContextCompactionEvent(
                 compaction_id=compaction_id,
@@ -2130,6 +2158,7 @@ class ContextGovernor:
                 summary=summary,
                 transcript_boundary=compaction.raw_accepted_boundary,
             )
+            state.invalidate_context_usage()
         except (Exception, asyncio.CancelledError) as exc:
             await state.events.emit(
                 ContextCompactionEvent(
@@ -2177,6 +2206,7 @@ class ContextGovernor:
             if raw is not None:
                 raw[:] = updated.messages()
             state.usage = None
+            state.invalidate_context_usage()
             state.local_usage_anchor = None
             state.conversation.replace_transcript(updated.messages())
         return updated.with_runtime(*extensions)
@@ -2278,6 +2308,7 @@ class ContextGovernor:
                 tool_choice=tool_choice,
                 provider_context=final_context,
             )
+            state.capture_prepared_context_usage(final_context)
             return prepared, final_context
         prepared = self.prepare_messages_for_model(state.config, messages)
         image_view_changed = recent_image_messages(messages) != messages
@@ -2337,6 +2368,7 @@ class ContextGovernor:
                         ContextCompactionEvent(compaction_id=compaction_id, phase="failed"),
                     )
                     raise
+                state.invalidate_context_usage()
                 await state.events.emit(
                     ContextCompactionEvent(compaction_id=compaction_id, phase="succeeded"),
                 )
@@ -2396,6 +2428,7 @@ class ContextGovernor:
         state.tool_definitions = deepcopy(tool_definitions)
         state.prepared_stream = stream
         state.prepared_tool_choice = tool_choice
+        state.capture_prepared_context_usage(provider_context)
         return prepared, provider_context
 
     def reprepare_route(
@@ -2427,6 +2460,7 @@ class ContextGovernor:
         )
         state.messages = deepcopy(prepared)
         state.tool_definitions = deepcopy(tool_definitions)
+        state.capture_prepared_context_usage(next_context)
         return prepared, next_context
 
     @staticmethod

@@ -724,6 +724,84 @@ describe("ThreadShell", () => {
     );
   });
 
+  it("revokes a folder choice across the real idle-running-completed lifecycle", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    const client = makeClient();
+    let resolveObsolete!: (path: string | null) => void;
+    let resolveFresh!: (path: string | null) => void;
+    const obsolete = new Promise<string | null>((resolve) => { resolveObsolete = resolve; });
+    const fresh = new Promise<string | null>((resolve) => { resolveFresh = resolve; });
+    const pickFolder = vi.fn().mockReturnValueOnce(obsolete).mockReturnValueOnce(fresh);
+    Object.defineProperty(window, "nanobotHost", {
+      configurable: true,
+      value: { getRuntimeInfo: vi.fn(), pickFolder, openLogs: vi.fn() },
+    });
+    const scope: WorkspaceScopePayload = {
+      project_path: "/agent/home",
+      project_name: "Agent home",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+    };
+    const workspaces: WorkspacesPayload = {
+      schema_version: 2,
+      default_access_mode: "restricted",
+      default_scope: scope,
+      managed_access: false,
+      management: null,
+      controls: {
+        can_change_project: true,
+        can_use_full_access: true,
+        can_pick_folder: true,
+      },
+    };
+    const onWorkspaceScopeChange = vi.fn();
+
+    render(wrap(client, <ThreadShell
+      session={{ ...session("folder-lifecycle"), workspaceScope: scope }}
+      title="Folder lifecycle"
+      onToggleSidebar={() => {}}
+      workspaceScope={scope}
+      workspaceDefaultScope={scope}
+      workspaceControls={workspaces.controls}
+      workspaces={workspaces}
+      onWorkspaceScopeChange={onWorkspaceScopeChange}
+    />));
+
+    await user.click(await screen.findByRole("button", { name: "Choose project folder" }));
+    await user.click(await screen.findByRole("button", { name: "Browse…" }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+
+    const workspaceTrigger = screen.getByRole("button", { name: "Choose project folder" });
+    act(() => client._emitChat("folder-lifecycle", {
+      event: "goal_status",
+      chat_id: "folder-lifecycle",
+      status: "running",
+      started_at: 1_700_000_000,
+      turn_id: "folder-turn",
+    }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument());
+
+    act(() => client._emitChat("folder-lifecycle", {
+      event: "turn_end",
+      chat_id: "folder-lifecycle",
+      turn_id: "folder-turn",
+    }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument());
+    await act(async () => { resolveObsolete("/projects/obsolete"); });
+
+    expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
+    expect(workspaceTrigger).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
+    await user.click(await screen.findByRole("button", { name: "Browse…" }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(2));
+    await act(async () => { resolveFresh("/projects/current"); });
+    expect(onWorkspaceScopeChange).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
+      project_path: "/projects/current",
+      project_name: "current",
+    }));
+  });
+
   it("does not enable legacy Stop after authenticated history reports stop_target null", async () => {
     const client = makeClient();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
@@ -1373,7 +1451,7 @@ describe("ThreadShell", () => {
       name: /input tokens 16,400.*KV cache hit rate 99%.*output tokens 236/i,
     })).toBeInTheDocument();
     expect(screen.getByTestId("composer-context-meter")).toBeInTheDocument();
-    for (const phase of ["started", "failed"] as const) {
+    for (const phase of ["started", "failed", "cancelled"] as const) {
       act(() => client._emitChat("usage-chart", {
         event: "context_compaction", chat_id: "usage-chart", compaction_id: "failed", phase,
       }));
@@ -1387,7 +1465,7 @@ describe("ThreadShell", () => {
     expect(screen.getAllByTestId("round-usage-bar")).toHaveLength(4);
   });
 
-  it.each([false, true])("restores context after compaction only with newer usage (%s)", async (newReply) => {
+  it.each([false, true])("restores context after compaction only with certified completion usage (%s)", async (newReply) => {
     const client = makeClient();
     const messages: UIMessage[] = [
       {
@@ -1396,13 +1474,14 @@ describe("ThreadShell", () => {
         roundUsages: [{ prompt_tokens: 170_000 }],
       },
       {
-        id: "compact", role: "assistant", kind: "compaction", content: "", createdAt: 2_000,
+        turnId: "current", turnSeq: 2, id: "compact", role: "assistant", kind: "compaction", content: "", createdAt: 2_000,
         compaction: { id: "compact", phase: "succeeded" },
       },
     ];
     if (newReply) messages.push({
-      id: "new", role: "assistant", content: "After compact", createdAt: 3_000,
+      turnId: "current", id: "new", role: "assistant", content: "After compact", createdAt: 3_000,
       contextWindowTokens: 1_000_000, usage: { context_tokens: 20_700 },
+      contextUsage: { contextTokens: 20_700, contextWindowTokens: 1_000_000, completionTurnSeq: 4 },
     });
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
       String(input).includes("websocket%3Acompact-usage/webui-thread")
@@ -1413,13 +1492,267 @@ describe("ThreadShell", () => {
       session={session("compact-usage")} title="Compact usage" onToggleSidebar={() => {}}
       settingsSnapshot={modelSettings("test-model", "deepseek")}
     />));
-    const trigger = await screen.findByTestId("composer-context-usage");
+    await screen.findByText(newReply ? "After compact" : "Before compact");
+    const trigger = newReply
+      ? await screen.findByRole("button", { name: "Context 2%. Open context usage" })
+      : await screen.findByTestId("composer-context-usage");
     if (newReply) {
       expect(trigger).toHaveAccessibleName("Context 2%. Open context usage");
     } else {
       expect(trigger).toHaveAccessibleName("Open context usage");
     }
   });
+
+  it.each([
+    { name: "cumulative carrier before notice", phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "answer" },
+    { name: "no observation is no update", noUpdate: true, count: null, window: null, seq: 4, expected: "42%", carrier: "user" },
+    { name: "missing completion owner", completionNoOwner: true, phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: null, carrier: "notice" },
+    { name: "success owner mismatch", boundaryOtherOwner: true, phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: null, carrier: "answer" },
+    { name: "invalid completion sequence", phase: "succeeded", count: 2000, window: 12000, seq: 1.5, expected: null, carrier: "notice" },
+    { name: "notice carrier", phase: "succeeded", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "notice" },
+    { name: "no new answer user carrier", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "user" },
+    { name: "silent invalidation user carrier", count: null, window: null, seq: 4, expected: null, carrier: "user" },
+    { name: "null without notice blocks aggregate and older history", count: null, window: null, seq: 4, expected: null, carrier: "answer" },
+    { name: "unknown route capacity never borrows primary", count: 2000, window: null, seq: 4, expected: null, carrier: "answer" },
+    { name: "genuine zero", count: 0, window: 12000, seq: 4, expected: "0%", carrier: "answer" },
+    { name: "same sequence cannot cross success", phase: "succeeded", count: 2000, window: 12000, seq: 2, expected: null, carrier: "notice" },
+    { name: "missing completion sequence", phase: "succeeded", count: 2000, window: 12000, expected: null, carrier: "notice" },
+    { name: "later success after completion", phase: "succeeded", count: 2000, window: 12000, seq: 4, laterSuccess: true, expected: null, carrier: "answer" },
+    { name: "failed attempt preserves valid observation", phase: "failed", count: 2000, window: 12000, seq: 4, expected: "17%", carrier: "notice" },
+  ] as const)("qualifies completion context live+reload: $name", async (testCase) => {
+    const snapshot = {
+      contextTokens: testCase.count, contextWindowTokens: testCase.window,
+      ...("seq" in testCase ? { completionTurnSeq: testCase.seq } : {}),
+    };
+    const old: UIMessage[] = [
+      { id: "old-user", role: "user", content: "Old question", createdAt: 1000, turnId: "old" },
+      { id: "old-answer", role: "assistant", content: "Old answer", createdAt: 1100, turnId: "old",
+        contextUsage: { contextTokens: 5000, contextWindowTokens: 12000, completionTurnSeq: 1 } },
+    ];
+    const rows: UIMessage[] = [
+      ...old, { id: "current-user", role: "user", content: "Current question", createdAt: 2000, turnId: "current", turnSeq: 0 },
+    ];
+    if (testCase.carrier !== "user") rows.push({
+      id: "answer", role: "assistant", content: "# Final canonical answer", createdAt: 2100, turnId: "current", turnSeq: 1,
+      usage: { prompt_tokens: 12000, context_tokens: 9000 }, contextWindowTokens: 12000,
+    });
+    if ("phase" in testCase) rows.push({
+      id: "notice", role: "assistant", content: "", kind: "compaction", createdAt: 2200,
+      turnId: "boundaryOtherOwner" in testCase ? "other" : "current", turnSeq: 2, compaction: { id: "notice", phase: testCase.phase },
+    });
+    // Live completion prefers last assistant/notice. Reload deliberately also
+    // exercises a canonical answer carrier *before* its compaction notice.
+    for (const replay of [false, true]) {
+      const client = makeClient();
+      const history = rows.map((row) => ({ ...row }));
+      if (replay && !("noUpdate" in testCase)) {
+        const id = testCase.carrier === "answer" ? "answer" : testCase.carrier === "notice" ? "notice" : "current-user";
+        history.find((row) => row.id === id)!.contextUsage = snapshot;
+        if ("completionNoOwner" in testCase) history.find((row) => row.id === id)!.turnId = undefined;
+        if ("laterSuccess" in testCase) history.push({
+          id: "later", role: "assistant", content: "", kind: "compaction", createdAt: 2300,
+          turnId: "current", turnSeq: 5, compaction: { id: "later", phase: "succeeded" },
+        });
+      }
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+        String(input).includes("websocket%3Asnapshot-usage/webui-thread")
+          ? httpJson({ schemaVersion: 3, messages: history })
+          : { ok: false, status: 404, json: async () => ({}) },
+      )));
+      const mounted = render(wrap(client, <ThreadShell session={session("snapshot-usage")} title="Snapshot"
+        onToggleSidebar={() => {}} settingsSnapshot={modelSettings("synthetic-model", "deepseek")} />));
+      await screen.findByText("Current question");
+      if (!replay) {
+        act(() => client._emitChat("snapshot-usage", {
+          event: "turn_end", chat_id: "snapshot-usage",
+          ...("completionNoOwner" in testCase ? {} : { turn_id: "current" }),
+          ...("seq" in testCase ? { turn_seq: testCase.seq } : {}),
+          ...("noUpdate" in testCase ? {} : { context_usage: { context_tokens: testCase.count, context_window_tokens: testCase.window } }),
+          usage: { prompt_tokens: 12000, context_tokens: 9000 }, context_window_tokens: 12000,
+        }));
+        if ("laterSuccess" in testCase) act(() => client._emitChat("snapshot-usage", {
+          event: "context_compaction", chat_id: "snapshot-usage", turn_id: "current", turn_seq: 5,
+          compaction_id: "later", phase: "succeeded",
+        }));
+      }
+      expect(await screen.findByTestId("composer-context-usage")).toHaveAccessibleName(
+        testCase.expected ? `Context ${testCase.expected}. Open context usage` : "Open context usage",
+      );
+      mounted.unmount();
+    }
+  });
+
+  it.each([
+    { rounds: false, replay: false },
+    { rounds: false, replay: true },
+    { rounds: true, replay: false },
+    { rounds: true, replay: true },
+  ])("shows configured context after successful compaction (rounds=$rounds, replay=$replay)", async ({
+    rounds,
+    replay,
+  }) => {
+    const client = makeClient();
+    const settings = modelSettings("global-model", "deepseek");
+    settings.agent.context_window_tokens = 1_000_000;
+    settings.model_presets[0] = {
+      ...settings.model_presets[0]!,
+      model: "global-model",
+      context_window_tokens: 1_000_000,
+    };
+    settings.model_presets.push({
+      ...settings.model_presets[0]!,
+      name: "selected",
+      label: "Selected",
+      active: false,
+      is_default: false,
+      model: "selected-model",
+      context_window_tokens: 65_536,
+    });
+    const messages: UIMessage[] = [{
+      id: "old",
+      role: "assistant",
+      content: "Before compact",
+      createdAt: 1_000,
+      contextWindowTokens: 1_000_000,
+      usage: { context_tokens: 170_000 },
+      ...(rounds ? { roundUsages: [{ prompt_tokens: 170_000 }] } : {}),
+    }];
+    if (replay) messages.push({
+      id: "compact",
+      role: "assistant",
+      kind: "compaction",
+      content: "",
+      createdAt: 2_000,
+      compaction: { id: "compact", phase: "succeeded" },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).includes("websocket%3Aselected-capacity/webui-thread")
+        ? httpJson({ schemaVersion: 3, messages })
+        : { ok: false, status: 404, json: async () => ({}) },
+    )));
+
+    render(wrap(client, <ThreadShell
+      session={session("selected-capacity", "selected")}
+      title="Selected capacity"
+      onToggleSidebar={() => {}}
+      settingsSnapshot={settings}
+    />));
+
+    if (!replay) {
+      await screen.findByText("Before compact");
+      expect(await screen.findByRole("button", {
+        name: "Context 17%. Open context usage",
+      })).toBeInTheDocument();
+      act(() => client._emitChat("selected-capacity", {
+        event: "context_compaction",
+        chat_id: "selected-capacity",
+        compaction_id: "compact",
+        phase: "succeeded",
+      }));
+    }
+
+    if (replay) await screen.findByText("Before compact");
+    const trigger = await screen.findByTestId("composer-context-usage");
+    expect(trigger).toHaveAccessibleName("Open context usage");
+    fireEvent.click(trigger);
+    expect(await screen.findByText("Configured model")).toBeInTheDocument();
+    expect(screen.getByText("selected-model")).toBeInTheDocument();
+    expect(screen.getByText("Configured window")).toBeInTheDocument();
+    expect(screen.getByText("65.5K")).toBeInTheDocument();
+    expect(screen.getByText("Usage unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("170K")).not.toBeInTheDocument();
+    expect(screen.queryByText("1M")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("composer-context-meter")).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    if (rounds) expect(screen.getByText("Recent rounds")).toBeInTheDocument();
+    else expect(screen.queryByText("Recent rounds")).not.toBeInTheDocument();
+  });
+
+  it("does not borrow a global preset when the selected preset is missing", async () => {
+    const client = makeClient();
+    const settings = modelSettings("global-model", "deepseek");
+    settings.agent.context_window_tokens = 1_000_000;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).includes("websocket%3Aremoved-preset/webui-thread")
+        ? httpJson({ schemaVersion: 3, messages: [] })
+        : { ok: false, status: 404, json: async () => ({}) },
+    )));
+
+    render(wrap(client, <ThreadShell
+      session={session("removed-preset", "removed")}
+      title="Removed preset"
+      onToggleSidebar={() => {}}
+      settingsSnapshot={settings}
+    />));
+
+    await screen.findByRole("textbox", { name: "Message input" });
+    expect(screen.queryByTestId("composer-context-usage")).not.toBeInTheDocument();
+  });
+
+  it("keeps the context control hidden when the selected model is blank", async () => {
+    const client = makeClient();
+    const settings = modelSettings("global-model", "deepseek");
+    settings.model_presets.push({
+      ...settings.model_presets[0]!,
+      name: "blank-model",
+      active: false,
+      is_default: false,
+      model: "  ",
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      String(input).includes("websocket%3Ablank-model/webui-thread")
+        ? httpJson({ schemaVersion: 3, messages: [] })
+        : { ok: false, status: 404, json: async () => ({}) },
+    )));
+
+    render(wrap(client, <ThreadShell
+      session={session("blank-model", "blank-model")}
+      title="Blank model"
+      onToggleSidebar={() => {}}
+      settingsSnapshot={settings}
+    />));
+
+    await screen.findByRole("textbox", { name: "Message input" });
+    expect(screen.queryByTestId("composer-context-usage")).not.toBeInTheDocument();
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 65_536.5])(
+    "keeps a selected model while its configured capacity is invalid (%s)",
+    async (contextWindowTokens) => {
+      const client = makeClient();
+      const settings = modelSettings("global-model", "deepseek");
+      settings.agent.context_window_tokens = 1_000_000;
+      settings.model_presets.push({
+        ...settings.model_presets[0]!,
+        name: "fractional",
+        label: "Fractional",
+        active: false,
+        is_default: false,
+        model: "selected-model",
+        context_window_tokens: contextWindowTokens,
+      });
+      vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(
+        String(input).includes("websocket%3Ainvalid-capacity/webui-thread")
+          ? httpJson({ schemaVersion: 3, messages: [] })
+          : { ok: false, status: 404, json: async () => ({}) },
+      )));
+
+      render(wrap(client, <ThreadShell
+        session={session("invalid-capacity", "fractional")}
+        title="Invalid capacity"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={settings}
+      />));
+
+      fireEvent.click(await screen.findByTestId("composer-context-usage"));
+      expect(await screen.findByText("Configured model")).toBeInTheDocument();
+      expect(screen.getByText("selected-model")).toBeInTheDocument();
+      expect(screen.getByText("Configured window")).toBeInTheDocument();
+      expect(screen.getByText("Usage unavailable")).toBeInTheDocument();
+      expect(screen.queryByText("1M")).not.toBeInTheDocument();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    },
+  );
 
   it("moves the session handle into the pane only when the workbench is split", () => {
     const client = makeClient();
@@ -1754,6 +2087,7 @@ describe("ThreadShell", () => {
       label: "Extra",
       model: "deepseek/extra",
       provider: "deepseek",
+      context_window_tokens: 88_888,
       active: false,
       is_default: false,
     });
@@ -1786,6 +2120,12 @@ describe("ThreadShell", () => {
       "/model extra",
     );
     expect(await screen.findByText("extra")).toBeInTheDocument();
+    const contextTrigger = await screen.findByTestId("composer-context-usage");
+    fireEvent.click(contextTrigger);
+    expect(await screen.findByText("Configured model")).toBeInTheDocument();
+    expect(screen.getByText("deepseek/extra")).toBeInTheDocument();
+    expect(screen.getByText("88.9K")).toBeInTheDocument();
+    fireEvent.click(contextTrigger);
 
     rerender(view("fast"));
     expect(await screen.findByText("fast")).toBeInTheDocument();

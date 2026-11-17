@@ -1247,6 +1247,10 @@
         "detailsLabel": "컨텍스트 사용량 열기",
         "panelTitle": "컨텍스트 사용량",
         "contextTitle": "컨텍스트",
+        "configuredModel": "구성된 모델",
+        "configuredWindow": "구성된 컨텍스트 창",
+        "usageUnavailable": "사용량을 사용할 수 없음",
+        "lastKnownRequest": "마지막으로 확인된 요청",
         "recentRounds": "최근 라운드",
         "inputTrend": "입력 토큰",
         "input": "입력 토큰",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "메시지가 전송되지 않았습니다",
       "body": "게이트웨이가 이 메시지를 거부했습니다. 텍스트나 첨부 파일을 확인한 후 다시 시도하세요."
+    },
+    "sessionRecoveryRequired": {
+      "title": "채팅 복구가 필요합니다",
+      "body": "턴이 중단되어 Nanobot이 이 채팅을 일시 중지했습니다. 계속하려면 새 채팅을 시작하세요."
     },
     "modelRequestFailed": {
       "billingTitle": "모델 제공업체 할당량을 사용할 수 없음",

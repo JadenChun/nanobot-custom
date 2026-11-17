@@ -1246,6 +1246,10 @@
         "detailsLabel": "打开上下文用量",
         "panelTitle": "上下文用量",
         "contextTitle": "上下文",
+        "configuredModel": "已配置的模型",
+        "configuredWindow": "已配置的上下文窗口",
+        "usageUnavailable": "用量不可用",
+        "lastKnownRequest": "最近一次已知请求",
         "recentRounds": "最近轮次",
         "inputTrend": "输入 Token",
         "input": "输入 Token",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "消息未发送",
       "body": "网关拒绝了这条消息。请检查消息内容或附件后重试。"
+    },
+    "sessionRecoveryRequired": {
+      "title": "聊天需要恢复",
+      "body": "Nanobot 在一个回合中断后暂停了此聊天。请开始新聊天以继续。"
     },
     "modelRequestFailed": {
       "billingTitle": "模型提供商账户额度不足",

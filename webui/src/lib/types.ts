@@ -172,6 +172,18 @@ export interface DelegatedChildSummaryPayload {
 
 export type DelegatedChildReference = DelegatedChildPayload | DelegatedChildSummaryPayload;
 
+export interface ContextUsageSnapshot {
+  context_tokens: number | null;
+  context_window_tokens: number | null;
+}
+
+export interface UIContextUsage {
+  contextTokens: number | null;
+  contextWindowTokens: number | null;
+  /** Anchor from turn_end, not the carrier row's older turnSeq. */
+  completionTurnSeq?: number;
+}
+
 export interface UIMessage {
   id: string;
   role: Role;
@@ -221,12 +233,14 @@ export interface UIMessage {
   latencyMs?: number;
   /** Client epoch milliseconds when the definitive ``turn_end`` was received. */
   completedAt?: number;
-  /** Additive model usage for this turn; context_tokens is the final request only. */
+  /** Additive model usage for this turn; not proof of current context after replacement. */
   usage?: TurnUsage;
   /** Logical model rounds in display order; runner-level recovery calls are aggregated. */
   roundUsages?: RoundUsage[];
   /** Configured context-window capacity for the model used by this turn. */
   contextWindowTokens?: number;
+  /** Completion-owned current context. Present null is an authoritative invalidation. */
+  contextUsage?: UIContextUsage;
   /** Lightweight provenance for proactive assistant messages. */
   source?: UIMessageSource;
   /** Structured provenance for a message delivered by another session. */
@@ -1934,6 +1948,7 @@ export type InboundEvent =
       usage?: TurnUsage;
       round_usages?: RoundUsage[];
       context_window_tokens?: number;
+      context_usage?: ContextUsageSnapshot;
       /** Authoritative sustained-goal snapshot for this chat (same shape as ``goal_state`` events). */
       goal_state?: GoalStateWsPayload;
       outcome?: "completed" | "failed" | "cancelled" | "interrupted";

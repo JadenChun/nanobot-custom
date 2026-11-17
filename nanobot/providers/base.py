@@ -14,7 +14,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 import json_repair
 from loguru import logger
@@ -56,6 +56,45 @@ RetryEventCallback = Callable[[str], Awaitable[None]]
 LLMCallObserver = Callable[["LLMCallRecord"], None]
 ProviderCompactionScope = Literal["prior_context", "current_request"]
 RetryStatusCallback = Callable[[RetryStatusEvent], Awaitable[None]]
+
+
+class ContextUsagePayload(TypedDict):
+    context_tokens: int | None
+    context_window_tokens: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextUsageSnapshot:
+    """One current main-request observation, separate from additive spending.
+
+    A present null snapshot is an invalidation. An absent snapshot means no update.
+    """
+
+    context_tokens: int | None
+    context_window_tokens: int | None
+
+    @classmethod
+    def from_value(cls, value: object) -> ContextUsageSnapshot:
+        """Normalize a *present* wire/persisted value, failing closed."""
+        if isinstance(value, cls):
+            count, window = value.context_tokens, value.context_window_tokens
+        elif isinstance(value, dict):
+            data = cast(dict[object, object], value)
+            if not {"context_tokens", "context_window_tokens"} <= data.keys():
+                return cls(None, None)
+            count, window = data["context_tokens"], data["context_window_tokens"]
+        else:
+            return cls(None, None)
+        if (count is None and window is None) or (
+            type(count) is int and count >= 0
+            and (window is None or (type(window) is int and window > 0))
+        ):
+            return cls(count, window)
+        return cls(None, None)
+
+    def to_dict(self) -> ContextUsagePayload:
+        return {"context_tokens": self.context_tokens,
+                "context_window_tokens": self.context_window_tokens}
 
 
 def track_stream_delivery(kwargs: dict[str, Any], delivered: list[bool]) -> None:

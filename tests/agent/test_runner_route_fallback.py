@@ -191,3 +191,52 @@ async def test_fallback_final_request_limits_reject_before_dispatch() -> None:
     assert primary.calls == 1
     assert fallback.calls == 0
     assert result.stop_reason == "error" or result.error is not None
+
+
+@pytest.mark.parametrize("known_window", [False, True])
+@pytest.mark.parametrize("path", ["normal", "streaming", "no-tools"])
+async def test_context_snapshot_uses_consumed_fallback_receipt_not_primary_budget(known_window, path) -> None:
+    from nanobot.agent.hook import AgentHook
+    from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+
+    primary = _CountingProxy(_leaf(PRIMARY, [_rate_limit_response()]))
+    fallback = _CountingProxy(_leaf(FALLBACK, [LLMResponse(
+        content="fallback answer", usage=LLMUsage.reported(input_tokens=2000, output_tokens=10),
+    )]))
+    preset = _fallback_preset(FALLBACK)
+    preset.context_window_tokens = int(FALLBACK["context_window_tokens"]) if known_window else None
+    wrapper = FallbackProvider(primary, [preset], lambda _preset: fallback,
+                               primary_context_window_tokens=int(PRIMARY["context_window_tokens"]))
+
+    class StreamHook(AgentHook):
+        def wants_streaming(self):
+            return path == "streaming"
+
+    runner = AgentRunner()
+    messages = [{"role": "user", "content": "hello"}]
+    spec = make_run_spec(wrapper, model=str(PRIMARY["model"]),
+        context_window_tokens=int(PRIMARY["context_window_tokens"]),
+        max_iterations=2, max_tool_result_chars=1000, tools=_tools(),
+        initial_messages=messages, hook=StreamHook())
+    if path == "no-tools":
+        state = runner._make_request_state(spec, messages, None)
+        recorded = await runner._request_no_tools(spec, messages, request_state=state)
+        runner._record_request_usage(spec, state, recorded.response, recorded_response=recorded)
+        snapshot = state.context_usage
+    else:
+        snapshot = (await runner.run(spec)).context_usage
+    assert snapshot == ContextUsageSnapshot(2000, int(FALLBACK["context_window_tokens"]) if known_window else None)
+    assert primary.calls == fallback.calls == 1
+
+
+@pytest.mark.parametrize("capacity", [None, 0, -1, True, float("inf"), float("nan")])
+def test_fallback_attribution_accessor_does_not_treat_inherited_budget_as_capacity(capacity) -> None:
+    primary = _leaf(PRIMARY)
+    preset = _fallback_preset(FALLBACK)
+    wrapper = FallbackProvider(primary, [preset], lambda _preset: _leaf(FALLBACK))
+    route = preview(wrapper).route
+    route = replace(route, model=str(FALLBACK["model"]), fallback_index=1)
+    preset.context_window_tokens = capacity
+    assert route.context_window_tokens == int(PRIMARY["context_window_tokens"])
+    assert wrapper.context_usage_window_for_route(route) is None
+    assert wrapper.context_usage_window_for_route(None) is None

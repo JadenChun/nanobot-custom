@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, CircleDashed } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Check, ChevronDown, CircleDashed } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { MarkdownText } from "@/components/MarkdownText";
 import { cn } from "@/lib/utils";
 
 import { ActivityStep } from "./ActivityStep";
@@ -17,20 +18,80 @@ export function ReasoningRow({
   className?: string;
 }) {
   const { t } = useTranslation();
+  const id = useId();
+  const [expanded, setExpanded] = useState(false);
   const fallback = streaming
     ? t("message.reasoningStreaming", { defaultValue: "Thinking…" })
     : t("message.reasoning", { defaultValue: "Thinking" });
   const preview = compactReasoningPreview(text) || fallback;
+  const hasDetails = text.trim().length > 0;
+  const disclosureId = `${id}-disclosure`;
+  const bodyId = `${id}-body`;
+  const label = hasDetails ? (
+    <button
+      type="button"
+      id={disclosureId}
+      data-thread-disclosure=""
+      aria-label={t("message.reasoningSummary", { defaultValue: "Reasoning" })}
+      aria-expanded={expanded}
+      aria-controls={bodyId}
+      onClick={() => setExpanded((open) => !open)}
+      className={cn(
+        "group inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm text-start",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    >
+      <span
+        data-sheen-text={streaming ? preview : undefined}
+        className={cn(
+          "min-w-0 flex-1 truncate",
+          streaming && "streaming-text-sheen",
+        )}
+      >
+        {preview}
+      </span>
+      <ChevronDown
+        aria-hidden
+        className={cn(
+          "h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform duration-200 ease-out",
+          "motion-reduce:transition-none group-hover:text-muted-foreground",
+          expanded && "rotate-180",
+        )}
+        strokeWidth={1.8}
+      />
+    </button>
+  ) : preview;
+
   return (
-    <ActivityStep
-      marker={<ReasoningMarker streaming={streaming} />}
-      active={streaming}
-      tone={streaming ? "active" : "success"}
-      label={preview}
-      labelClassName="italic text-muted-foreground/78"
-      contentClassName="overflow-hidden"
-      className={className}
-    />
+    <div className={cn("min-w-0", className)}>
+      <ActivityStep
+        marker={<ReasoningMarker streaming={streaming} />}
+        active={streaming}
+        tone={streaming ? "active" : "success"}
+        label={label}
+        labelClassName="italic text-muted-foreground/78"
+        contentClassName="overflow-hidden"
+      />
+      {hasDetails ? (
+        <div
+          id={bodyId}
+          role="region"
+          aria-labelledby={disclosureId}
+          aria-hidden={!expanded}
+          hidden={!expanded}
+          className="ml-[1.625rem] mt-1 min-w-0 [overflow-wrap:anywhere]"
+        >
+          {expanded ? (
+            <MarkdownText
+              className="min-w-0 text-[13px] leading-relaxed [&_pre]:whitespace-pre-wrap [&_pre_code]:whitespace-pre-wrap"
+              streaming={streaming}
+            >
+              {text}
+            </MarkdownText>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

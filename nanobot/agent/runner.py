@@ -42,6 +42,7 @@ from nanobot.llm_usage.context import (
     source_from_session_key,
 )
 from nanobot.providers.base import (
+    ContextUsageSnapshot,
     LLMProvider,
     LLMResponse,
     LLMUsage,
@@ -107,6 +108,8 @@ class RecordedResponse:
     source_event_id: str | None
     local_usage_anchor_eligible: bool = False
     tools: CapturedToolBindings | None = field(default=None, repr=False, compare=False)
+    context_usage_epoch: int | None = None
+    context_window_tokens: int | None = None
 
     def release(self) -> None:
         if self.tools is not None:
@@ -320,6 +323,7 @@ class AgentRunResult:
     # it implicitly.
     provider_state_settlement: ProviderStateSettlement | None = field(default=None, repr=False)
     artifact_handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False)
+    context_usage: ContextUsageSnapshot | None = None
 
 
 class AgentRunner:
@@ -730,6 +734,7 @@ class AgentRunner:
                 child_artifact_grants.close()
             raise
 
+        request_state: ModelRequestState | None = None
         try:
             request_state = self._make_request_state(spec, messages, compaction)
             if request_state.source is not None:
@@ -777,6 +782,7 @@ class AgentRunner:
         finally:
             try:
                 context.messages = deepcopy(messages)
+                context.context_usage = request_state.context_usage if request_state is not None else None
                 if context.exception is None:
                     await hook.on_finally(context)
                 else:
@@ -1734,6 +1740,7 @@ class AgentRunner:
                 else None
             ),
             provider_compaction_applied=request_state.provider_compaction_applied,
+            context_usage=request_state.context_usage,
         )
 
     @staticmethod
@@ -1800,7 +1807,9 @@ class AgentRunner:
     def _record_and_settle(self, spec: AgentRunSpec, state: ModelRequestState,
                            ticket: SourceRequestTicket | None, response: LLMResponse,
                            *, malformed: bool = False, no_tools: bool = False,
-                           record_source_response: bool = True) -> RecordedResponse:
+                           record_source_response: bool = True,
+                           context_usage_receipt: tuple[int | None, int | None] | None = None,
+                           ) -> RecordedResponse:
         try:
             source_event_id = (
                 self._record_source_response(spec, response)
@@ -1838,7 +1847,14 @@ class AgentRunner:
             and response.error_kind is None
             and response_has_usable_output
         )
-        return RecordedResponse(response, source_event_id, anchor_eligible)
+        epoch, window = context_usage_receipt if context_usage_receipt is not None else (
+            state.prepared_context_usage_epoch, state.prepared_context_window_tokens,
+        )
+        return RecordedResponse(
+            response, source_event_id, anchor_eligible,
+            context_usage_epoch=epoch,
+            context_window_tokens=window,
+        )
 
     def _reprepare_route_after_change(
         self,
@@ -2056,6 +2072,9 @@ class AgentRunner:
         while True:
             attempt_emitted_content = False
             attempt_emitted_reasoning = False
+            context_usage_receipt = (
+                request_state.prepared_context_usage_epoch, request_state.prepared_context_window_tokens,
+            )
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
             kwargs = self._build_request_kwargs(spec, messages, tools=deepcopy(tool_definitions))
             if wants_streaming:
@@ -2207,7 +2226,10 @@ class AgentRunner:
                 raise
             break
         dropped, all_dropped, original_finish_reason = self._drop_malformed_tool_calls(response)
-        recorded = self._record_and_settle(spec, request_state, ticket, response, malformed=dropped > 0)
+        recorded = self._record_and_settle(
+            spec, request_state, ticket, response, malformed=dropped > 0,
+            context_usage_receipt=context_usage_receipt,
+        )
         _pause_generation()
         await _close_native_reasoning()
         if first_output_at is not None:
@@ -2556,6 +2578,9 @@ class AgentRunner:
         recovery_failure_reason: str | None = None
         ticket: SourceRequestTicket | None = None
         while True:
+            context_usage_receipt = (
+                request_state.prepared_context_usage_epoch, request_state.prepared_context_window_tokens,
+            )
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
             kwargs = self._build_request_kwargs(spec, messages, tools=None)
             if tool_choice_none:
@@ -2695,6 +2720,7 @@ class AgentRunner:
             response,
             no_tools=True,
             record_source_response=record_source_response,
+            context_usage_receipt=context_usage_receipt,
         )
         await self.context_governor.summarize_provider_compaction(
             request_state,
@@ -2779,6 +2805,15 @@ class AgentRunner:
             response,
             tool_definitions=state.tool_definitions,
         )
+        if (
+            recorded_response is not None
+            and recorded_response.response is response
+            and recorded_response.context_usage_epoch == state.context_usage_epoch
+            and state.usage.context_tokens is not None
+        ):
+            state.context_usage = ContextUsageSnapshot(
+                state.usage.context_tokens, recorded_response.context_window_tokens,
+            )
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 
         reported = response.usage

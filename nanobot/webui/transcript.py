@@ -22,6 +22,7 @@ from loguru import logger
 
 from nanobot.attachments.context import media_paths_for_message
 from nanobot.config.paths import get_webui_dir
+from nanobot.providers.base import ContextUsageSnapshot
 from nanobot.runtime_context import public_history_message
 from nanobot.session.automation_turns import is_automation_kind
 from nanobot.session.history_visibility import is_hidden_history_message
@@ -449,6 +450,10 @@ def validate_retained_transcript_record(row: dict[str, object]) -> None:
         raise ValueError("unsupported retained transcript event/version")
     if "chat_id" in row and (not isinstance(row["chat_id"], str) or not row["chat_id"]):
         raise ValueError("invalid retained transcript chat identity")
+    if "context_usage" in row and (
+        row["context_usage"] != ContextUsageSnapshot.from_value(row["context_usage"]).to_dict()
+    ):
+        raise ValueError("invalid retained context usage")
     if event == "delegated_child":
         if (any(not isinstance(row.get(name), str) or not row.get(name)
                 for name in ("child_id", "child_session_key", "profile", "state"))
@@ -574,7 +579,7 @@ def validate_retained_webui_thread(data: dict[str, object]) -> None:
     strings = {"id", "content", "activitySegmentId", "reasoning", "turnId"}
     numbers = {"createdAt", "latencyMs", "completedAt", "contextWindowTokens", "turnSeq"}
     booleans = {"isStreaming", "reasoningStreaming"}
-    objects = {"compaction", "delegatedChild", "usage", "source", "sessionMessage"}
+    objects = {"compaction", "delegatedChild", "usage", "source", "sessionMessage", "contextUsage"}
     records = {"toolEvents", "fileEdits", "cliApps", "mcpPresets", "sessionMentions", "roundUsages"}
     choices = {
         "role": {"user", "assistant", "tool", "system"},
@@ -603,6 +608,23 @@ def validate_retained_webui_thread(data: dict[str, object]) -> None:
                 valid = type(value) is bool
             elif name in choices:
                 valid = isinstance(value, str) and value in choices[name]
+            elif name == "contextUsage":
+                if not isinstance(value, dict):
+                    raise ValueError("invalid retained context usage")
+                snapshot = cast(dict[str, object], value)
+                normalized = ContextUsageSnapshot.from_value({
+                    "context_tokens": snapshot.get("contextTokens"),
+                    "context_window_tokens": snapshot.get("contextWindowTokens"),
+                })
+                valid = (
+                    {"contextTokens", "contextWindowTokens"} <= snapshot.keys()
+                    and not snapshot.keys() - {"contextTokens", "contextWindowTokens", "completionTurnSeq"}
+                    and snapshot["contextTokens"] == normalized.context_tokens
+                    and snapshot["contextWindowTokens"] == normalized.context_window_tokens
+                    and ("completionTurnSeq" not in snapshot
+                         or (type(snapshot["completionTurnSeq"]) is int
+                             and snapshot["completionTurnSeq"] >= 0))
+                )
             elif name in objects:
                 valid = isinstance(value, dict)
             elif name in records:
@@ -2689,8 +2711,8 @@ def replay_transcript_to_ui_messages(
         elif fallback_phase:
             fields["turnPhase"] = fallback_phase
         seq = rec.get("turn_seq")
-        if isinstance(seq, (int, float)):
-            fields["turnSeq"] = int(seq)
+        if type(seq) is int and seq >= 0:
+            fields["turnSeq"] = seq
         return fields
 
     def _source_fields(rec: dict[str, Any]) -> dict[str, Any]:
@@ -2850,10 +2872,28 @@ def replay_transcript_to_ui_messages(
         usage: dict[str, int] | None = None,
         round_usages: list[dict[str, int]] | None = None,
         context_window_tokens: int | None = None,
+        context_usage: ContextUsageSnapshot | None = None,
+        turn_id: str | None = None,
+        completion_turn_seq: int | None = None,
     ) -> None:
+        context_fields: dict[str, Any] = {}
+        if context_usage is not None and turn_id:
+            context_fields["contextUsage"] = {
+                "contextTokens": context_usage.context_tokens,
+                "contextWindowTokens": context_usage.context_window_tokens,
+                **({"completionTurnSeq": completion_turn_seq} if completion_turn_seq is not None else {}),
+            }
         for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("role") == "assistant" and messages[i].get("kind") != "trace":
+            row = messages[i]
+            if row.get("role") == "user":
+                if context_fields and row.get("turnId") == turn_id:
+                    messages[i] = {**row, **context_fields}
+                break
+            if (row.get("role") == "assistant" and row.get("kind") != "trace"
+                    and (not turn_id or row.get("turnId") == turn_id)):
                 completion: dict[str, Any] = {"isStreaming": False}
+                if row.get("turnId") == turn_id:
+                    completion.update(context_fields)
                 if latency_ms is not None:
                     completion["latencyMs"] = latency_ms
                 if usage:
@@ -3517,6 +3557,7 @@ def replay_transcript_to_ui_messages(
             continue
 
         if ev == "turn_end":
+            completion_turn_id = _turn_fields(rec).get("turnId")
             media_reply_texts.clear()
             deferred_answers.clear()
             active_activity_segment_id = None
@@ -3546,6 +3587,12 @@ def replay_transcript_to_ui_messages(
             )
             context_window = rec.get("context_window_tokens")
             stamp_completion(
+                turn_id=completion_turn_id,
+                completion_turn_seq=(
+                    rec["turn_seq"] if type(rec.get("turn_seq")) is int and rec["turn_seq"] >= 0 else None
+                ),
+                context_usage=(ContextUsageSnapshot.from_value(rec["context_usage"])
+                               if "context_usage" in rec else None),
                 latency_ms=int(lat) if isinstance(lat, (int, float)) and lat >= 0 else None,
                 usage=sanitized_usage,
                 round_usages=sanitized_round_usages,

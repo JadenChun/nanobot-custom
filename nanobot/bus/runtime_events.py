@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from nanobot.bus.events import InboundMessage
 from nanobot.events import AgentEvent
-from nanobot.providers.base import LLMUsage
+from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
 
 if TYPE_CHECKING:
     from nanobot.bus.queue import MessageBus
@@ -85,6 +85,7 @@ class TurnCompleted(AgentEvent):
     failure_kind: str | None = None
     failure_error_kind: str | None = None
     failure_attempts: int | None = None
+    context_usage: ContextUsageSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,7 @@ class RuntimeEventPublisher:
         self._turn_runtime: dict[str, LLMRuntime] = {}
         self._turn_usage: dict[str, LLMUsage] = {}
         self._turn_round_usages: dict[str, tuple[LLMUsage, ...]] = {}
+        self._turn_context_usage: dict[str, ContextUsageSnapshot] = {}
 
     @staticmethod
     def _context(
@@ -150,6 +152,13 @@ class RuntimeEventPublisher:
         if latency_ms is not None:
             self._turn_latency_ms[session_key] = int(latency_ms)
 
+    def record_turn_context_usage(
+        self, session_key: str, snapshot: ContextUsageSnapshot | None,
+    ) -> None:
+        """None is no update; every present object replaces the one current slot."""
+        if snapshot is not None:
+            self._turn_context_usage[session_key] = snapshot
+
     def record_turn_usage(
         self,
         session_key: str,
@@ -173,6 +182,7 @@ class RuntimeEventPublisher:
         self._turn_runtime.pop(session_key, None)
         self._turn_usage.pop(session_key, None)
         self._turn_round_usages.pop(session_key, None)
+        self._turn_context_usage.pop(session_key, None)
 
     async def user_input_accepted(
         self,
@@ -326,6 +336,7 @@ class RuntimeEventPublisher:
                 runtime=self._turn_runtime.pop(session_key, None),
                 usage=self._turn_usage.pop(session_key, None),
                 round_usages=self._turn_round_usages.pop(session_key, ()),
+                context_usage=self._turn_context_usage.pop(session_key, None),
                 outcome=outcome,
                 failure_kind=failure_kind,
                 failure_error_kind=failure_error_kind,

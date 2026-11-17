@@ -1247,6 +1247,10 @@
         "detailsLabel": "Mở mức sử dụng ngữ cảnh",
         "panelTitle": "Mức sử dụng ngữ cảnh",
         "contextTitle": "Ngữ cảnh",
+        "configuredModel": "Mô hình đã cấu hình",
+        "configuredWindow": "Cửa sổ ngữ cảnh đã cấu hình",
+        "usageUnavailable": "Không có dữ liệu sử dụng",
+        "lastKnownRequest": "Yêu cầu gần nhất đã biết",
         "recentRounds": "Các lượt gần đây",
         "inputTrend": "Token đầu vào",
         "input": "Token đầu vào",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "Tin nhắn chưa được gửi",
       "body": "Gateway đã từ chối tin nhắn này. Hãy kiểm tra nội dung hoặc tệp đính kèm rồi thử lại."
+    },
+    "sessionRecoveryRequired": {
+      "title": "Cuộc trò chuyện cần được khôi phục",
+      "body": "Nanobot đã tạm dừng cuộc trò chuyện này sau một lượt bị gián đoạn. Hãy bắt đầu cuộc trò chuyện mới để tiếp tục."
     },
     "modelRequestFailed": {
       "billingTitle": "Hạn mức của nhà cung cấp mô hình không khả dụng",

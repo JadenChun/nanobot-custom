@@ -17,7 +17,7 @@ from nanobot.events import ContextCompactionEvent as ContextCompactionEvent
 from nanobot.events import RecoveryStateEvent as RecoveryStateEvent
 from nanobot.events import RetryStatusEvent as RetryStatusEvent
 from nanobot.events import RetryWaitEvent as RetryWaitEvent
-from nanobot.providers.base import LLMUsage
+from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
 
 if TYPE_CHECKING:
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
@@ -72,6 +72,7 @@ class TurnEndEvent(AgentEvent):
     failure_error_kind: str | None = None
     failure_attempts: int | None = None
     failure_message: str | None = None
+    context_usage: ContextUsageSnapshot | None = None
 
 
 @dataclass(frozen=True)

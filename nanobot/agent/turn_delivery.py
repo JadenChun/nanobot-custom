@@ -9,6 +9,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from nanobot.agent.hook import AgentHook, AgentRunHookContext
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.notification_delivery import notification_is_deliverable
 from nanobot.bus.outbound_events import (
@@ -20,8 +21,8 @@ from nanobot.bus.outbound_events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeEventPublisher
 from nanobot.channels.notification_routes import notification_metadata
-from nanobot.events import NO_EVENTS, AgentEvent, EventSink
-from nanobot.providers.base import LLMUsage
+from nanobot.events import NO_EVENTS, AgentEvent, ContextCompactionEvent, EventSink
+from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 
@@ -41,6 +42,17 @@ class TurnRoute:
 
 TurnRoutePolicy = Callable[[InboundMessage, str, TurnRoute], TurnRoute]
 TurnOutputHook = Callable[[OutboundMessage], Awaitable[None]]
+
+
+class _ContextUsageHook(AgentHook):
+    """Terminal relay before any fallible/suspending product or plugin finalizer."""
+
+    def __init__(self, publisher: RuntimeEventPublisher, session_key: str) -> None:
+        super().__init__()
+        self._publisher, self._session_key = publisher, session_key
+
+    async def on_finally(self, context: AgentRunHookContext) -> None:
+        self._publisher.record_turn_context_usage(self._session_key, context.context_usage)
 
 
 def _bind_events(
@@ -314,6 +326,12 @@ class TurnDelivery:
     def record_usage(self, round_usages: list[LLMUsage]) -> None:
         self.runtime_event_publisher.record_turn_usage(self.session_key, round_usages)
 
+    def context_usage_hook(self) -> AgentHook | None:
+        # Silent/no-lifecycle runs do not complete a publisher-owned turn.
+        if self.silent or not self.route.publish_lifecycle:
+            return None
+        return _ContextUsageHook(self.runtime_event_publisher, self.session_key)
+
     def record_stop_reason(
         self,
         stop_reason: str,
@@ -444,6 +462,11 @@ class TurnDelivery:
         return f"{self._stream_base_id}:{self._stream_segment}"
 
     async def _publish_event(self, event: AgentEvent) -> None:
+        if (isinstance(event, ContextCompactionEvent) and event.phase == "succeeded"
+                and self.route.publish_lifecycle and not self.silent):
+            self.runtime_event_publisher.record_turn_context_usage(
+                self.session_key, ContextUsageSnapshot(None, None),
+            )
         if isinstance(event, RetryStatusEvent):
             self._retry_status = event if event.state == "exhausted" else None
         if isinstance(event, StreamDeltaEvent | StreamEndEvent):

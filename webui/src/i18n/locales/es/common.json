@@ -1247,6 +1247,10 @@
         "detailsLabel": "Abrir uso del contexto",
         "panelTitle": "Uso del contexto",
         "contextTitle": "Contexto",
+        "configuredModel": "Modelo configurado",
+        "configuredWindow": "Ventana configurada",
+        "usageUnavailable": "Uso no disponible",
+        "lastKnownRequest": "Última solicitud conocida",
         "recentRounds": "Rondas recientes",
         "inputTrend": "Tokens de entrada",
         "input": "Tokens de entrada",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "El mensaje no se envió",
       "body": "El gateway rechazó este mensaje. Revisa el texto o los archivos adjuntos e inténtalo de nuevo."
+    },
+    "sessionRecoveryRequired": {
+      "title": "El chat necesita recuperación",
+      "body": "Nanobot pausó este chat después de un turno interrumpido. Inicia un chat nuevo para continuar."
     },
     "modelRequestFailed": {
       "billingTitle": "La cuota del proveedor del modelo no está disponible",

@@ -727,6 +727,38 @@ describe("useNanobotStream", () => {
     });
   });
 
+  it("keeps context tri-state on the exact user carrier and drops it on chat reset", () => {
+    const fake = fakeClient();
+    const initial: UIMessage[] = [
+      { id: "old-answer", role: "assistant", content: "old", createdAt: 1000, turnId: "old",
+        contextUsage: { contextTokens: 5000, contextWindowTokens: 12000, completionTurnSeq: 3 } },
+      { id: "current-user", role: "user", content: "new", createdAt: 2000, turnId: "current" },
+    ];
+    const { result, rerender } = renderHook(({ chatId, rows }: { chatId: string; rows: UIMessage[] }) => (
+      useNanobotStream(chatId, rows)
+    ), { wrapper: wrap(fake.client), initialProps: { chatId: "context", rows: initial } });
+    act(() => fake.emit("context", { event: "turn_end", chat_id: "context", turn_id: "current", turn_seq: 4 }));
+    expect(result.current.messages[0].contextUsage?.contextTokens).toBe(5000);
+    expect(result.current.messages[1].contextUsage).toBeUndefined();
+    act(() => fake.emit("context", {
+      event: "turn_end", chat_id: "context", turn_id: "current", turn_seq: 5,
+      context_usage: { context_tokens: -1, context_window_tokens: 12000 },
+      usage: { context_tokens: 9000 }, latency_ms: 100,
+    }));
+    expect(result.current.messages[1].contextUsage).toEqual({
+      contextTokens: null, contextWindowTokens: null, completionTurnSeq: 5,
+    });
+    expect(result.current.messages[1].usage).toBeUndefined();
+    expect(result.current.messages[1].latencyMs).toBeUndefined();
+    const hydrated = result.current.messages;
+    rerender({ chatId: "other", rows: EMPTY_MESSAGES });
+    expect(result.current.messages).toEqual([]);
+    // Reconnect/hydration retains the explicit barrier, not a synthesized count.
+    rerender({ chatId: "context", rows: hydrated });
+    expect(result.current.messages[1].contextUsage?.contextTokens).toBeNull();
+    expect(result.current.messages[0].contextUsage?.contextTokens).toBe(5000);
+  });
+
   it("exposes typed recovery state and validates actions with its recovery id", async () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useNanobotStream("chat-recovery", EMPTY_MESSAGES), {
@@ -4032,6 +4064,100 @@ describe("useNanobotStream", () => {
       content: "first second",
       isStreaming: false,
     });
+  });
+
+  it("keeps cumulative rewritten length-recovery text in one answer across compactions", () => {
+    const fake = fakeClient();
+    const chatId = "chat-length-rewritten-compaction";
+    const { result } = renderHook(() => useNanobotStream(chatId, EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => { result.current.send("give a long illustrated answer"); });
+    const turnId = fake.client.sendMessage.mock.calls.at(-1)![3]?.turnId;
+    const chunks = ["# first_segment\n![Diagram](diagram.png)", "second_segment", "final_segment"];
+    // Signing can change the earlier URL on every cumulative replacement. The
+    // continuation contract, not a matching text prefix, identifies the answer.
+    const replacements = [
+      "# first_segment\n![Diagram](/api/media/signed-1?publication=one)",
+      "# first_segment\n![Diagram](/api/media/signed-2?publication=two)second_segment",
+      "# first_segment\n![Diagram](/api/media/signed-3?publication=three)second_segmentfinal_segment",
+    ];
+    let assistantId: string | undefined;
+    for (let index = 0; index < chunks.length; index += 1) {
+      act(() => {
+        if (index > 0) {
+          fake.emit(chatId, {
+            event: "context_compaction", chat_id: chatId,
+            compaction_id: `length-${index}`, phase: "started",
+          });
+          fake.emit(chatId, {
+            event: "context_compaction", chat_id: chatId, turn_id: turnId,
+            compaction_id: `length-${index}`, phase: "succeeded",
+          });
+        }
+        fake.emit(chatId, {
+          event: "delta", chat_id: chatId, turn_id: turnId,
+          stream_id: "length-stream", text: chunks[index],
+        });
+        fake.emit(chatId, {
+          event: "stream_end", chat_id: chatId, turn_id: turnId,
+          stream_id: "length-stream", text: replacements[index],
+          ...(index < chunks.length - 1 ? { resuming: true, merge_next: true } : {}),
+        });
+      });
+      assistantId ??= result.current.messages.find((message) => message.role === "assistant")?.id;
+    }
+    act(() => { fake.emit(chatId, { event: "turn_end", chat_id: chatId, turn_id: turnId }); });
+
+    const answers = result.current.messages.filter((message) => (
+      message.role === "assistant" && !message.kind
+    ));
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({
+      id: assistantId, content: replacements[2], turnId, isStreaming: false,
+    });
+    expect(result.current.messages.filter((message) => message.kind === "compaction"))
+      .toMatchObject([
+        { compaction: { id: "length-1", phase: "succeeded" } },
+        { compaction: { id: "length-2", phase: "succeeded" } },
+      ]);
+  });
+
+  it("keeps a closed non-merged answer separate across a compaction notice", () => {
+    const fake = fakeClient();
+    const chatId = "chat-closed-stream-compaction";
+    const { result } = renderHook(() => useNanobotStream(chatId, EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+    act(() => {
+      fake.emit(chatId, { event: "delta", chat_id: chatId, text: "Before compaction" });
+      fake.emit(chatId, { event: "stream_end", chat_id: chatId });
+    });
+    const firstId = result.current.messages[0].id;
+    act(() => {
+      fake.emit(chatId, {
+        event: "context_compaction", chat_id: chatId,
+        compaction_id: "between-streams", phase: "started",
+      });
+      fake.emit(chatId, {
+        event: "context_compaction", chat_id: chatId,
+        compaction_id: "between-streams", phase: "succeeded",
+      });
+      fake.emit(chatId, { event: "delta", chat_id: chatId, text: "After compaction" });
+      fake.emit(chatId, {
+        event: "stream_end", chat_id: chatId, text: "After compaction: final text",
+      });
+      fake.emit(chatId, { event: "turn_end", chat_id: chatId });
+    });
+
+    const answers = result.current.messages.filter((message) => (
+      message.role === "assistant" && !message.kind
+    ));
+    expect(answers).toHaveLength(2);
+    expect(answers[0]).toMatchObject({ id: firstId, content: "Before compaction", isStreaming: false });
+    expect(answers[1]).toMatchObject({ content: "After compaction: final text", isStreaming: false });
+    expect(answers[1].id).not.toBe(firstId);
   });
 
   it("keeps streaming alive across stream_end when tool activity follows", async () => {

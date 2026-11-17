@@ -40,7 +40,7 @@ from nanobot.bus.runtime_events import (
     UserInputCommitted,
 )
 from nanobot.llm_usage.context import llm_usage_source
-from nanobot.providers.base import LLMProvider, LLMUsage, ProviderCallContext
+from nanobot.providers.base import ContextUsageSnapshot, LLMProvider, LLMUsage, ProviderCallContext
 from nanobot.providers.fallback_provider import FallbackModelObserver
 from nanobot.providers.request_budget import derive_provider_request_limits
 from nanobot.runtime_context import public_history_message
@@ -969,6 +969,7 @@ class WebuiTurnCoordinator:
             latency_ms=event.latency_ms,
             usage=event.usage,
             round_usages=event.round_usages,
+            context_usage=event.context_usage,
             context_window_tokens=(
                 event.runtime.context_window_tokens if event.runtime is not None else None
             ),
@@ -1018,6 +1019,7 @@ class WebuiTurnCoordinator:
         latency_ms: int | None,
         usage: LLMUsage | None = None,
         round_usages: tuple[LLMUsage, ...] = (),
+        context_usage: ContextUsageSnapshot | None = None,
         context_window_tokens: int | None = None,
         outcome: str = "completed",
         failure_kind: str | None = None,
@@ -1037,6 +1039,7 @@ class WebuiTurnCoordinator:
                     goal_state=goal_state_ws_blob(session.metadata),
                     usage=usage,
                     round_usages=round_usages,
+                    context_usage=context_usage,
                     context_window_tokens=context_window_tokens,
                     outcome=outcome,
                     failure_kind=failure_kind,

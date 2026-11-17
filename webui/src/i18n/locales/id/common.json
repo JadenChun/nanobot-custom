@@ -1247,6 +1247,10 @@
         "detailsLabel": "Buka penggunaan konteks",
         "panelTitle": "Penggunaan konteks",
         "contextTitle": "Konteks",
+        "configuredModel": "Model yang dikonfigurasi",
+        "configuredWindow": "Jendela konteks yang dikonfigurasi",
+        "usageUnavailable": "Penggunaan tidak tersedia",
+        "lastKnownRequest": "Permintaan terakhir yang diketahui",
         "recentRounds": "Putaran terbaru",
         "inputTrend": "Token masukan",
         "input": "Token masukan",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "Pesan tidak terkirim",
       "body": "Gateway menolak pesan ini. Periksa teks atau lampiran, lalu coba lagi."
+    },
+    "sessionRecoveryRequired": {
+      "title": "Chat perlu dipulihkan",
+      "body": "Nanobot menjeda chat ini setelah giliran terputus. Mulai chat baru untuk melanjutkan."
     },
     "modelRequestFailed": {
       "billingTitle": "Kuota penyedia model tidak tersedia",

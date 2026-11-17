@@ -1247,6 +1247,10 @@
         "detailsLabel": "Ouvrir l’utilisation du contexte",
         "panelTitle": "Utilisation du contexte",
         "contextTitle": "Contexte",
+        "configuredModel": "Modèle configuré",
+        "configuredWindow": "Fenêtre configurée",
+        "usageUnavailable": "Utilisation indisponible",
+        "lastKnownRequest": "Dernière requête connue",
         "recentRounds": "Tours récents",
         "inputTrend": "Jetons d’entrée",
         "input": "Jetons d’entrée",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "Le message n’a pas été envoyé",
       "body": "La passerelle a refusé ce message. Vérifiez le texte ou les pièces jointes, puis réessayez."
+    },
+    "sessionRecoveryRequired": {
+      "title": "La conversation nécessite une récupération",
+      "body": "Nanobot a suspendu cette conversation après un tour interrompu. Démarrez une nouvelle conversation pour continuer."
     },
     "modelRequestFailed": {
       "billingTitle": "Quota du fournisseur du modèle indisponible",

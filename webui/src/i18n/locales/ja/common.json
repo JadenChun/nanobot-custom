@@ -1247,6 +1247,10 @@
         "detailsLabel": "コンテキスト使用量を開く",
         "panelTitle": "コンテキスト使用量",
         "contextTitle": "コンテキスト",
+        "configuredModel": "設定済みモデル",
+        "configuredWindow": "設定済みコンテキスト長",
+        "usageUnavailable": "使用状況を確認できません",
+        "lastKnownRequest": "最後に確認されたリクエスト",
         "recentRounds": "最近のラウンド",
         "inputTrend": "入力トークン",
         "input": "入力トークン",
@@ -1586,6 +1590,10 @@
     "turnRejected": {
       "title": "メッセージは送信されませんでした",
       "body": "ゲートウェイがこのメッセージを拒否しました。本文または添付ファイルを確認して、もう一度お試しください。"
+    },
+    "sessionRecoveryRequired": {
+      "title": "チャットの復旧が必要です",
+      "body": "ターンが中断されたため、Nanobot はこのチャットを一時停止しました。続行するには新しいチャットを開始してください。"
     },
     "modelRequestFailed": {
       "billingTitle": "モデルプロバイダーの利用枠を使用できません",

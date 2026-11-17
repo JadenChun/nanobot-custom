@@ -1,22 +1,256 @@
 # A3 implementation correction handoff
 
-## Git checkpoint: fixes synced to origin — 2026-11-16
+## Current checkpoint — 2026-11-17
+
+This checkpoint accompanies all completed client fixes on
+`codex/staging-audit-implementation`: CUI-6 reasoning disclosure, CUI-2 context
+presentation and request-bound accounting, merged-text continuation across
+compaction, CUI-3 folder Browse lifetime safety, related locale corrections,
+regressions and progress records. They are included together in the client-fix
+checkpoint commit, using author and committer **Jaden <changherng.jc@gmail.com>**.
+The base before this checkpoint was
+`4f598372299f43041beee6fbe2d049b52b678aba`.
+
+The accompanying Git sync targets only
+`origin/codex/staging-audit-implementation`; remote publication must be confirmed
+against that branch rather than inferred from historical checkpoint text. Staging
+remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+No staging merge, PR, build/install, operator restart or release is part of this
+checkpoint. Earlier local/uncommitted and no-push statements below describe their
+pre-publication source-qualification snapshots, not additional pending fixes.
+
+Fresh commit-snapshot verification passed **1,671 WebUI tests / 106 files**,
+**151 selected Python tests** (including the six backend scope guards), TypeScript
+`--noEmit`, ESLint, Ruff and diff whitespace checks. Frozen before/after full
+strict checking covers **547 files / 0 errors / 0 warnings**, with **0 introduced
+diagnostic signatures** and unchanged dependencies. This is not the full Python
+repository suite or installed/native-device, P6, broader A3 or release acceptance.
+The installed nanobot release remains unchanged; no external model was used.
+
+CUI-6 retains its bounded source-preview qualification. **CUI-2 normal context
+accounting is now source-qualified**, beyond the earlier unavailable-state
+presentation safeguard; this is not blanket all-compaction client or installed
+runtime acceptance. **Live rewritten-cumulative text duplication is separately
+source-qualified** for the reproduced compaction/length-recovery mechanism;
+earlier OPEN records below are historical, not installed-runtime acceptance.
+CUI-3 is **PASS_SOURCE_FOLDER_BROWSE_LIFETIME** for the reproduced local stale-
+choice mechanism, not closure of the broader intermittent installed/native
+report. Active-response and unresolved-input locks remain intentional, with the
+existing backend `chat_running` refusal authoritative; no next-turn staging was
+introduced. See the [bounded CUI-3 source record](client-ux-followups.md#cui-3-folder-browse-lifetime--2026-11-17).
+CUI-4 notifications/icons, CUI-5 word reveal and general CUI-7 safe Retry,
+canonical same-attempt deduplication/readback and authoritative restart recovery
+remain open and separate. The user deferred package/build/install work;
+no bundle, build, install or release operation was performed. Full Python-repository
+suite, broader A3, P6 and native/physical-device acceptance are not claimed.
+
+## Historical Git checkpoint: fixes synced to origin — 2026-11-16
 
 The restored-queue anti-replay fix is committed and published at
 `185c3729bc0f28f3225837aa6d75142a9e82ffd6` on
 `origin/codex/staging-audit-implementation`. This includes the previously accepted
 macOS Stop/tooling, queue/Steer, mobile reconnect and bounded CUI-7 owner-seam base
 `b1d7eb24873b02bb5f52036cabf2bcc80957a873`, published in the same sync. Both commits
-use author and committer **Jaden <changherng.jc@gmail.com>**. This progress record
-accompanies the code checkpoint and preserves its validation and remaining work.
-Historical local/uncommitted and no-push statements below refer to qualification
-before this sync, not the current Git state.
+use author and committer **Jaden <changherng.jc@gmail.com>**. This section records
+that 2026-11-16 sync and its validation. Local/uncommitted and no-push statements
+in Nov16 pre-sync qualification records below refer to those snapshots only; the
+current working-tree state is recorded above.
 
-Continue from `origin/codex/staging-audit-implementation`, not staging. Local and
-origin staging remain at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`; no staging
-merge, PR, service change or deployment occurred. The next independent UI task is
-CUI-6 reasoning expansion; general safe Retry and authoritative restart recovery
-remain open as detailed below. Keep qualification to single-device scope.
+At the 2026-11-16 sync checkpoint, staging remained separate and there was no
+staging merge, PR, service change or deployment. See the current checkpoint above
+for the present branch and local uncommitted work.
+
+## CUI-6 reasoning disclosure — 2026-11-17
+
+**Bounded WebUI PASS.** The shared ReasoningRow now retains its collapsed compact
+preview and offers a native keyboard-operable disclosure for the complete supplied
+reasoning text. Expanded content uses the existing lazy Markdown renderer; the full
+body updates during streaming, remains open or closed across appends/completion,
+and is unmounted while collapsed. Empty or whitespace-only text has no control.
+The shared row is exercised through standalone MessageBubble and the existing
+AgentActivityCluster fold; the answer, activity grouping, markers and tool privacy
+remain separate and intact. No provider, transport, persistence or server behavior
+changed.
+
+The intentional pre-edit RED showed the three new disclosure regressions failing
+while the five existing focused files passed 145 tests. The final focused command
+passed **150 tests / 6 files**. Parent final checks passed **1,631 WebUI tests /
+106 files**, TypeScript --noEmit, ESLint and git diff --check.
+
+Parent browser verification used actual MessageBubble and AgentActivityCluster
+components with fixture text only at **1280 × 720** and **390 × 844**. It showed
+the full heading, 36 paragraphs, code block and end marker; appends remained visible
+while open; closing before completion stayed closed and removed full-body descendants.
+The existing outer fold retained its behavior, Enter opened one grouped row,
+Space closed it, and the sibling remained independent. The answer stayed separate.
+Narrow layout stayed at **390 px page width** without horizontal overflow; the end
+and appended markers were reached by scrolling. The viewport was reset and preview
+server PID 72546 was stopped. This was a source preview only, with no gateway,
+provider/model, installed package, native app or physical device.
+
+The nine non-English common.json recovery-notice additions were a separate
+root-owned preflight repair (i18n parity **26/26**), not CUI-6; HEAD remains
+4f598372299f43041beee6fbe2d049b52b678aba with local, uncommitted changes, while
+the Python 3.13.12 / 216-distribution environment and October 20 installed hashes
+remain unchanged. No bundle, wheel, install, service, release, commit or push
+operation was performed.
+
+Evidence is retained under
+/private/tmp/nb-cui6-reasoning-20261117-JwbUuymJ/ (focused RED/GREEN, parent
+full-test/typecheck/lint receipts, browser-observations.json and six screenshots).
+At the 2026-11-17 CUI-6 checkpoint, CUI-2 context accounting was next. Its bounded
+presentation qualification is recorded below. The user's subsequent clarification
+keeps CUI-2 open before CUI-3;
+CUI-4 notifications/icons and CUI-5 word reveal remain open. General CUI-7
+Retry/restart recovery remains open. This bounded UI result does not close A3,
+P6, release or native/physical-device acceptance.
+
+## Live cumulative-text continuation — 2026-11-17
+
+**PASS_SOURCE_LIVE_REWRITE**, bounded source qualification. Debugging confirmed a
+local hook defect: compaction notices closed an answer explicitly kept open by
+`resuming=true, merge_next=true`. The server retained cumulative text, so subsequent
+replacement frames populated new bubbles and repeated earlier segments. Replay's
+existing buffer behavior was correct. Only the hook's compaction flush now preserves
+the open answer; existing stream/tool/reasoning/turn boundaries remain intact. No
+new state, schema, text-prefix matching, persistence, transport, provider or context
+accounting change was needed.
+
+The new regression fails before the fix (**3 answer rows vs 1**), while the genuinely
+closed-segment control already passes. Actual-source frame replay in `ThreadShell`
+changes **3/2/1 live → 1/1/1 live**, matching canonical reload; final visible text
+and the latest signed image URL match. **16** captured-frame live/reload checks pass,
+including unchanged **42% / 42% / 17%** context usage. Full WebUI **1,664 / 106 files**,
+selected producer/replay Python **70**, TypeScript, ESLint, Ruff and diff checks pass.
+Frozen full strict before/after: **547 files / 0 errors / 0 warnings**, with **0**
+introduced diagnostic signatures. Python/dependencies and sampled October 20
+installation remain unchanged; all earlier local work is preserved. No commit,
+push, staging merge, build/install, operator restart or external model call occurred.
+This does not qualify the full Python repository, installed/native/device runtime,
+P6, A3 or a release.
+
+Evidence: `/private/tmp/nb-live-rewrite-20261117-2u27146w/`; see the
+[detailed live-continuation record](client-ux-followups.md#live-cumulative-text-continuation--2026-11-17).
+Earlier OPEN live-text statements below are historical and superseded only for
+this reproduced mechanism. Next independent work: CUI-3 folder selection; general
+CUI-7 mobile recovery/retry, CUI-4 notifications/icons and CUI-5 reveal remain open.
+
+## CUI-2 normal context accounting — 2026-11-17
+
+*Historical accounting checkpoint: its then-OPEN live-text finding is superseded
+only for the reproduced mechanism by the separate continuation correction above;
+the accounting verdict and other limits remain unchanged.*
+
+**PASS_AMENDED_SOURCE_ACCOUNTING; source accounting only, not full CUI-2
+all-compaction-client, installed-runtime or release acceptance.** The proven
+length-recovery request was freshly measured after compaction, but cumulative
+answer placement led replay to stamp usage onto a notice and discard it by row
+position. The correction qualifies one immutable snapshot with the final prepared
+request's epoch/exact-route-window receipt, then uses the existing terminal hook,
+scoped delivery/publisher slot and typed completion flow for live and replay.
+Native pre-compaction dispatched usage cannot reauthorize the replacement epoch;
+fresh reported/existing estimated main-request context resumes normally.
+**Omitted = no update; present explicit-null = actual invalidation/hard barrier**,
+never aggregate or older-history fallback. No ledger, canonical-text segmentation,
+source schema/checkpoint persistence, provider dispatch, billing or rounds change.
+
+Coordinator-rebuilt root/tool/length scenarios cover reported and estimated
+measurements live/reload (**42% / 42% / 17%**, respectively), preserving exact
+preparation/dispatch chronology and spend. Six modern plus two real signed-Markdown
+rewrite source probes pass canonical verification; actual `ThreadShell`
+live/reload checks pass **12 + 4**.
+
+**Separate OPEN live-text followup:** identical frames produce pre-existing
+rewritten-cumulative marker counts **3/2/1 live**, **1/1/1 canonical reload** in
+both actual pre-edit and candidate views. Visible canonical answer text nodes,
+including signed media URLs, are byte-identical before/after. Accounting neither
+introduces nor fixes this duplication. AC2 explicitly qualifies **no new text
+regression plus exact-once canonical replay**, not blanket live exactly-once.
+Keep this defect **OPEN** for independent next scoped work; do not fold it into
+CUI-3 or report full CUI-2 client completion.
+
+Final selected Python passes **1,918/1,918 in 137.07s**, exit0, not the full
+repository suite. The initial expanded selection failed: four delta-caused
+delivery-double errors were fixed by one faithful no-hook fixture field, retaining
+all assertions; long macOS AF_UNIX temporary paths and tight API timing under
+heavy concurrent checks were resolved with short paths and sequential execution
+of the same selection, not product workarounds, test skips or weaker thresholds.
+Full WebUI **1,662 tests / 106 files**, TypeScript `--noEmit`, ESLint, Ruff and
+diff checks pass. All original 26 candidate paths, including frontend source/tests,
+remain hash-identical after the one Python-fixture correction, so that full
+frontend result is reused. Repeated strict: **547 files / 0 errors / 0 warnings**;
+frozen-baseline comparator: **0** introduced signatures. Python **3.13.12**,
+**216** distributions and dependencies remain unchanged; fresh correction review
+passes the amended source-accounting contract.
+
+Evidence is under `/private/tmp/nb-cui2-accounting-20261117-aebB1h/`:
+`code-qualification.json`, `root-python-corrected-final.{json,log}` and
+`root-python-suite-files.txt`, `root-frontend-final.{json,log}`,
+`root-corrected-basedpyright.json` / `root-corrected-type-comparator.{json,log}`,
+`review/correction-recheck.md`, `root-source-probe/` and
+`root-rewrite-baseline-comparison.json`. See the
+[latest detailed accounting record](client-ux-followups.md#cui-2-normal-context-accounting--2026-11-17)
+for concise validation commands and the independent live-text followup.
+
+Legacy absent proof after successful compaction remains unknown; unknown fallback
+capacity has no inferred ratio, and success without a later measurement stays
+unavailable. Source tests did include **disposable private loopback gateway and
+remote-owner fixtures**; none matching remain. No operator service was restarted;
+the October 20 installed link and three sampled hashes remain unchanged. No full
+Python-repository suite, external model, installed/device/native, P6, A3 or release
+acceptance is claimed; build/install remains deferred. CUI-3/4/5 and general CUI-7
+remain separate open work.
+
+The configured-capacity section below is the **historical presentation-only
+checkpoint, retained unchanged**; its pending-accounting direction is superseded
+only by the bounded source-accounting verdict above.
+
+## CUI-2 configured capacity and unavailable usage — 2026-11-17
+
+**User clarification: continue CUI-2 before CUI-3.** The presentation safeguard
+does not satisfy the requirement for normal context usage after compaction. The
+old request measurement is invalidated, while the compaction event publishes only
+ID/phase, not its replacement. Internal rebuilt-request measurements/estimates
+exist, and controlled tests restore usage on an ordinary later measured reply;
+persistent absence in the user's actual run is not yet reproduced. Trace the full
+compaction and subsequent request/live/replay path and correct the replacement
+accounting at its owner. Do not simply keep stale counts or call the unavailable
+label a complete fix. No new production change or broader accounting acceptance
+is recorded by this clarification.
+
+**Bounded presentation PASS; no immediate post-compaction metric or
+effective-fallback provenance is claimed.** The shell derives an informational
+descriptor from the exact selected settings preset and passes it through the
+existing composer to the context popover. A successful compaction still
+invalidates the prior request measurement;
+known configured model/window remain visible alongside explicit unavailable usage.
+The last-known numeric block keeps its captured denominator. Invalid or unresolved
+configured rows do not borrow the global agent capacity. No provider, Python,
+runtime event, hook state, persistent data or effective fallback provenance was
+added. The UI does not claim a post-compaction numerator before a new request is
+measured.
+
+Worker RED-to-GREEN regressions cover ThreadShell live/replay with and without
+rounds, exact preset ownership, malformed capacity, last-known denominator and
+mobile no-round visibility. Parent verification passed **1,644 WebUI tests / 106
+files**, TypeScript `--noEmit`, lint and the strict no-new-diagnostics comparator;
+the unchanged Python environment/source and prior locale values were preserved.
+No full Python test suite, build, install or release was run or claimed.
+
+The parent previewed actual `ThreadComposer`, `ComposerUsagePopover` and
+`ContextCompactionNotice` with fixture state at **1280 × 720** and **390 × 844**;
+this was not a browser exercise of `ThreadShell`. It confirmed the configured
+65.5K window and unavailable usage without a percent/meter, last-known measurements
+retaining their own denominator, rounds, keyboard opening, and a narrow layout with
+no horizontal overflow. ThreadShell live/replay is covered by source tests. The
+viewport was reset and preview PID **76381** stopped; no gateway, provider/model,
+native app or physical device was used.
+
+See the [detailed CUI-2 UX qualification](client-ux-followups.md#cui-2-configured-capacity-and-unavailable-usage--2026-11-17)
+for exact commands, validation counts, preservation checks, browser observations
+and the local evidence directory `/private/tmp/nb-cui2-context-20261117-_2jn61sv/`.
+This source qualification does not imply build, install, release, A3, P6 or
+native/physical-device acceptance.
 
 ## Final CUI-7 restored-queue anti-replay — 2026-11-16
 

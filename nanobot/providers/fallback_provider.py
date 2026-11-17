@@ -27,6 +27,7 @@ from nanobot.providers.base import (
     RetryStatusCallback,
     track_stream_delivery,
 )
+from nanobot.providers.request_budget import PreparedRequestRoute
 
 # Circuit breaker tuned to match OpenAICompatProvider's Responses API breaker.
 _PRIMARY_FAILURE_THRESHOLD = 3
@@ -153,6 +154,21 @@ class FallbackProvider(LLMProvider):
 
     def get_default_model(self) -> str:
         return self._primary.get_default_model()
+
+    def context_usage_window_for_route(self, route: PreparedRequestRoute | None) -> int | None:
+        """Attribute capacity only to the captured leaf, never its inherited budget."""
+        if route is None or route.purpose != "main":
+            return None
+        if route.fallback_index == 0:
+            return route.context_window_tokens if route.provider == self._primary.provider_name else None
+        index = route.fallback_index - 1
+        if index >= len(self._fallback_presets):
+            return None
+        preset = self._fallback_presets[index]
+        window = getattr(preset, "context_window_tokens", None)
+        if type(window) is not int or window <= 0 or getattr(preset, "model", None) != route.model:
+            return None
+        return route.context_window_tokens
 
     def set_fallback_model_observer(self, observer: FallbackModelObserver | None) -> None:
         """Attach a process-level observer without changing request call signatures."""

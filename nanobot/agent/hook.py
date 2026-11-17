@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.events import NO_EVENTS, EventSink
-from nanobot.providers.base import LLMResponse, LLMUsage, ToolCallRequest
+from nanobot.providers.base import ContextUsageSnapshot, LLMResponse, LLMUsage, ToolCallRequest
 
 
 @dataclass(slots=True)
@@ -46,6 +46,8 @@ class AgentRunHookContext:
     tool_events: list[dict[str, str]] = field(default_factory=list)
     had_injections: bool = False
     exception: BaseException | None = None
+    # Refreshed by the runner before on_finally, including exception/cancellation.
+    context_usage: ContextUsageSnapshot | None = None
 
 
 @dataclass(slots=True)

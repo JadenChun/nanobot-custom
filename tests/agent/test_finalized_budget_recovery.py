@@ -30,6 +30,7 @@ from nanobot.agent.turn import TurnCallbacks, TurnRequest
 from nanobot.config.schema import Config
 from nanobot.events import AgentEvent, ContextCompactionEvent, EventSink
 from nanobot.providers.base import (
+    ContextUsageSnapshot,
     GenerationSettings,
     LLMResponse,
     LLMUsage,
@@ -478,6 +479,16 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
     async def on_stream(delta: str) -> None:
         streamed.append(delta)
 
+    context_observations = []
+    original_record_usage = loop.runner._record_request_usage
+
+    def observe_context_usage(spec, state, response, **kwargs):
+        usage = original_record_usage(spec, state, response, **kwargs)
+        context_observations.append((state.context_usage_epoch,
+            kwargs["recorded_response"].context_usage_epoch, state.context_usage, usage))
+        return usage
+
+    monkeypatch.setattr(loop.runner, "_record_request_usage", observe_context_usage)
     try:
         result = await loop.execute_turn(TurnRequest(
             content="Inspect the image and collect three evidence chunks.",
@@ -485,6 +496,11 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
             callbacks=TurnCallbacks(on_stream=on_stream) if streaming else TurnCallbacks(),
             hooks=(capture_hook,),
         ))
+
+        if not no_progress and not second_backend_overflow:
+            epoch, dispatch_epoch, context_snapshot, measured = context_observations[-1]
+            assert epoch > 0 and dispatch_epoch == epoch
+            assert context_snapshot == ContextUsageSnapshot(measured.context_tokens, _CONTEXT_WINDOW)
 
         if irreducible:
             assert result.error is None
@@ -1344,6 +1360,8 @@ async def test_compaction_callback_cancellation_preserves_publication_boundary(
                 if event.phase == failure_phase:
                     raise asyncio.CancelledError("injected compaction callback cancellation")
 
+        previous_context = ContextUsageSnapshot(5000, 12000)
+        state.context_usage = previous_context
         state.events = EventSink(publish=publish)
         budget = governor.input_budget(state.config)
         measurement = _local_overflow_measurement(budget)
@@ -1357,6 +1375,8 @@ async def test_compaction_callback_cancellation_preserves_publication_boundary(
                 source_view=state.source_view,
             )
 
+        assert state.context_usage == (ContextUsageSnapshot(None, None) if published else previous_context)
+        assert state.context_usage_epoch == (1 if published else 0)
         after = owner.read_snapshot()
         assert not state.source.has_pending_requests
         assert event_phases[0] == "started"
@@ -1548,6 +1568,10 @@ def _usage_anchor_fixture(*, content: str | None = "usable", finish_reason: str 
         messages=[{"role": "user", "content": "request"}],
         tool_definitions=None,
         usage=None,
+        context_usage=None,
+        context_usage_epoch=0,
+        prepared_context_usage_epoch=0,
+        prepared_context_window_tokens=12000,
         local_usage_anchor=LocalUsageAnchor(
             receipt=receipt,
             prompt_tokens=800,

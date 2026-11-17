@@ -1,6 +1,7 @@
 import { toolTraceLinesFromEvents } from "@/lib/tool-traces";
 import type {
   ToolProgressEvent,
+  UIContextUsage,
   UIFileEdit,
   UIMessage,
   UITurnPhase,
@@ -27,7 +28,7 @@ export function turnFieldsFromEvent(
   }
   const phase = ev.turn_phase ?? fallbackPhase;
   if (phase) fields.turnPhase = phase;
-  if (typeof ev.turn_seq === "number" && Number.isFinite(ev.turn_seq)) {
+  if (typeof ev.turn_seq === "number" && Number.isInteger(ev.turn_seq) && ev.turn_seq >= 0) {
     fields.turnSeq = ev.turn_seq;
   }
   return fields;
@@ -123,16 +124,22 @@ export function stampLastAssistantCompletion(
   prev: UIMessage[],
   completion: Pick<
     UIMessage,
-    "latencyMs" | "completedAt" | "usage" | "roundUsages" | "contextWindowTokens"
+    "latencyMs" | "completedAt" | "usage" | "roundUsages" | "contextWindowTokens" | "contextUsage"
   >,
   turnId?: string,
 ): UIMessage[] {
+  const { contextUsage, ...assistantCompletion } = completion;
   for (let i = prev.length - 1; i >= 0; i -= 1) {
     const m = prev[i];
     // The current user boundary ends the eligible turn. An empty turn with no
     // assistant row, or a legacy event with no turn id, must not restamp a row
     // that belongs to an earlier turn across that boundary.
-    if (m.role === "user") break;
+    if (m.role === "user") {
+      if (contextUsage !== undefined && turnId && m.turnId === turnId) {
+        return replaceMessageAt(prev, i, { ...m, contextUsage });
+      }
+      break;
+    }
     if (
       m.role === "assistant"
       && m.kind !== "trace"
@@ -143,11 +150,41 @@ export function stampLastAssistantCompletion(
         || m.turnId === turnId
       )
     ) {
-      const merged: UIMessage = { ...m, ...completion, isStreaming: false };
+      const merged: UIMessage = {
+        ...m, ...assistantCompletion, isStreaming: false,
+        ...(contextUsage !== undefined && turnId && m.turnId === turnId ? { contextUsage } : {}),
+      };
       return [...prev.slice(0, i), merged, ...prev.slice(i + 1)];
     }
   }
   return prev;
+}
+
+/** Normalize a present completion snapshot at the live protocol edge. */
+export function contextUsageFromEvent(ev: {
+  context_usage?: unknown;
+  turn_seq?: unknown;
+}): UIContextUsage | undefined {
+  if (!("context_usage" in ev)) return undefined;
+  const value = ev.context_usage;
+  let contextTokens: number | null = null;
+  let contextWindowTokens: number | null = null;
+  if (value !== null && typeof value === "object") {
+    const count = "context_tokens" in value ? value.context_tokens : undefined;
+    const window = "context_window_tokens" in value ? value.context_window_tokens : undefined;
+    if (
+      typeof count === "number" && Number.isInteger(count) && count >= 0
+      && (window === null || (typeof window === "number" && Number.isInteger(window) && window > 0))
+    ) {
+      contextTokens = count;
+      contextWindowTokens = window;
+    }
+  }
+  return {
+    contextTokens, contextWindowTokens,
+    ...(typeof ev.turn_seq === "number" && Number.isInteger(ev.turn_seq) && ev.turn_seq >= 0
+      ? { completionTurnSeq: ev.turn_seq } : {}),
+  };
 }
 
 function fileEditKey(edit: Pick<UIFileEdit, "call_id" | "tool" | "path">): string {

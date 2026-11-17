@@ -990,9 +990,43 @@ describe("MessageBubble", () => {
     const preview = screen.getByText("hidden until expanded");
     expect(preview).toBeInTheDocument();
     expect(screen.getByText("The answer is 42.")).toBeInTheDocument();
-    expect(preview.closest('[data-testid="activity-step"]')).toHaveClass("mb-2");
+    expect(preview.closest('[data-testid="activity-step"]')?.parentElement).toHaveClass("mb-2");
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /thinking/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps expanded reasoning separate from the assistant answer", async () => {
+    await act(async () => {
+      await import("@/components/MarkdownTextRenderer");
+    });
+
+    const message: UIMessage = {
+      id: "a-reasoning-answer-separation",
+      role: "assistant",
+      content: "The answer stays visible.",
+      createdAt: Date.now(),
+      reasoning: "## Full reasoning plan\n\nCheck the supplied evidence.",
+      reasoningStreaming: false,
+    };
+
+    render(<MessageBubble message={message} />);
+
+    const answer = screen.getByText("The answer stays visible.");
+    const disclosure = screen.getByRole("button", { name: "Reasoning" });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(answer).toBeInTheDocument();
+
+    fireEvent.click(disclosure);
+
+    const reasoning = document.getElementById(disclosure.getAttribute("aria-controls")!);
+    expect(reasoning).toBeInTheDocument();
+    await within(reasoning!).findByRole("heading", {
+      level: 2,
+      name: "Full reasoning plan",
+    });
+    expect(answer).toBeInTheDocument();
+    expect(reasoning).not.toContainElement(answer);
+    expect(within(reasoning!).getByText("Check the supplied evidence.")).toBeInTheDocument();
   });
 
   it("compacts reasoning markdown into plain single-line text", () => {

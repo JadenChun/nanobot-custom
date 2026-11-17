@@ -1,13 +1,58 @@
 # Client UX follow-ups — 2026-11-16
 
-**Git sync checkpoint, 2026-11-16:** the restored-queue anti-replay fix is committed
-and published to `origin/codex/staging-audit-implementation` at
+## Current checkpoint — 2026-11-17
+
+This checkpoint accompanies all completed client fixes on
+`codex/staging-audit-implementation`: CUI-6 reasoning disclosure, CUI-2 context
+presentation and request-bound accounting, merged-text continuation across
+compaction, CUI-3 folder Browse lifetime safety, related locale corrections,
+regressions and progress records. They are included together in the client-fix
+checkpoint commit, using author and committer **Jaden <changherng.jc@gmail.com>**.
+The base before this checkpoint was
+`4f598372299f43041beee6fbe2d049b52b678aba`.
+
+The accompanying Git sync targets only
+`origin/codex/staging-audit-implementation`; remote publication must be confirmed
+against that branch rather than inferred from historical checkpoint text. Staging
+remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+No staging merge, PR, build/install, operator restart or release is part of this
+checkpoint. Earlier local/uncommitted and no-push statements below describe their
+pre-publication source-qualification snapshots, not additional pending fixes.
+
+Fresh commit-snapshot verification passed **1,671 WebUI tests / 106 files**,
+**151 selected Python tests** (including the six backend scope guards), TypeScript
+`--noEmit`, ESLint, Ruff and diff whitespace checks. Frozen before/after full
+strict checking covers **547 files / 0 errors / 0 warnings**, with **0 introduced
+diagnostic signatures** and unchanged dependencies. This is not the full Python
+repository suite or installed/native-device, P6, broader A3 or release acceptance.
+The installed nanobot release remains unchanged; no external model was used.
+
+CUI-6 retains its bounded source-preview qualification. **CUI-2 normal context
+accounting is now source-qualified**, beyond the earlier unavailable-state
+presentation safeguard; this is not blanket all-compaction client or installed
+runtime acceptance. **Live rewritten-cumulative text duplication is separately
+source-qualified** for the reproduced compaction/length-recovery mechanism;
+earlier OPEN records below are historical, not installed-runtime acceptance.
+CUI-3 has **PASS_SOURCE_FOLDER_BROWSE_LIFETIME** for the reproduced local
+stale-choice mechanism; the broader intermittent installed/native report remains
+unqualified. Active-response and unresolved-input guards still intentionally lock
+folder mutation, and the existing backend `chat_running` refusal remains
+authoritative. No next-turn staging was introduced. CUI-4 notifications/icons,
+CUI-5 word reveal, and general CUI-7 safe Retry, canonical same-attempt
+deduplication/readback and authoritative restart recovery remain open and separate.
+The user deferred package/build/install work;
+no bundle, build, install or release operation was performed. Full Python-repository
+suite, broader A3, P6 and native/physical-device acceptance are not claimed.
+
+**Historical Git sync checkpoint, 2026-11-16:** the restored-queue anti-replay
+fix is committed and published to `origin/codex/staging-audit-implementation` at
 `185c3729bc0f28f3225837aa6d75142a9e82ffd6`, including the earlier owner-seam base
 `b1d7eb24873b02bb5f52036cabf2bcc80957a873`. Both commits use author/committer
-`Jaden <changherng.jc@gmail.com>`. This progress record accompanies that code
-checkpoint; historical local/uncommitted and no-push statements below describe
-their original qualification time, before this sync. See
-[the current handoff checkpoint](implementation-handoff.md#git-checkpoint-fixes-synced-to-origin--2026-11-16).
+`Jaden <changherng.jc@gmail.com>`. The 2026-11-16 progress record accompanied
+that code checkpoint. Local/uncommitted and no-push statements in dated Nov16
+pre-sync qualification entries describe those snapshots only; current state is
+recorded above. See
+[the current handoff checkpoint](implementation-handoff.md#current-checkpoint--2026-11-17).
 Staging remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
 No staging merge, PR, service change or deployment occurred. Broader issues remain open.
 
@@ -23,12 +68,429 @@ run; they do not close the remaining client reports below.
 | Order / ID | Report and desired outcome | Status |
 | --- | --- | --- |
 | 1 / CUI-1 | Queue presentation is awkward; Steer sends but leaves the composer text behind. Make queued guidance clear in a separate panel above the input card; remove submitted text without losing rejected/offline/unadmitted drafts or duplicating input. | **Qualified locally**; [record below](#cui-1-queue-and-steer-qualification) |
-| 2 / CUI-2 | Context-window data becomes missing or inconsistent after compaction. Retain truthful current-model/window and post-compaction context accounting; never invent missing measurements. | Not started; after CUI-7 and CUI-6 |
-| 3 / CUI-3 | Project/folder selection is inconsistently disabled in an existing/running session. Distinguish intentional active-turn binding from stale busy state; changing a draft/next-turn selection must not mutate the running turn's workspace authority. | Not started; specific post-Stop stale busy state fixed separately |
+| 2 / CUI-2 | Context-window data becomes missing or inconsistent after compaction. Restore normal usage updates across compaction; retain truthful model/window information and never invent measurements. | **Normal accounting source-qualified**, including fresh reported/estimated live and reload measurements; not full client/installed acceptance; [latest record](#cui-2-normal-context-accounting--2026-11-17) |
+| Separate / live rewrite | Pre-existing live rewritten-cumulative answer text repeats earlier segments, while canonical replay contains them once. | **Qualified locally** for compaction prematurely closing a merged answer stream; separate from the accounting correction and CUI-3; [latest record](#live-cumulative-text-continuation--2026-11-17) |
+| 3 / CUI-3 | Project/folder selection is inconsistently disabled in an existing/running session. Distinguish intentional active-turn binding from stale busy state; changing a draft/next-turn selection must not mutate the running turn's workspace authority. | **PASS_SOURCE_FOLDER_BROWSE_LIFETIME** for the reproduced local stale-choice mechanism; intentional active/unresolved-input lock remains and the broader installed/native report is unqualified; [record below](#cui-3-folder-browse-lifetime--2026-11-17) |
 | 4 / CUI-4 | Desktop and mobile notifications are unreliable and lack details such as the app icon. Verify permission/subscription/lifecycle, payload, icon and navigation independently on each surface. | Not started; actual device/OS delivery needs suitable platform evidence |
 | 5 / CUI-5 | Replace the bottom-to-top viewport motion with an Apple-like progressive word reveal. Preserve markdown/code/math, streaming, selection, accessibility/reduced motion and long-history performance. | Not started |
-| 6 / CUI-6 | Reasoning is limited to a one-line preview with no usable way to inspect the full provider-supplied reasoning output. Provide accessible expand/collapse and full readable content where the model actually supplies it; do not fabricate unavailable reasoning. | Not started; separate UI investigation after CUI-7 |
+| 6 / CUI-6 | Reasoning is limited to a one-line preview with no usable way to inspect the full provider-supplied reasoning output. Provide accessible expand/collapse and full readable content where the model actually supplies it; do not fabricate unavailable reasoning. | **Bounded UI qualified locally**; [record below](#cui-6-reasoning-disclosure--2026-11-17) |
 | 7 / CUI-7 | Mobile reports failed send even though restart reveals the message was sent; remote connection instability appears to disrupt features. Distinguish transport uncertainty from authoritative refusal, reconcile the same attempt, and provide safe explicit retry without duplicate admissions. | **Bounded single-device-scope restored-queue anti-replay qualified locally**; general safe Retry, authoritative restart recovery and native/physical-device qualification remain open; [latest record below](#cui-7-bounded-owner-seam-and-restored-queue-qualification--2026-11-16) |
+
+## CUI-3 folder Browse lifetime — 2026-11-17
+
+**PASS_SOURCE_FOLDER_BROWSE_LIFETIME** — bounded source-only qualification for
+the reproduced stale-choice mechanism. This does not close the broader original
+installed/native report.
+
+Ordinary idle folder changes in a regular chat remain available. An active
+response or unresolved input intentionally locks folder mutation; the existing
+server `chat_running` refusal remains authoritative. No active-turn change,
+draft/permission redesign or next-turn folder staging was added. The ordinary
+idle → running → `turn_end` availability transition already worked.
+
+The confirmed local defect was that Browse checked eligibility before awaiting
+the folder choice, then retained the old callback authority if chat owner,
+semantic path/access-mode focus or eligibility changed before resolution. A late
+choice could therefore mutate a different or active chat; server refusal was a
+downstream guard, not the cause.
+
+The picker now owns one pending Browse identity and permanently revokes it on a
+committed owner/focus/eligibility change or unmount. It checks the operation
+before any late success/error effect and fences finalization so an obsolete
+request cannot clear a newer request's busy state. A valid result uses the latest
+committed apply callback. The existing chat identity is forwarded through two
+narrow picker props. Equivalent same-owner metadata and freshly bound native
+picker methods keep the operation valid. No new session authority, async
+cancellation protocol or next-turn staging was added.
+
+Seven added regression cases cover the real ThreadShell lifecycle and fresh
+choice, owner and focus changes followed by return, equivalent native refresh,
+stale rejection/finalization while a replacement is pending, and unmount. In the
+valid original decisive/control RED, one control passed and the intended stale-
+application assertion failed; the validity-boundary RED had one pass and two
+intended failures. The corresponding final sets pass **2/2** and **3/3**. The
+setup-invalid artifacts are excluded. See
+`folder-diagnosis-valid-red.{json,log}` and
+`folder-validity-analysis-valid-red.{json,log}`. The closest composer/shell
+selection passes **274 tests / 2 files**. The full WebUI suite passes **1,671
+tests / 106 files**. TypeScript
+`--noEmit` and ESLint pass. Six selected existing backend scope guards pass;
+they were validly reused against unchanged Python hashes. Full-source strict
+before/after checking reports **547 files / 0 errors / 0 warnings**, and the
+global diagnostic comparator reports **0 introduced signatures**. Counts overlap
+across focused and full selections and must not be summed. No full Python
+repository suite is claimed.
+
+The frozen pre-docs source manifest checks **2,786 paths** with no unexpected
+changes; all **1,517 manifest Python sources** are unchanged. Python **3.13.12**,
+**216 distributions** and sampled October 20 installed link/files remain
+unchanged. The installed release remains October 20.
+
+From `webui/`, the primary source checks were:
+
+~~~sh
+npm exec --offline --yes --package=bun@1.4.2 -- bun run test src/tests/thread-composer.test.tsx src/tests/thread-shell.test.tsx
+npm exec --offline --yes --package=bun@1.4.2 -- bun run test
+npm exec --offline --yes --package=bun@1.4.2 -- bun run node_modules/typescript/bin/tsc -p tsconfig.build.json --noEmit
+npm exec --offline --yes --package=bun@1.4.2 -- bun run lint
+~~~
+
+The unchanged strict check was `.venv/bin/python -m basedpyright --outputjson`;
+the frozen global comparator was:
+
+~~~sh
+.venv/bin/python scripts/check_type_regressions.py \
+  /private/tmp/nb-cui3-folder-20261117-e02zb96v/baseline-basedpyright.json \
+  /private/tmp/nb-cui3-folder-20261117-e02zb96v/after-basedpyright.json \
+  --baseline-root /Users/jaden/.codex/worktrees/audit-architecture-records/nanobot \
+  --current-root /Users/jaden/.codex/worktrees/audit-architecture-records/nanobot
+~~~
+
+Coordinator receipts also retain the exact six-test backend command. The
+`git diff --check` PASS is **pre-docs** evidence from `pre-docs-integrity.json`;
+it does not validate these documentation edits.
+
+Evidence root: `/private/tmp/nb-cui3-folder-20261117-e02zb96v/`. See
+`precheck.json`, `pre-docs-integrity.json`, `integrated-review.md`,
+`focused-final.{json,log}`, `diagnosis-final.{json,log}`,
+`validity-final.{json,log}`, `frontend-final.{json,log}`,
+`typescript-final.{json,log}`, `eslint-final.{json,log}`,
+`backend-scope-guards.{json,log}`, `after-strict-command.json`,
+`after-basedpyright.{json,stderr,exit}` and
+`type-comparator-final.{json,log}`,
+`folder-diagnosis-valid-red.{json,log}` and
+`folder-validity-analysis-valid-red.{json,log}`. Final documentation integrity
+and the graph verdict are recorded separately in `accepted-integrity.json` and
+`acceptance.json`; pre-docs source checks alone are not final documentation
+acceptance.
+
+The broader intermittent installed/native behavior remains unreproduced and
+unqualified. No actual native dialog, physical-device qualification, real gateway,
+build/install, service restart or external/paid model call occurred. General CUI-7
+safe Retry/canonical deduplication/readback/restart recovery, CUI-4
+notifications/icons and CUI-5 reveal remain separate/open. Broader A3, P6,
+full-release and installed/native closure are not claimed.
+
+## Live cumulative-text continuation — 2026-11-17
+
+**PASS_SOURCE_LIVE_REWRITE**, scoped to the reproduced compaction/length-recovery
+mechanism; not blanket client, native/device, installed-runtime or release acceptance.
+The debugging workflow confirmed a **local implementation defect**, not a missing
+architectural state. `resuming=true, merge_next=true` preserves one answer and the
+server's cumulative text buffer. The live hook then incorrectly closed that answer
+on a compaction notice. Subsequent deltas opened new bubbles, and cumulative
+`stream_end.text` replaced only the newest bubble, repeating earlier segments.
+Canonical replay already retained its answer buffer correctly.
+
+The production correction changes only the compaction branch's existing flush
+call: flush pending text **without closing the answer stream**. Existing stream-end,
+tool, reasoning and turn boundaries still own closure. No new state, text-prefix
+heuristic, deduplication layer, wire/schema, source/persistence, provider, accounting
+or animation change was added. The two closest hook regressions protect one stable
+answer through two compactions with changing signed URLs, and two genuinely closed
+non-merged segments remaining separate.
+
+Before correction, the hook regression produced **3 answer rows instead of 1**;
+the closed-segment control passed. Captured actual-source frames in real
+`ThreadShell` produced two live failures (**3/2/1** marker counts), with both
+canonical reload controls passing (**1/1/1**). After correction the same frames
+are **1/1/1 live and reload** for reported and estimated usage. Visible answer text
+matches across both views, and the rendered image uses the exact latest signed URL.
+All **16** captured-frame UI checks pass: six modern root/tool/length scenarios
+live/reload plus two rewritten scenarios live/reload. Context remains **42%** for
+root/tool and **17%** for length recovery; the accounting fix is preserved.
+
+Validation: full WebUI **1,664 tests / 106 files**, TypeScript `--noEmit`, ESLint,
+Ruff and diff whitespace checks pass. Closest Python producer/replay selection:
+**70 passed**, not the full repository suite. Frozen full strict before/after:
+**547 files / 0 errors / 0 warnings**; comparator **0 introduced diagnostics**
+globally. Python **3.13.12**, **216** distributions and dependency hashes remain
+unchanged. Source hashes confirm that only the two scoped frontend files and these
+progress records changed; all preceding uncommitted work is preserved. The sampled
+October 20 installed link/files are unchanged. No commit, push, merge, build/install,
+operator service restart or
+external/paid model call occurred. Installed/native/physical-device, P6, A3 and
+release acceptance remain unverified/open.
+
+Evidence: `/private/tmp/nb-live-rewrite-20261117-2u27146w/` contains `scope.md`,
+`diagnosis.md`, RED/GREEN command receipts, `actual-frame-final-value.{json,log}`,
+`ui-semantic-comparison.json`, full frontend/types/lint/producer/replay receipts,
+frozen strict reports/comparator and source/environment/install hashes. Probe
+setup and asynchronous-render observation failures are retained, not counted as
+passes; the final probe awaits the exact rendered value without product workarounds
+or weaker assertions. The prior OPEN finding below records the accounting-stage
+checkpoint; this later correction supersedes it only for the reproduced mechanism.
+Next independent work is CUI-3 folder-selection availability; general CUI-7,
+notifications/icons and reveal animation remain open.
+
+## CUI-6 reasoning disclosure — 2026-11-17
+
+**Bounded source-preview PASS.** The shared reasoning row now keeps its compact
+preview by default and provides a keyboard-operable expand/collapse control for
+the complete supplied text. The full body uses the existing lazy Markdown renderer,
+updates while streaming, and is unmounted while closed. The open/closed choice is
+per mounted row and survives appends and completion. Empty or whitespace-only
+reasoning has no disclosure. Existing thinking/check markers, streaming sheen and
+outer grouped-activity fold remain intact.
+
+The shared leaf is exercised in standalone MessageBubble and in
+AgentActivityCluster; the standalone answer remains separate. No generation,
+provider, transport, persistence, activity-grouping or tool-content path changed.
+
+The parent verified the actual components and source styles at **1280 × 720** and
+**390 × 844** using supplied fixture text only. The opened sample showed its heading,
+36 paragraphs, code block and end marker; appending preserved the open state.
+Closing before completion stayed closed and removed the full-body descendants.
+The grouped outer fold kept its existing behavior, and Enter opened one reasoning
+row while Space closed it without opening its sibling. The answer stayed separate.
+At the narrow viewport, the page width remained **390 px**, with the end and
+appended markers reachable by scrolling and no horizontal page overflow. The
+viewport was reset and the temporary preview server was stopped. This is source
+preview evidence only; no gateway, provider, model, installed package, native app
+or physical-device behavior was exercised.
+
+### CUI-6 validation and limits
+
+The pre-edit regression was RED: the focused run reported three new disclosure
+failures with the five existing files passing 145 tests. The final focused command
+passed **150 tests / 6 files**:
+
+~~~sh
+npm exec --yes --package=bun@1.4.2 -- bun run test \
+  src/tests/reasoning-row.test.tsx src/tests/reasoning-preview.test.ts \
+  src/tests/thinking-reasoning-shell.test.tsx src/tests/message-bubble.test.tsx \
+  src/tests/agent-activity-cluster.test.tsx src/tests/thread-messages.test.tsx
+~~~
+
+Parent verification also passed the full WebUI suite (**1,631 tests / 106 files**),
+TypeScript --noEmit, ESLint, and git diff --check. Screenshots and browser
+observations are retained in
+/private/tmp/nb-cui6-reasoning-20261117-JwbUuymJ/.
+
+The nine non-English common.json recovery-notice additions were a separate
+root-owned preflight repair (i18n parity **26/26**), not CUI-6; HEAD remains
+4f598372299f43041beee6fbe2d049b52b678aba with local, uncommitted changes, while
+the Python 3.13.12 / 216-distribution environment and October 20 installed hashes
+remain unchanged.
+
+At the 2026-11-17 CUI-6 checkpoint, CUI-2 context accounting was next. It has
+since received the bounded presentation qualification below. The user's subsequent
+clarification keeps CUI-2 open before CUI-3; CUI-4 notifications/icons and CUI-5 word
+reveal remain open.
+General CUI-7 safe Retry, canonical same-attempt deduplication/readback and
+authoritative recovery after restart remain open, as do native/physical-device
+qualification and broader A3 acceptance. These bounded UI results do not qualify
+a release.
+
+## CUI-2 normal context accounting — 2026-11-17
+
+*Historical accounting qualification: the then-OPEN live-text finding below is
+superseded, only for the reproduced mechanism, by the separate
+[live continuation correction](#live-cumulative-text-continuation--2026-11-17).
+The accounting verdict and its other limits remain unchanged.*
+
+**Source-accounting PASS (`PASS_AMENDED_SOURCE_ACCOUNTING`); not full client,
+installed-runtime or release acceptance.** The proven modern-source length-recovery
+case already measured a fresh request after compaction, but cumulative answer text
+remained on an earlier row. Replay stamped completion usage onto a compaction notice,
+and row-position inference discarded the otherwise valid measurement. Text location
+cannot establish when a request was prepared or measured.
+
+The minimal correction keeps one immutable current-context snapshot and one
+overwritten final-prepared-request receipt, not a ledger:
+
+- The receipt captures the invocation-local invalidation epoch and exact consumed
+  route's window. Successful context replacement, including silent replacement,
+  invalidates the snapshot; started/failed/cancelled phases without replacement do
+  not. A native success after dispatch cannot promote that older response's usage
+  into the new epoch, even if usage is recorded later. A genuinely later reported
+  or existing estimated main-request measurement restores context normally.
+- **Omitted = no update; present explicit-null = actual invalidation and a hard
+  barrier.** Explicit-null cannot fall back to aggregate spend or older snapshots.
+  Measured zero remains valid; an unmeasured request without replacement preserves
+  the prior observation and its own denominator, not a different route's window.
+- The existing terminal hook, scoped delivery/publisher slot and typed completion
+  carry the snapshot through wire, live projection and replay. Exact turn ownership
+  and completion sequence, not carrier position, qualify it across succeeded
+  compactions; same-turn notice/user metadata can carry it without inventing an
+  answer. No canonical-text segmentation, source schema/checkpoint persistence,
+  provider dispatch policy, billing or round aggregation changed.
+
+Coordinator-rebuilt source probes cover root/tool/length compaction with both
+reported and estimated usage: root/tool restore **5,000/12,000 = 42%**, length
+**2,000/12,000 = 17%**, live and reload. Length's cumulative spend remains
+**12,000**; auxiliary summary **50** is never current context. Six modern cases
+and two real signed-Markdown/media rewritten cases pass source chronology and
+canonical verification; actual `ThreadShell` live/reload checks pass **12 + 4**.
+
+### Separate OPEN followup — live rewritten-cumulative text
+
+For identical frames, actual pre-edit and candidate live views both contain
+`first_segment` **3x**, `second_segment` **2x**, final **1x** (**3/2/1**); canonical
+reload is **1/1/1**. The visible canonical answer text nodes are byte-identical
+before/after, including signed media URLs. This accounting patch **neither
+introduces nor fixes** that live duplication. AC2 is explicitly amended to
+**no new text regression plus exact-once canonical replay**, not blanket live
+exactly-once or complete CUI-2 all-compaction-client acceptance. Keep the live-text
+defect **OPEN** for independent next scoped work; do not fold it into CUI-3.
+
+### Accounting validation, evidence and limits
+
+Coordinator final selected Python: **1,918/1,918 passed in 137.07s**, exit0; this
+is the expanded affected selection, not the full Python repository suite. The
+initial expanded run failed: four delta-caused incomplete delivery-test-double
+failures were corrected by one faithful no-hook fixture field with every original
+assertion retained. Long macOS AF_UNIX temporary paths and tight API timing under
+heavy concurrent checks were resolved by short temporary paths and a sequential
+rerun of the same selection, with no product workaround, test skip or threshold
+weakening. The original failure logs remain evidence, not a pass.
+
+Full WebUI **1,662 tests / 106 files**, TypeScript `--noEmit`, ESLint, Ruff and
+diff whitespace checks pass. Reusing the full frontend result after the fixture-only
+correction is justified by hashes: all original 26 candidate paths, including all
+frontend source/tests, stayed byte-identical; the 27th path is only the Python
+delivery double. Repeated full strict passes **547 files / 0 errors / 0 warnings**;
+the frozen-baseline comparator introduces **0** diagnostic signatures globally.
+Python **3.13.12**, all **216** distributions and dependency hashes are unchanged.
+
+Evidence root: `/private/tmp/nb-cui2-accounting-20261117-aebB1h/`. See
+`code-qualification.json`, `review/correction-recheck.md`,
+`root-python-corrected-final.{json,log}`, `root-python-suite-files.txt`,
+`root-frontend-final.{json,log}`, `root-corrected-basedpyright.json`,
+`root-corrected-type-comparator.{json,log}`, `root-source-probe/`,
+`root-rewrite-baseline-comparison.json` and `review/evidence.json`.
+Compact reproduction commands follow; saved receipts retain the exact invocations
+and complete selected-path list (run sequentially, not concurrently):
+
+~~~sh
+QA=/private/tmp/nb-cui2-accounting-20261117-aebB1h
+# Repository root; compact equivalent of the recorded selected Python command.
+xargs .venv/bin/python -m pytest -q -o cache_dir="$QA/root-final-short-cache" \
+  --basetemp=/tmp/c2fCJH1XW < "$QA/root-python-suite-files.txt"
+.venv/bin/python -m basedpyright --outputjson
+.venv/bin/python scripts/check_type_regressions.py "$QA/baseline-basedpyright.json" \
+  "$QA/root-corrected-basedpyright.json" --baseline-root "$PWD" --current-root "$PWD"
+uv run --no-sync ruff check nanobot/
+uv run --no-sync ruff check tests/agent/test_migration_fresh_turn.py
+git diff --check
+# webui/
+npm exec --offline --yes --package=bun@1.4.2 -- bun run test
+npm exec --offline --yes --package=bun@1.4.2 -- bun run node_modules/typescript/bin/tsc -p tsconfig.build.json --noEmit
+npm exec --offline --yes --package=bun@1.4.2 -- bun run lint
+~~~
+
+Legacy absent proof after successful compaction remains unknown; unknown fallback
+capacity cannot borrow a configured/primary denominator. Success without a later
+measurement remains unavailable. These are truthful limits, not fabricated normal
+usage. Source tests included **disposable private loopback gateway/remote-owner
+fixtures**; no matching disposable processes remain. No operator service was
+restarted. The October 20 installed link and three sampled hashes are unchanged;
+no external model, installed-runtime, native/physical-device, P6, A3 or release
+acceptance is claimed. Build/install remains deferred.
+
+The following configured-capacity section is the **historical presentation-only
+checkpoint, retained unchanged**; its pending-accounting statements describe that
+earlier checkpoint, not the latest source-accounting verdict above.
+
+## CUI-2 configured capacity and unavailable usage — 2026-11-17
+
+**User clarification: this does not complete CUI-2.** Normal context usage should
+continue after compaction. Keeping configuration visible and labelling an unknown
+count is only a presentation safeguard, not the requested accounting correction.
+The existing pipeline clears the stale request measurement when source projection
+changes; compaction completion carries only its ID and phase, not a replacement
+measurement. Internal rebuilt-request measurements/estimates exist, but are not
+published by that event. Ordinary later measured replies restore usage in the
+controlled tests. Persistent absence after such a reply has not been reproduced
+against the user's actual run. The next work is to trace the full compaction and
+subsequent request/live/replay path, establish where the replacement should come
+from, and restore truthful normal updates without reusing stale counts. Do not
+move to CUI-3 or treat an unavailable label as final acceptance.
+
+**Bounded presentation qualification PASS; no immediate post-compaction metric or
+effective-fallback provenance is claimed.** `ThreadShell` derives a separate
+informational descriptor from the exact selected settings preset (local choice,
+session choice, then configured default). It exposes only a nonempty configured
+model and a finite, positive integer configured window. `ThreadComposer` passes
+that descriptor to the existing context popover. The selected model/window remain
+visible after successful compaction even when the last request measurement is
+correctly invalidated. The popover states **Usage unavailable** with no zero,
+percentage or meter in that state, keeps recent rounds independent, and labels any retained request ratio
+**Last known request** against that snapshot's own window. The no-round mobile
+context control remains present.
+
+The successful-compaction invalidation guard and message ordering are unchanged.
+Started, failed and cancelled compactions retain the previous measured snapshot;
+a newer ordinary response restores its own measurement. A selected preset never
+borrows the global agent window if its row is absent or invalid. Configured values
+are not proof of effective runtime/fallback capacity. No active-runtime hint,
+event, hook state, persistence, ledger, estimate, wire change or Python/provider
+change was added. A genuinely post-compaction numerator can remain unknown until
+a newer request is measured. Richer immediate post-compaction metrics or exact
+effective-fallback provenance would require a separate scope if requested.
+
+### CUI-2 validation and limits
+
+The approved requirement regressions were RED before the UI change. The worker's
+focused command passed **380 tests / 6 files** with preinstalled Bun **1.3.10**:
+
+~~~sh
+cd webui
+bun run test src/tests/thread-shell.test.tsx src/tests/thread-composer.test.tsx \
+  src/tests/agent-activity-cluster.test.tsx src/tests/message-bubble.test.tsx \
+  src/tests/reasoning-row.test.tsx src/tests/i18n.test.tsx
+~~~
+
+Parent verification passed the full WebUI suite (**1,644 tests / 106 files**) with
+cached/offline Bun **1.4.2**, TypeScript `--noEmit`, lint and `git diff --check`.
+Exact parent commands (the first three from `webui/`; all used the existing offline
+package cache and did not change dependencies):
+
+~~~sh
+npm exec --offline --yes --package=bun@1.4.2 -- bun run test
+npm exec --offline --yes --package=bun@1.4.2 -- bun run node_modules/typescript/bin/tsc -p tsconfig.build.json --noEmit
+npm exec --offline --yes --package=bun@1.4.2 -- bun run lint
+git diff --check
+~~~
+
+Frozen strict reports before and after both contain **0 errors / 0 warnings across
+547 files**; `check_type_regressions.py` returned `PASS_NO_NEW_DIAGNOSTICS` with
+zero introduced diagnostics under the same Python **3.13.12 / 216-distribution**
+environment. This client-only work changed no Python source; the full Python test
+suite was not run or claimed. `source-preservation.json` verifies all prior locale
+values and **1,515 Python paths** remain unchanged. The October 20 installed link
+and its three sampled hashes are unchanged; no build/install/release operation
+was performed.
+
+The strict check used `uv run --no-sync basedpyright --outputjson` for both frozen
+reports; the global comparator command passed:
+
+~~~sh
+.venv/bin/python scripts/check_type_regressions.py "$QA/baseline-basedpyright.json" \
+  "$QA/after-basedpyright.json" --baseline-root "$REPO" --current-root "$REPO"
+~~~
+
+In that recorded command, `$QA` resolved to the CUI-2 evidence directory and `$REPO`
+to this checkout.
+
+The parent previewed actual `ThreadComposer`, `ComposerUsagePopover`,
+`ContextCompactionNotice` and app styles at **1280 × 720** and **390 × 844** using
+supplied fixture state, not `ThreadShell`. Return opened the no-round control;
+the configured model/window (**65.5K**) and unavailable usage were visible without
+a meter or percentage. The existing **14.7K / 65.5K (22%)** and supplied newer
+**5.2K / 65.5K (8%)** snapshots were labelled Last known request, rounds remained
+available, and the narrow page had no horizontal overflow. Removing config,
+measurement and rounds restored the previous hidden state. ThreadShell live/replay
+coverage is from its owning tests, not the browser preview. The viewport was reset
+and preview PID **76381** was stopped. No gateway, provider, model, native app or
+physical device was exercised.
+
+Evidence is retained in `/private/tmp/nb-cui2-context-20261117-_2jn61sv/`, including
+`analysis/report.md`, worker RED/focused logs, `root-full-webui.log`, typecheck/lint
+receipts, `root-type-regressions.log`, `browser-observations.json`,
+`source-preservation.json`, `installed-after.json` and `preview-stopped.json`.
+This qualification does not close CUI-3 through CUI-5, general CUI-7, broader A3,
+P6, release, native or physical-device acceptance.
 
 ## CUI-7 bounded owner-seam and restored-queue qualification — 2026-11-16
 
@@ -197,9 +659,10 @@ owners, and content-free outstanding-attempt/held metadata preservation. Lookup 
 source replacement or unavailability remains UNKNOWN, never permission to replay.
 No new prompt/media persistence decision was made. Physical Android/native-client
 and macOS Full/process-tree qualification also remain open. This bounded package is
-not complete CUI-7, A3, P6, release or merge acceptance. CUI-6 reasoning access is
-the next independent UI item, followed by CUI-2–5; no implementation of them is
-claimed here.
+not complete CUI-7, A3, P6, release or merge acceptance. At this 2026-11-16
+checkpoint CUI-6 reasoning access was the next independent UI item, followed by
+CUI-2–5; the CUI-6 qualification is recorded above and no later work is claimed
+by this historical section.
 
 ## Flat queue and Steer presentation follow-up — 2026-11-16
 

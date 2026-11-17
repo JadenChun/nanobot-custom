@@ -81,6 +81,7 @@ import {
 } from "@/components/thread/ModelPresetBadge";
 import {
   ComposerUsagePopover,
+  type ComposerConfiguredContext,
   type ComposerContextUsage,
   type ComposerRoundUsage,
 } from "@/components/thread/ComposerUsagePopover";
@@ -238,6 +239,7 @@ interface ThreadComposerProps {
   onModelBadgeClick?: () => void;
   onManageModels?: () => void;
   contextUsage?: ComposerContextUsage | null;
+  configuredContext?: ComposerConfiguredContext | null;
   recentRoundUsage?: readonly ComposerRoundUsage[];
   variant?: "thread" | "hero";
   slashCommands?: SlashCommand[];
@@ -1019,6 +1021,7 @@ export function ThreadComposer({
   onModelBadgeClick,
   onManageModels,
   contextUsage = null,
+  configuredContext = null,
   recentRoundUsage = [],
   variant = "thread",
   slashCommands = [],
@@ -2551,6 +2554,7 @@ export function ThreadComposer({
     <WorkspaceProjectPicker
       inline
       isHero={isHero}
+      ownerKey={pendingQueueKey}
       disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
@@ -2565,6 +2569,7 @@ export function ThreadComposer({
   const projectPickerLine = (
     <WorkspaceProjectPicker
       line
+      ownerKey={pendingQueueKey}
       disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
@@ -2580,7 +2585,9 @@ export function ThreadComposer({
     && !voiceRecorder.isRecording
     && !workspaceControlsHidden
     && projectPickerAvailable;
-  const hasMobileUsage = contextUsage != null || recentRoundUsage.length > 0;
+  const hasMobileUsage = contextUsage != null
+    || configuredContext != null
+    || recentRoundUsage.length > 0;
   const showMobileWorkspaceRow = mobileComposer
     && !voiceRecorder.isRecording
     && (showMobileWorkspaceLine || hasMobileUsage);
@@ -2703,6 +2710,7 @@ export function ThreadComposer({
             <div className="thread-composer-mobile-workspace-meta flex min-w-0 items-center">
               <ComposerUsagePopover
                 context={contextUsage}
+                configuredContext={configuredContext}
                 rounds={recentRoundUsage}
               />
             </div>
@@ -2949,6 +2957,7 @@ export function ThreadComposer({
             {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}
+                configuredContext={configuredContext}
                 rounds={recentRoundUsage}
                 isHero={isHero}
               />

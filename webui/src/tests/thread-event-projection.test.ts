@@ -128,3 +128,33 @@ describe("stampLastAssistantCompletion", () => {
     expect(afterSecond[0]?.latencyMs).toBe(100);
   });
 });
+
+it("attaches only exact-owned context metadata to an otherwise empty user turn", () => {
+  const messages = [
+    message("assistant", { turnId: "old", completedAt: 1 }),
+    message("user", { turnId: "new" }),
+  ];
+  const contextUsage = { contextTokens: null, contextWindowTokens: null, completionTurnSeq: 2 };
+  const result = stampLastAssistantCompletion(messages, {
+    completedAt: 2, usage: { context_tokens: 9000 }, contextUsage,
+  }, "new");
+  expect(result[0]).toBe(messages[0]);
+  expect(result[1].contextUsage).toEqual(contextUsage);
+  expect(result[1].usage).toBeUndefined();
+  expect(result[1].completedAt).toBeUndefined();
+  expect(stampLastAssistantCompletion(messages, { contextUsage }, "other")).toBe(messages);
+});
+
+it("normalizes present malformed context but preserves whole-field absence", async () => {
+  const { contextUsageFromEvent } = await import("@/lib/thread-event-projection");
+  expect(contextUsageFromEvent({ turn_seq: 4 })).toBeUndefined();
+  for (const value of [null, {}, { context_tokens: true, context_window_tokens: 12000 },
+    { context_tokens: 2000, context_window_tokens: 0 }, { context_tokens: -1, context_window_tokens: 12000 }]) {
+    expect(contextUsageFromEvent({ context_usage: value, turn_seq: 4 })).toEqual({
+      contextTokens: null, contextWindowTokens: null, completionTurnSeq: 4,
+    });
+  }
+  expect(contextUsageFromEvent({ context_usage: { context_tokens: 0, context_window_tokens: null }, turn_seq: 4 })).toEqual({
+    contextTokens: 0, contextWindowTokens: null, completionTurnSeq: 4,
+  });
+});

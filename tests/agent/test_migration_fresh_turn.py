@@ -24,6 +24,7 @@ def stage():
                        delivery=SimpleNamespace(
                            runtime_admitted=AsyncMock(),
                            input_committed=AsyncMock(),
+                           context_usage_hook=lambda: None,
                        ))
     ctx.run_context = TurnContext(request=request)
     return ctx

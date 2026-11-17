@@ -27,6 +27,7 @@ import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import type {
+  ComposerConfiguredContext,
   ComposerContextUsage,
   ComposerRoundUsage,
 } from "@/components/thread/ComposerUsagePopover";
@@ -419,28 +420,54 @@ function sameMessageShape(a: MessageShape, b: MessageShape): boolean {
 }
 
 function latestComposerContextUsage(messages: UIMessage[]): ComposerContextUsage | null {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.kind === "compaction" && message.compaction?.phase === "succeeded") {
-      return null;
+  // Completion metadata may live on an earlier cumulative answer, a notice, or
+  // the exact user row. Row placement is not a request-generation receipt.
+  let end = messages.length;
+  while (end > 0) {
+    let start = end - 1;
+    while (start > 0 && messages[start].role !== "user") start -= 1;
+    const turn = messages.slice(start, end);
+    const successes = turn.filter((m) => m.kind === "compaction" && m.compaction?.phase === "succeeded");
+    let carrier: UIMessage | undefined;
+    for (let i = turn.length - 1; i >= 0; i -= 1) {
+      const row = turn[i];
+      if (row.contextUsage === undefined) continue;
+      const seq = row.contextUsage?.completionTurnSeq;
+      if (!row.turnId || typeof seq !== "number" || !Number.isInteger(seq) || seq < 0) return null;
+      if (!carrier || (carrier.turnId === row.turnId && seq > carrier.contextUsage!.completionTurnSeq!)) {
+        carrier = row;
+      }
     }
-    const contextTokens = message.usage?.context_tokens;
-    if (
-      message.role !== "assistant"
-      || message.kind === "trace"
-      || message.isStreaming
-      || typeof contextTokens !== "number"
-      || !Number.isFinite(contextTokens)
-      || contextTokens < 0
-    ) {
-      continue;
+    if (carrier) {
+      const snapshot = carrier.contextUsage!;
+      const count = snapshot.contextTokens;
+      const window = snapshot.contextWindowTokens;
+      if (
+        carrier.isStreaming || typeof count !== "number" || !Number.isInteger(count) || count < 0
+        || (window !== null && (typeof window !== "number" || !Number.isInteger(window) || window <= 0))
+        || successes.some((boundary) => (
+          boundary.turnId !== carrier.turnId
+          || typeof boundary.turnSeq !== "number" || !Number.isInteger(boundary.turnSeq) || boundary.turnSeq < 0
+          || snapshot.completionTurnSeq! <= boundary.turnSeq
+        ))
+      ) return null;
+      return { contextTokens: count, ...(window !== null ? { contextWindowTokens: window } : {}) };
     }
-    return {
-      contextTokens,
-      ...(typeof message.contextWindowTokens === "number"
-        ? { contextWindowTokens: message.contextWindowTokens }
-        : {}),
-    };
+    // Legacy additive usage has no dispatch proof across *any* success in its
+    // turn, even if a later canonical rewrite happens to carry it after notice.
+    if (successes.length) return null;
+    for (let i = turn.length - 1; i >= 0; i -= 1) {
+      const row = turn[i];
+      const count = row.usage?.context_tokens;
+      if (row.role === "assistant" && row.kind !== "trace" && !row.isStreaming
+        && typeof count === "number" && Number.isFinite(count) && count >= 0) {
+        return {
+          contextTokens: count,
+          ...(typeof row.contextWindowTokens === "number" ? { contextWindowTokens: row.contextWindowTokens } : {}),
+        };
+      }
+    }
+    end = start;
   }
   return null;
 }
@@ -1949,6 +1976,30 @@ export function ThreadShell({
     || settings?.agent.model_preset
     || "default"
   );
+  const configuredAgentPreset = typeof settings?.agent.model_preset === "string"
+    ? settings.agent.model_preset.trim()
+    : "";
+  const configuredPresetName = localModelPreset?.trim()
+    || sessionModelPreset
+    || configuredAgentPreset
+    || "default";
+  const configuredContext: ComposerConfiguredContext | null = (() => {
+    const preset = settings?.model_presets.find(
+      (candidate) => candidate.name === configuredPresetName,
+    );
+    const modelValue = preset?.model;
+    const model = typeof modelValue === "string" ? modelValue.trim() : "";
+    if (!preset || !model) return null;
+    const contextWindowTokens = preset.context_window_tokens;
+    return {
+      model,
+      ...(Number.isFinite(contextWindowTokens)
+        && Number.isInteger(contextWindowTokens)
+        && contextWindowTokens > 0
+        ? { contextWindowTokens }
+        : {}),
+    };
+  })();
   const handleModelPresetChange = useCallback((name: string) => {
     setLocalModelPreset(name);
     if (chatId) {
@@ -3067,6 +3118,7 @@ export function ThreadShell({
             isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
           }
           contextUsage={composerContextUsage}
+          configuredContext={configuredContext}
           recentRoundUsage={composerRoundUsage}
           variant={composerVariant}
           slashCommands={availableSlashCommands}
@@ -3147,6 +3199,7 @@ export function ThreadShell({
             isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
           }
           contextUsage={composerContextUsage}
+          configuredContext={configuredContext}
           recentRoundUsage={composerRoundUsage}
           variant={composerVariant}
           slashCommands={availableSlashCommands}
