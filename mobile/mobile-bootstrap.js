@@ -30,7 +30,9 @@
                 // Without this, Capacitor asks for exact-alarm access on
                 // Android 12+, which blocks delivery when the app is in the
                 // background and can leave the promise pending forever.
-                isExactNotification: false
+                isExactNotification: false,
+                smallIcon: "ic_stat_nanobot",
+                largeIcon: "ic_nanobot_notification"
               }]
             });
           } catch (_) {

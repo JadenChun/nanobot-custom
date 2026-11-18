@@ -2713,10 +2713,16 @@ class GatewayHTTPHandler:
         command = shutil.which("notify-send")
         if command is None:
             return _http_error(503, "desktop notifications unavailable")
+        notification_command = [command, "--app-name=nanobot"]
+        if self.static_dist_path is not None:
+            icon_path = self.static_dist_path / "brand" / "nanobot_icon_192.png"
+            if icon_path.is_file():
+                notification_command.extend(["--icon", str(icon_path)])
+        notification_command.extend([title, body])
         try:
             completed = await asyncio.to_thread(
                 subprocess.run,
-                [command, "--app-name=nanobot", title, body],
+                notification_command,
                 capture_output=True,
                 check=False,
                 timeout=5,
