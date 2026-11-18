@@ -1,5 +1,153 @@
 # A3 implementation correction handoff
 
+## Git checkpoint — 2026-11-18
+
+The [client-fix record](client-ux-followups.md#git-checkpoint--2026-11-18)
+lists the three validated commits for send reconciliation, notification icons
+and word reveal on `codex/staging-audit-implementation`. They follow
+`a89acead0`; staging remains separate. The reveal-related assertions were
+updated without changing product code further, and the full WebUI suite passed.
+Author and committer are **Jaden <changherng.jc@gmail.com>**. No staging merge,
+PR, install, service restart or release was performed. Earlier pre-publication
+checkpoints below retain their scope and test evidence.
+
+Next, verify the reported Android image load and OS notification delivery/click
+on **one** remote device with a matching APK and gateway. The older APK symptom
+is undetermined, not a reproduced defect on the current candidate. Keep these
+device checks separate from CUI-7 general Retry/recreated-client recovery and
+from staging/release acceptance.
+
+Local validation receipts:
+`/Users/jaden/.codex/qa/nanobot-client-sync-20261118-WPmSEKeb/` (commit snapshots,
+before/after checker reports, and test/build logs), and
+`/Users/jaden/.codex/qa/nanobot-current-verify-20261118-VRGpn7hV/` (the macOS
+browser smoke and remote-media checks for the same production source).
+
+## Current checkpoint — 2026-11-18 (CUI-5)
+
+The [history reveal](client-ux-followups.md#current-checkpoint--2026-11-18-cui-5)
+reuses Streamdown's word fade for the latest short completed assistant reply
+instead of clipping the transcript. The small change adds one regression test;
+102 focused tests, TypeScript, affected lint and a local browser preview passed.
+It is uncommitted on `codex/staging-audit-implementation` and not installed.
+Continue with real notification delivery on one remote device or the remaining
+CUI-7 recovery work separately; neither is qualified by this UI change.
+
+## Current checkpoint — 2026-11-18 (CUI-4-L1)
+
+**PASS_SOURCE_NOTIFICATION_ICON_PAYLOAD** for native icon identity/resource
+payload only. This advances the narrow CUI-4 icon issue recorded in the earlier
+“next work” section below; it does not qualify overall notification reliability,
+permission/background delivery, activation/navigation or operating-system
+rendering.
+
+The correction is limited to seven implementation/test/resource paths: the
+authenticated Fedora notifier adds the existing bundled icon as a separate
+argv value when present; the actual Android bootstrap includes
+`smallIcon="ic_stat_nanobot"` and
+`largeIcon="ic_nanobot_notification"` on its immediate schedule; the keepalive
+uses the same 24dp white-alpha fox mask; and the Android large icon is byte
+identical to the existing 192×192 WebUI PNG. Authorization, routing, delivery
+ownership, permission requests, notification channel, lifecycle, click behavior
+and public protocol were not changed. The CUI-5 item remains untouched.
+
+Independent evidence is under
+`/Users/jaden/.codex/qa/nanobot-cui4-20261118-du14uo_z/`, especially
+`root-source-qualification.md`, `CUI4-implementation-receipts.md`,
+`root-backend.{json,log}`, `root-notification-chain-qualified.{json,log}`,
+`root-full-webui.{json,log}`, `root-tsc.json`, `root-eslint.json`,
+`root-ruff.json`, `root-diff-check.json`,
+`root-after-basedpyright.json`, `root-type-regressions.json` and the visually
+inspected `root-native-icon-preview.svg.png`. Root passed 13 notification and
+listener/auth cases, 4 actual client→hook→bootstrap source-chain cases with a
+stub native plugin, 1,753 WebUI tests / 109 files, TypeScript, ESLint, Ruff and
+diff checks. The unchanged checker covered 548 files with no diagnostics; the
+frozen global comparator found no newly introduced signatures. The source-chain
+probe does not test OS delivery. A first QA probe's cleanup misuse and the
+worker's early fixture path typo are retained separately from the intended
+original-source RED evidence; neither required a product correction.
+
+The seven implementation/test/resource paths and these two progress records
+remain **local and uncommitted** on
+`codex/staging-audit-implementation`, based on
+`a89acead0d4287d1b35c5ce73a6bcfbad6759eb3`; there was no build, install, device
+action, service restart, commit, push, merge or deployment. The installed release
+is unchanged. No full Python-repository, P6, broader A3 or release completion is
+claimed. Next CUI-4 evidence is actual permission/background delivery and click
+verification on one remote device. Fedora OS rendering/activation and macOS
+browser/PWA behavior remain unverified. CUI-5 remains an untouched separate
+issue; CUI-7's general Retry and recreated-client recovery limits remain open.
+
+## Current checkpoint — 2026-11-18
+
+**PASS_SOURCE_LIVE_INPUT_RECONCILIATION** for the bounded CUI-7 source package.
+See the [current behavior, exact additive contract and evidence](client-ux-followups.md#current-checkpoint--2026-11-18).
+Earlier dated open/readback statements below remain historical outside this
+qualified slice; they do not erase the new evidence or close broader CUI-7.
+
+### Git and installed state
+
+- Branch: `codex/staging-audit-implementation`.
+- Base HEAD and freshly fetched origin:
+  `a89acead0d4287d1b35c5ce73a6bcfbad6759eb3`.
+- This package's code/tests and progress records are **local and uncommitted**;
+  no new push, merge or PR was performed. Git identity is
+  **Jaden <changherng.jc@gmail.com>**.
+- Staging remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+- No build/install, service/operator restart or deployment occurred. The installed
+  October 20 release and sampled files are unchanged; source qualification does
+  not mean these fixes are installed.
+
+### What is complete in this package
+
+New negotiated ordinary plain-text `new` attempts in **existing durable canonical
+chats**, while the original pending client owner survives, carry immutable
+source/principal/payload identity. The canonical owner atomically commits it with
+the user event, joins an exact duplicate before another run/effect, and answers
+positive-only lookup through existing `attach`/`attached`. Queue and direct hook
+consumers accept only that exact qualified proof, preserving later drafts/rows,
+UNKNOWN on missing proof and independent activity/history projection. No second
+ledger, prompt copy, new RPC, permission scope or automatic resend was added.
+
+The fresh review's direct-hook omission was corrected in **one** bounded round
+through a local typed fact on the existing chat callback/buffer, not another wire
+protocol. The original four real-hook failures became seven passing checks;
+40 direct-consumer regression cases are included in final independent
+**1,749 WebUI tests / 108 files**. TypeScript `--noEmit`, ESLint, Ruff and diff
+checks passed. Independent backend checks passed **661 tests / 20 affected files**
+(four retained temporary-chat AsyncMock warnings). Full strict checking passed
+**548 files / zero diagnostics**, with **zero introduced signatures** under the
+unchanged Python/dependency environment. The final TS-only correction preserved
+all Python/backend/checker hashes; no baseline was refreshed. The same reviewer
+performed a narrow successful recheck. This is not the full Python repository
+suite, P6, broader A3, installed/native or release acceptance.
+
+Raw local contracts, source/environment manifests, actual backend-to-client wire
+bridge, command/exit receipts, original REDs, correction and root PASS are in
+`/Users/jaden/.codex/qa/nanobot-cui7-20261118-supzqn6x/`. The portable tests and
+bridge-reproduction instructions are linked in the current CUI-7 record above;
+another device need not rely on that local QA directory to run regressions.
+
+### Next work and boundaries
+
+1. Keep CUI-7's limits explicit: **no general Retry**, negative replay proof,
+   app/client-recreation recovery, first-chat bootstrap, rich/Steer/control
+   recovery or installed/physical-device qualification. Old unbound UNKNOWN
+   attempts cannot be upgraded from a newly acquired capability. No unknown
+   effects are resumed. One remote device is enough for later real qualification;
+   do not expand into a multi-device matrix.
+2. Next independent issue: **CUI-4 notifications/icons**, then **CUI-5 word reveal**.
+   Establish each failure with the debugging skill before editing; use one write
+   owner and minimal corrections. Luna Max remains suitable for clear bounded
+   worker tasks after the owning contract/root cause is known.
+3. CUI-2 normal context accounting, merged-text compaction continuation, CUI-3
+   Browse lifetime and CUI-6 reasoning disclosure retain their earlier bounded
+   qualifications. Do not reclassify their broader installed/native reports as
+   complete. Package/build/install remains deferred until explicitly requested.
+4. Commit/sync is a separate next action: preserve the local candidate, review
+   its actual diff and use the correct Git identity above. Do not merge it into
+   staging or install it merely because this source package passed.
+
 ## Current checkpoint — 2026-11-17
 
 This checkpoint accompanies all completed client fixes on

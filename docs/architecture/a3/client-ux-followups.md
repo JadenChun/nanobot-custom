@@ -1,5 +1,261 @@
 # Client UX follow-ups — 2026-11-16
 
+## Git checkpoint — 2026-11-18
+
+These three fixes are committed on `codex/staging-audit-implementation`,
+separate from staging:
+
+| Commit | Scope |
+| --- | --- |
+| `02a1cc77e` | CUI-7: recover exact admission for negotiated plain-text sends in existing durable chats, while the original client survives. No automatic resend or general Retry. |
+| `0d7f753b2` | CUI-4: include branded icons in Fedora and Android notification payloads. No change to permissions, delivery, or activation. |
+| `e7e110df0` | CUI-5: reveal the latest eligible history reply word by word, not by wiping the viewport. |
+
+The CUI-5 integration run initially found 20 thread-shell assertions that
+looked for one contiguous text node. The browser still rendered the whole reply;
+Streamdown splits it across word spans. The tests now compare exact normalized
+paragraph text, preserving both presence and absence assertions. The production
+reveal is unchanged by this test correction. In an isolated macOS Chrome session
+with the candidate gateway and a local scripted provider, the full reasoning
+disclosure, negotiated send receipt, history reveal, formatted text, and reduced
+motion worked.
+
+Final verification passed **1,754 WebUI tests / 110 files**, the production
+TypeScript check and WebUI build, ESLint, Ruff and diff checks. The intermediate
+input-recovery snapshot passed **661 Python / 324 WebUI tests**; the subsequent
+icon snapshot passed **13 Python / 4 WebUI tests**. Frozen full-source Python
+checking was clean at baseline and candidate (**547 → 548 files, zero new
+diagnostics**). The broader, non-build TypeScript config retained its baseline
+test diagnostics (140 before and after; none new). No app was installed or
+deployed. Earlier local/uncommitted notes below refer to pre-publication snapshots.
+
+**Android remote image loading remains a device verification item.** The branch
+already has the November 4 native streaming change (`11c86ccf2`) and the later
+cache-pressure correction (`0b9421792`). The current candidate passed 228 WebUI
+and 230 backend media-area checks and the Go media broker checks; that is not
+proof for the reported older APK. On one phone, use a matching current APK and
+gateway, reopen the affected chat, and load a new uncached image. Record which
+image kind fails if the symptom persists. No image code changed in this batch.
+
+Actual OS notification delivery, icon rendering and click/navigation, and
+general Retry or recovery after app restart remain open. See the
+[handoff checkpoint](implementation-handoff.md#git-checkpoint--2026-11-18).
+
+## Current checkpoint — 2026-11-18 (CUI-5)
+
+**Verified in the local WebUI.** Opening a conversation no longer wipes the
+transcript upward. Streamdown's existing word fade applies to the latest short,
+completed assistant reply; older replies, long replies and live streaming keep
+their usual rendering. Reduced motion disables the fade. Bottom restoration
+and composer docking stay in the viewport; no custom animation controller or
+Markdown parser was added.
+
+One new regression and the existing viewport/Markdown checks passed (102 tests),
+along with TypeScript, affected ESLint and diff checks. A local macOS browser
+preview showed the opacity-only fade, intact formatted content and the transcript
+at the bottom. This change is local and uncommitted on
+`codex/staging-audit-implementation`; it has not been built or installed. The
+CUI-4 delivery and CUI-7 recovery gaps below remain separate.
+
+## Current checkpoint — 2026-11-18 (CUI-4-L1)
+
+**PASS_SOURCE_NOTIFICATION_ICON_PAYLOAD** — source qualification for native icon
+identity and payload resources only. This supersedes earlier “not started” CUI-4
+statements below only for that narrow scope. It does not close the original
+intermittent delivery report, notification permissions/background behavior,
+activation or chat navigation, or OS rendering and delivery.
+
+The bounded correction keeps the existing completion notification owner,
+phone/client eligibility, authenticated same-origin desktop mutation, focus and
+preference checks, hidden Fedora-shell suppression and best-effort failure
+behavior. Fedora passes the existing bundled
+`brand/nanobot_icon_192.png` path as a distinct `notify-send --icon` argument
+when the file exists; a missing static bundle or icon keeps the existing
+notification behavior. Android's actual `mobile-bootstrap.js` bridge adds the
+small and large drawable names to its existing immediate notification. It
+retains `isExactNotification=false`, the current permission and failure
+behavior, and does not add a schedule/alarm. The foreground keepalive uses the
+same small branded resource. The 24dp white-alpha fox mask uses an even-odd
+silhouette with transparent eye/nose cutouts; the 192×192 Android bitmap is
+byte-identical to the existing WebUI brand asset.
+
+Independent root qualification passed the authenticated notification and
+listener/auth backend cases (**13 cases**), the complete WebUI suite
+(**1,753 tests / 109 files**), TypeScript `--noEmit`, ESLint, Ruff and diff
+checks. Four actual client→hook→bootstrap cases passed with a stub native
+notification plugin; they verify the existing owner/focus/eligibility path and
+icon-bearing schedule payload, not OS delivery. The unchanged full checker
+reported **548 files / 0 errors / 0 warnings / 0 information**, and the global
+type-regression comparator found **0 new diagnostic signatures**. Dependencies
+and the Python 3.13.12 / 216-distribution environment were unchanged. The
+vector preview and canonical PNG were visually inspected; the preview is not
+an Android resource-compiler or OS-rendering result.
+
+Worker focused evidence (including intended RED/GREEN and the separate fixture
+setup error) and root receipts are in
+`/Users/jaden/.codex/qa/nanobot-cui4-20261118-du14uo_z/`. The worker's focused
+WebUI run used the preinstalled Bun 1.3.10; root's full run used cached Bun
+1.4.2 offline. Root also replayed original HEAD sources in disposable probes:
+the original bootstrap had the one expected missing-icon failure plus three
+passing controls, and the original desktop handler had the one expected missing
+`--icon` failure plus seven controls. An initial external integration probe's
+four `disconnect` cleanup errors were corrected in QA by using the existing
+`close` method; they are retained as setup errors, not product failures.
+Exact root command/exit receipts are `root-backend.json`,
+`root-notification-chain-qualified.json`, `root-full-webui.json`, `root-tsc.json`,
+`root-eslint.json`, `root-ruff.json`, `root-diff-check.json`,
+`root-after-basedpyright.json`, and `root-type-regressions.json`; the paired
+`.log` files retain their output.
+
+The seven implementation/test/resource paths and these two progress records
+are local, uncommitted changes on `codex/staging-audit-implementation` at
+`a89acead0d4287d1b35c5ce73a6bcfbad6759eb3`. Root's before/after qualification
+integrity records show the implementation paths, branch, HEAD, installed target
+and dependency environment unchanged during independent verification. No build,
+install, service restart, device action, commit, push, merge or deployment
+occurred. The full Python repository suite, P6 completion, broader A3 and release
+acceptance are not claimed.
+
+**Still open:** actual permission/background delivery and click/navigation
+verification on the next single remote device, Fedora OS rendering/activation,
+and browser/PWA behavior on macOS. No native macOS notification host or push
+transport was added. CUI-5 remains untouched. CUI-7 general Retry, recreated
+client recovery and installed/native qualification remain open; its prior
+bounded qualification and limits are retained below. Do not treat this icon
+source result as overall CUI-4 reliability or platform delivery acceptance.
+
+## Current checkpoint — 2026-11-18
+
+**PASS_SOURCE_LIVE_INPUT_RECONCILIATION** — a bounded CUI-7 source qualification,
+not completion of the original mobile/remote report. This entry supersedes the
+open canonical-binding/readback statements in earlier dated checkpoints only for
+the negotiated scope below. Other historical qualifications remain unchanged.
+
+The implementation and these records are **local, uncommitted changes** on
+`codex/staging-audit-implementation`, based on
+`a89acead0d4287d1b35c5ce73a6bcfbad6759eb3`. A fresh origin fetch confirmed that
+commit still matches `origin/codex/staging-audit-implementation`. Git identity is
+**Jaden <changherng.jc@gmail.com>**; this package creates no new commit or push.
+Staging remains separate at `f1a6bb85588ba044fc2ca50e3e9f41eb2f13b6f9`.
+There was no merge, PR, build/install, service restart or deployment. The installed
+release remains the unchanged October 20 release.
+
+### Supported behavior and minimum contract
+
+Newly negotiated **ordinary plain-text `request_intent=new` inputs in an existing
+durable canonical chat**, while the original `NanobotClient` pending owner
+survives, can recover a lost admission reply without resending. Direct sends and
+queued sends consume the same qualified canonical fact. Positive input admission
+does not claim model/tool completion or restart unknown effects.
+
+The confirmed architectural gap was missing durable browser-attempt provenance:
+repeating a valid unbound v1 frame after completion produced two canonical user
+events and two scripted model calls. The gateway payload cache and source
+event-ID CAS protect different invariants. The correction adds evidence to the
+existing canonical event, not another execution ledger or prompt inbox:
+
+- `attached.input_attempt_source` advertises version 1, the full source origin
+  `(store_identity, session_key, incarnation, generation)`, its existing
+  content-free source token and a trusted principal tag, only after a successful
+  noncreating canonical read. Temporary, missing and legacy sources do not
+  advertise this capability.
+- Before first transport send, the pending owner freezes that provenance, its
+  exact `turn_id` and submitted-text fingerprint. Async WebCrypto preparation is
+  owner-fenced; failure cannot silently send an unstamped negotiated message.
+  A later capability never upgrades an older sent/UNKNOWN attempt.
+- Optional `message.input_attempt` carries version, original source/token and
+  fingerprint, separately from unchanged request-settings v1 permission controls.
+  The fingerprint is lowercase SHA-256 over UTF-8
+  `nanobot.input-attempt.v1\0new\0` followed by the exact submitted text, with no
+  trimming or Unicode normalization; lone surrogates are rejected. The principal
+  is server-derived SHA-256 of `nanobot.input-principal.v1\0` followed by `local`
+  or `mobile:<installation_id>`, never a caller label or bearer token.
+- The trusted writer atomically adds reserved, versioned `_input_attempt`
+  evidence to the canonical user event. It binds turn, original origin,
+  principal, fingerprint and intent; existing `_event_id`/`_run_id` supply the
+  references. Source schema remains version 1, without backfill or additional
+  prompt/media copies. An exact duplicate joins the original admission under the
+  canonical owner before fresh RunStore/lifecycle/model/tool work. A changed
+  principal or payload conflicts; different turn IDs with identical text remain
+  distinct legitimate inputs. The existing file/CAS transaction also rejects
+  duplicate attempt claims within one incoming batch.
+- Existing `attach` accepts at most one optional `input_attempt_query` per chat.
+  Its corresponding `attached.input_attempt_result` is either UNKNOWN or admitted
+  with exact original proof. Only one valid matching raw canonical user event
+  proves admission. The read acquires no execution lease, creates/upgrades no
+  session, writes no source/metadata and publishes no input. Mobile permission,
+  principal and subscription are rechecked before delivery. Revision/compaction
+  changes retain evidence; reset, fork, incarnation/generation or store changes
+  cannot transfer it. Missing, malformed, ambiguous or unavailable proof stays
+  UNKNOWN, never retry authority.
+- The existing post-append `message_admitted` receipt optionally carries
+  `input_attempt_proof`. The client checks original source, token, turn,
+  principal, fingerprint and current owner/socket before settling its existing
+  queue/direct disposition. A small **local-only** optional `onChat` argument
+  carries exact-turn `unresolved`/`admitted` to the stream hook, paired through the
+  existing bounded event buffer. It is never trusted from the wire. Activity and
+  history remain independent: unqualified running/output cannot accept a
+  negotiated input; qualified readback can repair its row/waiter after completion
+  without reviving a run, changing a newer row/error or discarding a later draft.
+
+Reserved evidence is stripped from untrusted imports/new payloads and public
+history, and excluded from model, RunStore and ordinary notification/log
+projections. Explicit authorized admission proof is the only new wire carrier.
+No global result framework, new RPC, scope expansion or reconnect owner was added.
+
+### Validation, review and limits
+
+Independent final verification passed **1,749 WebUI tests / 108 files**,
+TypeScript `--noEmit`, ESLint and diff checks. Independent affected backend
+qualification passed **661 tests / 20 files**, with four retained temporary-chat
+AsyncMock warnings; Ruff passed. Full unchanged-policy strict checking passed
+**548 files / 0 errors / 0 warnings**, versus baseline 547/0; the global comparator
+found **0 introduced diagnostic signatures**. Python 3.13.12 and all 216 installed
+distributions remained unchanged. The later TS-only correction preserved every
+Python/backend/checker hash, binding those results to the final candidate rather
+than refreshing a baseline.
+
+Evidence includes deterministic before/after-append and lost-receipt barriers,
+atomic-write faults, router/loop recreation, a second-process lock/read/join,
+raw checkpoint retention, authorization/read-purity spies, source/principal
+replacement, exact queue consumption and actual hook/client recovery before and
+after completion. The real authenticated backend attach generated a wire bridge
+consumed by the actual frontend client/hook qualification; no external model,
+listener, native app or device was used. This is not actual process-crash testing.
+
+A fresh integrated review found that the first candidate protected the queue but
+missed the direct hook consumer. One bounded correction added the local delivery
+fact above; the real-hook probe moved from **4 intended failures / 3 controls** to
+**7 passing cases**, and 40 direct-consumer regressions pass in the full suite.
+The same reviewer's narrow recheck found no remaining defect in that scope.
+An additional unkeyed-activity diagnostic only retired a redundant dismissible
+global notice; the unresolved waiter, UNKNOWN state and inline row/error remained.
+It was not treated as admission proof or patched into a new banner-lifetime rule.
+
+Portable regressions are in `tests/agent/test_input_attempt_reconciliation.py`,
+`tests/session/test_input_attempt_evidence.py`,
+`tests/webui/test_input_attempt_readback.py`,
+`webui/src/tests/nanobot-client-input-attempt.test.ts` and
+`webui/src/tests/direct-input-admission.test.tsx`. The route-binding fixture now
+includes required `request_intent` and asserts actual first publication.
+To reproduce the cross-language bridge, set `NANOBOT_INPUT_ATTEMPT_BRIDGE` to a
+disposable JSON path for the production-path backend test and then the frontend
+run; portable tests remain runnable without that machine-local artifact.
+Raw local receipts, frozen contracts/manifests, RED/GREEN probes, reviews and
+root verdict are under
+`/Users/jaden/.codex/qa/nanobot-cui7-20261118-supzqn6x/`. They are not installation
+or deployment artifacts; historical unbound RED evidence is preserved, not
+retroactively relabeled fixed.
+
+**Still open:** general Retry/resend and authoritative negative proof; app/client
+recreation recovery and any direct prompt/media retention decision; initial-chat
+bootstrap, rich input/Steer/control recovery; actual crash/backup rollback and
+mixed-version writers; installed macOS and physical single-remote-device
+qualification. Older unbound UNKNOWN rows remain held. CUI-4 notifications/icons
+and CUI-5 progressive word reveal are still unstarted independent issues. Work on
+one issue/owner at a time; do not infer full Python-repository, P6, broader A3,
+release or staging-merge acceptance from this source-only qualification.
+
 ## Current checkpoint — 2026-11-17
 
 This checkpoint accompanies all completed client fixes on
@@ -71,10 +327,10 @@ run; they do not close the remaining client reports below.
 | 2 / CUI-2 | Context-window data becomes missing or inconsistent after compaction. Restore normal usage updates across compaction; retain truthful model/window information and never invent measurements. | **Normal accounting source-qualified**, including fresh reported/estimated live and reload measurements; not full client/installed acceptance; [latest record](#cui-2-normal-context-accounting--2026-11-17) |
 | Separate / live rewrite | Pre-existing live rewritten-cumulative answer text repeats earlier segments, while canonical replay contains them once. | **Qualified locally** for compaction prematurely closing a merged answer stream; separate from the accounting correction and CUI-3; [latest record](#live-cumulative-text-continuation--2026-11-17) |
 | 3 / CUI-3 | Project/folder selection is inconsistently disabled in an existing/running session. Distinguish intentional active-turn binding from stale busy state; changing a draft/next-turn selection must not mutate the running turn's workspace authority. | **PASS_SOURCE_FOLDER_BROWSE_LIFETIME** for the reproduced local stale-choice mechanism; intentional active/unresolved-input lock remains and the broader installed/native report is unqualified; [record below](#cui-3-folder-browse-lifetime--2026-11-17) |
-| 4 / CUI-4 | Desktop and mobile notifications are unreliable and lack details such as the app icon. Verify permission/subscription/lifecycle, payload, icon and navigation independently on each surface. | Not started; actual device/OS delivery needs suitable platform evidence |
-| 5 / CUI-5 | Replace the bottom-to-top viewport motion with an Apple-like progressive word reveal. Preserve markdown/code/math, streaming, selection, accessibility/reduced motion and long-history performance. | Not started |
+| 4 / CUI-4 | Desktop and mobile notifications are unreliable and lack details such as the app icon. Verify permission/subscription/lifecycle, payload, icon and navigation independently on each surface. | **PASS_SOURCE_NOTIFICATION_ICON_PAYLOAD** for native icon identity/resource payload only; overall delivery, permission/background lifecycle, activation/navigation and OS qualification remain open; [latest record](#current-checkpoint--2026-11-18-cui-4-l1) |
+| 5 / CUI-5 | Replace the bottom-to-top viewport motion with a progressive word reveal. Preserve existing Markdown, streaming and scroll behavior. | **Verified locally** for the latest short completed reply on history entry; [checkpoint](#current-checkpoint--2026-11-18-cui-5) |
 | 6 / CUI-6 | Reasoning is limited to a one-line preview with no usable way to inspect the full provider-supplied reasoning output. Provide accessible expand/collapse and full readable content where the model actually supplies it; do not fabricate unavailable reasoning. | **Bounded UI qualified locally**; [record below](#cui-6-reasoning-disclosure--2026-11-17) |
-| 7 / CUI-7 | Mobile reports failed send even though restart reveals the message was sent; remote connection instability appears to disrupt features. Distinguish transport uncertainty from authoritative refusal, reconcile the same attempt, and provide safe explicit retry without duplicate admissions. | **Bounded single-device-scope restored-queue anti-replay qualified locally**; general safe Retry, authoritative restart recovery and native/physical-device qualification remain open; [latest record below](#cui-7-bounded-owner-seam-and-restored-queue-qualification--2026-11-16) |
+| 7 / CUI-7 | Mobile reports failed send even though restart reveals the message was sent; remote connection instability appears to disrupt features. Distinguish transport uncertainty from authoritative refusal, reconcile the same attempt, and provide safe explicit retry without duplicate admissions. | **PASS_SOURCE_LIVE_INPUT_RECONCILIATION** for new negotiated plain-text sends in existing durable chats with a surviving client owner; prior queue anti-replay qualification retained. General Retry, recreated-client recovery and installed/native qualification remain open; [latest record](#current-checkpoint--2026-11-18) |
 
 ## CUI-3 folder Browse lifetime — 2026-11-17
 
