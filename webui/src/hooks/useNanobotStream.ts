@@ -18,6 +18,7 @@ import {
 } from "@/lib/delegated-child-projection";
 import {
   messageDeliveryErrorKind,
+  type LocalInputAdmission,
   type QueuedAttemptBinding,
   type QueuedAttemptOutcome,
   type StreamError,
@@ -1036,10 +1037,21 @@ export function useNanobotStream(
       }
     };
 
-    const handle = (ev: InboundEvent) => {
+    const handle = (ev: InboundEvent, admission?: LocalInputAdmission) => {
       // Read the attempt owner after every existing callback, including receipt
       // early returns; transcript hydration never supplies this safety fact.
       refreshUnknownMessageSend();
+      if (admission?.disposition === "admitted") {
+        // The client captured exact proof before its pending-owner cleanup.
+        // This repairs disposition only, including attached after completion.
+        resolveAdmission(admission.turnId, true);
+        setMessages((prev) => transitionTurnDelivery(prev, admission.turnId, "accepted", true));
+        setStreamError((current) => (
+          current?.kind === "connection_closed" && current.turnId === admission.turnId
+            ? null
+            : current
+        ));
+      }
       if (ev.event === "error") {
         resolveAdmission(ev.turn_id, false);
         if (
@@ -1083,7 +1095,9 @@ export function useNanobotStream(
         return;
       }
       const turnId = eventTurnId(ev);
-      if (turnId) {
+      const unresolvedAdmission = admission?.disposition === "unresolved"
+        && admission.turnId === turnId;
+      if (turnId && !unresolvedAdmission) {
         const repairsUncertain = (
           ev.event !== "message_accepted"
           && ev.event !== "user_message"
@@ -1107,7 +1121,7 @@ export function useNanobotStream(
       if (ev.event === "message_accepted") return;
       if (ev.event === "message_admitted") {
         // Owner receipt: only this event commits a queued attempt.
-        resolveAdmission(turnId, true);
+        if (!unresolvedAdmission) resolveAdmission(turnId, true);
         return;
       }
       if (ev.event === "user_message") {
@@ -1131,7 +1145,7 @@ export function useNanobotStream(
               ...(ev.turn_id ? { turnId: ev.turn_id } : {}),
               turnPhase: "user",
               turnSeq: 0,
-              deliveryStatus: "accepted",
+              deliveryStatus: unresolvedAdmission ? "unknown" : "accepted",
               createdAt: typeof ev.created_at_ms === "number"
                 && Number.isFinite(ev.created_at_ms)
                 ? ev.created_at_ms
@@ -1313,12 +1327,12 @@ export function useNanobotStream(
 
       if (ev.event === "goal_status") {
         if (ev.status === "running" && typeof ev.started_at === "number") {
-          setStreamError(null);
+          if (!unresolvedAdmission) setStreamError(null);
           setRunStartedAt(ev.started_at);
           setIsStreaming(true);
-          // An owner run status for this attempt is proof of admission even if
-          // the transient receipt was lost while the client was disconnected.
-          if (ev.turn_id) resolveAdmission(ev.turn_id, true);
+          // Legacy activity remains implicit admission; negotiated input needs
+          // the client's exact proof independently of this live activity.
+          if (ev.turn_id && !unresolvedAdmission) resolveAdmission(ev.turn_id, true);
         } else if (ev.status === "stopping") {
           // Stop was accepted; keep the turn visible until settlement.
           setStopPending(true);

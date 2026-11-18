@@ -23,6 +23,7 @@ from nanobot.bus.runtime_events import RuntimeEventPublisher
 from nanobot.channels.notification_routes import notification_metadata
 from nanobot.events import NO_EVENTS, AgentEvent, ContextCompactionEvent, EventSink
 from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+from nanobot.session.input_attempt import InputAttemptProof
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 
@@ -293,11 +294,12 @@ class TurnDelivery:
                 self.session_key,
             )
 
-    async def input_committed(self) -> None:
+    async def input_committed(self, *, input_attempt_proof: InputAttemptProof | None = None) -> None:
         if self.route.publish_lifecycle:
             await self.runtime_event_publisher.user_input_committed(
                 self.delivery_message,
                 self.session_key,
+                input_attempt_proof=input_attempt_proof,
             )
 
     async def running(self, *, started_at: float) -> None:

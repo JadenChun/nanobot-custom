@@ -68,7 +68,7 @@ def new_source_event(payload: object, *, run_id: object) -> dict[str, Any]:
     canonical_events([payload_values])
     # Recursive canonical validation established string keys for this JSON object.
     event = deepcopy(cast(dict[str, Any], payload_values))
-    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin", "_artifact_read", "_busy_input_id", "_filesystem_effects"):
+    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin", "_artifact_read", "_busy_input_id", "_filesystem_effects", "_input_attempt"):
         event.pop(key, None)
     event.update(_event_id=secrets.token_hex(16), _run_id=run_id)
     canonical_events([event])

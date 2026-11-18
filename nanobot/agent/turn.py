@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     )
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.execution_owner import ExecutionOwner
+    from nanobot.session.input_attempt import InputAttemptAdmission
     from nanobot.session.source_request import SourceTranscript
     from nanobot.session.source_store import SourceState
     from nanobot.session.turn_writer import SourceToolIntentBinding, SourceTurnWriter
@@ -552,6 +553,7 @@ class TurnContext:
     artifact_handoff_notices: list[str] = field(default_factory=list, repr=False)
     source_history: SourceTranscript | None = field(default=None, repr=False)
     source_input_event_id: str | None = field(default=None, repr=False)
+    input_attempt_admission: InputAttemptAdmission | None = field(default=None, repr=False)
     workspace_task_reference: WorkspaceTaskAccessReference | None = field(
         default=None, repr=False,
     )

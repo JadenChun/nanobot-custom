@@ -924,8 +924,9 @@ class WebuiTurnCoordinator:
                     session_key=event.context.session_key,
                     session_incarnation=session.incarnation,
                     active_turn_id=active_turn_id,
+                    input_attempt_proof=event.input_attempt_proof,
                     starts_turn=(
-                        event.context.metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY)
+                        not event.joined and event.context.metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY)
                         != "steer"
                     ),
                 ),

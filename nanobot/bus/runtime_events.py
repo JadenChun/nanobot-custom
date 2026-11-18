@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from nanobot.bus.events import InboundMessage
 from nanobot.events import AgentEvent
 from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+from nanobot.session.input_attempt import InputAttemptProof
 
 if TYPE_CHECKING:
     from nanobot.bus.queue import MessageBus
@@ -37,6 +38,8 @@ class UserInputCommitted(AgentEvent):
     """This invocation's user input append returned successfully."""
 
     context: RuntimeEventContext
+    input_attempt_proof: InputAttemptProof | None = None
+    joined: bool = False
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,9 @@ class RuntimeEventPublisher:
         self,
         msg: InboundMessage,
         session_key: str,
+        *,
+        input_attempt_proof: InputAttemptProof | None = None,
+        joined: bool = False,
     ) -> None:
         await self.bus.publish(
             UserInputCommitted(
@@ -230,6 +236,8 @@ class RuntimeEventPublisher:
                     session_key=session_key,
                     metadata=msg.metadata,
                 ),
+                input_attempt_proof=input_attempt_proof,
+                joined=joined,
             )
         )
 

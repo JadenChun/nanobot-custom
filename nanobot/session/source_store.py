@@ -33,6 +33,13 @@ from nanobot.session.idle_compaction import (
     read_user_activity,
     validate_idle_capture,
 )
+from nanobot.session.input_attempt import (
+    InputAttempt,
+    InputAttemptConflictError,
+    InputAttemptSource,
+    find_input_attempt,
+    fingerprint,
+)
 from nanobot.session.pending_followups import (
     PendingFollowupRecord,
     parse_pending_followup_records,
@@ -378,6 +385,7 @@ def _upgrade_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Legacy metadata cannot retroactively authenticate a producing read.
         event.pop("_source_origin", None)
         event.pop("_artifact_read", None)
+        event.pop("_input_attempt", None)
         if "_event_id" not in event:
             event["_event_id"] = uuid.uuid4().hex
         if "tool_calls" in event:
@@ -1326,6 +1334,20 @@ class SourceSessionStore:
         with execution_transaction(self._backend, key, owner):
             header, committed = self._current_unlocked(key, expected)
             merged = merge_source_events(committed, events)
+            # Validate the entire batch inside the atomic file/CAS transaction.
+            for event in events:
+                if "_input_attempt" not in event:
+                    continue
+                attempt = InputAttempt.parse_evidence(event["_input_attempt"])
+                content = event.get("content")
+                if (event.get("role") != "user" or attempt.source != InputAttemptSource.from_state(expected)
+                        or not isinstance(content, str) or fingerprint(content) != attempt.fingerprint):
+                    raise InputAttemptConflictError("Input attempt source or payload changed")
+                prior = find_input_attempt(merged, attempt)
+                if prior is not None and (
+                    prior.event_id != event.get("_event_id") or prior.run_id != event.get("_run_id")
+                ):
+                    raise InputAttemptConflictError("Input attempt already committed")
             if merged == committed:
                 return self._snapshot(header, committed)
             if any(event.get("role") == "user" for event in events):
@@ -1490,6 +1512,8 @@ class SourceSessionStore:
             raise SourceValidationError("Invalid reset timestamp")
         header = deepcopy(snapshot.header)
         events = deepcopy(replacement_events)
+        for event in events:
+            event.pop("_input_attempt", None)
         header["revision"] = snapshot.state.revision + 1
         header["generation"] = snapshot.state.generation + 1
         header["last_archived"] = header["last_consolidated"] = 0
@@ -1539,7 +1563,8 @@ class SourceSessionStore:
             planned_snapshot = self._snapshot(planned_header, planned_events)
             if (
                 planned_snapshot.state != plan.target_state
-                or planned_events != replacement_events
+                or planned_events != [{key: value for key, value in event.items()
+                                      if key != "_input_attempt"} for event in replacement_events]
                 or planned_header.get("updated_at") != plan.updated_at
             ):
                 raise SourceValidationError("Invalid reset plan")

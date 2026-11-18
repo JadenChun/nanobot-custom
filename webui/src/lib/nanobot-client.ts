@@ -16,8 +16,18 @@ import type {
   WorkspacePermissionProjection,
   WebUIMutationOutcome,
   StopExpectation,
+  InputAttemptBinding,
+  InputAttemptCapability,
+  InputAttemptProof,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
+import {
+  inputAttemptFingerprint,
+  matchingAttemptProof,
+  matchingAttemptResult,
+  parseAttemptCapability,
+  validAttemptTurnId,
+} from "./input-attempt";
 import {
   startMobileRunKeepAlive,
   stopMobileRunKeepAlive,
@@ -64,7 +74,11 @@ function wsInboundDebugEnabled(): boolean {
 /** Shorten streaming text fields so logging stays usable for huge deltas. */
 function summarizeInboundWsPayload(ev: InboundEvent): unknown {
   const kind = (ev as { event?: string }).event;
-  if (kind !== "delta" && kind !== "reasoning_delta") return ev;
+  const safe = { ...ev } as Record<string, unknown>;
+  delete safe.input_attempt_source;
+  delete safe.input_attempt_result;
+  delete safe.input_attempt_proof;
+  if (kind !== "delta" && kind !== "reasoning_delta") return safe;
   const row = { ...(ev as object) } as Record<string, unknown>;
   const text = typeof row.text === "string" ? row.text : "";
   const max = 240;
@@ -75,7 +89,12 @@ function summarizeInboundWsPayload(ev: InboundEvent): unknown {
 }
 
 type Unsubscribe = () => void;
-type EventHandler = (ev: InboundEvent) => void;
+/** Client-qualified disposition for this delivery only; never decoded from wire. */
+export type LocalInputAdmission = {
+  readonly turnId: string;
+  readonly disposition: "unresolved" | "admitted";
+};
+type EventHandler = (ev: InboundEvent, admission?: LocalInputAdmission) => void;
 type StatusHandler = (status: ConnectionStatus) => void;
 type RuntimeModelHandler = (modelName: string | null, modelPreset?: string | null) => void;
 type SessionUpdateScope = "metadata" | "thread" | string;
@@ -268,6 +287,11 @@ interface PendingMessageSend {
   state: PendingMessageState;
   transportSettled?: boolean;
   queuedAttempt?: QueuedAttemptObservation;
+  recovery?: {
+    capability: InputAttemptCapability;
+    binding: InputAttemptBinding | null;
+    proven: boolean;
+  };
 }
 
 /**
@@ -294,7 +318,10 @@ export class NanobotClient {
   // chat_id -> handlers listening on it
   private chatHandlers = new Map<string, Set<EventHandler>>();
   /** Inbound frames received while no subscriber is registered (e.g. user switched away). */
-  private pendingInboundByChat = new Map<string, InboundEvent[]>();
+  private pendingInboundByChat = new Map<string, {
+    event: InboundEvent;
+    admission?: LocalInputAdmission;
+  }[]>();
   private static readonly PENDING_INBOUND_MAX = 2000;
   // chat_ids we've attached to since connect; re-attached after reconnects
   private knownChats = new Set<string>();
@@ -312,6 +339,9 @@ export class NanobotClient {
   private unsettledRunTurnIdsByChatId = new Map<string, Set<string>>();
   /** Correlated WebUI sends retained until protocol/canonical disposition. */
   private pendingMessageSends = new Map<string, PendingMessageSend>();
+  private inputAttemptSources = new Map<string, InputAttemptCapability>();
+  private inputAttemptQueries = new Map<string, { socket: WebSocket; pending: PendingMessageSend }>();
+  private preparationGeneration = 0;
   /** Message sends written to the current socket but not yet acknowledged. */
   private socketPendingMessageSendKeys = new Set<string>();
   /** Last application frame written, used only for conservative 1009 attribution. */
@@ -495,7 +525,7 @@ export class NanobotClient {
       || snapshot.activeTurnId !== null
       || snapshot.hasPendingToolCalls
     )) return false;
-    if (pending?.state === "unknown") return snapshot !== undefined;
+    if (pending?.state === "unknown" || (pending?.recovery && !pending.recovery.proven)) return snapshot !== undefined;
     if (completed.has(turnId)) return true;
     if (!snapshot) return false;
     if (observed.has(turnId)) return true;
@@ -509,7 +539,8 @@ export class NanobotClient {
     snapshot?: CanonicalRunSnapshot,
   ): void {
     for (const pending of [...this.pendingMessageSends.values()]) {
-      if (pending.chatId !== chatId || pending.startsNewRun || pending.state === "unknown") continue;
+      if (pending.chatId !== chatId || pending.startsNewRun
+        || this.isUnknownPendingMessageSend(chatId, pending.turnId)) continue;
       if (!this.canonicalTurnWillSettle(
         chatId,
         pending.turnId,
@@ -524,7 +555,7 @@ export class NanobotClient {
   private prunePendingInboundTurn(chatId: string, turnId: string): void {
     const pending = this.pendingInboundByChat.get(chatId);
     if (!pending) return;
-    const remaining = pending.filter((event) => (
+    const remaining = pending.filter(({ event }) => (
       !("turn_id" in event)
       || event.turn_id !== turnId
     ));
@@ -617,7 +648,7 @@ export class NanobotClient {
     if (fences.size > 0) this.canonicalCompletedTurnIdsByChatId.set(chatId, fences);
     const pendingInbound = this.pendingInboundByChat.get(chatId);
     if (pendingInbound) {
-      const remaining = pendingInbound.filter((event) => {
+      const remaining = pendingInbound.filter(({ event }) => {
         const turnId = "turn_id" in event && typeof event.turn_id === "string"
           ? event.turn_id
           : null;
@@ -937,9 +968,9 @@ export class NanobotClient {
     turnId: string,
     outcome: QueuedAttemptOutcome,
   ): void {
-    const observation = this.pendingMessageSends.get(
-      this.runSendKey(chatId, turnId),
-    )?.queuedAttempt;
+    const pending = this.pendingMessageSends.get(this.runSendKey(chatId, turnId));
+    if (pending?.recovery && !pending.recovery.proven) return;
+    const observation = pending?.queuedAttempt;
     if (!observation || observation.outcome) return;
     observation.outcome = outcome;
     observation.resolve(outcome);
@@ -972,7 +1003,8 @@ export class NanobotClient {
   }
 
   private isUnknownPendingMessageSend(chatId: string, turnId: string): boolean {
-    return this.pendingMessageSends.get(this.runSendKey(chatId, turnId))?.state === "unknown";
+    const pending = this.pendingMessageSends.get(this.runSendKey(chatId, turnId));
+    return pending?.state === "unknown" || !!(pending?.recovery && !pending.recovery.proven);
   }
 
   private recordRunAcceptance(
@@ -983,7 +1015,7 @@ export class NanobotClient {
     if (!turnId) return;
     const key = this.runSendKey(chatId, turnId);
     const pending = this.pendingMessageSends.get(key);
-    if (!pending) return;
+    if (!pending || (pending.recovery && !pending.recovery.proven)) return;
     // A route ACK or display echo cannot turn a lost-ACK send into a known
     // admission. Keep the attempt held until the owner receipt or live output.
     if (pending.state === "unknown" && !ownerReceipt) return;
@@ -1015,6 +1047,7 @@ export class NanobotClient {
     const pendingAttempt = ev.turn_id
       ? this.pendingMessageSends.get(this.runSendKey(ev.chat_id, ev.turn_id))
       : undefined;
+    if (pendingAttempt?.recovery && !pendingAttempt.recovery.proven) return;
     if (pendingAttempt?.state === "unknown" && ev.event !== "message_admitted") return;
     if (ev.turn_id && ev.turn_id !== activeTurnId) {
       const pending = pendingAttempt;
@@ -1050,6 +1083,8 @@ export class NanobotClient {
 
   private recordRunRejection(chatId: string, turnId?: string): void {
     if (!turnId) return;
+    const pending = this.pendingMessageSends.get(this.runSendKey(chatId, turnId));
+    if (pending?.recovery && !pending.recovery.proven) return;
     const rejectedOwned = this.isOwnedRun(chatId, turnId);
     const rejectedLatest = this.latestRunTurnIdByChatId.get(chatId) === turnId;
     this.clearPendingMessageSend(chatId, turnId);
@@ -1198,8 +1233,9 @@ export class NanobotClient {
     if (pending !== undefined && pending.length > 0) {
       const flushed = pending.splice(0);
       this.pendingInboundByChat.delete(chatId);
-      for (const ev of flushed) {
-        handler(ev);
+      for (const { event, admission } of flushed) {
+        if (admission) handler(event, admission);
+        else handler(event);
       }
     }
     this.attach(chatId);
@@ -1246,6 +1282,9 @@ export class NanobotClient {
 
   close(): void {
     this.intentionallyClosed = true;
+    this.preparationGeneration += 1;
+    this.inputAttemptSources.clear();
+    this.inputAttemptQueries.clear();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -1457,8 +1496,37 @@ export class NanobotClient {
     if (this.temporaryChatIds.has(chatId)) return;
     this.knownChats.add(chatId);
     if (this.socket?.readyState === WS_OPEN) {
-      this.queueSend({ type: "attach", chat_id: chatId });
+      this.queueSend(this.inputAttemptAttach(chatId, this.socket));
     }
+  }
+
+  private inputAttemptAttach(chatId: string, socket: WebSocket): Extract<Outbound, { type: "attach" }> {
+    this.inputAttemptQueries.delete(chatId);
+    const candidates = [...this.pendingMessageSends.values()].filter((pending) => (
+      pending.chatId === chatId && pending.recovery?.binding && !pending.recovery.proven
+      && (pending.state === "sent" || pending.state === "unknown")
+    ));
+    const pending = candidates.length === 1 ? candidates[0] : undefined;
+    const binding = pending?.recovery?.binding;
+    if (!pending || !binding) return { type: "attach", chat_id: chatId };
+    this.inputAttemptQueries.set(chatId, { socket, pending });
+    return { type: "attach", chat_id: chatId, input_attempt_query: {
+      version: 1, turn_id: binding.turn_id, source: binding.source,
+      source_token: binding.source_token, fingerprint: binding.fingerprint,
+    } };
+  }
+
+  private acceptInputAttemptProof(
+    chatId: string, proof: InputAttemptProof, pending: PendingMessageSend,
+  ): LocalInputAdmission | null {
+    if (this.pendingMessageSends.get(this.runSendKey(chatId, pending.turnId)) !== pending
+      || !pending.recovery?.binding
+      || !matchingAttemptProof(proof, pending.recovery.binding, chatId)) return null;
+    const admission: LocalInputAdmission = { turnId: pending.turnId, disposition: "admitted" };
+    pending.recovery.proven = true;
+    this.recordQueuedAttemptOutcome(chatId, pending.turnId, { kind: "admitted" });
+    this.recordRunAcceptance(chatId, pending.turnId, true);
+    return admission;
   }
 
   sendMessage(
@@ -1482,6 +1550,7 @@ export class NanobotClient {
     },
   ): void {
     const temporary = this.temporaryChatIds.has(chatId);
+    const capability = temporary ? undefined : this.inputAttemptSources.get(chatId);
     if (!temporary) this.knownChats.add(chatId);
     const systemCommand = options?.turnId
       ? isSystemCommandTurnId(options.turnId)
@@ -1526,6 +1595,7 @@ export class NanobotClient {
       return;
     }
     if (options?.turnId && !isSystemCommandTurnId(options.turnId)) {
+      if (this.pendingMessageSends.get(this.runSendKey(chatId, options.turnId))?.recovery) return;
       const startsNewRun = options.startsNewRun !== false;
       if (startsNewRun) {
         this.advanceRunGeneration(chatId, options.turnId);
@@ -1534,6 +1604,42 @@ export class NanobotClient {
       }
       if (options.sideChannel) this.addSideChannelTurn(chatId, options.turnId);
       this.trackPendingMessageSend(chatId, options.turnId, startsNewRun);
+    }
+    const turnId = options?.turnId;
+    const ordinary = turnId && validAttemptTurnId(turnId) && !systemCommand
+      && content.trim().length > 0 && !content.trimStart().startsWith("/")
+      && !content.trimStart().startsWith("!") && !media?.length
+      && !options?.cliApps?.length && !options?.mcpPresets?.length
+      && !options?.sessionMentions?.length && !options?.quotedContext
+      && !options?.targetTurnId && !options?.approvalDecision && !options?.stopExpectation
+      && !options?.sideChannel && options?.startsNewRun !== false
+      && (options?.requestIntent ?? "new") === "new";
+    const pending = turnId ? this.pendingMessageSends.get(this.runSendKey(chatId, turnId)) : undefined;
+    if (capability && ordinary && pending && frame.type === "message") {
+      const generation = this.preparationGeneration;
+      pending.recovery = { capability, binding: null, proven: false };
+      void inputAttemptFingerprint(content).then((fingerprint) => {
+        if (this.preparationGeneration !== generation || this.intentionallyClosed
+          || this.pendingMessageSends.get(this.runSendKey(chatId, turnId)) !== pending) return;
+        const binding: InputAttemptBinding = Object.freeze({ ...capability, turn_id: turnId, fingerprint });
+        pending.recovery = { capability, binding, proven: false };
+        frame.input_attempt = { version: 1, source: binding.source,
+          source_token: binding.source_token, fingerprint };
+        if (!this.frameFitsTransport(frame)) throw new Error("Input attempt frame too large");
+        this.queueSend(frame);
+      }).catch(() => {
+        if (this.preparationGeneration !== generation || this.intentionallyClosed
+          || this.pendingMessageSends.get(this.runSendKey(chatId, turnId)) !== pending) return;
+        // This owner has never sent a frame. Preserve text and the durable row.
+        pending.recovery = undefined;
+        this.recordQueuedAttemptOutcome(chatId, turnId, {
+          kind: "not_admitted", reason: "input_attempt_preparation_failed",
+        });
+        this.recordRunRejection(chatId, turnId);
+        this.emitError({ kind: "turn_rejected", chatId, turnId,
+          detail: "not_admitted", reason: "input_attempt_preparation_failed" });
+      });
+      return;
     }
     this.queueSend(frame);
   }
@@ -1647,7 +1753,7 @@ export class NanobotClient {
     this.authRetryFailures = 0;
     // Re-attach every known chat_id so deliveries continue routing after a drop.
     for (const chatId of this.knownChats) {
-      this.rawSend({ type: "attach", chat_id: chatId });
+      this.rawSend(this.inputAttemptAttach(chatId, sock));
     }
     for (const pending of this.pendingWebUIRequests.values()) {
       this.rawSendSerialized(pending.serializedFrame);
@@ -1756,9 +1862,17 @@ export class NanobotClient {
       ? parsed.turn_id
       : null;
     const correlatedChatId = (parsed as { chat_id?: string }).chat_id;
+    let admission: LocalInputAdmission | undefined;
     const completedTurnEvent = correlatedChatId !== undefined
       && this.isCanonicalCompletedTurnEvent(correlatedChatId, parsed);
     if (parsed.event === "message_admitted" && correlatedChatId && receivedTurnId) {
+      const pending = this.pendingMessageSends.get(this.runSendKey(correlatedChatId, receivedTurnId));
+      if (pending?.recovery) {
+        const binding = pending.recovery.binding;
+        if (!binding || !matchingAttemptProof(parsed.input_attempt_proof, binding, correlatedChatId)) return;
+        admission = this.acceptInputAttemptProof(correlatedChatId, parsed.input_attempt_proof, pending) ?? undefined;
+        if (!admission) return;
+      }
       // Exact owner receipts remain valid after canonical activity completion;
       // this repairs the attempt without reviving the retired run below.
       this.recordQueuedAttemptOutcome(correlatedChatId, receivedTurnId, { kind: "admitted" });
@@ -1781,7 +1895,7 @@ export class NanobotClient {
         this.recordCanonicalTurnOwnership(parsed);
       }
       if (!isSystemCommandTurnId(turnId)) {
-        this.dispatch(parsed.chat_id, parsed);
+        this.dispatch(parsed.chat_id, parsed, admission);
       }
       return;
     }
@@ -1831,6 +1945,11 @@ export class NanobotClient {
     }
 
     if (parsed.event === "error" && correlatedChatId && turnId) {
+      const pending = this.pendingMessageSends.get(this.runSendKey(correlatedChatId, turnId));
+      if (pending?.recovery && !pending.recovery.proven) {
+        pending.state = "unknown";
+        return;
+      }
       this.recordRunRejection(correlatedChatId, turnId);
       if (parsed.detail !== "workspace_scope_rejected") {
         this.emitError({
@@ -1860,6 +1979,21 @@ export class NanobotClient {
     }
 
     if (parsed.event === "attached") {
+      const capability = parseAttemptCapability(parsed.input_attempt_source, parsed.chat_id);
+      if (capability && parsed.temporary !== true) this.inputAttemptSources.set(parsed.chat_id, capability);
+      else this.inputAttemptSources.delete(parsed.chat_id);
+      const query = this.inputAttemptQueries.get(parsed.chat_id);
+      this.inputAttemptQueries.delete(parsed.chat_id);
+      const binding = query?.pending.recovery?.binding;
+      if (query?.socket === sock && binding
+        && matchingAttemptResult(parsed.input_attempt_result, binding, parsed.chat_id)) {
+        admission = this.acceptInputAttemptProof(parsed.chat_id, parsed.input_attempt_result.proof, query.pending) ?? undefined;
+      }
+      if (!admission && query?.socket === sock
+        && this.pendingMessageSends.get(this.runSendKey(parsed.chat_id, query.pending.turnId)) === query.pending
+        && query.pending.recovery && !query.pending.recovery.proven) {
+        admission = { turnId: query.pending.turnId, disposition: "unresolved" };
+      }
       if (parsed.temporary === true) {
         this.temporaryChatIds.add(parsed.chat_id);
       } else {
@@ -1873,7 +2007,7 @@ export class NanobotClient {
         this.pendingNewChat.resolve(parsed.chat_id);
         this.pendingNewChat = null;
       }
-      this.dispatch(parsed.chat_id, parsed);
+      this.dispatch(parsed.chat_id, parsed, admission);
       return;
     }
 
@@ -2007,11 +2141,18 @@ export class NanobotClient {
     }
   }
 
-  private dispatch(chatId: string, ev: InboundEvent): void {
+  private dispatch(chatId: string, ev: InboundEvent, admission?: LocalInputAdmission): void {
+    if (!admission && "turn_id" in ev && typeof ev.turn_id === "string") {
+      const pending = this.pendingMessageSends.get(this.runSendKey(chatId, ev.turn_id));
+      if (pending?.recovery && !pending.recovery.proven) {
+        admission = { turnId: pending.turnId, disposition: "unresolved" };
+      }
+    }
     const handlers = this.chatHandlers.get(chatId);
     if (handlers !== undefined && handlers.size > 0) {
       for (const h of handlers) {
-        h(ev);
+        if (admission) h(ev, admission);
+        else h(ev);
       }
       return;
     }
@@ -2020,7 +2161,7 @@ export class NanobotClient {
       q = [];
       this.pendingInboundByChat.set(chatId, q);
     }
-    q.push(ev);
+    q.push({ event: ev, admission });
     const over = q.length - NanobotClient.PENDING_INBOUND_MAX;
     if (over > 0) {
       q.splice(0, over);
@@ -2030,6 +2171,8 @@ export class NanobotClient {
   private handleClose(sock: WebSocket, event?: { code?: number }): void {
     if (this.socket !== sock) return;
     this.socket = null;
+    this.inputAttemptSources.clear();
+    this.inputAttemptQueries.clear();
     this.clearTemporaryChats();
     const willReconnect = !this.intentionallyClosed && this.shouldReconnect;
     if (this.pendingNewChat) {

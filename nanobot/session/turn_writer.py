@@ -16,6 +16,15 @@ from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.tools.filesystem_effect import FilesystemEffectFact
 from nanobot.agent.turn import ToolOutcome
 from nanobot.session.execution_owner import ExecutionOwner
+from nanobot.session.input_attempt import (
+    InputAttempt,
+    InputAttemptAdmission,
+    InputAttemptConflictError,
+    InputAttemptProof,
+    InputAttemptSource,
+    find_input_attempt,
+    fingerprint,
+)
 from nanobot.session.pending_followups import PendingFollowupRecord
 from nanobot.session.source import (
     SourceValidationError,
@@ -146,7 +155,8 @@ class SourceTurnWriter:
     def _append(self, payload: dict[str, object], *, execution_ids: list[str] | None = None,
                 execution_id: str | None = None, source_origin: dict[str, Any] | None = None,
                  artifact_read: dict[str, Any] | None = None,
-                 filesystem_effects: tuple[FilesystemEffectFact, ...] | None = None) -> dict[str, Any]:
+                 filesystem_effects: tuple[FilesystemEffectFact, ...] | None = None,
+                 input_attempt: InputAttempt | None = None) -> dict[str, Any]:
         if self._writes.failed:
             raise SourceValidationError('Source turn recording failed')
         try:
@@ -157,6 +167,8 @@ class SourceTurnWriter:
             if 'content' in clean:
                 clean['content'] = _persisted_content(clean['content'])
             event = new_source_event(clean, run_id=self.run_id)
+            if input_attempt is not None:
+                event['_input_attempt'] = input_attempt.evidence()
             if source_origin is not None:
                 event['_source_origin'] = deepcopy(source_origin)
             if artifact_read is not None:
@@ -190,6 +202,22 @@ class SourceTurnWriter:
             self._writes.failed = True
             raise SourceValidationError('Invalid source turn message')
         return self._append(payload)
+
+    def admit_input(self, payload: dict[str, Any], attempt: InputAttempt) -> InputAttemptAdmission:
+        """Append input and binding together, or join the exact original admission."""
+        self.owner.validate_dispatch()
+        snapshot = self.owner.read_snapshot()
+        if attempt.source != InputAttemptSource.from_state(snapshot.state):
+            raise InputAttemptConflictError('Input attempt source changed')
+        prior = find_input_attempt(snapshot.events, attempt)
+        if prior is not None:
+            return InputAttemptAdmission('joined', prior)
+        if (payload.get('role') != 'user' or not isinstance(payload.get('content'), str)
+                or fingerprint(payload['content']) != attempt.fingerprint):
+            raise InputAttemptConflictError('Invalid input attempt event')
+        event = self._append(payload, input_attempt=attempt)
+        proof = InputAttemptProof(attempt, event['_event_id'], event['_run_id'])
+        return InputAttemptAdmission('committed', proof)
 
     def consume_pending_followup(
         self,

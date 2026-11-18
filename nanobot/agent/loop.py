@@ -177,6 +177,14 @@ from nanobot.session.goal_state import (
     runner_wall_llm_timeout_s,
 )
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META
+from nanobot.session.input_attempt import (
+    INPUT_ATTEMPT_METADATA_KEY,
+    InputAttempt,
+    InputAttemptAdmission,
+    InputAttemptConflictError,
+    InputAttemptSource,
+    find_input_attempt,
+)
 from nanobot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
 from nanobot.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
 from nanobot.session.model_selection import (
@@ -2167,10 +2175,20 @@ class AgentLoop:
                     entry = next(event for event in writer.committed_events
                                  if event["_event_id"] == binding.event_id)
                 else:
-                    entry = writer.append_message({**source_extra, "role": "user", "content": original,
+                    source_input = {**source_extra, "role": "user", "content": original,
                         **({"media": retained_media} if retained_media and not attachments else {}),
                         **automation,
-                        **({"_command": True} if kwargs.get("_command") else {})})
+                        **({"_command": True} if kwargs.get("_command") else {})}
+                    attempt = request.metadata.get(INPUT_ATTEMPT_METADATA_KEY) if request else None
+                    if type(attempt) is InputAttempt:
+                        admission = writer.admit_input(source_input, attempt)
+                        if admission.disposition != "committed":
+                            raise InputAttemptConflictError("Input attempt changed during admission")
+                        run_context.input_attempt_admission = admission
+                        entry = next(event for event in writer.committed_events
+                                     if event["_event_id"] == admission.proof.event_id)
+                    else:
+                        entry = writer.append_message(source_input)
                 run_context.source_input_event_id = entry["_event_id"]
                 self._capture_trace_row(trace_owner, entry, is_input=True)
                 return True
@@ -4729,6 +4747,8 @@ class AgentLoop:
     ) -> None:
         metadata = msg.metadata
         turn_id = metadata.get(WEBUI_TURN_METADATA_KEY)
+        if type(metadata.get(INPUT_ATTEMPT_METADATA_KEY)) is InputAttempt:
+            detail = "input_attempt_unknown"
         await self.bus.publish_outbound(OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
@@ -4749,7 +4769,11 @@ class AgentLoop:
         activity_marker = self._take_admitted_activity_message(msg)
         registration_key = self._effective_session_key(msg)
         original = msg
-        msg = dataclasses.replace(msg, session_key_override=registration_key)
+        attempt = msg.metadata.get(INPUT_ATTEMPT_METADATA_KEY)
+        msg = dataclasses.replace(
+            msg, session_key_override=registration_key,
+            source_state=(attempt.source.expected_state() if type(attempt) is InputAttempt else msg.source_state),
+        )
         copy_pending_followup_proof(original, msg)
         copy_workspace_access_continuation(original, msg)
         copy_full_permission_message_reference(original, msg)
@@ -4839,7 +4863,10 @@ class AgentLoop:
                         coordinator.complete(msg, error=exc)
                     except Exception:
                         logger.warning('Automation completion observer failed for {}', registration_key)
-            logger.exception('Canonical source origin was rejected for {}', registration_key)
+            if type(msg.metadata.get(INPUT_ATTEMPT_METADATA_KEY)) is InputAttempt:
+                logger.warning("Negotiated input source unavailable")
+            else:
+                logger.exception('Canonical source origin was rejected for {}', registration_key)
         except WorkspaceAccessContinuationRejectedError:
             if continuation is not None:
                 owner = msg.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
@@ -4854,9 +4881,19 @@ class AgentLoop:
                         continuation,
                     )
             logger.exception('Canonical workspace continuation was rejected for {}', registration_key)
-        except Exception:
-            logger.exception('Bus turn failed for {}', registration_key)
+        except InputAttemptConflictError:
+            await self._reject_webui_admission(msg, "input_attempt_unknown", "input_attempt_conflict")
+        except Exception as exc:
+            if type(msg.metadata.get(INPUT_ATTEMPT_METADATA_KEY)) is InputAttempt:
+                logger.warning("Negotiated input failed: {}", type(exc).__name__)
+            else:
+                logger.exception('Bus turn failed for {}', registration_key)
         finally:
+            if not bus_scope_created and type(msg.metadata.get(INPUT_ATTEMPT_METADATA_KEY)) is InputAttempt:
+                from nanobot.session.webui_turns import clear_websocket_turn_if_current
+                owner = msg.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
+                if isinstance(owner, str):
+                    clear_websocket_turn_if_current(msg.chat_id, owner)
             if registered and recovery is not None and task is not None:
                 recovery.unregister_recovery_task(registration_key, task)
 
@@ -5197,7 +5234,7 @@ class AgentLoop:
         workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
         workspace_full_reference: WorkspaceFullAccessReference | None = None,
         expected_source_state: SourceState | None = None,
-    ) -> AsyncGenerator[None]:
+    ) -> AsyncGenerator[InputAttemptAdmission | None]:
         if expected_source_state is not None and not persistent:
             raise SourceOriginMismatchError()
         if workspace_access_continuation is not None and (
@@ -5237,7 +5274,7 @@ class AgentLoop:
             ):
                 raise WorkspaceScopeError("full_access_unavailable", status=409)
             context.workspace_full_reference = workspace_full_reference
-            yield
+            yield None
             return
         if not persistent:
             if self.sessions.has_managed_authority:
@@ -5262,7 +5299,7 @@ class AgentLoop:
                             raise _SourceSessionRecoveryRequiredError()
                     elif self.sessions.read_session_snapshot(key) is None:
                         raise RuntimeError("Managed session source is unavailable")
-            yield
+            yield None
             return
         if (
             persistent
@@ -5285,7 +5322,7 @@ class AgentLoop:
                 raise RuntimeError("workspace permission source is unavailable")
             if admitted is not None:
                 admitted()
-            yield
+            yield None
             return
         from nanobot.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
 
@@ -5312,6 +5349,16 @@ class AgentLoop:
                 and workspace_full_reference is None
             ),
         ) as owner:
+            attempt = request.metadata.get(INPUT_ATTEMPT_METADATA_KEY) if request else None
+            if type(attempt) is InputAttempt:
+                snapshot = owner.read_snapshot()
+                if attempt.source != InputAttemptSource.from_state(snapshot.state):
+                    raise InputAttemptConflictError("Input attempt source changed")
+                prior = find_input_attempt(snapshot.events, attempt)
+                if prior is not None:
+                    # Before RunStore, activity workers, lifecycle, hooks or effects.
+                    yield InputAttemptAdmission("joined", prior)
+                    return
             # Recovery may only enter the explicit reset route. Never consume an
             # approval or request a model while uncertain effects remain.
             if owner.recovery_required and not reset:
@@ -5499,7 +5546,7 @@ class AgentLoop:
             try:
                 if admitted is not None:
                     admitted()
-                yield
+                yield None
             finally:
                 if self._source_activity_admissions.get(key) is activity_admission:
                     self._source_activity_admissions.pop(key, None)
@@ -5610,6 +5657,11 @@ class AgentLoop:
             cancellation_key_unchanged = snapshot.effective_key == key
             key = snapshot.effective_key
             expected_source_state = request.expected_source_state
+            input_attempt = request.metadata.get(INPUT_ATTEMPT_METADATA_KEY)
+            if type(input_attempt) is InputAttempt:
+                if input_attempt.source.session_key != key:
+                    raise InputAttemptConflictError("Input attempt source changed")
+                expected_source_state = input_attempt.source.expected_state()
             if (snapshot.typed and snapshot.action in {'affirmative', 'negative'}
                     and snapshot.pending is not None and snapshot.pending.source_state is not None):
                 expected_source_state = snapshot.pending.source_state
@@ -5731,7 +5783,17 @@ class AgentLoop:
                     workspace_access_continuation=options.workspace_access_continuation,
                     workspace_full_reference=options.workspace_full_reference,
                     expected_source_state=expected_source_state,
-                ):
+                ) as source_admission:
+                    if source_admission is not None:
+                        # Historical admission is not a live run or completion claim.
+                        if options.inbound is not None:
+                            await self.runtime_event_publisher.user_input_committed(
+                                options.inbound, key, input_attempt_proof=source_admission.proof,
+                                joined=True,
+                            )
+                        return TurnResult(run_id=source_admission.proof.run_id,
+                                          status=RunStatus.COMPLETED,
+                                          stop_reason="input_attempt_joined")
                     if context.source_writer is not None:
                         record.metadata["source_stream_id"] = context.source_writer.stream_id
                     try:
@@ -6762,7 +6824,10 @@ class AgentLoop:
         ctx.input_persisted_early = self._persist_user_message_early(
             ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
         if ctx.kind is TurnKind.USER and ctx.input_persisted_early:
-            await ctx.delivery.input_committed()
+            admission = ctx.run_context.input_attempt_admission
+            await ctx.delivery.input_committed(
+                input_attempt_proof=admission.proof if admission is not None else None,
+            )
         if pending_followup_id(ctx.msg) is not None:
             await self._publish_stop_target_for_session(ctx.session_key)
         # Keep the full recovery history until the runner has admitted its

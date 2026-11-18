@@ -80,6 +80,28 @@ export interface SourceOrigin {
   generation: number;
 }
 
+/** Optional v1 recovery provenance; never workspace or execution authority. */
+export interface InputAttemptCapability {
+  version: 1;
+  source: SourceOrigin;
+  source_token: string;
+  principal: string;
+}
+
+export interface InputAttemptBinding extends InputAttemptCapability {
+  turn_id: string;
+  fingerprint: string;
+}
+
+export type InputAttemptQuery = Omit<InputAttemptBinding, "principal">;
+export interface InputAttemptProof extends InputAttemptBinding {
+  event_id: string;
+  run_id: string;
+}
+export type InputAttemptResult =
+  | { version: 1; turn_id: string; disposition: "unknown" }
+  | { version: 1; turn_id: string; disposition: "admitted"; proof: InputAttemptProof };
+
 export interface StopExpectationChild {
   child_id: string;
   source: SourceOrigin;
@@ -1793,6 +1815,8 @@ export type InboundEvent =
   | {
       event: "attached";
       chat_id: string;
+      input_attempt_source?: InputAttemptCapability;
+      input_attempt_result?: InputAttemptResult;
       temporary?: boolean;
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
@@ -1809,6 +1833,7 @@ export type InboundEvent =
   | {
       event: "message_admitted";
       chat_id: string;
+      input_attempt_proof?: InputAttemptProof;
       turn_id?: string;
       attempt_id?: string;
       session_key?: string;
@@ -2164,7 +2189,7 @@ export type Outbound =
       payload: Record<string, unknown>;
     }
   | { type: "fork_chat"; source_chat_id: string; before_user_index: number; title?: string }
-  | { type: "attach"; chat_id: string }
+  | { type: "attach"; chat_id: string; input_attempt_query?: InputAttemptQuery }
   | { type: "set_sidebar_state"; state: SidebarStatePayload }
   | { type: "discard_temporary_chat"; chat_id: string }
   | { type: "set_workspace_scope"; chat_id: string; workspace_scope: WorkspaceScopePayload }
@@ -2181,6 +2206,7 @@ export type Outbound =
   | {
       type: "message";
       chat_id: string;
+      input_attempt?: Omit<InputAttemptQuery, "turn_id">;
       content: string;
       media?: OutboundMedia[];
       cli_apps?: OutboundCliAppMention[];

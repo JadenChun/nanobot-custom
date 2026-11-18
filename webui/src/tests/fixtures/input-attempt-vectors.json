@@ -1,0 +1,27 @@
+[
+  {
+    "text": "hello",
+    "utf8_hex": "68656c6c6f",
+    "fingerprint": "0647c6be0dcdde9208b0290f8897c6408514d33f86a837232ea9f188688a124b"
+  },
+  {
+    "text": "  hello\n",
+    "utf8_hex": "202068656c6c6f0a",
+    "fingerprint": "aee9c814da499ad2b376ab6b2028bc57bf4b7a85f25b375288f1d1a33e73af93"
+  },
+  {
+    "text": "café",
+    "utf8_hex": "63616665cc81",
+    "fingerprint": "7c5899e5b6cd41855a5de7583ea3ad12f89b229820aed155b94e914a52b81aa9"
+  },
+  {
+    "text": "café",
+    "utf8_hex": "636166c3a9",
+    "fingerprint": "320d261d6002413aa598db736861342e925a83d4f950db70647693d01641e575"
+  },
+  {
+    "text": "hello 🌍👩‍💻",
+    "utf8_hex": "68656c6c6f20f09f8c8df09f91a9e2808df09f92bb",
+    "fingerprint": "0b580947f1d7932ceda74d6260cb988172feecc85cc8040c7d914d2438a5289c"
+  }
+]

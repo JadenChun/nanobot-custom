@@ -250,6 +250,8 @@ class WebUIOutboundProjector:
                             if event.active_turn_id else {}
                         ),
                         "starts_turn": event.starts_turn,
+                        **({"input_attempt_proof": event.input_attempt_proof.to_dict()}
+                           if event.input_attempt_proof is not None else {}),
                     }),
                     persistence="transient",
                 )
@@ -276,7 +278,9 @@ class WebUIOutboundProjector:
         if notification is not None:
             if conns or notification.deliver_offline:
                 kwargs: dict[str, Any] = (
-                    {"metadata": msg.metadata} if notification.attach_turn_metadata else {}
+                    {"metadata": {key: value for key, value in msg.metadata.items()
+                                  if key not in {"_webui_input_attempt", "_input_attempt"}}}
+                    if notification.attach_turn_metadata else {}
                 )
                 await self._transport.send_payload(
                     msg.chat_id, notification.payload,

@@ -18,6 +18,7 @@ from nanobot.events import RecoveryStateEvent as RecoveryStateEvent
 from nanobot.events import RetryStatusEvent as RetryStatusEvent
 from nanobot.events import RetryWaitEvent as RetryWaitEvent
 from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
+from nanobot.session.input_attempt import InputAttemptProof
 
 if TYPE_CHECKING:
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
@@ -96,6 +97,7 @@ class MessageAdmittedEvent(AgentEvent):
     session_incarnation: str | None = None
     active_turn_id: str | None = None
     starts_turn: bool = True
+    input_attempt_proof: InputAttemptProof | None = None
 
 
 @dataclass(frozen=True)

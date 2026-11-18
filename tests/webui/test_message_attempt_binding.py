@@ -66,6 +66,7 @@ def _message_envelope(*, chat_id: str, content: str, turn_id: str) -> dict[str, 
         "turn_id": turn_id,
         "webui": True,
         "request_settings_version": 1,
+        "request_intent": "new",
     }
 
 
@@ -83,6 +84,7 @@ async def test_repeated_turn_id_with_changed_payload_is_rejected_before_publish(
         _message_envelope(chat_id="chat-a", content="hello", turn_id="turn-1"),
     )
     publishes_after_first = bus.publish_inbound.await_count
+    assert publishes_after_first == 1, "valid fixture must reach first publication"
     assert _conflict_errors(connection, chat_id="chat-a", turn_id="turn-1") == []
 
     await channel._dispatch_envelope(
@@ -117,6 +119,7 @@ async def test_repeated_turn_id_with_identical_payload_is_not_a_payload_conflict
     )
 
     await channel._dispatch_envelope(connection, "webui-client", envelope)
+    assert bus.publish_inbound.await_count == 1
     await channel._dispatch_envelope(connection, "webui-client", dict(envelope))
 
     assert _conflict_errors(connection, chat_id="chat-a", turn_id="turn-same") == []

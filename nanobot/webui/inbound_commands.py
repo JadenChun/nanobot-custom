@@ -37,6 +37,15 @@ from nanobot.security.workspace_access import (
     WorkspaceScope,
     WorkspaceScopeError,
 )
+from nanobot.session.input_attempt import (
+    INPUT_ATTEMPT_METADATA_KEY,
+    InputAttempt,
+    InputAttemptConflictError,
+    InputAttemptSource,
+    find_input_attempt,
+    principal_tag,
+    turn_identity,
+)
 from nanobot.session.webui_turns import (
     activate_queued_websocket_turn,
     bind_queued_websocket_turn_scope,
@@ -620,6 +629,69 @@ class WebUICommandRouter:
             **request_field,
         )
 
+    def _input_attempt_principal(self, connection: ServerConnection) -> str | None:
+        from nanobot.remote.edge import AccessIdentity
+
+        identity = getattr(connection, "mobile_identity", None)
+        if isinstance(identity, AccessIdentity):
+            return principal_tag("mobile:" + identity.installation_id)
+        if connection in self._webui_connections:
+            return principal_tag("local")
+        return None
+
+    async def _input_attempt_attach_fields(
+        self, connection: ServerConnection, chat_id: str, envelope: dict[str, Any],
+    ) -> dict[str, object]:
+        """One authorized, noncreating source read; no negative/replay authority."""
+        principal = self._input_attempt_principal(connection)
+        if principal is None:
+            return {}
+        fields: dict[str, object] = {}
+        attempt: InputAttempt | None = None
+        if "input_attempt_query" in envelope:
+            raw: object = envelope["input_attempt_query"]
+            try:
+                attempt = InputAttempt.parse_query(raw, principal=principal,
+                                                   session_key=webui_session_key(chat_id))
+            except (TypeError, ValueError):
+                if isinstance(raw, dict):
+                    try:
+                        turn_id = turn_identity(cast(dict[object, object], raw).get("turn_id"))
+                    except ValueError:
+                        return fields
+                    fields["input_attempt_result"] = {
+                        "version": 1, "turn_id": turn_id, "disposition": "unknown",
+                    }
+                return fields
+            fields["input_attempt_result"] = {
+                "version": 1, "turn_id": attempt.turn_id, "disposition": "unknown",
+            }
+        sessions = self.gateway.session_manager
+        if sessions is None:
+            return fields
+        try:
+            read = await asyncio.to_thread(sessions.read_existing_canonical_source,
+                                           webui_session_key(chat_id))
+            if read is None:
+                return fields
+            _, snapshot = read
+            source = InputAttemptSource.from_state(snapshot.state)
+            fields["input_attempt_source"] = {
+                "version": 1, "source": source.to_dict(),
+                "source_token": source.token, "principal": principal,
+            }
+            if attempt is not None and attempt.source == source:
+                proof = find_input_attempt(snapshot.events, attempt)
+                if proof is not None:
+                    fields["input_attempt_result"] = {
+                        "version": 1, "turn_id": attempt.turn_id,
+                        "disposition": "admitted", "proof": proof.to_dict(),
+                    }
+        except Exception:
+            # Read/storage/conflict errors are UNKNOWN; never log raw evidence.
+            pass
+        return fields
+
     async def dispatch(
         self,
         connection: ServerConnection,
@@ -738,13 +810,30 @@ class WebUICommandRouter:
                     chat_id=chat_id,
                 )
                 return
+            if "input_attempt_query" in envelope and (
+                set(envelope) - {"type", "chat_id", "input_attempt_query"}
+                or getattr(envelope, "duplicate_keys", ())
+            ):
+                await self._transport.webui_send_event(connection, "error", detail="invalid_input_attempt_query")
+                return
             self._transport.webui_attach(connection, chat_id)
-            await self._transport.webui_send_event(
-                connection,
-                "attached",
-                chat_id=chat_id,
-                **self._session_projection.attach_fields(webui_session_key(chat_id)),
-            )
+            principal_before_read = self._input_attempt_principal(connection)
+            fields = self._session_projection.attach_fields(webui_session_key(chat_id))
+            if not self._temporary_chats.owns(connection, chat_id):
+                fields.update(await self._input_attempt_attach_fields(connection, chat_id, envelope))
+            # Authorization/subscription may change while the pure read awaits.
+            if _typed_mobile_identity(connection) is not None:
+                if not await self._transport.revalidate_mobile_connection(connection):
+                    return
+                from nanobot.remote.operations import mobile_frame_allowed
+                identity = _typed_mobile_identity(connection)
+                if identity is None or not mobile_frame_allowed(identity.scopes, envelope):
+                    return
+            if chat_id not in self._transport.webui_connection_chats(connection):
+                return
+            if self._input_attempt_principal(connection) != principal_before_read:
+                return
+            await self._transport.webui_send_event(connection, "attached", chat_id=chat_id, **fields)
             await self._transport.webui_hydrate(chat_id)
             return
         if command_type == "set_sidebar_state":
@@ -907,6 +996,11 @@ class WebUICommandRouter:
             "chat_id": chat_id,
             **({"turn_id": turn_id} if turn_id else {}),
         }
+        negotiated = "input_attempt" in envelope
+        attempt: InputAttempt | None = None
+        if set(envelope) & {"_input_attempt", "principal", "event_id", "run_id", "_event_id", "_run_id", INPUT_ATTEMPT_METADATA_KEY}:
+            await self._transport.webui_send_event(connection, "error", detail="invalid_input_attempt", **rejection_fields)
+            return
         is_stop = _is_stop_control(envelope)
         raw_stop_expectation = envelope.get("stop_expectation")
         has_stop_expectation = "stop_expectation" in envelope
@@ -933,7 +1027,7 @@ class WebUICommandRouter:
                     **rejection_fields,
                 )
                 return
-        attempt_error = self._bind_message_attempt(
+        attempt_error = None if negotiated else self._bind_message_attempt(
             str(chat_id),
             turn_id,
             envelope,
@@ -957,6 +1051,9 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        if negotiated and self._input_attempt_principal(connection) is None:
+            await self._transport.webui_send_event(connection, "error", detail="access_denied", **rejection_fields)
+            return
         request_intent = envelope.get("request_intent")
         temporary_owned = self._temporary_chats.owns(connection, chat_id)
         current_source_token = (
@@ -976,6 +1073,38 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        if negotiated:
+            try:
+                permitted = {"type", "chat_id", "content", "turn_id", "webui", "request_settings_version",
+                             "request_intent", "input_attempt", "media", "attachments", "cli_apps",
+                             "mcp_presets", "session_mentions", "quoted_context"}
+                if (set(envelope) - permitted or duplicate_keys or temporary_owned
+                    or envelope.get("webui") is not True
+                    or envelope.get("request_settings_version") != 1 or request_intent != "new"
+                    or not isinstance(content, str) or not content.strip()
+                    or content.lstrip().startswith(("/", "!"))
+                    or any(envelope.get(key) not in (None, []) for key in
+                           ("media", "attachments", "cli_apps", "mcp_presets", "session_mentions"))
+                    or envelope.get("quoted_context") not in (None, "")):
+                    raise InputAttemptConflictError("Unsupported input attempt")
+                principal = self._input_attempt_principal(connection)
+                sessions = self.gateway.session_manager
+                if principal is None or sessions is None:
+                    raise InputAttemptConflictError("Input attempt source unavailable")
+                attempt = InputAttempt.parse_message(envelope["input_attempt"], principal=principal,
+                    session_key=webui_session_key(chat_id), turn_id=turn_id, text=content)
+                read = await asyncio.to_thread(sessions.read_existing_canonical_source,
+                    webui_session_key(chat_id), expected_binding={
+                        "store_identity": attempt.source.store_identity,
+                        "incarnation": attempt.source.incarnation, "generation": attempt.source.generation,
+                    })
+                if read is None or InputAttemptSource.from_state(read[1].state) != attempt.source:
+                    raise InputAttemptConflictError("Input attempt source unavailable")
+                current_source_token = attempt.source.token
+            except (TypeError, ValueError, OSError, RuntimeError):
+                await self._transport.webui_send_event(connection, "error", detail="input_attempt_unknown",
+                    reason="invalid_input_attempt", **rejection_fields)
+                return
         approval_control = "approval_decision" in envelope or "approval_decision" in duplicate_keys
         if approval_control:
             raw_decision: object = envelope.get("approval_decision")
@@ -1020,7 +1149,7 @@ class WebUICommandRouter:
             await self._transport.webui_send_event(
                 connection,
                 "error",
-                detail="not_admitted",
+                detail="input_attempt_unknown" if negotiated else "not_admitted",
                 reason="busy_new_request",
                 **rejection_fields,
             )
@@ -1137,7 +1266,7 @@ class WebUICommandRouter:
             await self._transport.webui_send_event(
                 connection,
                 "error",
-                detail="not_admitted",
+                detail="input_attempt_unknown" if negotiated else "not_admitted",
                 reason="busy_new_request",
                 **rejection_fields,
             )
@@ -1325,6 +1454,8 @@ class WebUICommandRouter:
             }
             if temporary_policy is None and current_source_token is not None:
                 metadata[WEBUI_SOURCE_TOKEN_METADATA_KEY] = current_source_token
+            if attempt is not None:
+                metadata[INPUT_ATTEMPT_METADATA_KEY] = attempt
             mobile_identity = getattr(connection, "mobile_identity", None)
             mobile_installation = getattr(mobile_identity, "installation_id", None)
             if isinstance(mobile_installation, str) and mobile_installation:
@@ -1451,6 +1582,12 @@ class WebUICommandRouter:
                         context_blocks.append(session_context)
                     if context_blocks:
                         metadata[RUNTIME_CONTEXT_INPUT_META] = context_blocks
+                if attempt is not None:
+                    if (_typed_mobile_identity(connection) is not None
+                            and not await self._transport.revalidate_mobile_connection(connection)):
+                        return
+                    if self._input_attempt_principal(connection) != attempt.principal:
+                        return
                 await self._transport.webui_dispatch_message(
                     sender_id=client_id,
                     chat_id=chat_id,
