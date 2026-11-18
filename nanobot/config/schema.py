@@ -580,7 +580,7 @@ class AgentsConfig(Base):
 class ProviderConfig(Base):
     """LLM provider configuration."""
 
-    # User-facing name for dynamic custom providers.
+    # User-facing label; the configured provider key remains its identity.
     display_name: str | None = Field(
         default=None,
         exclude_if=lambda value: value is None,

@@ -24,8 +24,9 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict, cast
 
 import httpx
 
-from nanobot.config.loader import resolve_config_env_vars
+from nanobot.config.loader import resolve_config_env_vars, resolve_env_refs
 from nanobot.config.schema import Config, FallbackCandidate, ModelPresetConfig, ProviderConfig
+from nanobot.providers.factory import provider_extra_headers
 from nanobot.providers.image_generation import get_image_gen_provider
 from nanobot.providers.oauth_credentials import CredentialOwner
 from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
@@ -569,7 +570,7 @@ def _provider_settings_rows(
         if provider_config is None:
             continue
         row = _provider_settings_row(chosen.name, chosen, provider_config, oauth_status)
-        row["label"] = canonical.label
+        row["label"] = provider_config.display_name or canonical.label
         rows.append(row)
     return rows
 
@@ -687,7 +688,7 @@ def provider_models_payload(
     catalog_kind = model_catalog_kind(spec)
     base_payload: dict[str, Any] = {
         "provider": provider_key,
-        "label": spec.label,
+        "label": provider_config.display_name or spec.label,
         "catalog_kind": catalog_kind,
         "models": [],
         "model_count": 0,
@@ -742,9 +743,12 @@ def provider_models_payload(
             "fetched_at": catalog.fetched_at,
         }
 
-    api_base = _resolve_env_placeholders(provider_config.api_base) or spec.default_api_base
-    if spec.name == "openai" and not api_base:
-        api_base = "https://api.openai.com/v1"
+    if provider_config.api_base:
+        # Never send credentials for an explicitly configured endpoint to a
+        # different origin if the endpoint's environment reference is unset.
+        api_base = resolve_env_refs(provider_config.api_base).strip()
+    else:
+        api_base = spec.default_api_base or ("https://api.openai.com/v1" if spec.name == "openai" else "")
     if not api_base:
         return {
             **base_payload,
@@ -767,14 +771,27 @@ def provider_models_payload(
         else:
             headers["Authorization"] = f"Bearer {api_key}"
 
+    extra_headers: dict[str, str] = {}
+    for name, value in (provider_extra_headers(spec, provider_config) or {}).items():
+        resolved = resolve_env_refs(value)
+        if value and not resolved:
+            return {
+                **base_payload,
+                "status": "not_configured",
+                "message": "A configured provider header is missing from the environment.",
+            }
+        extra_headers[name] = resolved
+
     models_url = f"{api_base.rstrip('/')}/models"
     if spec.name == "minimax_anthropic" and not api_base.rstrip("/").endswith("/v1"):
         models_url = f"{api_base.rstrip('/')}/v1/models"
 
     try:
+        request_headers = httpx.Headers(headers)
+        request_headers.update(extra_headers)
         response = http_get(
             models_url,
-            headers=headers,
+            headers=request_headers,
             timeout=10.0,
             follow_redirects=False,
         )
@@ -793,11 +810,11 @@ def provider_models_payload(
             "status": "error",
             "message": f"Model list request failed with HTTP {status}.",
         }
-    except (httpx.HTTPError, ValueError) as exc:
+    except (httpx.HTTPError, ValueError):
         return {
             **base_payload,
             "status": "error",
-            "message": f"Could not load models: {exc}",
+            "message": "Could not load models from the configured provider.",
         }
 
     return {

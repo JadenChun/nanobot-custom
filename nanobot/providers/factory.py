@@ -64,10 +64,11 @@ def _resolve_model_preset(
     return preset if preset is not None else config.resolve_preset(preset_name)
 
 
-def _provider_extra_headers(
+def provider_extra_headers(
     spec: ProviderSpec | None,
     provider_config: ProviderConfig | None,
 ) -> dict[str, str] | None:
+    """Merge registry headers with the configured provider's overrides."""
     headers = dict(spec.default_extra_headers) if spec else {}
     if provider_config and provider_config.extra_headers:
         headers.update(provider_config.extra_headers)
@@ -239,7 +240,7 @@ def _make_provider_core(
             api_key=effective_key,
             api_base=config.get_api_base(model, preset=preset),
             default_model=model,
-            extra_headers=_provider_extra_headers(spec, p),
+            extra_headers=provider_extra_headers(spec, p),
             provider_name=provider_name,
         )
     elif backend == "bedrock":
@@ -265,7 +266,7 @@ def _make_provider_core(
                 api_key=key,
                 api_base=config.get_api_base(model, preset=preset),
                 default_model=model,
-                extra_headers=_provider_extra_headers(spec, p),
+                extra_headers=provider_extra_headers(spec, p),
                 spec=spec,
                 extra_body=p.extra_body if p else None,
                 api_type=p.api_type if p and provider_name == "openai" else "auto",
@@ -422,7 +423,7 @@ def provider_signature(
             provider_name,
             config.get_api_key(fallback.model, preset=fallback),
             config.get_api_base(fallback.model, preset=fallback),
-            _provider_extra_headers(spec, fp),
+            provider_extra_headers(spec, fp),
             fp.extra_body if fp else None,
             fp.api_type if fp else "auto",
             fp.extra_query if fp else None,
@@ -450,7 +451,7 @@ def provider_signature(
         provider_name,
         config.get_api_key(resolved.model, preset=resolved),
         config.get_api_base(resolved.model, preset=resolved),
-        _provider_extra_headers(primary_spec, p),
+        provider_extra_headers(primary_spec, p),
         p.extra_body if p else None,
         p.api_type if p else "auto",
         p.extra_query if p else None,

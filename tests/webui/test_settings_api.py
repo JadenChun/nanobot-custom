@@ -2122,6 +2122,97 @@ def test_provider_models_payload_fetches_openai_compatible_models(
     assert payload["models"][1]["context_window"] == 65536
 
 
+@pytest.mark.parametrize("access_token", ["test-access-token", None])
+def test_provider_catalog_uses_configured_proxy_headers(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    access_token: str | None,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    provider = config.providers.openai
+    provider.display_name = "Team Model Proxy"
+    provider.api_base = "https://proxy.example.test/v1"
+    provider.api_type = "responses"
+    provider.api_key = "${TEST_PROVIDER_KEY}"
+    provider.extra_headers = {"cf-access-token": "${TEST_PROXY_ACCESS_TOKEN}"}
+    save_config(config, config_path)
+    original = config_path.read_bytes()
+    monkeypatch.setenv("TEST_PROVIDER_KEY", "test-provider-key")
+    if access_token is not None:
+        monkeypatch.setenv("TEST_PROXY_ACCESS_TOKEN", access_token)
+    else:
+        monkeypatch.delenv("TEST_PROXY_ACCESS_TOKEN", raising=False)
+
+    def fake_get(url: str, **kwargs):
+        assert access_token is not None, "Do not dispatch with a missing configured header"
+        assert url == "https://proxy.example.test/v1/models"
+        assert kwargs["headers"]["Authorization"] == "Bearer test-provider-key"
+        assert kwargs["headers"]["cf-access-token"] == access_token
+        assert kwargs["follow_redirects"] is False
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "route/model-a"}, {"id": "route/model-b", "context_length": 1234}]},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    payload = provider_models_payload({"provider": ["openai"]}, config_path=config_path)
+    assert payload["label"] == "Team Model Proxy"
+    assert payload["provider"] == "openai"
+    if access_token is not None:
+        assert payload["status"] == "available"
+        assert [row["id"] for row in payload["models"]] == ["route/model-a", "route/model-b"]
+        assert payload["models"][1]["context_window"] == 1234
+        assert access_token not in json.dumps(payload)
+    else:
+        assert payload["status"] == "not_configured"
+        assert payload["models"] == []
+    settings = settings_payload(config_path=config_path)
+    assert next(row for row in settings["providers"] if row["name"] == "openai")["label"] == (
+        "Team Model Proxy"
+    )
+    assert config_path.read_bytes() == original
+
+
+def test_provider_catalog_does_not_fall_back_from_unresolved_proxy_base(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.openai.api_base = "${TEST_PROXY_ENDPOINT}"
+    config.providers.openai.api_key = "test-provider-key"
+    config.providers.openai.extra_headers = {"cf-access-token": "test-access-token"}
+    save_config(config, config_path)
+    monkeypatch.delenv("TEST_PROXY_ENDPOINT", raising=False)
+
+    def fake_get(_url: str, **_kwargs):
+        pytest.fail("An unresolved configured endpoint must not send credentials to a fallback")
+
+    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    payload = provider_models_payload({"provider": ["openai"]}, config_path=config_path)
+    assert payload["status"] == "missing_api_base"
+
+
+def test_provider_catalog_does_not_return_sensitive_transport_errors(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.openai.api_key = "test-provider-key"
+    save_config(config, config_path)
+
+    def fake_get(_url: str, **_kwargs):
+        raise httpx.LocalProtocolError("Illegal header value: secret-token")
+
+    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+    payload = provider_models_payload({"provider": ["openai"]}, config_path=config_path)
+    assert payload["status"] == "error"
+    assert "secret-token" not in json.dumps(payload)
+
+
 def test_settings_payload_lists_local_manager_and_commandcode_separately(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
