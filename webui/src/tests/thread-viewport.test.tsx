@@ -2215,13 +2215,7 @@ describe("ThreadViewport", () => {
     expect(jumpTo.mock.calls).toEqual([[2400]]);
     expect(followTo).toHaveBeenCalledWith(2400);
     expect(handoffAnimation.cancel).toHaveBeenCalled();
-    expect(animate).toHaveBeenCalledWith(
-      [expect.objectContaining({ opacity: 0.82 }), expect.objectContaining({ opacity: 1 })],
-      expect.objectContaining({ duration: expect.any(Number) }),
-    );
-    expect(jumpTo.mock.invocationCallOrder[0]).toBeLessThan(
-      animate.mock.invocationCallOrder[1],
-    );
+    expect(animate).toHaveBeenCalledTimes(1);
   });
 
   it("waits for hydrated messages before fulfilling open-chat bottom scroll", async () => {

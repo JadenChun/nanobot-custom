@@ -18,6 +18,8 @@ interface ThreadMessagesProps {
   temporary?: boolean;
   /** When true, agent turn still in flight — keeps activity timeline expanded. */
   isStreaming?: boolean;
+  /** Reveal the latest ordinary assistant body after a conversation handoff. */
+  revealLatestHistoryMessage?: boolean;
   activeTurnId?: string | null;
   /** Optimistic or canonical active-turn start, in unix seconds. */
   runStartedAt?: number | null;
@@ -71,6 +73,7 @@ export function ThreadMessages({
   messages,
   temporary = false,
   isStreaming = false,
+  revealLatestHistoryMessage = false,
   activeTurnId = null,
   runStartedAt = null,
   retryStatus = null,
@@ -116,6 +119,23 @@ export function ThreadMessages({
     ? activeTurnStartIndex(units, activeTurnId)
     : units.length;
   const unitKeys = useMemo(() => unitKeysForDisplay(units), [units]);
+  let revealMessageId: string | null = null;
+  if (revealLatestHistoryMessage && !isStreaming) {
+    for (let index = units.length - 1; index >= 0; index -= 1) {
+      const unit = units[index];
+      if (unit.type !== "message") continue;
+      const message = unit.message;
+      if (
+        message.role !== "assistant"
+        || (message.kind !== undefined && message.kind !== "message")
+        || message.compactReply !== undefined
+        || message.sessionMessage !== undefined
+        || message.activityKind === "model"
+      ) continue;
+      revealMessageId = message.id;
+      break;
+    }
+  }
   let nextUserIndex = hiddenUserMessageCount;
 
   // Render historical units eagerly. `content-visibility: auto` skipped their
@@ -158,6 +178,9 @@ export function ThreadMessages({
             unit={unit}
             marginTop={marginTop}
             userPromptId={userPromptId}
+            revealOnHistoryEntry={
+              unit.type === "message" && unit.message.id === revealMessageId
+            }
             hasBodyBelow={hasBodyBelow}
             isTurnStreaming={
               unit.type === "activity"
@@ -255,6 +278,7 @@ interface ThreadDisplayUnitProps {
   unit: DisplayUnit;
   marginTop: string;
   userPromptId?: string;
+  revealOnHistoryEntry: boolean;
   hasBodyBelow: boolean;
   isTurnStreaming: boolean;
   retryStatus: RetryStatus | null;
@@ -276,6 +300,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   unit,
   marginTop,
   userPromptId,
+  revealOnHistoryEntry,
   hasBodyBelow,
   isTurnStreaming,
   retryStatus,
@@ -317,6 +342,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
           <MessageBubble
             message={unit.message}
             isTurnStreaming={isTurnStreaming}
+            revealOnHistoryEntry={revealOnHistoryEntry}
             temporary={temporary}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
@@ -343,6 +369,7 @@ function threadDisplayUnitPropsEqual(
     displayUnitsEqual(previous.unit, next.unit)
     && previous.marginTop === next.marginTop
     && previous.userPromptId === next.userPromptId
+    && previous.revealOnHistoryEntry === next.revealOnHistoryEntry
     && previous.hasBodyBelow === next.hasBodyBelow
     && previous.isTurnStreaming === next.isTurnStreaming
     && previous.retryStatus === next.retryStatus

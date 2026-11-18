@@ -976,3 +976,13 @@
     outline-offset: 2px;
   }
 }
+
+.markdown-content [data-sd-animate] {
+  animation-delay: min(var(--sd-delay, 0ms), 160ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-content [data-sd-animate] {
+    animation: none;
+  }
+}

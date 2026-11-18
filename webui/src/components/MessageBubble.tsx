@@ -70,6 +70,8 @@ interface MessageBubbleProps {
   message: UIMessage;
   /** The containing agent turn has not received turn_end yet. */
   isTurnStreaming?: boolean;
+  /** Reveal this completed assistant body when its conversation enters history. */
+  revealOnHistoryEntry?: boolean;
   /** Give temporary-chat user turns the dashed private-mode treatment. */
   temporary?: boolean;
   /** When false, hide this message's copy button. Default true. */
@@ -457,6 +459,7 @@ function IncomingSessionMessage({
 export function MessageBubble({
   message,
   isTurnStreaming = false,
+  revealOnHistoryEntry = false,
   temporary = false,
   showCopyAction = true,
   cliApps = [],
@@ -663,6 +666,12 @@ export function MessageBubble({
             <MarkdownText
               streaming={!!message.isStreaming}
               preserveStreamingLayout
+              revealOnHistoryEntry={
+                revealOnHistoryEntry
+                && !isTurnStreaming
+                && !message.isStreaming
+                && message.compactReply === undefined
+              }
               onOpenFilePreview={onOpenFilePreview}
             >
               {assistantContent}

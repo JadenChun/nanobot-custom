@@ -4,6 +4,7 @@ import {
   lazy,
   memo,
   useEffect,
+  useState,
   type ReactNode,
 } from "react";
 
@@ -14,6 +15,7 @@ interface MarkdownTextProps {
   className?: string;
   streaming?: boolean;
   preserveStreamingLayout?: boolean;
+  revealOnHistoryEntry?: boolean;
   onOpenFilePreview?: (path: string) => void;
 }
 
@@ -25,12 +27,14 @@ const MemoizedMarkdownRenderer = memo(function MemoizedMarkdownRenderer({
   className,
   highlightCode,
   streaming,
+  revealOnHistoryEntry,
   onOpenFilePreview,
 }: {
   source: string;
   className?: string;
   highlightCode: boolean;
   streaming: boolean;
+  revealOnHistoryEntry: boolean;
   onOpenFilePreview?: (path: string) => void;
 }) {
   return (
@@ -38,6 +42,7 @@ const MemoizedMarkdownRenderer = memo(function MemoizedMarkdownRenderer({
       className={className}
       highlightCode={highlightCode}
       streaming={streaming}
+      revealOnHistoryEntry={revealOnHistoryEntry}
       onOpenFilePreview={onOpenFilePreview}
     >
       {source}
@@ -76,9 +81,17 @@ export function MarkdownText({
   className,
   streaming = false,
   preserveStreamingLayout = false,
+  revealOnHistoryEntry = false,
   onOpenFilePreview,
 }: MarkdownTextProps) {
   const renderedSource = children;
+  const [initialRevealSource] = useState(() => (
+    revealOnHistoryEntry && !streaming && renderedSource.length <= 2_048
+      ? renderedSource
+      : null
+  ));
+  const animateHistory = initialRevealSource !== null
+    && renderedSource === initialRevealSource;
   const renderPhase = streaming ? "streaming" : "complete";
   const highlightCode = !streaming;
   const renderWithStreamingLayout = streaming || preserveStreamingLayout;
@@ -107,6 +120,7 @@ export function MarkdownText({
           className={className}
           highlightCode={highlightCode}
           streaming={renderWithStreamingLayout}
+          revealOnHistoryEntry={animateHistory}
           onOpenFilePreview={onOpenFilePreview}
         />
       </Suspense>

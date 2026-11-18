@@ -89,9 +89,7 @@ const EXTERNAL_COMPOSER_SCROLL_BUTTON_BOTTOM_PX = 16;
 const SCROLL_BUTTON_COMPOSER_GAP_PX = 16;
 const SOFT_KEYBOARD_MIN_INSET_PX = 80;
 const SESSION_HANDOFF_EXIT_DURATION_MS = 80;
-const SESSION_HANDOFF_ENTER_DURATION_MS = 180;
 const SESSION_HANDOFF_OPACITY = 0.82;
-const SESSION_HANDOFF_VISIBLE_TAIL_PX = 48;
 export const INITIAL_HISTORY_WINDOW = 160;
 export const HISTORY_WINDOW_INCREMENT = 120;
 
@@ -279,6 +277,13 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastConversationKeyRef = useRef<string | null>(conversationKey);
   const conversationHandoffPendingRef = useRef(conversationKey !== null);
+  const revealLatestHistoryMessage = conversationKey !== null
+    && conversationReady
+    && !conversationLoading
+    && (
+      conversationHandoffPendingRef.current
+      || lastConversationKeyRef.current !== conversationKey
+    );
   const conversationHandoffAnimationRef = useRef<Animation | null>(null);
   const pendingConversationScrollRef = useRef(true);
   const pendingPromptJumpRef = useRef<string | null>(null);
@@ -728,34 +733,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     conversationHandoffPendingRef.current = false;
     conversationHandoffAnimationRef.current?.cancel();
     conversationHandoffAnimationRef.current = null;
-    const surface = messageRegionRef.current;
-    const content = messageContentRef.current;
-    const reduceMotion = typeof window.matchMedia === "function"
-      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!surface || !content || reduceMotion || typeof surface.animate !== "function") return;
-
-    // Start at the last visible message even when the transcript is shorter than the viewport.
-    const contentBottom = content.getBoundingClientRect().bottom - surface.getBoundingClientRect().top;
-    const revealTop = Math.max(0, Math.min(contentBottom, surface.clientHeight) - SESSION_HANDOFF_VISIBLE_TAIL_PX);
-    const animation = surface.animate(
-      [
-        { clipPath: `inset(${revealTop}px 0 0 0)`, opacity: SESSION_HANDOFF_OPACITY },
-        { clipPath: "inset(0px 0 0 0)", opacity: 1 },
-      ],
-      {
-        duration: SESSION_HANDOFF_ENTER_DURATION_MS,
-        easing: "cubic-bezier(0.2, 0, 0, 1)",
-      },
-    );
-    conversationHandoffAnimationRef.current = animation;
-    const clearAnimation = () => {
-      if (conversationHandoffAnimationRef.current === animation) {
-        conversationHandoffAnimationRef.current = null;
-      }
-    };
-    animation.onfinish = clearAnimation;
-    animation.oncancel = clearAnimation;
-  }, [conversationLoading, conversationReady, hasMessages]);
+  }, [conversationKey, conversationLoading, conversationReady, hasMessages]);
 
   useLayoutEffect(() => {
     threadMotionRef.current?.invalidateGeometry();
@@ -962,6 +940,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   messages={visibleMessages}
                   temporary={temporary}
                   isStreaming={isStreaming}
+                  revealLatestHistoryMessage={revealLatestHistoryMessage}
                   activeTurnId={activeTurnId}
                   runStartedAt={runStartedAt}
                   retryStatus={retryStatus}

@@ -37,6 +37,15 @@ import {
 const HERO_GREETING_PATTERN =
   /What should we work on\?|Where should we start\?|What are we building today\?|What should we tackle together\?/;
 
+// A reply can contain individual animated word spans. Assert the same exact
+// paragraph text, regardless of whether it is split across child elements.
+function replyText(expected: string) {
+  return (text: string, element: Element | null) => {
+    if (!element?.closest(".markdown-content")) return text === expected;
+    return element.matches("p") && element.textContent?.replace(/\s+/g, " ").trim() === expected;
+  };
+}
+
 function makeClient() {
   const errorHandlers = new Set<(err: StreamError) => void>();
   const statusHandlers = new Set<(status: ConnectionStatus) => void>();
@@ -1492,7 +1501,7 @@ describe("ThreadShell", () => {
       session={session("compact-usage")} title="Compact usage" onToggleSidebar={() => {}}
       settingsSnapshot={modelSettings("test-model", "deepseek")}
     />));
-    await screen.findByText(newReply ? "After compact" : "Before compact");
+    await screen.findByText(replyText(newReply ? "After compact" : "Before compact"));
     const trigger = newReply
       ? await screen.findByRole("button", { name: "Context 2%. Open context usage" })
       : await screen.findByTestId("composer-context-usage");
@@ -1639,7 +1648,7 @@ describe("ThreadShell", () => {
     />));
 
     if (!replay) {
-      await screen.findByText("Before compact");
+      await screen.findByText(replyText("Before compact"));
       expect(await screen.findByRole("button", {
         name: "Context 17%. Open context usage",
       })).toBeInTheDocument();
@@ -1651,7 +1660,7 @@ describe("ThreadShell", () => {
       }));
     }
 
-    if (replay) await screen.findByText("Before compact");
+    if (replay) await screen.findByText(replyText("Before compact"));
     const trigger = await screen.findByTestId("composer-context-usage");
     expect(trigger).toHaveAccessibleName("Open context usage");
     fireEvent.click(trigger);
@@ -2959,7 +2968,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
 
     await act(async () => {
       rerender(
@@ -2976,13 +2985,13 @@ describe("ThreadShell", () => {
       );
     });
 
-    expect(screen.queryByText("old answer")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("old answer"))).not.toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByPlaceholderText("Ask anything...")).toBeInTheDocument(),
     );
     const input = screen.getByPlaceholderText("Ask anything...");
     expect(input.className).toContain("min-h-[78px]");
-    expect(screen.queryByText("old answer")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("old answer"))).not.toBeInTheDocument();
   });
 
   it("forks assistant replies using the global user message index rather than the visible window index", async () => {
@@ -3027,7 +3036,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    const targetText = await screen.findByText("answer 100");
+    const targetText = await screen.findByText(replyText("answer 100"));
     fireEvent.click(within(targetText.closest(".w-full") as HTMLElement).getByRole("button", {
       name: "Fork",
     }));
@@ -3157,7 +3166,7 @@ describe("ThreadShell", () => {
         text: "live assistant reply",
       });
     });
-    expect(screen.getByText("live assistant reply")).toBeInTheDocument();
+    expect(screen.getByText(replyText("live assistant reply"))).toBeInTheDocument();
 
     await act(async () => {
       rerender(
@@ -3173,7 +3182,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    expect(screen.queryByText("live assistant reply")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("live assistant reply"))).not.toBeInTheDocument();
     expect(screen.getByText(HERO_GREETING_PATTERN)).toBeInTheDocument();
 
     await act(async () => {
@@ -3190,7 +3199,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    await waitFor(() => expect(screen.getByText("live assistant reply")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("live assistant reply"))).toBeInTheDocument());
   });
 
   it("restores the stop control when returning to a running chat", async () => {
@@ -3471,7 +3480,7 @@ describe("ThreadShell", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByText("row from the expired latest window")).toBeInTheDocument(),
+      expect(screen.getByText(replyText("row from the expired latest window"))).toBeInTheDocument(),
     );
 
     act(() => client._emitSessionUpdate("window-reset-chat", "thread"));
@@ -3479,7 +3488,7 @@ describe("ThreadShell", () => {
     await waitFor(() =>
       expect(screen.getByText("answer in the new latest window")).toBeInTheDocument(),
     );
-    expect(screen.queryByText("row from the expired latest window")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("row from the expired latest window"))).not.toBeInTheDocument();
     expect(client.reconcileCanonicalCompletion).toHaveBeenCalledWith(
       "window-reset-chat",
       expect.any(Number),
@@ -3534,20 +3543,20 @@ describe("ThreadShell", () => {
     );
     const { rerender } = render(view("lineage-chat-a"));
 
-    await waitFor(() => expect(screen.getByText("committed old lineage")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("committed old lineage"))).toBeInTheDocument());
     rerender(view("lineage-chat-b"));
-    await waitFor(() => expect(screen.getByText("other lineage chat")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("other lineage chat"))).toBeInTheDocument());
     rerender(view("lineage-chat-a"));
     await waitFor(() => expect(chatACalls).toBe(2));
 
-    expect(screen.getByText("committed old lineage")).toBeInTheDocument();
-    expect(screen.queryByText("disjoint new lineage")).not.toBeInTheDocument();
+    expect(screen.getByText(replyText("committed old lineage"))).toBeInTheDocument();
+    expect(screen.queryByText(replyText("disjoint new lineage"))).not.toBeInTheDocument();
 
     act(() => client._emitSessionUpdate("lineage-chat-a", "thread"));
 
     await waitFor(() => expect(chatACalls).toBe(3));
-    await waitFor(() => expect(screen.getByText("disjoint new lineage")).toBeInTheDocument());
-    expect(screen.queryByText("committed old lineage")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(replyText("disjoint new lineage"))).toBeInTheDocument());
+    expect(screen.queryByText(replyText("committed old lineage"))).not.toBeInTheDocument();
   });
 
   it("does not reset away a durable UI tail that arrives after the request", async () => {
@@ -3590,7 +3599,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("old canonical row")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old canonical row"))).toBeInTheDocument());
     act(() => client._emitSessionUpdate("reset-tail-race", "thread"));
     await waitFor(() => expect(historyCalls).toBe(2));
 
@@ -3615,9 +3624,9 @@ describe("ThreadShell", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("old canonical row")).toBeInTheDocument();
+    expect(screen.getByText(replyText("old canonical row"))).toBeInTheDocument();
     expect(screen.getByText("local durable row after request")).toBeInTheDocument();
-    expect(screen.queryByText("disjoint canonical reset row")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("disjoint canonical reset row"))).not.toBeInTheDocument();
   });
 
   it("safely commits an empty canonical reset for a rejected local turn", async () => {
@@ -3890,7 +3899,7 @@ describe("ThreadShell", () => {
     );
     const { rerender } = render(view("chat-version-a"));
 
-    await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
     act(() => client._emitSessionUpdate("chat-version-a"));
     await waitFor(() => expect(chatACalls).toBe(2));
 
@@ -3981,7 +3990,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
     act(() => client._emitSessionUpdate("run-generation-chat", "thread"));
     await waitFor(() => expect(historyCalls).toBe(2));
 
@@ -4160,14 +4169,14 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
 
     act(() => client._emitSessionUpdate("visibility-complete-a", "thread"));
-    await waitFor(() => expect(screen.getByText("completed while hidden")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("completed while hidden"))).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
     expect(client.getRunStartedAt("visibility-complete-a")).toBeNull();
 
     rerender(view("visibility-complete-b"));
     await waitFor(() => expect(screen.getByText("other thread")).toBeInTheDocument());
     rerender(view("visibility-complete-a"));
-    await waitFor(() => expect(screen.getByText("completed while hidden")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("completed while hidden"))).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
   });
 
@@ -4639,7 +4648,7 @@ describe("ThreadShell", () => {
           />,
         ),
       );
-      await waitFor(() => expect(screen.getByText("settled answer")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(replyText("settled answer"))).toBeInTheDocument());
 
       act(() => document.dispatchEvent(new Event("visibilitychange")));
       act(() => {
@@ -6504,7 +6513,7 @@ describe("ThreadShell", () => {
         ),
       );
 
-      await waitFor(() => expect(screen.getByText("old answer")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText(replyText("old answer"))).toBeInTheDocument());
       const scroller = container.querySelector(".thread-viewport-scrollbar") as HTMLElement;
       Object.defineProperties(scroller, {
         scrollHeight: { configurable: true, value: 2_000 },
@@ -6624,7 +6633,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    await waitFor(() => expect(screen.getByText("loaded answer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("loaded answer"))).toBeInTheDocument());
     await waitFor(() => expect(scroller.scrollTop).toBe(1800));
   });
 
@@ -6968,7 +6977,7 @@ describe("ThreadShell", () => {
       ),
     );
 
-    await waitFor(() => expect(screen.getByText("from chat a")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(replyText("from chat a"))).toBeInTheDocument());
 
     await act(async () => {
       rerender(
@@ -6985,7 +6994,7 @@ describe("ThreadShell", () => {
       );
     });
 
-    expect(screen.queryByText("from chat a")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("from chat a"))).not.toBeInTheDocument();
     expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
 
     await act(async () => {
@@ -6994,8 +7003,8 @@ describe("ThreadShell", () => {
       );
     });
 
-    await waitFor(() => expect(screen.getByText("from chat b")).toBeInTheDocument());
-    expect(screen.queryByText("from chat a")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(replyText("from chat b"))).toBeInTheDocument());
+    expect(screen.queryByText(replyText("from chat a"))).not.toBeInTheDocument();
   });
 
   it("shows the transcript while delegated activity loads and ignores the old chat's reply", async () => {
@@ -7023,14 +7032,14 @@ describe("ThreadShell", () => {
       <ThreadShell session={session(`opening-${chat}`)} title={`Chat ${chat}`} onToggleSidebar={() => {}} />
     ));
     const { rerender } = render(open("a"));
-    expect(await screen.findByText("Saved reply in chat a")).toBeVisible();
+    expect(await screen.findByText(replyText("Saved reply in chat a"))).toBeVisible();
     expect(childRequests.has("a")).toBe(true);
     expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
 
     rerender(open("b"));
-    expect(await screen.findByText("Saved reply in chat b")).toBeVisible();
+    expect(await screen.findByText(replyText("Saved reply in chat b"))).toBeVisible();
     expect(childRequests.has("b")).toBe(true);
-    expect(screen.queryByText("Saved reply in chat a")).not.toBeInTheDocument();
+    expect(screen.queryByText(replyText("Saved reply in chat a"))).not.toBeInTheDocument();
 
     await act(async () => {
       childRequests.get("a")?.(httpJson({
@@ -7055,7 +7064,7 @@ describe("ThreadShell", () => {
     });
 
     expect(await screen.findByText(/Delegated activity could not be fully verified/)).toBeVisible();
-    expect(screen.getByText("Saved reply in chat b")).toBeVisible();
+    expect(screen.getByText(replyText("Saved reply in chat b"))).toBeVisible();
     expect(screen.queryByLabelText("Late activity from chat a")).not.toBeInTheDocument();
   });
 
