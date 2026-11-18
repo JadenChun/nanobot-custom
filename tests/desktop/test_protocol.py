@@ -35,3 +35,10 @@ def test_protocol_serves_one_strict_request_per_line() -> None:
         "result": {"op": "start", "empty": True},
     }
 
+
+def test_prepare_default_config_cannot_request_an_arbitrary_path() -> None:
+    frame = b'{"v":1,"id":7,"op":"prepare_default_config","params":{}}\n'
+    assert parse_request(frame) == (7, "prepare_default_config", {})
+    with pytest.raises(ProtocolError):
+        parse_request(frame.replace(b'"params":{}', b'"params":{"config_path":"/tmp/other"}'))
+

@@ -6,6 +6,10 @@ type DesktopState = {
   selected_config: string | null;
   selected_interpreter: string | null;
   selected_workspace: string | null;
+  setup_defaults?: {
+    config_path: string;
+    interpreter_path: string | null;
+  } | null;
   tray_available: boolean;
   selection_locked: boolean;
   admission_pending: boolean;
@@ -41,15 +45,18 @@ const stateLabel = $("state");
 const indicator = $("indicator");
 
 const copy: Record<string, string> = {
-  setup_required: "Choose an existing config file and compatible Python interpreter.",
+  setup_required: "Review the config and Python paths, then connect.",
   hello_required: "Validate the selected installation before starting it.",
   backend_version_unsupported: "This Python installation has an unsupported Nanobot version.",
   backend_capability_unsupported: "This Nanobot installation lacks the desktop lifecycle capability.",
+  default_config_backend_unsupported: "Select a newer Nanobot Python installation to create a default config.",
+  default_config_write_failed: "Could not create the default config. Check that the Nanobot config directory is writable.",
   interpreter_mismatch: "The selected Python interpreter did not launch the installed backend.",
+  interpreter_invalid: "Choose the executable bin/python from an installed Nanobot environment.",
   config_invalid: "The selected config file could not be validated.",
   workspace_invalid: "The workspace override must be an absolute path.",
-  loopback_required: "This config does not use a supported loopback gateway.",
-  provider_unavailable: "The selected config has an incomplete provider setup.",
+  loopback_required: "Desktop requires loopback addresses (such as 127.0.0.1) for gateway.host and channels.websocket.host, without a public URL, TLS, or Unix socket override.",
+  provider_unavailable: "Configure a model provider for this config, then connect again. You can use nanobot onboard --wizard.",
   runtime_preflight_refused: "The selected backend refused startup during its safety checks.",
   startup_admission_refused: "The selected backend refused desktop startup.",
   gateway_conflict: "An unmanaged or incompatible gateway is using this instance.",
@@ -98,8 +105,13 @@ function draw(state: DesktopState, syncSelection = false): void {
   else if (state.state === "unavailable" || state.state === "stopped") indicator.classList.add("error");
   const hasSelection = state.selected_config !== null && state.selected_interpreter !== null;
   if (syncSelection) {
-    config.value = state.selected_config ?? "";
-    python.value = state.selected_interpreter ?? "";
+    if (state.setup_defaults) {
+      $("selection-hint").textContent = "Connect uses the default config unless you choose another. If the default file is missing, Desktop creates a local-only config.";
+    }
+    config.defaultValue = state.setup_defaults?.config_path ?? "";
+    python.defaultValue = state.setup_defaults?.interpreter_path ?? "";
+    config.value = state.selected_config ?? config.defaultValue;
+    python.value = state.selected_interpreter ?? python.defaultValue;
     workspace.value = state.selected_workspace ?? "";
   }
   selected.textContent = hasSelection
@@ -149,8 +161,8 @@ connect.addEventListener("click", async () => {
   detail.textContent = "Validating the selected installation…";
   try {
     const state = await invoke<DesktopState>("select_backend", {
-      configPath: config.value.trim(),
-      interpreterPath: python.value.trim(),
+      configPath: config.value.trim() || config.defaultValue,
+      interpreterPath: python.value.trim() || python.defaultValue,
       workspace: workspace.value.trim() || null,
     });
     draw(state, true);

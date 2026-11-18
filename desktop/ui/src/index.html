@@ -20,15 +20,15 @@
 
       <section id="selection" aria-labelledby="selection-title">
         <h2 id="selection-title">Connect an existing backend</h2>
-        <p class="hint">Choose the config file and the Python interpreter where Nanobot is installed.</p>
+        <p id="selection-hint" class="hint">Choose the config file and the Python interpreter where Nanobot is installed.</p>
         <label for="config">Config file</label>
         <div class="field-row">
-          <input id="config" type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/.config/nanobot/config.json" />
+          <input id="config" type="text" autocomplete="off" spellcheck="false" placeholder="Absolute path to config.json" />
           <button class="secondary" data-pick="config" type="button">Browse</button>
         </div>
         <label for="python">Python interpreter</label>
         <div class="field-row">
-          <input id="python" type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/.venv/bin/python" />
+          <input id="python" type="text" autocomplete="off" spellcheck="false" placeholder="Absolute path to the backend’s bin/python" />
           <button class="secondary" data-pick="python" type="button">Browse</button>
         </div>
         <label for="workspace">Workspace override <span>(optional)</span></label>

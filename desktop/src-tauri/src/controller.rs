@@ -12,11 +12,9 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::{
-    menu::MenuItem,
-    webview::WebviewWindowBuilder,
-    AppHandle, LogicalSize, Manager, WebviewUrl, Wry,
-};
+#[cfg(target_os = "linux")]
+use tauri::{webview::WebviewWindowBuilder, WebviewUrl};
+use tauri::{menu::MenuItem, AppHandle, LogicalSize, Manager, Wry};
 use url::{Host, Url};
 
 use crate::{
@@ -34,6 +32,8 @@ pub struct Snapshot {
     pub selected_config: Option<String>,
     pub selected_interpreter: Option<String>,
     pub selected_workspace: Option<String>,
+    #[cfg(target_os = "macos")]
+    pub setup_defaults: Option<preferences::SetupDefaults>,
     pub effective_workspace: Option<String>,
     pub tray_available: bool,
     pub selection_locked: bool,
@@ -51,6 +51,8 @@ impl Snapshot {
             selected_config: None,
             selected_interpreter: None,
             selected_workspace: None,
+            #[cfg(target_os = "macos")]
+            setup_defaults: preferences::setup_defaults(),
             effective_workspace: None,
             tray_available: false,
             selection_locked: false,
@@ -104,7 +106,7 @@ pub struct Shared {
     quit_queued: AtomicBool,
     window_open: AtomicBool,
     lifecycle_gate: AdmissionGate,
-    bus_verified: bool,
+    instance_verified: bool,
     _host_guard: Option<HostGuard>,
     tray_status_item: Mutex<Option<MenuItem<Wry>>>,
     setup_url: Mutex<Option<Url>>,
@@ -114,7 +116,7 @@ pub struct Shared {
 impl Shared {
     fn new(app: AppHandle<Wry>, host_guard: Option<HostGuard>) -> (Arc<Self>, Receiver<Job>) {
         let (sender, receiver) = mpsc::channel();
-        let bus_verified = host_guard.as_ref().is_some_and(|guard| guard.bus_verified);
+        let instance_verified = host_guard.as_ref().is_some_and(|guard| guard.instance_verified);
         let shared = Arc::new(Self {
             snapshot: RwLock::new(Snapshot::empty()),
             sender,
@@ -123,7 +125,7 @@ impl Shared {
             quit_queued: AtomicBool::new(false),
             window_open: AtomicBool::new(true),
             lifecycle_gate: AdmissionGate::default(),
-            bus_verified,
+            instance_verified,
             _host_guard: host_guard,
             tray_status_item: Mutex::new(None),
             setup_url: Mutex::new(None),
@@ -198,7 +200,7 @@ impl Shared {
         self: &Arc<Self>,
         preferences: Preferences,
     ) -> Result<Receiver<Result<Snapshot, String>>, String> {
-        if !self.bus_verified {
+        if !self.instance_verified {
             return Err("singleton_guard".to_owned());
         }
         if self.quit_requested.load(Ordering::Acquire) || self.snapshot().selection_locked {
@@ -247,7 +249,7 @@ impl Shared {
         self: &Arc<Self>,
         kind: JobKind,
     ) -> Result<Receiver<Result<Snapshot, String>>, String> {
-        if !self.bus_verified {
+        if !self.instance_verified {
             return Err("singleton_guard".to_owned());
         }
         if self.quit_requested.load(Ordering::Acquire) {
@@ -342,6 +344,8 @@ pub fn initialize(
     initial: Result<Option<Preferences>, &'static str>,
 ) -> Arc<Shared> {
     let (shared, receiver) = Shared::new(app.clone(), guard);
+    #[cfg(target_os = "macos")]
+    shared.set_setup_url(native::macos_setup_url());
     if let Some(guard) = shared._host_guard.as_ref() {
         native::initialize_primary(&app, guard, shared.clone());
     }
@@ -358,7 +362,7 @@ fn start_worker(
     thread::spawn(move || {
         let mut controller = Controller::new(app, shared.clone());
         match initial {
-            Ok(Some(preferences)) if shared.bus_verified => {
+            Ok(Some(preferences)) if shared.instance_verified => {
                 controller.start_selected(preferences, false);
             }
             Ok(Some(_)) => shared.set_error("singleton_guard"),
@@ -499,7 +503,7 @@ impl Controller {
     }
 
     fn start_selected(&mut self, preferences: Preferences, persist: bool) {
-        if !self.shared.bus_verified {
+        if !self.shared.instance_verified {
             self.shared.set_error("singleton_guard");
             return;
         }
@@ -513,7 +517,7 @@ impl Controller {
         }
         self.preferences = Some(preferences.clone());
         self.mark_selection(&preferences, "starting", "gateway_starting");
-        if let Err(code) = self.ensure_new_adapter(&preferences) {
+        if let Err(code) = self.ensure_new_adapter(&preferences, persist) {
             self.admission_pending = false;
             self.publish("unavailable", &code);
             return;
@@ -561,7 +565,11 @@ impl Controller {
         }
     }
 
-    fn ensure_new_adapter(&mut self, preferences: &Preferences) -> Result<(), String> {
+    fn ensure_new_adapter(
+        &mut self,
+        preferences: &Preferences,
+        _allow_default_creation: bool,
+    ) -> Result<(), String> {
         if !Path::new(&preferences.interpreter_path).is_file() {
             return Err("interpreter_invalid".to_owned());
         }
@@ -570,11 +578,20 @@ impl Controller {
         if interpreter_metadata.permissions().mode() & 0o111 == 0 {
             return Err("interpreter_invalid".to_owned());
         }
-        if !Path::new(&preferences.config_path).is_file() {
+        let config = Path::new(&preferences.config_path);
+        #[cfg(target_os = "macos")]
+        let create_default = _allow_default_creation && preferences::missing_default_config(config);
+        #[cfg(not(target_os = "macos"))]
+        let create_default = false;
+        if !create_default && !config.is_file() {
             return Err("config_invalid".to_owned());
         }
         let mut adapter = PipeAdapter::spawn(Path::new(&preferences.interpreter_path))
             .map_err(|error| error.0)?;
+        #[cfg(target_os = "macos")]
+        if create_default {
+            adapter.prepare_default_config(config).map_err(|error| error.0)?;
+        }
         let hello = adapter
             .hello(
                 &preferences.config_path,
@@ -599,11 +616,11 @@ impl Controller {
             .preferences
             .clone()
             .ok_or_else(|| "setup_required".to_owned())?;
-        self.ensure_new_adapter(&preferences)
+        self.ensure_new_adapter(&preferences, false)
     }
 
     fn retry(&mut self) -> Result<(), String> {
-        if !self.shared.bus_verified {
+        if !self.shared.instance_verified {
             return Err("singleton_guard".to_owned());
         }
         if self.pending_start.is_some() || self.admission_unknown {
@@ -773,6 +790,7 @@ impl Controller {
         {
             return Err("gateway_origin_mismatch".to_owned());
         }
+        #[cfg(target_os = "linux")]
         let setup_url = self.shared.setup_url();
         let mut reuse_existing = None;
         if let Some(existing) = self.app.get_webview_window("chat") {
@@ -788,28 +806,40 @@ impl Controller {
                 native::reveal_window(&self.shared, &existing);
                 return Ok(());
             }
-            let on_setup = setup_url
-                .as_ref()
-                .is_some_and(|setup| current.as_ref().is_some_and(|url| url == setup));
-            if on_setup || self.chat_origin.is_none() {
+            #[cfg(target_os = "macos")]
+            {
+                // Retained WKWebView already has the navigation policy installed
+                // and keeps website data in its nonpersistent store.
                 reuse_existing = Some(existing);
-            } else if !native::destroy_chat_after_hide(&self.app, &self.shared, &existing) {
-                return Err("chat_cleanup_unconfirmed".to_owned());
-            } else {
-                self.shared.set_window_open(false);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let on_setup = setup_url
+                    .as_ref()
+                    .is_some_and(|setup| current.as_ref().is_some_and(|url| url == setup));
+                if on_setup || self.chat_origin.is_none() {
+                    reuse_existing = Some(existing);
+                } else if !native::destroy_chat_after_hide(&self.app, &self.shared, &existing) {
+                    return Err("chat_cleanup_unconfirmed".to_owned());
+                } else {
+                    self.shared.set_window_open(false);
+                }
             }
         }
-        let preferences = self
-            .preferences
-            .as_ref()
-            .ok_or_else(|| "setup_required".to_owned())?;
-        let data_directory = preferences::profile_directory(preferences).map_err(str::to_owned)?;
+        #[cfg(target_os = "linux")]
+        let data_directory = {
+            let preferences = self
+                .preferences
+                .as_ref()
+                .ok_or_else(|| "setup_required".to_owned())?;
+            preferences::profile_directory(preferences).map_err(str::to_owned)?
+        };
         let secret = url::form_urlencoded::byte_serialize(bootstrap.secret.as_bytes()).collect::<String>();
         let mut chat_url = origin.clone();
         chat_url.set_fragment(Some(&format!("/?bootstrapSecret={secret}")));
         let origin_for_policy = origin.clone();
-        let target_origin = origin.clone();
         let (sender, receiver) = mpsc::sync_channel(1);
+        #[cfg(target_os = "linux")]
         let setup_for_reuse = setup_url.clone();
         if let Some(existing) = reuse_existing {
             let app_for_reuse = self.app.clone();
@@ -818,18 +848,22 @@ impl Controller {
                 let _ = existing.set_title("Nanobot");
                 let _ = existing.set_size(LogicalSize::new(1120.0, 780.0));
                 let _ = native::set_window_icon(&existing);
-                if native::install_navigation_policy(
+                #[cfg(target_os = "linux")]
+                let policy = native::install_navigation_policy(
                     &existing,
                     origin_for_policy,
                     setup_for_reuse,
                     app_for_reuse.clone(),
-                )
-                .is_err()
-                {
+                );
+                #[cfg(target_os = "macos")]
+                let policy = native::allow_gateway_origin(&app_for_reuse, origin_for_policy);
+                if policy.is_err() {
                     let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
                     return;
                 }
                 if existing.navigate(chat_url).is_err() {
+                    #[cfg(target_os = "macos")]
+                    native::clear_gateway_origin(&app_for_reuse);
                     let _ = sender.send(Err("chat_window_unavailable".to_owned()));
                     return;
                 }
@@ -837,49 +871,55 @@ impl Controller {
                 let _ = sender.send(Ok(()));
             });
         } else {
-            let app_for_create = self.app.clone();
-            let shared_for_event = self.shared.clone();
-            let shared_for_flag = self.shared.clone();
-            let setup_for_policy = setup_url.clone();
-            let _ = self.app.run_on_main_thread(move || {
-                let builder = WebviewWindowBuilder::new(
-                    &app_for_create,
-                    "chat",
-                    WebviewUrl::External(chat_url),
-                )
-                .title("Nanobot")
-                .inner_size(1120.0, 780.0)
-                .data_directory(data_directory)
-                .on_navigation({
-                    let selected = target_origin.clone();
-                    let setup = setup_for_policy.clone();
-                    move |target| native::navigation_allowed(target, &selected, setup.as_ref())
-                })
-                .on_new_window(|_url, _features| native::new_window_response());
-                let chat = match builder.build() {
-                    Ok(chat) => chat,
-                    Err(_) => {
-                        let _ = sender.send(Err("chat_window_unavailable".to_owned()));
+            #[cfg(target_os = "macos")]
+            return Err("chat_window_unavailable".to_owned());
+            #[cfg(target_os = "linux")]
+            {
+                let app_for_create = self.app.clone();
+                let shared_for_event = self.shared.clone();
+                let shared_for_flag = self.shared.clone();
+                let setup_for_policy = setup_url.clone();
+                let target_origin = origin.clone();
+                let _ = self.app.run_on_main_thread(move || {
+                    let builder = WebviewWindowBuilder::new(
+                        &app_for_create,
+                        "chat",
+                        WebviewUrl::External(chat_url),
+                    )
+                    .title("Nanobot")
+                    .inner_size(1120.0, 780.0)
+                    .data_directory(data_directory)
+                    .on_navigation({
+                        let selected = target_origin.clone();
+                        let setup = setup_for_policy.clone();
+                        move |target| native::navigation_allowed(target, &selected, setup.as_ref())
+                    })
+                    .on_new_window(|_url, _features| native::new_window_response());
+                    let chat = match builder.build() {
+                        Ok(chat) => chat,
+                        Err(_) => {
+                            let _ = sender.send(Err("chat_window_unavailable".to_owned()));
+                            return;
+                        }
+                    };
+                    let _ = native::set_window_icon(&chat);
+                    if native::install_navigation_policy(
+                        &chat,
+                        origin_for_policy,
+                        setup_for_policy,
+                        app_for_create.clone(),
+                    )
+                    .is_err()
+                    {
+                        let _ = chat.destroy();
+                        let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
                         return;
                     }
-                };
-                let _ = native::set_window_icon(&chat);
-                if native::install_navigation_policy(
-                    &chat,
-                    origin_for_policy,
-                    setup_for_policy,
-                    app_for_create.clone(),
-                )
-                .is_err()
-                {
-                    let _ = chat.destroy();
-                    let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
-                    return;
-                }
-                native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
-                shared_for_flag.set_window_open(true);
-                let _ = sender.send(Ok(()));
-            });
+                    native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
+                    shared_for_flag.set_window_open(true);
+                    let _ = sender.send(Ok(()));
+                });
+            }
         }
         receiver
             .recv_timeout(Duration::from_secs(5))
@@ -1264,11 +1304,18 @@ impl Controller {
 
 fn normalize_selection(mut value: Preferences) -> Result<Preferences, String> {
     value.validate().map_err(str::to_owned)?;
-    let config = fs::canonicalize(&value.config_path).map_err(|_| "config_invalid".to_owned())?;
-    if !config.is_file() {
-        return Err("config_invalid".to_owned());
+    let config = Path::new(&value.config_path);
+    #[cfg(target_os = "macos")]
+    let create_default = preferences::missing_default_config(config);
+    #[cfg(not(target_os = "macos"))]
+    let create_default = false;
+    if !create_default {
+        let config = fs::canonicalize(config).map_err(|_| "config_invalid".to_owned())?;
+        if !config.is_file() {
+            return Err("config_invalid".to_owned());
+        }
+        value.config_path = config.to_string_lossy().into_owned();
     }
-    value.config_path = config.to_string_lossy().into_owned();
     if let Some(workspace) = &value.workspace {
         if Path::new(workspace).exists() {
             value.workspace = Some(

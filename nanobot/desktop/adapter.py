@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import re
+import secrets
 import sys
+import tempfile
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -16,6 +20,7 @@ from nanobot import __version__
 from nanobot.channels.websocket.runtime import WebSocketConfig
 from nanobot.config.loader import load_config, resolve_config_env_vars, set_config_path
 from nanobot.config.schema import Config
+from nanobot.gateway.darwin_desktop_process import darwin_desktop_available
 from nanobot.gateway.runtime import (
     DesktopAdmissionResult,
     DesktopGatewayIdentity,
@@ -61,6 +66,49 @@ class _Selection:
     health_port: int
 
 
+def _prepare_default_config() -> Path:
+    """Seed the standard config only if absent, leaving other defaults to the schema."""
+    path = Path.home() / ".nanobot" / "config.json"
+    try:
+        with suppress(FileNotFoundError):
+            path.lstat()
+            return path
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        websocket = WebSocketConfig(
+            enabled=True,
+            host="127.0.0.1",
+            token_issue_secret=secrets.token_urlsafe(32),
+            websocket_requires_token=True,
+        )
+        payload = {
+            "gateway": {"host": "127.0.0.1"},
+            "channels": {"websocket": websocket.model_dump(mode="json", by_alias=True, exclude_unset=True)},
+        }
+        fd, name = tempfile.mkstemp(dir=path.parent, prefix=".config-", suffix=".tmp")
+        staged = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                json.dump(payload, output, indent=2)
+                output.write("\n")
+                output.flush()
+                os.fsync(output.fileno())
+            # Publish a complete private file without replacing a config that
+            # another setup process may have created in the meantime.
+            with suppress(FileExistsError):
+                os.link(staged, path)
+            with suppress(OSError, NotImplementedError):
+                parent_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(parent_fd)
+                finally:
+                    os.close(parent_fd)
+        finally:
+            staged.unlink(missing_ok=True)
+    except OSError:
+        raise DesktopError("default_config_write_failed") from None
+    return path
+
+
 class DesktopAdapter:
     """Own one selected gateway adapter session and its client lease."""
 
@@ -69,6 +117,10 @@ class DesktopAdapter:
         self._runtime: GatewayRuntime | None = None
 
     def handle(self, op: str, params: dict[str, object]) -> dict[str, object]:
+        if op == "prepare_default_config":
+            if params or self._selection is not None:
+                raise DesktopError("request_invalid")
+            return {"config_path": str(_prepare_default_config())}
         if op == "hello":
             return self._hello(params)
         selection = self._selection
@@ -206,11 +258,14 @@ class DesktopAdapter:
 
     @staticmethod
     def _hello_result(selection: _Selection) -> dict[str, object]:
+        capabilities = [_CAPABILITY]
+        if darwin_desktop_available():
+            capabilities.append("darwin-identity-stop-v1")
         return {
             "protocol_version": 1,
             "backend_version": __version__,
             "python_executable": sys.executable,
-            "capabilities": [_CAPABILITY],
+            "capabilities": capabilities,
             "config_path": str(selection.config_path),
             "workspace": str(selection.workspace),
         }
