@@ -1,12 +1,12 @@
 {
   "app": {
-    "brand": "nanobot",
+    "brand": "Kohaku",
     "loading": {
-      "connecting": "Menghubungkan ke nanobot…",
-      "boot": "Memuat nanobot…"
+      "connecting": "Menghubungkan ke Kohaku…",
+      "boot": "Memuat Kohaku…"
     },
     "error": {
-      "title": "Tidak dapat menjangkau nanobot",
+      "title": "Tidak dapat menjangkau Kohaku",
       "gatewayHint": "Pastikan gateway sedang berjalan (`nanobot gateway`) dan halaman ini dibuka pada mesin yang sama."
     },
     "auth": {
@@ -24,8 +24,8 @@
     },
     "system": {
       "section": "Sistem",
-      "restartHint": "Mulai ulang nanobot untuk menerapkan perubahan runtime.",
-      "restart": "Mulai ulang nanobot",
+      "restartHint": "Mulai ulang Kohaku untuk menerapkan perubahan runtime.",
+      "restart": "Mulai ulang Kohaku",
       "restarting": "Memulai ulang...",
       "restartEngine": "Mulai ulang mesin",
       "restartingEngine": "Memulai ulang mesin..."
@@ -34,11 +34,11 @@
       "completed": "Mulai ulang selesai dalam {{seconds}} dtk."
     },
     "documentTitle": {
-      "base": "nanobot",
-      "chat": "{{title}} · nanobot"
+      "base": "Kohaku",
+      "chat": "{{title}} · Kohaku"
     },
     "meta": {
-      "description": "UI web nanobot — ngobrol dengan ruang kerja nanobot Anda."
+      "description": "UI web Kohaku — ngobrol dengan ruang kerja Kohaku Anda."
     },
     "pairing": {
       "title": "Hubungkan pengguna chat",
@@ -136,7 +136,7 @@
       "language": "Bahasa",
       "provider": "Penyedia",
       "model": "Model",
-      "restart": "Mulai ulang nanobot",
+      "restart": "Mulai ulang Kohaku",
       "configPath": "Path konfigurasi",
       "activePreset": "Prasetel aktif",
       "gateway": "Gerbang",
@@ -229,7 +229,7 @@
       "selectedModelValue": "Ditentukan oleh model yang dipilih.",
       "brandLogos": "Tampilkan logo penyedia pihak ketiga dan CLI di Pengaturan.",
       "browserNotifications": "Beri tahu saat permintaan selesai dan aplikasi tidak sedang difokuskan. Nonaktif secara bawaan.",
-      "cliAppsCatalog": "Instal hanya adaptor CLI aplikasi yang dapat dijalankan nanobot secara lokal; aplikasi asli tidak diubah.",
+      "cliAppsCatalog": "Instal hanya adaptor CLI aplikasi yang dapat dijalankan Kohaku secara lokal; aplikasi asli tidak diubah.",
       "cliAppsFilter": "Cari berdasarkan aplikasi, kategori, atau kemampuan.",
       "logs": "Buka folder log mesin asli.",
       "diagnostics": "Ekspor laporan waktu proses singkat untuk dukungan.",
@@ -282,11 +282,11 @@
       "loadError": "Tidak dapat memuat pengaturan",
       "unsaved": "Perubahan belum disimpan.",
       "upToDate": "Sudah terbaru.",
-      "savedRestart": "Tersimpan. Mulai ulang nanobot untuk menerapkan.",
+      "savedRestart": "Tersimpan. Mulai ulang Kohaku untuk menerapkan.",
       "restartAfterSaving": "Simpan perubahan, lalu mulai ulang saat siap.",
       "savedRestartApply": "Tersimpan. Mulai ulang saat siap.",
       "imageProviderRestart": "Perubahan penyedia gambar tersimpan. Mulai ulang saat siap.",
-      "hostRestartAfterSaving": "Saat disimpan, nanobot akan memulai ulang mesinnya.",
+      "hostRestartAfterSaving": "Saat disimpan, Kohaku akan memulai ulang mesinnya.",
       "hostRestartPending": "Tersimpan. Mesin akan dimulai ulang saat siap.",
       "hostApiUnavailable": "Tindakan host hanya tersedia di aplikasi asli.",
       "logsOpened": "Folder log dibuka.",
@@ -310,7 +310,7 @@
       "exporting": "Mengekspor..."
     },
     "byok": {
-      "description": "Gunakan kunci penyedia Anda sendiri. Nanobot membaca nilai ini dari konfigurasi saat ini dan hanya penyedia yang sudah dikonfigurasi yang dapat digunakan dalam prasetel model.",
+      "description": "Gunakan kunci penyedia Anda sendiri. Kohaku membaca nilai ini dari konfigurasi saat ini dan hanya penyedia yang sudah dikonfigurasi yang dapat digunakan dalam prasetel model.",
       "configured": "Terkonfigurasi",
       "notConfigured": "Belum dikonfigurasi",
       "configuredSection": "Terkonfigurasi",
@@ -558,7 +558,7 @@
       "saveCustom": "Simpan MCP",
       "configImport": "Impor mcp.json",
       "importConfig": "Impor",
-      "restartRequired": "Mulai ulang nanobot untuk menyambungkan alat MCP yang diperbarui.",
+      "restartRequired": "Mulai ulang Kohaku untuk menyambungkan alat MCP yang diperbarui.",
       "toolsFound": "{{count}} alat",
       "loading": "Memuat prasetel MCP...",
       "empty": "Tidak ada prasetel MCP yang cocok dengan filter ini.",
@@ -586,14 +586,14 @@
       "preparingSignIn": "Menyiapkan proses masuk yang aman…",
       "openSignInToContinue": "Buka halaman masuk untuk melanjutkan.",
       "finishSignInInBrowser": "Selesaikan proses masuk di jendela browser.",
-      "manualCallbackRequired": "Selesaikan proses masuk, lalu tempel URL callback ke nanobot.",
+      "manualCallbackRequired": "Selesaikan proses masuk, lalu tempel URL callback ke Kohaku.",
       "manualCallbackHelp": "Setelah menyetujui akses, halaman localhost tidak akan terbuka. Salin URL lengkap dari bilah alamat lalu tempel di sini.",
       "finishingConnection": "Menyelesaikan koneksi…",
       "activatingTools": "Mengaktifkan alat…",
       "connected": "Terhubung.",
       "connectionFailed": "Koneksi gagal.",
       "connectionCancelled": "Koneksi dibatalkan.",
-      "reloadFailed": "Anda sudah masuk, tetapi nanobot tidak dapat menghubungkan alat. Coba mulai ulang nanobot.",
+      "reloadFailed": "Anda sudah masuk, tetapi Kohaku tidak dapat menghubungkan alat. Coba mulai ulang Kohaku.",
       "oauthFailed": "Tidak dapat terhubung. Coba masuk lagi.",
       "statusMissingDependency": "Butuh dependensi",
       "statusComingSoon": "Segera hadir",
@@ -666,15 +666,15 @@
     },
     "observability": {
       "title": "Observabilitas",
-      "configured": "Kredensial tracing tersedia untuk nanobot.",
-      "environment": "Atur LANGFUSE_SECRET_KEY dan LANGFUSE_PUBLIC_KEY, lalu mulai ulang nanobot.",
+      "configured": "Kredensial tracing tersedia untuk Kohaku.",
+      "environment": "Atur LANGFUSE_SECRET_KEY dan LANGFUSE_PUBLIC_KEY, lalu mulai ulang Kohaku.",
       "enable": "Aktifkan dukungan tracing"
     },
     "legal": {
       "thirdPartyBrands": "Nama produk, logo, dan merek adalah milik pemiliknya masing-masing. Penggunaan hanya untuk identifikasi dan tidak menyiratkan dukungan."
     },
     "apps": {
-      "description": "Tambahkan alat ke nanobot, lalu gunakan dengan @ di chat.",
+      "description": "Tambahkan alat ke Kohaku, lalu gunakan dengan @ di chat.",
       "cliLabel": "Aplikasi",
       "mcpLabel": "MCP",
       "channelLabel": "Kanal",
@@ -697,21 +697,21 @@
       "browseApps": "Jelajahi aplikasi",
       "browseIntegrations": "Jelajahi alat MCP",
       "emptyIntegrationsHint": "Tambahkan server MCP khusus di bawah.",
-      "restartRequired": "Mulai ulang nanobot untuk menerapkan aplikasi dan alat MCP yang diperbarui."
+      "restartRequired": "Mulai ulang Kohaku untuk menerapkan aplikasi dan alat MCP yang diperbarui."
     },
     "channels": {
-      "description": "Hubungkan nanobot ke aplikasi chat. Memasang dukungan hanya menambahkan paket integrasi; sebagian besar kanal tetap memerlukan token atau pengaturan ruang kerja.",
+      "description": "Hubungkan Kohaku ke aplikasi chat. Memasang dukungan hanya menambahkan paket integrasi; sebagian besar kanal tetap memerlukan token atau pengaturan ruang kerja.",
       "caption": "{{enabled}} aktif · {{total}} kanal",
       "searchPlaceholder": "Cari kanal",
       "backToChannels": "Semua kanal",
       "catalog": "Kanal",
       "loading": "Memuat kanal...",
       "empty": "Tidak ada kanal yang cocok dengan filter ini.",
-      "restartRequired": "Mulai ulang nanobot untuk menerapkan dukungan kanal yang diperbarui.",
+      "restartRequired": "Mulai ulang Kohaku untuk menerapkan dukungan kanal yang diperbarui.",
       "requires": "Memerlukan: {{requirements}}",
       "setUp": "Siapkan",
       "setupGuide": "Panduan penyiapan",
-      "setupSummary": "Mengaktifkan hanya menyalakan dukungan nanobot. Tambahkan kredensial platform, lalu mulai ulang nanobot.",
+      "setupSummary": "Mengaktifkan hanya menyalakan dukungan Kohaku. Tambahkan kredensial platform, lalu mulai ulang Kohaku.",
       "configKeys": "Kunci konfigurasi",
       "enable": "Aktifkan kanal",
       "disable": "Nonaktifkan kanal",
@@ -774,7 +774,7 @@
       "missingDependency": "Dukungan belum terpasang",
       "installSupport": "Instal dukungan",
       "installConfirmTitle": "Instal dukungan untuk {{name}}?",
-      "installConfirmDescription": "nanobot akan menambahkan yang dibutuhkan {{name}}, lalu mengaktifkannya. Lanjutkan?",
+      "installConfirmDescription": "Kohaku akan menambahkan yang dibutuhkan {{name}}, lalu mengaktifkannya. Lanjutkan?",
       "installConfirmAction": "Instal dan aktifkan",
       "websocketRequired": "Wajib untuk WebUI",
       "channelDisabled": "Kanal dinonaktifkan",
@@ -918,7 +918,7 @@
       "signedInAs": "Masuk sebagai {{account}}",
       "signInHelp": "Masuk dari perangkat ini; kunci API tidak disimpan di config.",
       "remoteSignInHelp": "Pilih Masuk untuk membuka xAI di komputer Anda, lalu tempel kode otorisasi yang ditampilkan setelah masuk.",
-      "codexRemoteSignInHelp": "Masuk melalui browser ini, lalu tempel URL callback localhost lengkap kembali ke nanobot.",
+      "codexRemoteSignInHelp": "Masuk melalui browser ini, lalu tempel URL callback localhost lengkap kembali ke Kohaku.",
       "signInRequired": "Perlu masuk",
       "signInBeforeSaving": "Masuk ke penyedia ini sebelum menyimpan prasetel.",
       "signedIn": "Sudah masuk",
@@ -926,9 +926,9 @@
       "proxyLabel": "Proksi jaringan",
       "proxySaveBeforeSignIn": "Simpan perubahan proksi sebelum login.",
       "saveProxy": "Simpan proksi",
-      "localCodeHelp": "Selesaikan proses masuk di browser. nanobot biasanya menyelesaikannya secara otomatis; jika tidak, tempel kode otorisasi di bawah.",
+      "localCodeHelp": "Selesaikan proses masuk di browser. Kohaku biasanya menyelesaikannya secara otomatis; jika tidak, tempel kode otorisasi di bawah.",
       "remoteCodeHelp": "Pilih Masuk untuk membuka xAI di komputer Anda. Setelah masuk, tempel kode otorisasi yang ditampilkan xAI di bawah.",
-      "localCallbackHelp": "Selesaikan proses masuk di browser. nanobot biasanya menyelesaikannya secara otomatis; jika tidak, salin URL callback localhost lengkap dari bilah alamat dan tempel di bawah.",
+      "localCallbackHelp": "Selesaikan proses masuk di browser. Kohaku biasanya menyelesaikannya secara otomatis; jika tidak, salin URL callback localhost lengkap dari bilah alamat dan tempel di bawah.",
       "remoteCallbackHelp": "Buka ChatGPT di browser ini dan selesaikan proses masuk. Saat halaman localhost gagal dimuat, salin URL lengkap dari bilah alamat dan tempel di bawah.",
       "authorizationCode": "Kode otorisasi",
       "callbackUrl": "URL callback lengkap",
@@ -971,7 +971,7 @@
       "deleteConfirmAction": "Hapus keterampilan",
       "instructionsTitle": "Petunjuk keterampilan",
       "setupRequired": "Perlu penyiapan",
-      "setupDescription": "Instal dependensi yang belum tersedia di mesin yang menjalankan nanobot, lalu periksa lagi.",
+      "setupDescription": "Instal dependensi yang belum tersedia di mesin yang menjalankan Kohaku, lalu periksa lagi.",
       "copySetupCommand": "Salin perintah penyiapan",
       "checkAgain": "Periksa lagi",
       "marketplaceSearchFailed": "Tidak dapat mencari marketplace keterampilan.",
@@ -1030,7 +1030,7 @@
     },
     "agentHome": {
       "change": "Ubah direktori utama agen",
-      "changeHint": "Ubah agents.defaults.workspace dalam berkas konfigurasi di atas, lalu mulai ulang Nanobot. Berkas agen yang ada tidak dipindahkan secara otomatis.",
+      "changeHint": "Ubah agents.defaults.workspace dalam berkas konfigurasi di atas, lalu mulai ulang Kohaku. Berkas agen yang ada tidak dipindahkan secara otomatis.",
       "description": "Menyimpan instruksi, memori, keterampilan, dan keluaran bawaan agen.",
       "summary": "Instruksi, memori, dan keterampilan",
       "title": "Direktori utama agen"
@@ -1161,7 +1161,7 @@
       "imageQuickActions": {
         "icon": {
           "title": "Desain ikon aplikasi",
-          "prompt": "Buat ikon aplikasi 1:1 yang bersih untuk nanobot: robot ramah, gaya vektor sederhana, palet biru dan putih lembut, tanpa teks."
+          "prompt": "Buat ikon aplikasi 1:1 yang bersih untuk Kohaku: robot ramah, gaya vektor sederhana, palet biru dan putih lembut, tanpa teks."
         },
         "sticker": {
           "title": "Buat stiker",
@@ -1247,8 +1247,6 @@
         "detailsLabel": "Buka penggunaan konteks",
         "panelTitle": "Penggunaan konteks",
         "contextTitle": "Konteks",
-        "configuredModel": "Model yang dikonfigurasi",
-        "configuredWindow": "Jendela konteks yang dikonfigurasi",
         "usageUnavailable": "Penggunaan tidak tersedia",
         "lastKnownRequest": "Permintaan terakhir yang diketahui",
         "recentRounds": "Putaran terbaru",
@@ -1298,6 +1296,7 @@
         "insecureContext": "Demi keamanan, Chrome dan browser lain memblokir akses mikrofon pada halaman HTTP jarak jauh. Buka WebUI ini melalui HTTPS untuk menggunakan input suara.",
         "unsupported": "Input suara tidak didukung di browser ini.",
         "permission": "Izinkan mikrofon di bilah alamat, lalu coba lagi.",
+        "nativePermission": "Izinkan Kohaku mengakses mikrofon, lalu coba lagi. Periksa pengaturan sistem jika akses diblokir.",
         "notConfigured": "Konfigurasikan penyedia transkripsi terlebih dahulu.",
         "tooLong": "Rekaman terlalu panjang.",
         "tooShort": "Tahan sedikit lebih lama untuk merekam suara.",
@@ -1325,7 +1324,7 @@
             "description": "Batalkan giliran agen yang sedang aktif di chat ini."
           },
           "restart": {
-            "title": "Mulai ulang nanobot",
+            "title": "Mulai ulang Kohaku",
             "description": "Mulai ulang proses bot di tempat."
           },
           "status": {
@@ -1405,14 +1404,14 @@
         "label": "Aplikasi",
         "cliGroup": "Aplikasi CLI",
         "mcpGroup": "Layanan MCP",
-        "sessionGroup": "Percakapan Nanobot",
+        "sessionGroup": "Percakapan Kohaku",
         "cliBadge": "CLI",
         "mcpBadge": "MCP",
         "cliDescription": "Gunakan @{{name}} sebagai aplikasi CLI lokal",
         "mcpDescription": "Gunakan @{{name}} sebagai server MCP",
         "cliTitle": "Aplikasi CLI: {{name}}",
         "mcpTitle": "Server MCP: {{name}}",
-        "sessionBadge": "Percakapan Nanobot",
+        "sessionBadge": "Percakapan Kohaku",
         "sessionDescription": "Referensikan @{{name}} sebagai chat sebelumnya"
       },
       "workspace": {
@@ -1512,6 +1511,7 @@
     "activityThinkingFor": "Berpikir selama {{duration}}",
     "activityThought": "Selesai berpikir",
     "activityThoughtFor": "Selesai berpikir dalam {{duration}}",
+    "activityGroup": "Aktivitas",
     "activityWorkingFor": "Memproses selama {{duration}}",
     "activityWorked": "Selesai memproses",
     "activityWorkedFor": "Diproses selama {{duration}}",
@@ -1593,7 +1593,7 @@
     },
     "sessionRecoveryRequired": {
       "title": "Chat perlu dipulihkan",
-      "body": "Nanobot menjeda chat ini setelah giliran terputus. Mulai chat baru untuk melanjutkan."
+      "body": "Kohaku menjeda chat ini setelah giliran terputus. Mulai chat baru untuk melanjutkan."
     },
     "modelRequestFailed": {
       "billingTitle": "Kuota penyedia model tidak tersedia",
@@ -1634,7 +1634,7 @@
       "permissionRefreshing": "Memeriksa akses saat ini…",
       "onceNotActive": "Akses sekali tidak lagi aktif. Tinjau folder sebelum melanjutkan.",
       "onceRetiringActive": "Perintah masih berjalan dengan akses sebelumnya. Tunggu hingga selesai atau hentikan, lalu coba lagi.",
-      "onceRetiringUnknown": "Nanobot belum dapat memastikan apakah perintah sebelumnya sudah selesai. Perubahan akses masih tertunda.",
+      "onceRetiringUnknown": "Kohaku belum dapat memastikan apakah perintah sebelumnya sudah selesai. Perubahan akses masih tertunda.",
       "onceRetiringFinished": "Pekerjaan sebelumnya selesai. Akses sekali masih dalam proses berakhir.",
       "onceExpired": "Akses sekali telah berakhir. Tinjau folder lagi sebelum melanjutkan.",
       "readyOnce": "Akses diizinkan untuk tugas ini. Siap melanjutkan di {{path}}.",
@@ -1644,16 +1644,16 @@
       "allowForTask": "Izinkan untuk tugas ini",
       "changed": "Tugas atau izin folder telah berubah. Muat ulang dan tinjau izin saat ini sebelum mencoba lagi.",
       "chooseAnotherFolder": "Pilih folder lain",
-      "chooseNarrowerFolder": "Folder ini berisi berkas runtime pribadi Nanobot. Pilih folder proyek dengan cakupan lebih kecil.",
+      "chooseNarrowerFolder": "Folder ini berisi berkas runtime pribadi Kohaku. Pilih folder proyek dengan cakupan lebih kecil.",
       "commandsRequested": "Eksekusi perintah diminta",
       "directoryTarget": "Folder yang diminta: {{path}}",
       "fileTarget": "Berkas yang diblokir: {{path}}. Pilih folder yang memuatnya secara eksplisit.",
       "fileTargetWithFolder": "Berkas yang diblokir: {{path}}. Folder yang akan diizinkan: {{folder}}",
       "folderMissing": "Folder ini tidak ada atau bukan direktori. Pilih folder yang ada dan coba lagi.",
       "folderToAuthorizeLabel": "Folder yang akan diizinkan",
-      "folderUnavailable": "Nanobot tidak dapat menggunakan folder ini dengan izin saat ini. Pilih folder lain atau tinjau izinnya.",
+      "folderUnavailable": "Kohaku tidak dapat menggunakan folder ini dengan izin saat ini. Pilih folder lain atau tinjau izinnya.",
       "insufficientCapabilities": "Izin yang dipilih tidak memenuhi permintaan ini. {{required}} Sesuaikan izin sebelum mengizinkan folder.",
-      "invalidFolder": "Nanobot tidak dapat memverifikasi folder ini. Pilih folder yang ada dan coba lagi.",
+      "invalidFolder": "Kohaku tidak dapat memverifikasi folder ini. Pilih folder yang ada dan coba lagi.",
       "purpose": "Tujuan: {{purpose}}",
       "readyInsufficient": "Izin yang dipilih untuk {{path}} tidak memenuhi permintaan ini. Pilih folder lain atau tinjau izinnya.",
       "requestedFileLabel": "Berkas yang diminta",
@@ -1667,18 +1667,18 @@
       "reviewAccess": "Tinjau izin",
       "selectedCapabilities": "Izin yang dipilih: {{fileAccess}} · {{commands}}",
       "selectedFolderScope": "Cakupan folder yang dipilih: {{path}}",
-      "unknownTarget": "Nanobot belum mengidentifikasi folder yang tepat. Pilih folder secara eksplisit."
+      "unknownTarget": "Kohaku belum mengidentifikasi folder yang tepat. Pilih folder secara eksplisit."
     },
     "permissionV2": {
       "actionFailed": "Akses tidak dapat diperbarui. Segarkan chat ini sebelum mencoba lagi.",
       "confirmTitle": "Aktifkan Akses penuh?",
-      "confirmDescription": "Nanobot dapat membaca dan mengubah file serta menjalankan perintah di luar folder yang dipilih sesuai izin akun sistem operasi Anda. Direktori kerja dan konteks tetap saat ini. Chat baru dimulai dalam mode Sandbox.",
+      "confirmDescription": "Kohaku dapat membaca dan mengubah file serta menjalankan perintah di luar folder yang dipilih sesuai izin akun sistem operasi Anda. Direktori kerja dan konteks tetap saat ini. Chat baru dimulai dalam mode Sandbox.",
       "enableFull": "Aktifkan Akses penuh",
       "fullEnding": "Akses penuh sedang diakhiri",
       "fullIndicator": "Akses penuh",
       "fullReach": "File dan perintah di seluruh perangkat sesuai izin akun sistem operasi Anda.",
       "retiringActive": "Perintah masih berjalan dengan akses sebelumnya. Tunggu hingga selesai atau hentikan, lalu coba lagi.",
-      "retiringUnknown": "Nanobot belum dapat memastikan apakah perintah sebelumnya sudah selesai. Perubahan akses masih tertunda.",
+      "retiringUnknown": "Kohaku belum dapat memastikan apakah perintah sebelumnya sudah selesai. Perubahan akses masih tertunda.",
       "retiringFinished": "Pekerjaan sebelumnya selesai. Coba lagi untuk mengonfirmasi akses Sandbox.",
       "retryRestricted": "Coba lagi untuk kembali ke Sandbox",
       "returnRestricted": "Kembali ke Sandbox",
@@ -1689,7 +1689,7 @@
         "controls_unavailable": "Akses penuh tidak tersedia dengan kontrol lokal saat ini.",
         "session_required": "Kirim pesan untuk membuat chat ini sebelum mengaktifkan Akses penuh.",
         "configured_sandbox": "Akses penuh tidak tersedia saat pembatasan perintah dikonfigurasi.",
-        "supervisor_unavailable": "Akses penuh tidak tersedia karena Nanobot tidak dapat mengawasi perintah dengan aman.",
+        "supervisor_unavailable": "Akses penuh tidak tersedia karena Kohaku tidak dapat mengawasi perintah dengan aman.",
         "permission_state_unavailable": "Izin akses saat ini tidak tersedia. Segarkan chat ini sebelum mencoba lagi.",
         "permission_retiring": "Akses penuh tidak dapat diaktifkan saat pekerjaan sebelumnya sedang diakhiri."
       }

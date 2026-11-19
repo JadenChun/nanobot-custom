@@ -736,6 +736,7 @@ export async function listSessions(
     title?: string;
     preview?: string;
     model_preset?: string | null;
+    reasoning_effort?: string | null;
     run_started_at?: number | null;
     recovery_state?: RecoveryState | null;
     workspace_scope?: WorkspaceScopePayload | null;
@@ -757,6 +758,7 @@ export async function listSessions(
       title: s.title ?? "",
       preview: s.preview ?? "",
       modelPreset: s.model_preset ?? null,
+      ...(typeof s.reasoning_effort === "string" ? { reasoningEffort: s.reasoning_effort } : {}),
       runStartedAt: s.run_started_at ?? null,
       recoveryState: s.recovery_state ?? null,
       workspaceScope: s.workspace_scope ?? null,
@@ -915,6 +917,7 @@ export async function fetchAllGeneratedAssets(
   if (options.limit !== undefined) query.set("limit", String(options.limit));
   if (options.cursor) query.set("cursor", options.cursor);
   if (options.sessionCursor) query.set("sessionCursor", options.sessionCursor);
+  query.set("order", "newest");
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<SessionGeneratedAssetsPayload>(
     `${base}/api/generated-assets${suffix}`,

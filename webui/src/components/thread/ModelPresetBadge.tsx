@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -79,12 +80,22 @@ export interface ModelPresetOption {
   provider?: string | null;
 }
 
+export interface ModelReasoningControl {
+  value: string | null;
+  defaultValue: string | null;
+  options: string[];
+  pending: boolean;
+  failed: boolean;
+  onChange: (effort: string | null) => void;
+}
+
 interface ModelPresetBadgeProps {
   label: string;
   modelDetail?: string | null;
   modelPreset?: string | null;
   modelPresets?: ModelPresetOption[];
   onPresetChange?: (name: string) => void;
+  reasoning?: ModelReasoningControl;
   onManageModels?: () => void;
   onRequestComposerFocus?: () => void;
   provider?: string | null;
@@ -102,6 +113,7 @@ export function ModelPresetBadge({
   modelPreset,
   modelPresets = [],
   onPresetChange,
+  reasoning,
   onManageModels,
   onRequestComposerFocus,
   provider,
@@ -155,6 +167,7 @@ export function ModelPresetBadge({
   });
 
   const selectPreset = (name: string) => {
+    if (reasoning?.pending) return;
     setOpen(false);
     if (name !== activeName) onPresetChange?.(name);
     requestAnimationFrame(() => onRequestComposerFocus?.());
@@ -287,7 +300,7 @@ export function ModelPresetBadge({
     />
   );
 
-  if (!canSwitch) {
+  if (!canSwitch && !reasoning) {
     const Container = opensSetup ? "button" : "span";
     return (
       <Container
@@ -332,7 +345,7 @@ export function ModelPresetBadge({
             if (gestureRef.current?.active) event.preventDefault();
           }}
           onDragStart={(event) => event.preventDefault()}
-          onKeyDown={handleKeyDown}
+          onKeyDown={canSwitch ? handleKeyDown : undefined}
           onClickCapture={(event) => {
             if (!suppressClickRef.current) return;
             suppressClickRef.current = false;
@@ -412,7 +425,7 @@ export function ModelPresetBadge({
         }}
         className={cn(
           pickerWidthClassName,
-          "origin-[var(--radix-popover-content-transform-origin)] p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
+          "max-h-[var(--radix-popover-content-available-height)] overflow-y-auto origin-[var(--radix-popover-content-transform-origin)] p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
         )}
       >
         <div
@@ -429,6 +442,7 @@ export function ModelPresetBadge({
             />
           ))}
         </div>
+        {reasoning && <ReasoningEffortSlider key={activeName} control={reasoning} />}
         {onManageModels ? (
           <div className="mt-1 border-t border-border/55 pt-1">
             <button
@@ -448,6 +462,102 @@ export function ModelPresetBadge({
       </PopoverContent>
     </Popover>
   );
+}
+
+function ReasoningEffortSlider({ control }: { control: ModelReasoningControl }) {
+  const { t } = useTranslation();
+  const id = useId();
+  const [preview, setPreview] = useState<number | null>(null);
+  const pointer = useRef<number | null>(null);
+  const efforts = [null, ...control.options];
+  const committed = Math.max(0, efforts.indexOf(control.value));
+  const selected = preview ?? committed;
+  const last = efforts.length - 1;
+  const defaultLabel = t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" });
+  const labelFor = (effort: string) => t(`thread.composer.reasoningEfforts.${effort}`, {
+    defaultValue: effortLabel(effort),
+  });
+  const selectedEffort = efforts[selected];
+  const label = selectedEffort ? labelFor(selectedEffort) : defaultLabel;
+  const valueText = !selectedEffort && control.defaultValue
+    ? `${label} (${labelFor(control.defaultValue)})`
+    : label;
+
+  const commit = (index: number) => {
+    if (!control.pending && index !== committed && index >= 0 && index <= last) {
+      control.onChange(efforts[index]);
+    }
+  };
+  const endPreview = (event: PointerEvent<HTMLInputElement>, apply: boolean) => {
+    if (pointer.current !== event.pointerId) return;
+    pointer.current = null;
+    setPreview(null);
+    if (apply) commit(event.currentTarget.valueAsNumber);
+  };
+
+  return (
+    <div className="space-y-1 border-t border-border/55 px-2.5 py-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+        <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
+          {t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })}
+        </label>
+        <span className="text-xs font-medium text-foreground">{valueText}</span>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min={0}
+        max={last}
+        step={1}
+        value={selected}
+        aria-valuetext={valueText}
+        aria-disabled={control.pending}
+        aria-busy={control.pending}
+        onChange={(event) => {
+          const index = event.target.valueAsNumber;
+          if (pointer.current === null) commit(index);
+          else setPreview(index);
+        }}
+        onPointerDown={(event) => {
+          if (control.pending || event.button !== 0) {
+            event.preventDefault();
+            return;
+          }
+          pointer.current = event.pointerId;
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+        }}
+        onPointerUp={(event) => endPreview(event, true)}
+        onPointerCancel={(event) => endPreview(event, false)}
+        onLostPointerCapture={(event) => endPreview(event, false)}
+        className="block h-7 w-full cursor-pointer touch-pan-y accent-primary focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50 aria-disabled:cursor-wait"
+      />
+      <div className="flex justify-between gap-1">
+        {efforts.map((effort, index) => (
+          (efforts.length <= 4 || index === 0 || index === last) && (
+            <button
+              key={effort ?? "default"}
+              type="button"
+              aria-pressed={index === committed}
+              aria-disabled={control.pending}
+              onClick={() => commit(index)}
+              className="min-h-7 rounded px-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50 aria-pressed:font-semibold aria-pressed:text-foreground"
+            >
+              {effort ? labelFor(effort) : t("settings.values.default", { defaultValue: "Default" })}
+            </button>
+          )
+        ))}
+      </div>
+      {control.failed && (
+        <p role="status" className="text-xs text-destructive">
+          {t("thread.composer.reasoningEffortFailed", { defaultValue: "Could not update reasoning effort. Try again." })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function effortLabel(effort: string): string {
+  return effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
 function PresetOption({

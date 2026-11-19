@@ -22,7 +22,7 @@ from contextlib import (
     suppress,
 )
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum, auto
 from functools import partial
@@ -147,6 +147,7 @@ from nanobot.providers.conversation_state import (
     ProviderStateSettlement,
 )
 from nanobot.providers.factory import ProviderSnapshot
+from nanobot.providers.registry import reasoning_effort_values_for
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RUNTIME_CONTEXT_MESSAGE_META,
@@ -189,7 +190,9 @@ from nanobot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
 from nanobot.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
 from nanobot.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
+    SESSION_REASONING_EFFORT_METADATA_KEY,
     model_preset_from_metadata,
+    reasoning_effort_from_metadata,
 )
 from nanobot.session.pending_followups import (
     PendingFollowupRecord,
@@ -1245,12 +1248,10 @@ class AgentLoop:
     ) -> LLMRuntime:
         """Resolve the immutable runtime selected by one session."""
         name = model_preset_from_metadata(session.metadata)
-        if name is None:
-            return self.llm_runtime()
         try:
-            return self.runtime_resolver.resolve_preset(name)
+            runtime = self.llm_runtime() if name is None else self.runtime_resolver.resolve_preset(name)
         except KeyError:
-            if not recover_removed or name in self.runtime_resolver.model_presets:
+            if name is None or not recover_removed or name in self.runtime_resolver.model_presets:
                 raise
             logger.warning(
                 "Session '{}' references removed model preset '{}'; falling back to default",
@@ -1258,29 +1259,49 @@ class AgentLoop:
                 name,
             )
             if session.policy.persist and not self.sessions.upsert_session_metadata(
-                session.key, {}, removals=(SESSION_MODEL_PRESET_METADATA_KEY,),
+                session.key, {}, removals=(
+                    SESSION_MODEL_PRESET_METADATA_KEY, SESSION_REASONING_EFFORT_METADATA_KEY,
+                ),
                 create_if_absent=True,
             ):
                 raise RuntimeError("could not persist session model selection")
             session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)
+            session.metadata.pop(SESSION_REASONING_EFFORT_METADATA_KEY, None)
             return self.llm_runtime()
+        effort = reasoning_effort_from_metadata(session.metadata)
+        if effort and effort in reasoning_effort_values_for(runtime.provider.provider_name, runtime.model):
+            return replace(runtime, generation=replace(runtime.generation, reasoning_effort=effort))
+        return runtime
 
     def set_session_model_preset(
         self,
         session_key: str,
         name: str,
+        *,
+        reasoning_effort: str | None = None,
+        temporary_session: Session | None = None,
     ) -> LLMRuntime:
         """Validate and persist one session's preset selection."""
         runtime = self.runtime_resolver.resolve_preset(name)
-        session = self.sessions.get_or_create(session_key)
+        metadata = {SESSION_MODEL_PRESET_METADATA_KEY: runtime.model_preset}
+        if reasoning_effort is not None:
+            levels = reasoning_effort_values_for(runtime.provider.provider_name, runtime.model)
+            if not reasoning_effort or reasoning_effort not in levels:
+                raise ValueError("Reasoning effort is unavailable for this model.")
+            metadata[SESSION_REASONING_EFFORT_METADATA_KEY] = reasoning_effort
+            runtime = replace(runtime, generation=replace(runtime.generation, reasoning_effort=reasoning_effort))
+        session = temporary_session or self.sessions.get_or_create(session_key)
+        removals = (SESSION_REASONING_EFFORT_METADATA_KEY,) if reasoning_effort is None else ()
         if session.policy.persist and not self.sessions.upsert_session_metadata(
-            session_key, {SESSION_MODEL_PRESET_METADATA_KEY: runtime.model_preset},
+            session_key, metadata, removals=removals,
             create_if_absent=True,
         ):
             raise RuntimeError("could not persist session model selection")
         # Publish only after commit. Temporary sessions never acquire durable
         # authority; existing references still observe the selected value.
-        session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
+        session.metadata.update(metadata)
+        for key in removals:
+            session.metadata.pop(key, None)
         return runtime
 
     def _publish_runtime_selection(

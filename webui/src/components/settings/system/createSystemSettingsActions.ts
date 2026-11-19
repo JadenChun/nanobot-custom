@@ -371,7 +371,7 @@ export function createSystemSettingsActions({
       setMcpError(
         flow.hot_reload.message
         || t("settings.mcp.reloadFailed", {
-          defaultValue: "Signed in, but nanobot could not connect the tools. Try restarting nanobot.",
+          defaultValue: "Signed in, but Kohaku could not connect the tools. Try restarting Kohaku.",
         }),
       );
       return;

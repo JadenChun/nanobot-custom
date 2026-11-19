@@ -28,7 +28,7 @@ declare global {
   }
 }
 
-const DEFAULT_NOTIFICATION_TITLE = "nanobot";
+const DEFAULT_NOTIFICATION_TITLE = "Kohaku";
 const DEFAULT_NOTIFICATION_ICON = "/brand/nanobot_icon_192.png";
 const DESKTOP_HIDE_EVENT = "nanobot:desktop-hide";
 const DESKTOP_SHOW_EVENT = "nanobot:desktop-show";
@@ -143,15 +143,18 @@ function showViaServiceWorker(
   });
 }
 
+function isDesktopTaskConclusion(event: TaskNotificationEvent): boolean {
+  if (event.kind === "recovery") return event.status === "failed";
+  return event.outcome === undefined || event.outcome === "completed" || event.outcome === "failed";
+}
+
 export function showTaskNotification({
-  body,
-  tag,
-  title = DEFAULT_NOTIFICATION_TITLE,
+  event,
+  t,
   requestMutation,
 }: {
-  body: string;
-  tag?: string;
-  title?: string;
+  event: TaskNotificationEvent;
+  t: TFunction;
   /** Authenticated WebSocket mutation control; the desktop side effect needs it. */
   requestMutation?: (
     action: string,
@@ -162,7 +165,12 @@ export function showTaskNotification({
   // window. Suppress even the browser Notification fallback in that state:
   // activating a stale notification must not pull the hidden window back.
   if (!desktopWindowOpen) return;
-  if (isDesktopShell()) {
+  const desktop = isDesktopShell();
+  if (desktop && !isDesktopTaskConclusion(event)) return;
+  const body = buildTaskNotificationBody(event, t);
+  const title = DEFAULT_NOTIFICATION_TITLE;
+  const tag = `nanobot-turn-${event.chatId}`;
+  if (desktop) {
     if (!clientWindowIsOpen()) return;
     // The desktop notifier is an authenticated local mutation. Without the
     // control there is no unauthenticated fallback request.
@@ -170,7 +178,7 @@ export function showTaskNotification({
     void requestMutation("desktop.notify", {
       title,
       body,
-      ...(tag ? { tag } : {}),
+      tag,
     }).catch(() => {
       // Desktop notifications are best-effort and must not affect chat.
     });

@@ -1,12 +1,12 @@
 {
   "app": {
-    "brand": "nanobot",
+    "brand": "Kohaku",
     "loading": {
-      "connecting": "Connecting to nanobot…",
-      "boot": "Loading nanobot…"
+      "connecting": "Connecting to Kohaku…",
+      "boot": "Loading Kohaku…"
     },
     "error": {
-      "title": "Couldn't reach nanobot",
+      "title": "Couldn't reach Kohaku",
       "gatewayHint": "Make sure the gateway is running (`nanobot gateway`) and that this page is open on the same machine."
     },
     "auth": {
@@ -24,8 +24,8 @@
     },
     "system": {
       "section": "System",
-      "restartHint": "Restart nanobot to apply runtime changes.",
-      "restart": "Restart nanobot",
+      "restartHint": "Restart Kohaku to apply runtime changes.",
+      "restart": "Restart Kohaku",
       "restarting": "Restarting...",
       "restartEngine": "Restart engine",
       "restartingEngine": "Restarting engine..."
@@ -34,11 +34,11 @@
       "completed": "Restart completed in {{seconds}}s."
     },
     "documentTitle": {
-      "base": "nanobot",
-      "chat": "{{title}} · nanobot"
+      "base": "Kohaku",
+      "chat": "{{title}} · Kohaku"
     },
     "meta": {
-      "description": "nanobot web UI — chat with your nanobot workspace."
+      "description": "Your personal AI assistant."
     },
     "pairing": {
       "title": "Pair a chat user",
@@ -189,7 +189,7 @@
       "language": "Language",
       "provider": "Provider",
       "model": "Model",
-      "restart": "Restart nanobot",
+      "restart": "Restart Kohaku",
       "configPath": "Config path",
       "activePreset": "Active preset",
       "gateway": "Gateway",
@@ -278,7 +278,7 @@
       "maxImagesPerTurn": "Upper bound for one generate_image request.",
       "comfyMcp": "Local image, edit, and video generation is handled through the Comfy MCP tools.",
       "timezone": "Used for schedules and time-aware replies.",
-      "cliAppsCatalog": "Install only the app-specific CLI adapters nanobot can run locally; native apps stay untouched.",
+      "cliAppsCatalog": "Install only the app-specific CLI adapters Kohaku can run locally; native apps stay untouched.",
       "cliAppsFilter": "Search by app, category, or capability.",
       "localServiceAccess": "Allow channel setup checks to reach localhost services.",
       "webuiDefaultAccess": "Used by web chats without a project-specific permission.",
@@ -325,7 +325,7 @@
       "readyStatus": "Ready",
       "readyTry": "Try @{{name}}",
       "readyCopied": "Copied",
-      "readyPrompt": "Ask nanobot to use @{{name}} for this task.",
+      "readyPrompt": "Ask Kohaku to use @{{name}} for this task.",
       "openChat": "Open chat",
       "unsupported": "Unsupported",
       "unavailable": "Unavailable",
@@ -369,7 +369,7 @@
       "saveCustom": "Save MCP",
       "configImport": "Import mcp.json",
       "importConfig": "Import",
-      "restartRequired": "Restart nanobot to connect updated MCP tools.",
+      "restartRequired": "Restart Kohaku to connect updated MCP tools.",
       "toolsFound": "{{count}} tools",
       "loading": "Loading MCP presets...",
       "empty": "No MCP presets match this filter.",
@@ -397,14 +397,14 @@
       "preparingSignIn": "Preparing secure sign-in…",
       "openSignInToContinue": "Open the sign-in page to continue.",
       "finishSignInInBrowser": "Finish signing in in the browser window.",
-      "manualCallbackRequired": "Finish signing in, then paste the callback URL into nanobot.",
+      "manualCallbackRequired": "Finish signing in, then paste the callback URL into Kohaku.",
       "manualCallbackHelp": "After approving access, the localhost page will not load. Copy its full URL from the address bar and paste it here.",
       "finishingConnection": "Finishing connection…",
       "activatingTools": "Activating tools…",
       "connected": "Connected.",
       "connectionFailed": "Connection failed.",
       "connectionCancelled": "Connection cancelled.",
-      "reloadFailed": "Signed in, but nanobot could not connect the tools. Try restarting nanobot.",
+      "reloadFailed": "Signed in, but Kohaku could not connect the tools. Try restarting Kohaku.",
       "oauthFailed": "Unable to connect. Try signing in again.",
       "statusMissingDependency": "Needs dependency",
       "statusComingSoon": "Coming soon",
@@ -494,11 +494,11 @@
       "loadError": "Could not load settings",
       "unsaved": "Unsaved changes.",
       "upToDate": "Up to date.",
-      "savedRestart": "Saved. Restart nanobot to apply.",
+      "savedRestart": "Saved. Restart Kohaku to apply.",
       "restartAfterSaving": "Save changes, then restart when ready.",
       "savedRestartApply": "Saved. Restart when ready.",
       "imageProviderRestart": "Image provider changes saved. Restart when ready.",
-      "hostRestartAfterSaving": "Save changes and nanobot will restart its engine.",
+      "hostRestartAfterSaving": "Save changes and Kohaku will restart its engine.",
       "hostRestartPending": "Saved. Restarting engine when ready.",
       "hostApiUnavailable": "Host actions are only available inside the native app.",
       "logsOpened": "Opened logs folder.",
@@ -522,7 +522,7 @@
       "exporting": "Exporting..."
     },
     "byok": {
-      "description": "Bring your own provider keys. Nanobot reads these values from the current config and only configured providers can be used in model presets.",
+      "description": "Bring your own provider keys. Kohaku reads these values from the current config and only configured providers can be used in model presets.",
       "configured": "Configured",
       "notConfigured": "Not configured",
       "configuredSection": "Configured",
@@ -669,12 +669,12 @@
     },
     "observability": {
       "title": "Observability",
-      "configured": "Tracing credentials are available to nanobot.",
-      "environment": "Set LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY, then restart nanobot.",
+      "configured": "Tracing credentials are available to Kohaku.",
+      "environment": "Set LANGFUSE_SECRET_KEY and LANGFUSE_PUBLIC_KEY, then restart Kohaku.",
       "enable": "Enable tracing support"
     },
     "apps": {
-      "description": "Add tools to nanobot, then @ them in chat.",
+      "description": "Add tools to Kohaku, then @ them in chat.",
       "cliLabel": "App",
       "mcpLabel": "MCP",
       "channelLabel": "Channel",
@@ -697,21 +697,21 @@
       "browseApps": "Browse apps",
       "browseIntegrations": "Browse MCP tools",
       "emptyIntegrationsHint": "Add a custom MCP server below.",
-      "restartRequired": "Restart nanobot to apply updated apps and MCP tools."
+      "restartRequired": "Restart Kohaku to apply updated apps and MCP tools."
     },
     "channels": {
-      "description": "Connect chat apps, email, and WebUI to nanobot.",
+      "description": "Connect chat apps, email, and WebUI to Kohaku.",
       "caption": "{{enabled}} running · {{total}} channels",
       "searchPlaceholder": "Search channels",
       "backToChannels": "All channels",
       "catalog": "Channels",
       "loading": "Loading Channels...",
       "empty": "No channels match this filter.",
-      "restartRequired": "Restart nanobot to apply updated channel support.",
+      "restartRequired": "Restart Kohaku to apply updated channel support.",
       "requires": "Requires: {{requirements}}",
       "setUp": "Set up",
       "setupGuide": "Setup guide",
-      "setupSummary": "Enable only turns on nanobot support. Add the platform credentials, then restart nanobot.",
+      "setupSummary": "Enable only turns on Kohaku support. Add the platform credentials, then restart Kohaku.",
       "configKeys": "Config keys",
       "enable": "Enable channel",
       "disable": "Disable channel",
@@ -774,7 +774,7 @@
       "missingDependency": "Support missing",
       "installSupport": "Install support",
       "installConfirmTitle": "Install support for {{name}}?",
-      "installConfirmDescription": "nanobot will add what {{name}} needs, then turn it on. Continue?",
+      "installConfirmDescription": "Kohaku will add what {{name}} needs, then turn it on. Continue?",
       "installConfirmAction": "Install and enable",
       "websocketRequired": "Required for WebUI",
       "channelDisabled": "Channel is disabled",
@@ -918,7 +918,7 @@
       "signedInAs": "Signed in as {{account}}",
       "signInHelp": "Sign in from this device; no API key is stored in config.",
       "remoteSignInHelp": "Select Sign in to open xAI on your computer, then paste the authorization code shown after login.",
-      "codexRemoteSignInHelp": "Sign in through this browser, then paste the full localhost callback URL back into nanobot.",
+      "codexRemoteSignInHelp": "Sign in through this browser, then paste the full localhost callback URL back into Kohaku.",
       "signInRequired": "Sign in required",
       "signInBeforeSaving": "Sign in before saving this provider in the preset.",
       "signedIn": "Signed in",
@@ -926,9 +926,9 @@
       "proxyLabel": "Network proxy",
       "proxySaveBeforeSignIn": "Save proxy changes before signing in.",
       "saveProxy": "Save proxy",
-      "localCodeHelp": "Complete sign-in in your browser. Nanobot usually finishes automatically; if it does not, paste the authorization code below.",
+      "localCodeHelp": "Complete sign-in in your browser. Kohaku usually finishes automatically; if it does not, paste the authorization code below.",
       "remoteCodeHelp": "Select Sign in to open xAI on your computer. After signing in, paste the authorization code shown by xAI below.",
-      "localCallbackHelp": "Complete sign-in in your browser. Nanobot usually finishes automatically; if it does not, copy the full localhost callback URL from the address bar and paste it below.",
+      "localCallbackHelp": "Complete sign-in in your browser. Kohaku usually finishes automatically; if it does not, copy the full localhost callback URL from the address bar and paste it below.",
       "remoteCallbackHelp": "Open ChatGPT in this browser and finish signing in. When the localhost page fails to load, copy the full URL from the address bar and paste it below.",
       "authorizationCode": "Authorization code",
       "callbackUrl": "Full callback URL",
@@ -971,7 +971,7 @@
       "deleteConfirmAction": "Delete skill",
       "instructionsTitle": "Skill instructions",
       "setupRequired": "Setup required",
-      "setupDescription": "Install the missing dependency on the machine running nanobot, then check again.",
+      "setupDescription": "Install the missing dependency on the machine running Kohaku, then check again.",
       "copySetupCommand": "Copy setup command",
       "checkAgain": "Check again",
       "marketplaceSearchFailed": "Could not search skill marketplaces.",
@@ -1033,7 +1033,7 @@
       "summary": "Instructions, memory & skills",
       "description": "Stores agent instructions, memory, skills, and default outputs.",
       "change": "Change agent home",
-      "changeHint": "Update agents.defaults.workspace in the configuration file shown above, then restart Nanobot. Existing agent files are not moved automatically."
+      "changeHint": "Update agents.defaults.workspace in the configuration file shown above, then restart Kohaku. Existing agent files are not moved automatically."
     }
   },
   "chat": {
@@ -1161,7 +1161,7 @@
       "imageQuickActions": {
         "icon": {
           "title": "Design an app icon",
-          "prompt": "Generate a clean 1:1 app icon for nanobot: friendly robot, simple vector style, soft blue and white palette, no text."
+          "prompt": "Generate a clean 1:1 app icon for Kohaku: friendly robot, simple vector style, soft blue and white palette, no text."
         },
         "sticker": {
           "title": "Make a sticker",
@@ -1247,8 +1247,6 @@
         "detailsLabel": "Open context usage",
         "panelTitle": "Context usage",
         "contextTitle": "Context",
-        "configuredModel": "Configured model",
-        "configuredWindow": "Configured window",
         "usageUnavailable": "Usage unavailable",
         "lastKnownRequest": "Last known request",
         "recentRounds": "Recent rounds",
@@ -1298,6 +1296,7 @@
         "insecureContext": "Chrome and other browsers block microphone access on remote HTTP pages for security. Open this WebUI over HTTPS to use voice input.",
         "unsupported": "Voice input is not supported in this browser.",
         "permission": "Allow microphone access in the address bar, then retry.",
+        "nativePermission": "Allow microphone access for Kohaku, then try again. Check system settings if access is blocked.",
         "notConfigured": "Configure a transcription provider first.",
         "tooLong": "Recording is too long.",
         "tooShort": "Hold a little longer to record voice.",
@@ -1335,7 +1334,7 @@
             "description": "Cancel the active agent turn for this chat."
           },
           "restart": {
-            "title": "Restart nanobot",
+            "title": "Restart Kohaku",
             "description": "Restart the bot process in place."
           },
           "status": {
@@ -1389,14 +1388,14 @@
         "label": "Apps",
         "cliGroup": "CLI apps",
         "mcpGroup": "MCP services",
-        "sessionGroup": "Nanobot conversations",
+        "sessionGroup": "Kohaku conversations",
         "cliBadge": "CLI",
         "mcpBadge": "MCP",
         "cliDescription": "Use @{{name}} as a local CLI app",
         "mcpDescription": "Use @{{name}} as an MCP server",
         "cliTitle": "CLI app: {{name}}",
         "mcpTitle": "MCP server: {{name}}",
-        "sessionBadge": "Nanobot conversation",
+        "sessionBadge": "Kohaku conversation",
         "sessionDescription": "Reference @{{name}} as a previous chat"
       },
       "encoding": "Encoding…",
@@ -1485,6 +1484,7 @@
     "activityThinkingFor": "Thinking for {{duration}}",
     "activityThought": "Thought",
     "activityThoughtFor": "Thought for {{duration}}",
+    "activityGroup": "Activity",
     "activityWorkingFor": "Working for {{duration}}",
     "activityWorked": "Worked",
     "activityWorkedFor": "Worked for {{duration}}",
@@ -1597,7 +1597,7 @@
     },
     "sessionRecoveryRequired": {
       "title": "Chat needs recovery",
-      "body": "Nanobot paused this chat after an interrupted turn. Start a new chat to continue."
+      "body": "Kohaku paused this chat after an interrupted turn. Start a new chat to continue."
     },
     "modelRequestFailed": {
       "billingTitle": "Model provider quota is unavailable",
@@ -1640,7 +1640,7 @@
       "requestedFileLabel": "Requested file",
       "folderToAuthorizeLabel": "Folder to authorize",
       "commandsRequested": "Commands requested",
-      "unknownTarget": "Nanobot has not identified the exact folder yet. Choose a folder explicitly.",
+      "unknownTarget": "Kohaku has not identified the exact folder yet. Choose a folder explicitly.",
       "requirements": {
         "read": "Required: read-only file access. Commands follow Sandbox file rules. Read-only folders stay read-only for programs and their child processes.",
         "write": "Required: read and write file access. Commands follow Sandbox file rules. Read-only folders stay read-only for programs and their child processes.",
@@ -1651,10 +1651,10 @@
       "insufficientCapabilities": "The selected access cannot satisfy this request. {{required}} Adjust the access before approving this folder.",
       "readyInsufficient": "The selected access for {{path}} cannot satisfy this request. Choose another folder or review its access.",
       "folderMissing": "That folder is missing or is not a directory. Choose an existing folder and try again.",
-      "invalidFolder": "Nanobot could not verify that folder. Choose an existing folder and try again.",
+      "invalidFolder": "Kohaku could not verify that folder. Choose an existing folder and try again.",
       "absolutePathRequired": "Enter an absolute folder path on this machine, then try again.",
-      "chooseNarrowerFolder": "This folder includes Nanobot's private runtime files. Choose a narrower project folder.",
-      "folderUnavailable": "Nanobot cannot use that folder with the current access settings. Choose a different folder or review access.",
+      "chooseNarrowerFolder": "This folder includes Kohaku's private runtime files. Choose a narrower project folder.",
+      "folderUnavailable": "Kohaku cannot use that folder with the current access settings. Choose a different folder or review access.",
       "changed": "This task or folder access changed. Refresh and review the current access before trying again.",
       "allowOnceAndUse": "Allow once and use folder",
       "onceUnavailable": "Stored Sandbox rules control writes. Agent map shortcuts help navigation. Full access uses normal OS-account access.",
@@ -1663,7 +1663,7 @@
       "permissionRefreshing": "Checking current access…",
       "onceNotActive": "One-time access is no longer active. Review the folder before continuing.",
       "onceRetiringActive": "A command is still running with the previous access. Wait for it to finish or stop it, then retry.",
-      "onceRetiringUnknown": "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending.",
+      "onceRetiringUnknown": "Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending.",
       "onceRetiringFinished": "Earlier work has finished. One-time access is still ending.",
       "onceExpired": "One-time access has ended. Review the folder again before continuing.",
       "readyOnce": "Access allowed for this task. Ready to continue using {{path}}.",
@@ -1678,7 +1678,7 @@
       "fullIndicator": "Full access",
       "fullReach": "Files and commands across this device under your OS account permissions.",
       "retiringActive": "A command is still running with the previous access. Wait for it to finish or stop it, then retry.",
-      "retiringUnknown": "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending.",
+      "retiringUnknown": "Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending.",
       "retiringFinished": "Earlier work has finished. Retry to confirm Sandbox access.",
       "retryRestricted": "Retry returning to Sandbox",
       "returnRestricted": "Return to Sandbox",
@@ -1689,7 +1689,7 @@
         "controls_unavailable": "Full access is unavailable with the current local controls.",
         "session_required": "Send a message to create this chat before enabling Full access.",
         "configured_sandbox": "Full access is unavailable while command confinement is configured.",
-        "supervisor_unavailable": "Full access is unavailable because Nanobot cannot supervise commands safely.",
+        "supervisor_unavailable": "Full access is unavailable because Kohaku cannot supervise commands safely.",
         "permission_state_unavailable": "Current access permissions are unavailable. Refresh this chat before retrying.",
         "permission_retiring": "Full access cannot be enabled while earlier work is ending."
       }

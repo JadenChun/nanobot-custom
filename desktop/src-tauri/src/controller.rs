@@ -166,7 +166,6 @@ impl Shared {
         if let Ok(mut snapshot) = self.snapshot.write() {
             snapshot.tray_available = available;
         }
-        self.refresh_tray_label();
     }
 
     pub fn tray_available(&self) -> bool {
@@ -292,18 +291,28 @@ impl Shared {
     }
 
     fn replace_snapshot(&self, snapshot: Snapshot) {
-        if let Ok(mut current) = self.snapshot.write() {
-            *current = snapshot;
+        let Ok(mut current) = self.snapshot.write() else {
+            return;
+        };
+        let state_changed = current.state != snapshot.state;
+        *current = snapshot;
+        drop(current);
+        if state_changed {
+            self.refresh_tray_label();
         }
-        self.refresh_tray_label();
     }
 
     fn update_snapshot(&self, state: &str, code: &str) {
-        if let Ok(mut snapshot) = self.snapshot.write() {
-            snapshot.state = state.to_owned();
-            snapshot.code = code.to_owned();
+        let Ok(mut snapshot) = self.snapshot.write() else {
+            return;
+        };
+        let state_changed = snapshot.state != state;
+        snapshot.state = state.to_owned();
+        snapshot.code = code.to_owned();
+        drop(snapshot);
+        if state_changed {
+            self.refresh_tray_label();
         }
-        self.refresh_tray_label();
     }
 
     fn refresh_tray_label(&self) {
@@ -845,16 +854,17 @@ impl Controller {
             let app_for_reuse = self.app.clone();
             let shared_for_reuse = self.shared.clone();
             let _ = self.app.run_on_main_thread(move || {
-                let _ = existing.set_title("Nanobot");
+                let _ = existing.set_title("Kohaku");
                 let _ = existing.set_size(LogicalSize::new(1120.0, 780.0));
                 let _ = native::set_window_icon(&existing);
                 #[cfg(target_os = "linux")]
                 let policy = native::install_navigation_policy(
                     &existing,
-                    origin_for_policy,
+                    origin_for_policy.clone(),
                     setup_for_reuse,
                     app_for_reuse.clone(),
-                );
+                )
+                .and_then(|()| native::allow_gateway_origin(&app_for_reuse, origin_for_policy));
                 #[cfg(target_os = "macos")]
                 let policy = native::allow_gateway_origin(&app_for_reuse, origin_for_policy);
                 if policy.is_err() {
@@ -862,7 +872,6 @@ impl Controller {
                     return;
                 }
                 if existing.navigate(chat_url).is_err() {
-                    #[cfg(target_os = "macos")]
                     native::clear_gateway_origin(&app_for_reuse);
                     let _ = sender.send(Err("chat_window_unavailable".to_owned()));
                     return;
@@ -886,7 +895,7 @@ impl Controller {
                         "chat",
                         WebviewUrl::External(chat_url),
                     )
-                    .title("Nanobot")
+                    .title("Kohaku")
                     .inner_size(1120.0, 780.0)
                     .data_directory(data_directory)
                     .on_navigation({
@@ -905,16 +914,18 @@ impl Controller {
                     let _ = native::set_window_icon(&chat);
                     if native::install_navigation_policy(
                         &chat,
-                        origin_for_policy,
+                        origin_for_policy.clone(),
                         setup_for_policy,
                         app_for_create.clone(),
                     )
+                    .and_then(|()| native::allow_gateway_origin(&app_for_create, origin_for_policy))
                     .is_err()
                     {
                         let _ = chat.destroy();
                         let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
                         return;
                     }
+                    let _ = crate::microphone::install(&chat);
                     native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
                     shared_for_flag.set_window_open(true);
                     let _ = sender.send(Ok(()));

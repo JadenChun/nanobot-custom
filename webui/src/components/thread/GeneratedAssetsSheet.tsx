@@ -58,6 +58,12 @@ interface LightboxState {
   index: number;
 }
 
+interface DatedAsset {
+  asset: GeneratedAsset;
+  createdAt: number;
+  startedAt: number;
+}
+
 export function GeneratedAssetsSheet({
   sessionKey,
   token,
@@ -108,20 +114,30 @@ export function GeneratedAssetsSheet({
   );
   const totalAssets = flatAssets.length;
   const librarySessions = useMemo(() => {
-    const bySession = new Map<string, GeneratedAsset[]>();
+    const bySession = new Map<string, DatedAsset[]>();
     for (const group of libraryGroups) {
-      const assets = group.artifacts.filter(
-        (artifact) => artifact.kind === "image" || artifact.kind === "video",
-      );
-      if (assets.length === 0) continue;
-      const key = group.sessionKey || "unknown";
-      bySession.set(key, [...(bySession.get(key) ?? []), ...assets]);
+      const sessionKey = group.sessionKey || "unknown";
+      const startedAt = group.startedAt ?? 0;
+      const assets = bySession.get(sessionKey) ?? [];
+      for (const asset of group.artifacts) {
+        if (asset.kind !== "image" && asset.kind !== "video") continue;
+        assets.push({ asset, createdAt: asset.createdAt ?? startedAt, startedAt });
+      }
+      if (assets.length > 0) bySession.set(sessionKey, assets);
     }
-    return Array.from(bySession, ([key, assets]) => ({ sessionKey: key, assets }));
+    const sessions = Array.from(bySession, ([sessionKey, assets]) => {
+      assets.sort((a, b) => b.createdAt - a.createdAt || b.startedAt - a.startedAt);
+      return {
+        sessionKey,
+        latestAt: assets[0]?.createdAt ?? 0,
+        assets: assets.map((item) => item.asset),
+      };
+    });
+    return sessions.sort((a, b) => b.latestAt - a.latestAt);
   }, [libraryGroups]);
-  const libraryAssets = librarySessions.flatMap((session) => session.assets);
+  const libraryTotal = librarySessions.reduce((total, session) => total + session.assets.length, 0);
   const libraryMode = view === "library";
-  const activeTotal = libraryMode ? libraryAssets.length : totalAssets;
+  const activeTotal = libraryMode ? libraryTotal : totalAssets;
   const activeLoading = libraryMode ? libraryLoading : loading;
   const activeLoadingMore = libraryMode ? libraryLoadingMore : loadingMore;
   const activeFailed = libraryMode ? libraryLoadFailed : loadFailed;
@@ -135,10 +151,6 @@ export function GeneratedAssetsSheet({
   const openFlat = (index: number) => {
     setLightbox({ images: flatAssets.map((item) => item.asset), index });
   };
-  const openLibrary = (assets: GeneratedAsset[], index: number) => {
-    setLightbox({ images: assets, index });
-  };
-
   return (
     <>
       <Button
@@ -259,7 +271,7 @@ export function GeneratedAssetsSheet({
                           key={`${session.sessionKey}:${asset.id}`}
                           asset={asset}
                           badge={`#${index + 1}`}
-                          onClick={() => openLibrary(session.assets, index)}
+                          onClick={() => setLightbox({ images: session.assets, index })}
                         />
                       ))}
                     </div>

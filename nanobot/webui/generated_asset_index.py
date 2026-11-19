@@ -112,7 +112,13 @@ def delete_generated_asset_index(session_key: str) -> bool:
 
 def webui_session_keys(webui_dir: Path) -> list[str]:
     """Derive WebSocket session keys from persisted transcript files."""
-    keys: set[str] = set()
+    return [key for _, key in _webui_session_positions(webui_dir, newest_first=False)]
+
+
+def _webui_session_positions(
+    webui_dir: Path, *, newest_first: bool,
+) -> list[tuple[int, str]]:
+    positions: dict[str, int] = {}
     if not webui_dir.is_dir():
         return []
     persisted_prefix = SessionManager.safe_key(WEBUI_SESSION_STORAGE_PREFIX)
@@ -120,20 +126,29 @@ def webui_session_keys(webui_dir: Path) -> list[str]:
         stem: str | None = None
         if path.is_file() and path.suffix == ".jsonl":
             stem = path.stem
+            if newest_first:
+                base, marker, generation = stem.rpartition(".active.")
+                if marker and len(generation) == 16 and (webui_dir / f"{base}.segments").is_dir():
+                    stem = base
         elif path.is_dir() and path.name.endswith(".segments"):
             stem = path.name.removesuffix(".segments")
         if stem is None:
             continue
         decoded = SessionManager.decode_storage_key(stem)
         if decoded is not None and decoded.startswith(WEBUI_SESSION_STORAGE_PREFIX):
-            keys.add(decoded)
+            key = decoded
+        elif stem.startswith(persisted_prefix) and (chat_id := stem[len(persisted_prefix):]):
+            key = webui_session_key(chat_id)
+        else:
             continue
-        if not stem.startswith(persisted_prefix):
-            continue
-        chat_id = stem[len(persisted_prefix):]
-        if chat_id:
-            keys.add(webui_session_key(chat_id))
-    return sorted(keys)
+        rank = 0
+        if newest_first:
+            try:
+                rank = -path.stat().st_mtime_ns
+            except OSError:
+                continue
+        positions[key] = min(rank, positions.get(key, rank))
+    return sorted((rank, key) for key, rank in positions.items())
 
 
 def build_generated_asset_library_page(
@@ -144,28 +159,29 @@ def build_generated_asset_library_page(
     cursor: str | None = None,
     limit: int = 50,
     max_sessions: int = 200,
+    newest_first: bool = False,
 ) -> dict[str, Any]:
     """Read a bounded session page, continuing within a session when necessary.
 
     Library totals count returned artifacts only. A global count would require
-    reading every transcript. The opaque cursor anchors to a session key so
-    inserting/removing earlier sessions cannot shift later pages.
+    reading every transcript. The cursor anchors to the session's sort position.
     """
-    anchor, offset = _library_cursor(cursor)
-    keys = webui_session_keys(webui_dir)
-    start = bisect_left(keys, anchor)
+    anchor, offset = _library_cursor(cursor, newest_first=newest_first)
+    positions = _webui_session_positions(webui_dir, newest_first=newest_first)
+    start = bisect_left(positions, anchor) if anchor is not None else 0
     groups: list[dict[str, Any]] = []
     next_cursor: str | None = None
     scanned = 0
-    for index in range(start, min(len(keys), start + max_sessions)):
-        session_key = keys[index]
+    for index in range(start, min(len(positions), start + max_sessions)):
+        position = positions[index]
+        _, session_key = position
         scanned += 1
         session_groups = load_or_build_generated_asset_index(
             session_key,
             signature=webui_transcript_signature(session_key),
             records_loader=lambda key=session_key: read_transcript_lines(key),
         )
-        group_offset = offset if session_key == anchor else 0
+        group_offset = offset if position == anchor else 0
         payload = build_generated_assets_payload_from_groups(
             session_groups,
             session_key=session_key,
@@ -173,6 +189,7 @@ def build_generated_asset_library_page(
             sign_path=sign_path,
             cursor=group_offset,
             limit=limit - len(groups),
+            newest_first=newest_first,
         )
         page: list[dict[str, Any]] = payload["groups"]
         for group in page:
@@ -180,10 +197,14 @@ def build_generated_asset_library_page(
             item["sessionKey"] = session_key
             groups.append(item)
         if payload["next"] is not None:
-            next_cursor = json.dumps([session_key, group_offset + len(page)])
+            next_cursor = _encode_library_cursor(
+                position, group_offset + len(page), newest_first=newest_first,
+            )
             break
-        if index + 1 < len(keys):
-            next_cursor = json.dumps([keys[index + 1], 0])
+        if index + 1 < len(positions):
+            next_cursor = _encode_library_cursor(
+                positions[index + 1], 0, newest_first=newest_first,
+            )
         else:
             next_cursor = None
         if len(groups) >= limit:
@@ -200,9 +221,18 @@ def build_generated_asset_library_page(
     }
 
 
-def _library_cursor(raw: str | None) -> tuple[str, int]:
+def _encode_library_cursor(
+    position: tuple[int, str], offset: int, *, newest_first: bool,
+) -> str:
+    rank, key = position
+    return json.dumps([key, offset, rank] if newest_first else [key, offset])
+
+
+def _library_cursor(
+    raw: str | None, *, newest_first: bool,
+) -> tuple[tuple[int, str] | None, int]:
     if raw is None or not raw.strip():
-        return "", 0
+        return None, 0
     if len(raw) > 4096:
         raise ValueError("invalid cursor")
     try:
@@ -212,9 +242,12 @@ def _library_cursor(raw: str | None) -> tuple[str, int]:
     if not isinstance(value, list):
         raise ValueError("invalid cursor")
     parts = cast(list[object], value)
-    if len(parts) != 2:
+    if len(parts) != (3 if newest_first else 2):
         raise ValueError("invalid cursor")
-    key, offset = parts
+    key, offset = parts[:2]
     if not isinstance(key, str) or not key or type(offset) is not int or offset < 0:
         raise ValueError("invalid cursor")
-    return key, offset
+    rank = parts[2] if newest_first else 0
+    if type(rank) is not int:
+        raise ValueError("invalid cursor")
+    return (rank, key), offset

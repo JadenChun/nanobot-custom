@@ -70,7 +70,7 @@ const copy: Record<string, string> = {
   adapter_unavailable: "The selected Python process stopped responding. Retry to reconcile it.",
   stop_unconfirmed: "Shutdown is unconfirmed. The backend may still be running; retry to check.",
   singleton_guard: "The session bus could not verify this desktop process. The backend was not started.",
-  host_lock_busy: "Another Nanobot Desktop window is already running.",
+  host_lock_busy: "Another Kohaku window is already running.",
   tray_unavailable: "No system tray host is available. Keep this window open for controls.",
   host_lock_unavailable: "This desktop session cannot establish a private single-instance lock. The backend was not started.",
 };

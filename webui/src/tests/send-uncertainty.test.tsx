@@ -1,3 +1,4 @@
+import { webcrypto } from "node:crypto";
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -141,23 +142,55 @@ describe("admission refused for session recovery", () => {
     return { client, socket };
   }
 
-  it("shows the recovery notice and keeps the refused input in the chat", async () => {
+  it.each([false, true])("shows the recovery notice and keeps the input (negotiated=%s)", async (negotiated) => {
     const chatId = "chat-needs-recovery";
-    const { socket } = renderChat(chatId);
+    const { client, socket } = renderChat(chatId);
+    if (negotiated) {
+      vi.stubGlobal("crypto", webcrypto);
+      act(() => socket.fakeMessage({
+        event: "attached", chat_id: chatId, input_attempt_source: {
+          version: 1,
+          source: {
+            store_identity: "a".repeat(64), session_key: `websocket:${chatId}`,
+            incarnation: "chat-incarnation", generation: 0,
+          },
+          source_token: "b".repeat(32), principal: "c".repeat(64),
+        },
+      }));
+    }
     const content = "Continue the preview.";
     fireEvent.change(screen.getByLabelText("Message input"), { target: { value: content } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    const sent = socket.sent.map((frame) => JSON.parse(frame)).find((frame) => frame.type === "message");
-    expect(sent).toBeDefined();
+    const sent = await waitFor(() => {
+      const message = socket.sent.map((frame) => JSON.parse(frame)).find((frame) => frame.type === "message");
+      expect(message?.turn_id).toEqual(expect.any(String));
+      return message;
+    });
+    expect(!!sent.input_attempt).toBe(negotiated);
     act(() => socket.fakeMessage({ event: "error", chat_id: chatId, turn_id: sent.turn_id,
-      detail: "not_admitted", reason: "session_recovery_required" }));
+      detail: negotiated ? "input_attempt_unknown" : "not_admitted",
+      reason: "session_recovery_required" }));
 
     expect(await screen.findByText("Chat needs recovery")).toBeVisible();
-    expect(screen.getByText("Nanobot paused this chat after an interrupted turn. Start a new chat to continue.")).toBeVisible();
+    expect(screen.getByText("Kohaku paused this chat after an interrupted turn. Start a new chat to continue.")).toBeVisible();
     expect(screen.getByText(content)).toBeVisible();
+    expect(screen.queryByText("Sending")).not.toBeInTheDocument();
     expect(screen.queryByText("Working")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Working for / })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Working for / })).not.toBeInTheDocument();
+    if (negotiated) {
+      expect(client.hasUnknownMessageSend(chatId)).toBe(true);
+      await act(async () => {
+        socket.fakeCloseWithCode(1006);
+        await client.retry();
+        FakeSocket.instances.at(-1)!.fakeOpen();
+      });
+      const frames = FakeSocket.instances.flatMap((instance) => instance.sent)
+        .map((frame) => JSON.parse(frame)).filter((frame) => frame.type === "message");
+      expect(frames).toHaveLength(1);
+      expect(client.hasUnknownMessageSend(chatId)).toBe(true);
+      expect(screen.getByText("Chat needs recovery")).toBeVisible();
+    }
   });
 
   it("keeps newer work active when an older turn receives a recovery rejection", async () => {

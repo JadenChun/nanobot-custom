@@ -78,10 +78,10 @@ import { useThreadComposerChromeHidden } from "@/components/thread/composerChrom
 import {
   ModelPresetBadge,
   type ModelPresetOption,
+  type ModelReasoningControl,
 } from "@/components/thread/ModelPresetBadge";
 import {
   ComposerUsagePopover,
-  type ComposerConfiguredContext,
   type ComposerContextUsage,
   type ComposerRoundUsage,
 } from "@/components/thread/ComposerUsagePopover";
@@ -232,6 +232,7 @@ interface ThreadComposerProps {
   modelPreset?: string | null;
   modelPresets?: ModelPresetOption[];
   onModelPresetChange?: (name: string) => void;
+  modelReasoning?: ModelReasoningControl;
   modelProvider?: string | null;
   modelProviderLabel?: string | null;
   modelNeedsSetup?: boolean;
@@ -239,7 +240,7 @@ interface ThreadComposerProps {
   onModelBadgeClick?: () => void;
   onManageModels?: () => void;
   contextUsage?: ComposerContextUsage | null;
-  configuredContext?: ComposerConfiguredContext | null;
+  hasConfiguredModel?: boolean;
   recentRoundUsage?: readonly ComposerRoundUsage[];
   variant?: "thread" | "hero";
   slashCommands?: SlashCommand[];
@@ -1014,6 +1015,7 @@ export function ThreadComposer({
   modelPreset = null,
   modelPresets = [],
   onModelPresetChange,
+  modelReasoning,
   modelProvider = null,
   modelProviderLabel = null,
   modelNeedsSetup = false,
@@ -1021,7 +1023,7 @@ export function ThreadComposer({
   onModelBadgeClick,
   onManageModels,
   contextUsage = null,
-  configuredContext = null,
+  hasConfiguredModel = false,
   recentRoundUsage = [],
   variant = "thread",
   slashCommands = [],
@@ -1825,7 +1827,9 @@ export function ThreadComposer({
   const setVoiceError = useCallback((key: VoiceRecorderErrorKey) => {
     clearVoiceErrorTimers();
     setVoiceErrorFading(false);
-    setInlineError(t(`thread.composer.voiceErrors.${key}`));
+    const isNative = mobileComposer || typeof window.__TAURI_INTERNALS__ !== "undefined";
+    const messageKey = key === "permission" && isNative ? "nativePermission" : key;
+    setInlineError(t(`thread.composer.voiceErrors.${messageKey}`));
     voiceErrorFadeTimerRef.current = setTimeout(() => {
       setVoiceErrorFading(true);
       voiceErrorFadeTimerRef.current = setTimeout(() => {
@@ -1834,7 +1838,7 @@ export function ThreadComposer({
         voiceErrorFadeTimerRef.current = null;
       }, VOICE_ERROR_FADE_MS);
     }, VOICE_ERROR_VISIBLE_MS);
-  }, [clearVoiceErrorTimers, t]);
+  }, [clearVoiceErrorTimers, mobileComposer, t]);
   const voiceRecorder = useVoiceRecorder({
     disabled: interactionDisabled,
     onClearError: clearInlineError,
@@ -2586,7 +2590,7 @@ export function ThreadComposer({
     && !workspaceControlsHidden
     && projectPickerAvailable;
   const hasMobileUsage = contextUsage != null
-    || configuredContext != null
+    || hasConfiguredModel
     || recentRoundUsage.length > 0;
   const showMobileWorkspaceRow = mobileComposer
     && !voiceRecorder.isRecording
@@ -2631,6 +2635,7 @@ export function ThreadComposer({
       modelPreset={modelPreset}
       modelPresets={modelPresets}
       onPresetChange={onModelPresetChange}
+      reasoning={modelReasoning}
       onManageModels={onManageModels}
       onRequestComposerFocus={() => {
         // A touch keyboard would cover the thread; only restore composer focus
@@ -2710,7 +2715,7 @@ export function ThreadComposer({
             <div className="thread-composer-mobile-workspace-meta flex min-w-0 items-center">
               <ComposerUsagePopover
                 context={contextUsage}
-                configuredContext={configuredContext}
+                hasConfiguredModel={hasConfiguredModel}
                 rounds={recentRoundUsage}
               />
             </div>
@@ -2957,7 +2962,7 @@ export function ThreadComposer({
             {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}
-                configuredContext={configuredContext}
+                hasConfiguredModel={hasConfiguredModel}
                 rounds={recentRoundUsage}
                 isHero={isHero}
               />

@@ -1,9 +1,9 @@
 {
   "app": {
-    "brand": "nanobot",
+    "brand": "Kohaku",
     "loading": {
       "connecting": "nanobot에 연결 중…",
-      "boot": "nanobot 불러오는 중…"
+      "boot": "Kohaku 불러오는 중…"
     },
     "error": {
       "title": "nanobot에 연결할 수 없습니다",
@@ -25,7 +25,7 @@
     "system": {
       "section": "시스템",
       "restartHint": "런타임 변경 사항을 적용하려면 nanobot을 다시 시작하세요.",
-      "restart": "nanobot 다시 시작",
+      "restart": "Kohaku 다시 시작",
       "restarting": "다시 시작 중...",
       "restartEngine": "엔진 다시 시작",
       "restartingEngine": "엔진 다시 시작 중..."
@@ -34,11 +34,11 @@
       "completed": "{{seconds}}초 만에 다시 시작되었습니다."
     },
     "documentTitle": {
-      "base": "nanobot",
-      "chat": "{{title}} · nanobot"
+      "base": "Kohaku",
+      "chat": "{{title}} · Kohaku"
     },
     "meta": {
-      "description": "nanobot 웹 UI — nanobot 작업공간과 대화하세요."
+      "description": "Kohaku 웹 UI — Kohaku 작업공간과 대화하세요."
     },
     "pairing": {
       "title": "채팅 사용자 연결",
@@ -136,7 +136,7 @@
       "language": "언어",
       "provider": "제공자",
       "model": "모델",
-      "restart": "nanobot 재시작",
+      "restart": "Kohaku 재시작",
       "configPath": "설정 경로",
       "activePreset": "활성 프리셋",
       "gateway": "게이트웨이",
@@ -711,7 +711,7 @@
       "requires": "필요: {{requirements}}",
       "setUp": "설정",
       "setupGuide": "설정 가이드",
-      "setupSummary": "활성화는 nanobot 지원만 켭니다. 플랫폼 자격 증명을 추가한 뒤 nanobot을 다시 시작하세요.",
+      "setupSummary": "활성화는 Kohaku 지원만 켭니다. 플랫폼 자격 증명을 추가한 뒤 nanobot을 다시 시작하세요.",
       "configKeys": "설정 키",
       "enable": "채널 활성화",
       "disable": "채널 비활성화",
@@ -1247,8 +1247,6 @@
         "detailsLabel": "컨텍스트 사용량 열기",
         "panelTitle": "컨텍스트 사용량",
         "contextTitle": "컨텍스트",
-        "configuredModel": "구성된 모델",
-        "configuredWindow": "구성된 컨텍스트 창",
         "usageUnavailable": "사용량을 사용할 수 없음",
         "lastKnownRequest": "마지막으로 확인된 요청",
         "recentRounds": "최근 라운드",
@@ -1298,6 +1296,7 @@
         "insecureContext": "보안을 위해 Chrome 및 기타 브라우저는 원격 HTTP 페이지의 마이크 접근을 차단합니다. 음성 입력을 사용하려면 HTTPS로 이 WebUI를 여세요.",
         "unsupported": "이 브라우저는 음성 입력을 지원하지 않습니다.",
         "permission": "주소 표시줄에서 마이크를 허용한 후 다시 시도하세요.",
+        "nativePermission": "Kohaku의 마이크 접근을 허용한 뒤 다시 시도하세요. 접근이 차단된 경우 시스템 설정을 확인하세요.",
         "notConfigured": "먼저 음성 변환 제공업체를 설정하세요.",
         "tooLong": "녹음 시간이 너무 깁니다.",
         "tooShort": "음성을 녹음하려면 조금 더 길게 눌러 주세요.",
@@ -1325,7 +1324,7 @@
             "description": "이 채팅에서 실행 중인 에이전트 턴을 취소합니다."
           },
           "restart": {
-            "title": "nanobot 재시작",
+            "title": "Kohaku 재시작",
             "description": "bot 프로세스를 제자리에서 재시작합니다."
           },
           "status": {
@@ -1405,14 +1404,14 @@
         "label": "앱",
         "cliGroup": "CLI 앱",
         "mcpGroup": "MCP 서비스",
-        "sessionGroup": "Nanobot 대화",
+        "sessionGroup": "Kohaku 대화",
         "cliBadge": "CLI",
         "mcpBadge": "MCP",
         "cliDescription": "@{{name}}을 로컬 CLI 앱으로 사용",
         "mcpDescription": "@{{name}}을 MCP 서버로 사용",
         "cliTitle": "CLI 앱: {{name}}",
         "mcpTitle": "MCP 서버: {{name}}",
-        "sessionBadge": "Nanobot 대화",
+        "sessionBadge": "Kohaku 대화",
         "sessionDescription": "@{{name}}을 이전 채팅으로 참조"
       },
       "workspace": {
@@ -1512,6 +1511,7 @@
     "activityThinkingFor": "{{duration}} 동안 생각 중",
     "activityThought": "생각함",
     "activityThoughtFor": "{{duration}} 동안 생각함",
+    "activityGroup": "활동",
     "activityWorkingFor": "{{duration}} 동안 작업 중",
     "activityWorked": "작업함",
     "activityWorkedFor": "{{duration}} 동안 작업함",

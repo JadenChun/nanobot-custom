@@ -773,7 +773,7 @@ export function WorkspacePermissionV2Control({
         defaultValue: unavailableReason === "configured_sandbox"
           ? "Full access is unavailable while command confinement is configured."
           : unavailableReason === "supervisor_unavailable"
-            ? "Full access is unavailable because Nanobot cannot supervise commands safely."
+            ? "Full access is unavailable because Kohaku cannot supervise commands safely."
             : unavailableReason === "session_required"
               ? "Send a message to create this chat before enabling Full access."
               : "Full access is unavailable with the current local controls.",
@@ -783,7 +783,7 @@ export function WorkspacePermissionV2Control({
       : null;
   const restrictedRetirementMessage = permissions?.retirement?.unknown_processes
     ? t("workspace.permissionV2.restrictedEndingUnknown", {
-        defaultValue: "Nanobot cannot confirm whether earlier commands have finished. New work remains Sandbox; Full access stays unavailable.",
+        defaultValue: "Kohaku cannot confirm whether earlier commands have finished. New work remains Sandbox; Full access stays unavailable.",
       })
     : permissions?.retirement?.active_processes || permissions?.retirement?.active_turn
       ? t("workspace.permissionV2.restrictedEndingActive", {
@@ -797,7 +797,7 @@ export function WorkspacePermissionV2Control({
             defaultValue: "Previous access is still ending. New work remains Sandbox; Full access stays unavailable.",
           });
   const retirementMessage = permissions?.retirement?.unknown_processes
-    ? t("workspace.permissionV2.retiringUnknown", { defaultValue: "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending." })
+    ? t("workspace.permissionV2.retiringUnknown", { defaultValue: "Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending." })
     : permissions?.retirement?.active_processes || permissions?.retirement?.active_turn
       ? t("workspace.permissionV2.retiringActive", { defaultValue: "A command is still running with the previous access. Wait for it to finish or stop it, then retry." })
       : t("workspace.permissionV2.retiringFinished", { defaultValue: "Earlier work has finished. Retry to confirm Sandbox access." });
@@ -954,7 +954,7 @@ export function WorkspacePermissionV2Control({
           <DialogHeader className="text-left">
             <DialogTitle>{t("workspace.permissionV2.confirmTitle", { defaultValue: "Enable Full access?" })}</DialogTitle>
             <DialogDescription>
-              {t("workspace.permissionV2.confirmDescription", { defaultValue: "Nanobot can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Sandbox mode." })}
+              {t("workspace.permissionV2.confirmDescription", { defaultValue: "Kohaku can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Sandbox mode." })}
             </DialogDescription>
           </DialogHeader>
           {!persistentChat && !draftFullAccess ? (

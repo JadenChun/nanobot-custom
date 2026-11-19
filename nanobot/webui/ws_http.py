@@ -2151,6 +2151,7 @@ class GatewayHTTPHandler:
                 ),
                 cursor=raw_cursor,
                 limit=limit,
+                newest_first=_query_first(query, "order") == "newest",
             )
         except ValueError:
             return _http_error(400, "invalid cursor")
@@ -2706,14 +2707,14 @@ class GatewayHTTPHandler:
         ):
             return _http_error(403, "local_ui_required")
         query = _request_query(request)
-        title = (query.get("title") or ["nanobot"])[0].strip()[:120] or "nanobot"
+        title = (query.get("title") or ["Kohaku"])[0].strip()[:120] or "Kohaku"
         body = (query.get("body") or [""])[0].strip()[:500]
         if not body:
             return _http_error(400, "missing notification body")
         command = shutil.which("notify-send")
         if command is None:
             return _http_error(503, "desktop notifications unavailable")
-        notification_command = [command, "--app-name=nanobot"]
+        notification_command = [command, "--app-name=Kohaku"]
         if self.static_dist_path is not None:
             icon_path = self.static_dist_path / "brand" / "nanobot_icon_192.png"
             if icon_path.is_file():

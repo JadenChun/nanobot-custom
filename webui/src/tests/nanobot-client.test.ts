@@ -1,5 +1,8 @@
+import { createElement, type ReactNode } from "react";
+import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useTaskNotifications } from "@/hooks/useTaskNotifications";
 import { NanobotClient } from "@/lib/nanobot-client";
 import {
   DEFAULT_LOCAL_PREFS,
@@ -7,6 +10,7 @@ import {
   writeLocalPreferences,
 } from "@/lib/local-preferences";
 import type { SidebarStatePayload } from "@/lib/types";
+import { ClientProvider } from "@/providers/ClientProvider";
 import { folderAccessSessionUpdatedFixture } from "./fixtures/folder-access-request";
 
 /**
@@ -2784,6 +2788,79 @@ describe("mobile run keepalive and centralized task notifications", () => {
     socket.fakeOpen();
     return { client, socket };
   }
+
+  describe("desktop task completion alerts", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    function openBackgroundDesktop() {
+      const { client, socket } = createClient();
+      vi.stubGlobal("__TAURI_INTERNALS__", {});
+      vi.spyOn(document, "hasFocus").mockReturnValue(false);
+      const notify = vi.spyOn(client, "requestMutation").mockResolvedValue({ ok: true });
+      renderHook(useTaskNotifications, {
+        wrapper: ({ children }: { children: ReactNode }) => createElement(ClientProvider, {
+          client,
+          token: "token",
+          children,
+        }),
+      });
+      return { client, socket, notify };
+    }
+
+    it("alerts once for the owned completion after progress, retries and another turn", () => {
+      const { client, socket, notify } = openBackgroundDesktop();
+      const chat_id = "chat-1";
+      client.sendMessage(chat_id, "task", undefined, { turnId: "owned-1" });
+
+      socket.fakeMessage({
+        event: "message", kind: "progress", text: "Working", chat_id, turn_id: "owned-1",
+      });
+      expect(notify).not.toHaveBeenCalled();
+      socket.fakeMessage({
+        event: "retry_status", state: "waiting", attempt: 1, error_kind: "connection",
+        retry_after_s: 2, chat_id, turn_id: "owned-1",
+      });
+      expect(notify).not.toHaveBeenCalled();
+      socket.fakeMessage({ event: "turn_end", chat_id, turn_id: "other-1", outcome: "completed" });
+      expect(notify).not.toHaveBeenCalled();
+
+      socket.fakeMessage({ event: "turn_end", chat_id, turn_id: "owned-1", outcome: "completed" });
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify.mock.calls[0]?.[0]).toBe("desktop.notify");
+    });
+
+    it("stays quiet while recovery waits and alerts for a later legacy completion", () => {
+      const { client, socket, notify } = openBackgroundDesktop();
+      const chat_id = "chat-1";
+      client.sendMessage(chat_id, "task", undefined, { turnId: "waiting-1" });
+      socket.fakeMessage({ event: "recovery_state", chat_id, status: "awaiting_user", recovery_id: "waiting" });
+      expect(notify).not.toHaveBeenCalled();
+
+      client.sendMessage(chat_id, "new task", undefined, { turnId: "legacy-1" });
+      socket.fakeMessage({ event: "turn_end", chat_id, turn_id: "legacy-1" });
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify.mock.calls[0]?.[0]).toBe("desktop.notify");
+    });
+
+    it("alerts on failures and stays quiet when a desktop task stops without a result", () => {
+      const { client, socket, notify } = openBackgroundDesktop();
+      const chat_id = "chat-1";
+      client.sendMessage(chat_id, "task", undefined, { turnId: "recovery-failed-1" });
+      socket.fakeMessage({ event: "recovery_state", chat_id, status: "failed", recovery_id: "failed" });
+      expect(notify).toHaveBeenCalledTimes(1);
+
+      for (const outcome of ["failed", "cancelled", "interrupted"] as const) {
+        const turn_id = `${outcome}-1`;
+        client.sendMessage(chat_id, "task", undefined, { turnId: turn_id });
+        socket.fakeMessage({ event: "turn_end", chat_id, turn_id, outcome });
+        expect(notify).toHaveBeenCalledTimes(2);
+      }
+      expect(notify.mock.calls.map(([action]) => action)).toEqual(["desktop.notify", "desktop.notify"]);
+    });
+  });
 
   it("starts for a phone-started run and notifies centrally on turn_end", () => {
     const start = vi.fn();

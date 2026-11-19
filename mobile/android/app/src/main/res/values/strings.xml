@@ -1,12 +1,12 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Nanobot Mobile</string>
-    <string name="title_activity_main">Nanobot Mobile</string>
+    <string name="app_name">Kohaku</string>
+    <string name="title_activity_main">Kohaku</string>
     <string name="package_name">ai.nanobot.mobile</string>
     <string name="custom_url_scheme">ai.nanobot.mobile</string>
     <string name="back_press_again">Press back again to exit</string>
     <string name="run_keepalive_channel_name">Background task</string>
-    <string name="run_keepalive_channel_description">Keeps Nanobot connected while a task is running</string>
-    <string name="run_keepalive_title">Nanobot is working</string>
+    <string name="run_keepalive_channel_description">Keeps Kohaku connected while a task runs</string>
+    <string name="run_keepalive_title">Kohaku is working</string>
     <string name="run_keepalive_text">Waiting for the current task to finish</string>
 </resources>

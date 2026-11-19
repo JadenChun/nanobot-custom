@@ -1,12 +1,12 @@
 {
   "app": {
-    "brand": "nanobot",
+    "brand": "Kohaku",
     "loading": {
-      "connecting": "Đang kết nối tới nanobot…",
-      "boot": "Đang tải nanobot…"
+      "connecting": "Đang kết nối tới Kohaku…",
+      "boot": "Đang tải Kohaku…"
     },
     "error": {
-      "title": "Không thể kết nối tới nanobot",
+      "title": "Không thể kết nối tới Kohaku",
       "gatewayHint": "Hãy chắc chắn gateway đang chạy (`nanobot gateway`) và trang này được mở trên cùng máy."
     },
     "auth": {
@@ -24,8 +24,8 @@
     },
     "system": {
       "section": "Hệ thống",
-      "restartHint": "Khởi động lại nanobot để áp dụng thay đổi thời gian chạy.",
-      "restart": "Khởi động lại nanobot",
+      "restartHint": "Khởi động lại Kohaku để áp dụng thay đổi thời gian chạy.",
+      "restart": "Khởi động lại Kohaku",
       "restarting": "Đang khởi động lại...",
       "restartEngine": "Khởi động lại bộ máy",
       "restartingEngine": "Đang khởi động lại bộ máy..."
@@ -34,11 +34,11 @@
       "completed": "Khởi động lại hoàn tất sau {{seconds}} giây."
     },
     "documentTitle": {
-      "base": "nanobot",
-      "chat": "{{title}} · nanobot"
+      "base": "Kohaku",
+      "chat": "{{title}} · Kohaku"
     },
     "meta": {
-      "description": "Giao diện web nanobot — trò chuyện với không gian làm việc nanobot của bạn."
+      "description": "Giao diện web Kohaku — trò chuyện với không gian làm việc Kohaku của bạn."
     },
     "pairing": {
       "title": "Liên kết người dùng chat",
@@ -136,7 +136,7 @@
       "language": "Ngôn ngữ",
       "provider": "Nhà cung cấp",
       "model": "Mô hình",
-      "restart": "Khởi động lại nanobot",
+      "restart": "Khởi động lại Kohaku",
       "configPath": "Đường dẫn cấu hình",
       "activePreset": "Cấu hình đặt trước đang dùng",
       "gateway": "Cổng",
@@ -229,7 +229,7 @@
       "selectedModelValue": "Được đặt bởi mô hình đã chọn.",
       "brandLogos": "Hiển thị logo nhà cung cấp bên thứ ba và CLI trong Cài đặt.",
       "browserNotifications": "Thông báo khi yêu cầu hoàn tất lúc ứng dụng không được chọn. Mặc định tắt.",
-      "cliAppsCatalog": "Chỉ cài đặt các bộ chuyển đổi CLI ứng dụng mà nanobot có thể chạy cục bộ; ứng dụng gốc không bị thay đổi.",
+      "cliAppsCatalog": "Chỉ cài đặt các bộ chuyển đổi CLI ứng dụng mà Kohaku có thể chạy cục bộ; ứng dụng gốc không bị thay đổi.",
       "cliAppsFilter": "Tìm theo ứng dụng, danh mục hoặc khả năng.",
       "logs": "Mở thư mục nhật ký của bộ máy gốc.",
       "diagnostics": "Xuất báo cáo thời gian chạy ngắn để hỗ trợ.",
@@ -282,11 +282,11 @@
       "loadError": "Không thể tải cài đặt",
       "unsaved": "Có thay đổi chưa lưu.",
       "upToDate": "Đã cập nhật.",
-      "savedRestart": "Đã lưu. Khởi động lại nanobot để áp dụng.",
+      "savedRestart": "Đã lưu. Khởi động lại Kohaku để áp dụng.",
       "restartAfterSaving": "Lưu thay đổi, rồi khởi động lại khi sẵn sàng.",
       "savedRestartApply": "Đã lưu. Khởi động lại khi sẵn sàng.",
       "imageProviderRestart": "Đã lưu thay đổi nhà cung cấp ảnh. Khởi động lại khi sẵn sàng.",
-      "hostRestartAfterSaving": "Sau khi lưu, nanobot sẽ khởi động lại bộ máy.",
+      "hostRestartAfterSaving": "Sau khi lưu, Kohaku sẽ khởi động lại bộ máy.",
       "hostRestartPending": "Đã lưu. Bộ máy sẽ khởi động lại khi sẵn sàng.",
       "hostApiUnavailable": "Các thao tác máy chủ chỉ khả dụng trong ứng dụng gốc.",
       "logsOpened": "Đã mở thư mục nhật ký.",
@@ -310,7 +310,7 @@
       "exporting": "Đang xuất..."
     },
     "byok": {
-      "description": "Dùng khóa nhà cung cấp của riêng bạn. Nanobot đọc các giá trị này từ cấu hình hiện tại và chỉ nhà cung cấp đã cấu hình mới có thể dùng trong cấu hình mô hình đặt trước.",
+      "description": "Dùng khóa nhà cung cấp của riêng bạn. Kohaku đọc các giá trị này từ cấu hình hiện tại và chỉ nhà cung cấp đã cấu hình mới có thể dùng trong cấu hình mô hình đặt trước.",
       "configured": "Đã cấu hình",
       "notConfigured": "Chưa cấu hình",
       "configuredSection": "Đã cấu hình",
@@ -558,7 +558,7 @@
       "saveCustom": "Lưu MCP",
       "configImport": "Nhập mcp.json",
       "importConfig": "Nhập",
-      "restartRequired": "Khởi động lại nanobot để kết nối các công cụ MCP đã cập nhật.",
+      "restartRequired": "Khởi động lại Kohaku để kết nối các công cụ MCP đã cập nhật.",
       "toolsFound": "{{count}} công cụ",
       "loading": "Đang tải cấu hình đặt trước MCP...",
       "empty": "Không có cấu hình đặt trước MCP nào khớp bộ lọc này.",
@@ -586,14 +586,14 @@
       "preparingSignIn": "Đang chuẩn bị đăng nhập an toàn…",
       "openSignInToContinue": "Mở trang đăng nhập để tiếp tục.",
       "finishSignInInBrowser": "Hoàn tất đăng nhập trong cửa sổ trình duyệt.",
-      "manualCallbackRequired": "Hoàn tất đăng nhập, rồi dán URL callback vào nanobot.",
+      "manualCallbackRequired": "Hoàn tất đăng nhập, rồi dán URL callback vào Kohaku.",
       "manualCallbackHelp": "Sau khi phê duyệt quyền truy cập, trang localhost sẽ không tải được. Hãy sao chép URL đầy đủ từ thanh địa chỉ và dán vào đây.",
       "finishingConnection": "Đang hoàn tất kết nối…",
       "activatingTools": "Đang kích hoạt công cụ…",
       "connected": "Đã kết nối.",
       "connectionFailed": "Kết nối thất bại.",
       "connectionCancelled": "Đã hủy kết nối.",
-      "reloadFailed": "Đã đăng nhập nhưng nanobot không thể kết nối các công cụ. Hãy thử khởi động lại nanobot.",
+      "reloadFailed": "Đã đăng nhập nhưng Kohaku không thể kết nối các công cụ. Hãy thử khởi động lại Kohaku.",
       "oauthFailed": "Không thể kết nối. Hãy thử đăng nhập lại.",
       "statusMissingDependency": "Cần phụ thuộc",
       "statusComingSoon": "Sắp ra mắt",
@@ -666,15 +666,15 @@
     },
     "observability": {
       "title": "Khả năng quan sát",
-      "configured": "Thông tin xác thực tracing đã sẵn sàng cho nanobot.",
-      "environment": "Đặt LANGFUSE_SECRET_KEY và LANGFUSE_PUBLIC_KEY rồi khởi động lại nanobot.",
+      "configured": "Thông tin xác thực tracing đã sẵn sàng cho Kohaku.",
+      "environment": "Đặt LANGFUSE_SECRET_KEY và LANGFUSE_PUBLIC_KEY rồi khởi động lại Kohaku.",
       "enable": "Bật hỗ trợ tracing"
     },
     "legal": {
       "thirdPartyBrands": "Tên sản phẩm, logo và thương hiệu thuộc về chủ sở hữu tương ứng. Việc sử dụng chỉ nhằm nhận diện và không ngụ ý được xác nhận."
     },
     "apps": {
-      "description": "Thêm công cụ vào nanobot, sau đó dùng @ trong cuộc trò chuyện.",
+      "description": "Thêm công cụ vào Kohaku, sau đó dùng @ trong cuộc trò chuyện.",
       "cliLabel": "Ứng dụng",
       "mcpLabel": "MCP",
       "channelLabel": "Kênh",
@@ -697,21 +697,21 @@
       "browseApps": "Xem ứng dụng",
       "browseIntegrations": "Xem công cụ MCP",
       "emptyIntegrationsHint": "Thêm máy chủ MCP tùy chỉnh ở bên dưới.",
-      "restartRequired": "Khởi động lại nanobot để áp dụng ứng dụng và công cụ MCP đã cập nhật."
+      "restartRequired": "Khởi động lại Kohaku để áp dụng ứng dụng và công cụ MCP đã cập nhật."
     },
     "channels": {
-      "description": "Kết nối nanobot với các ứng dụng chat. Cài đặt hỗ trợ chỉ thêm gói tích hợp; hầu hết kênh vẫn cần token hoặc cấu hình không gian làm việc.",
+      "description": "Kết nối Kohaku với các ứng dụng chat. Cài đặt hỗ trợ chỉ thêm gói tích hợp; hầu hết kênh vẫn cần token hoặc cấu hình không gian làm việc.",
       "caption": "{{enabled}} đã bật · {{total}} kênh",
       "searchPlaceholder": "Tìm kênh",
       "backToChannels": "Tất cả kênh",
       "catalog": "Kênh",
       "loading": "Đang tải kênh...",
       "empty": "Không có kênh nào phù hợp.",
-      "restartRequired": "Khởi động lại nanobot để áp dụng hỗ trợ kênh đã cập nhật.",
+      "restartRequired": "Khởi động lại Kohaku để áp dụng hỗ trợ kênh đã cập nhật.",
       "requires": "Yêu cầu: {{requirements}}",
       "setUp": "Thiết lập",
       "setupGuide": "Hướng dẫn thiết lập",
-      "setupSummary": "Bật chỉ kích hoạt hỗ trợ của nanobot. Thêm thông tin xác thực nền tảng rồi khởi động lại nanobot.",
+      "setupSummary": "Bật chỉ kích hoạt hỗ trợ của Kohaku. Thêm thông tin xác thực nền tảng rồi khởi động lại Kohaku.",
       "configKeys": "Khóa cấu hình",
       "enable": "Bật kênh",
       "disable": "Tắt kênh",
@@ -774,7 +774,7 @@
       "missingDependency": "Thiếu gói hỗ trợ",
       "installSupport": "Cài gói hỗ trợ",
       "installConfirmTitle": "Cài hỗ trợ cho {{name}}?",
-      "installConfirmDescription": "nanobot sẽ thêm những gì {{name}} cần, rồi bật tính năng này. Tiếp tục?",
+      "installConfirmDescription": "Kohaku sẽ thêm những gì {{name}} cần, rồi bật tính năng này. Tiếp tục?",
       "installConfirmAction": "Cài và bật",
       "websocketRequired": "Bắt buộc cho WebUI",
       "channelDisabled": "Kênh đang tắt",
@@ -918,7 +918,7 @@
       "signedInAs": "Đã đăng nhập bằng {{account}}",
       "signInHelp": "Đăng nhập từ thiết bị này; khóa API không được lưu trong config.",
       "remoteSignInHelp": "Chọn Đăng nhập để mở xAI trên máy tính của bạn, sau đó dán mã ủy quyền được hiển thị sau khi đăng nhập.",
-      "codexRemoteSignInHelp": "Đăng nhập trong trình duyệt này, sau đó dán lại URL callback localhost đầy đủ vào nanobot.",
+      "codexRemoteSignInHelp": "Đăng nhập trong trình duyệt này, sau đó dán lại URL callback localhost đầy đủ vào Kohaku.",
       "signInRequired": "Cần đăng nhập",
       "signInBeforeSaving": "Hãy đăng nhập nhà cung cấp này trước khi lưu cấu hình đặt trước.",
       "signedIn": "Đã đăng nhập",
@@ -926,9 +926,9 @@
       "proxyLabel": "Proxy mạng",
       "proxySaveBeforeSignIn": "Hãy lưu thay đổi proxy trước khi đăng nhập.",
       "saveProxy": "Lưu proxy",
-      "localCodeHelp": "Hoàn tất đăng nhập trong trình duyệt. nanobot thường tự động hoàn tất; nếu không, hãy dán mã ủy quyền bên dưới.",
+      "localCodeHelp": "Hoàn tất đăng nhập trong trình duyệt. Kohaku thường tự động hoàn tất; nếu không, hãy dán mã ủy quyền bên dưới.",
       "remoteCodeHelp": "Chọn Đăng nhập để mở xAI trên máy tính của bạn. Sau khi đăng nhập, hãy dán mã ủy quyền do xAI hiển thị bên dưới.",
-      "localCallbackHelp": "Hoàn tất đăng nhập trong trình duyệt. nanobot thường tự động hoàn tất; nếu không, hãy sao chép URL callback localhost đầy đủ từ thanh địa chỉ và dán vào bên dưới.",
+      "localCallbackHelp": "Hoàn tất đăng nhập trong trình duyệt. Kohaku thường tự động hoàn tất; nếu không, hãy sao chép URL callback localhost đầy đủ từ thanh địa chỉ và dán vào bên dưới.",
       "remoteCallbackHelp": "Mở ChatGPT trong trình duyệt này và hoàn tất đăng nhập. Khi trang localhost không tải được, hãy sao chép URL đầy đủ từ thanh địa chỉ và dán vào bên dưới.",
       "authorizationCode": "Mã ủy quyền",
       "callbackUrl": "URL callback đầy đủ",
@@ -971,7 +971,7 @@
       "deleteConfirmAction": "Xóa kỹ năng",
       "instructionsTitle": "Hướng dẫn kỹ năng",
       "setupRequired": "Cần thiết lập",
-      "setupDescription": "Cài đặt phần phụ thuộc còn thiếu trên máy chạy nanobot rồi kiểm tra lại.",
+      "setupDescription": "Cài đặt phần phụ thuộc còn thiếu trên máy chạy Kohaku rồi kiểm tra lại.",
       "copySetupCommand": "Sao chép lệnh thiết lập",
       "checkAgain": "Kiểm tra lại",
       "marketplaceSearchFailed": "Không thể tìm kiếm các chợ kỹ năng.",
@@ -1030,7 +1030,7 @@
     },
     "agentHome": {
       "change": "Đổi thư mục của tác nhân",
-      "changeHint": "Cập nhật agents.defaults.workspace trong tệp cấu hình hiển thị ở trên, rồi khởi động lại Nanobot. Các tệp hiện có của tác nhân sẽ không tự động được di chuyển.",
+      "changeHint": "Cập nhật agents.defaults.workspace trong tệp cấu hình hiển thị ở trên, rồi khởi động lại Kohaku. Các tệp hiện có của tác nhân sẽ không tự động được di chuyển.",
       "description": "Lưu hướng dẫn, bộ nhớ, kỹ năng và đầu ra mặc định của tác nhân.",
       "summary": "Hướng dẫn, bộ nhớ và kỹ năng",
       "title": "Thư mục của tác nhân"
@@ -1161,7 +1161,7 @@
       "imageQuickActions": {
         "icon": {
           "title": "Thiết kế biểu tượng ứng dụng",
-          "prompt": "Tạo một biểu tượng ứng dụng 1:1 gọn gàng cho nanobot: robot thân thiện, phong cách vector đơn giản, bảng màu xanh trắng dịu, không có chữ."
+          "prompt": "Tạo một biểu tượng ứng dụng 1:1 gọn gàng cho Kohaku: robot thân thiện, phong cách vector đơn giản, bảng màu xanh trắng dịu, không có chữ."
         },
         "sticker": {
           "title": "Tạo nhãn dán",
@@ -1247,8 +1247,6 @@
         "detailsLabel": "Mở mức sử dụng ngữ cảnh",
         "panelTitle": "Mức sử dụng ngữ cảnh",
         "contextTitle": "Ngữ cảnh",
-        "configuredModel": "Mô hình đã cấu hình",
-        "configuredWindow": "Cửa sổ ngữ cảnh đã cấu hình",
         "usageUnavailable": "Không có dữ liệu sử dụng",
         "lastKnownRequest": "Yêu cầu gần nhất đã biết",
         "recentRounds": "Các lượt gần đây",
@@ -1298,6 +1296,7 @@
         "insecureContext": "Vì lý do bảo mật, Chrome và các trình duyệt khác chặn quyền truy cập micrô trên các trang HTTP từ xa. Mở WebUI này qua HTTPS để dùng tính năng nhập bằng giọng nói.",
         "unsupported": "Trình duyệt này không hỗ trợ nhập bằng giọng nói.",
         "permission": "Cho phép micrô trong thanh địa chỉ rồi thử lại.",
+        "nativePermission": "Cho phép Kohaku truy cập micrô rồi thử lại. Nếu quyền truy cập bị chặn, hãy kiểm tra cài đặt hệ thống.",
         "notConfigured": "Hãy cấu hình nhà cung cấp chép lời trước.",
         "tooLong": "Bản ghi âm quá dài.",
         "tooShort": "Giữ lâu hơn một chút để ghi âm giọng nói.",
@@ -1325,7 +1324,7 @@
             "description": "Hủy lượt của tác nhân đang chạy trong cuộc trò chuyện này."
           },
           "restart": {
-            "title": "Khởi động lại nanobot",
+            "title": "Khởi động lại Kohaku",
             "description": "Khởi động lại tiến trình bot tại chỗ."
           },
           "status": {
@@ -1405,14 +1404,14 @@
         "label": "Ứng dụng",
         "cliGroup": "Ứng dụng CLI",
         "mcpGroup": "Dịch vụ MCP",
-        "sessionGroup": "Cuộc trò chuyện Nanobot",
+        "sessionGroup": "Cuộc trò chuyện Kohaku",
         "cliBadge": "CLI",
         "mcpBadge": "MCP",
         "cliDescription": "Dùng @{{name}} như ứng dụng CLI cục bộ",
         "mcpDescription": "Dùng @{{name}} như máy chủ MCP",
         "cliTitle": "Ứng dụng CLI: {{name}}",
         "mcpTitle": "Máy chủ MCP: {{name}}",
-        "sessionBadge": "Cuộc trò chuyện Nanobot",
+        "sessionBadge": "Cuộc trò chuyện Kohaku",
         "sessionDescription": "Tham chiếu @{{name}} như cuộc trò chuyện trước"
       },
       "workspace": {
@@ -1512,6 +1511,7 @@
     "activityThinkingFor": "Đang suy nghĩ trong {{duration}}",
     "activityThought": "Đã suy nghĩ",
     "activityThoughtFor": "Đã suy nghĩ trong {{duration}}",
+    "activityGroup": "Hoạt động",
     "activityWorkingFor": "Đang xử lý trong {{duration}}",
     "activityWorked": "Đã xử lý",
     "activityWorkedFor": "Đã xử lý trong {{duration}}",
@@ -1593,7 +1593,7 @@
     },
     "sessionRecoveryRequired": {
       "title": "Cuộc trò chuyện cần được khôi phục",
-      "body": "Nanobot đã tạm dừng cuộc trò chuyện này sau một lượt bị gián đoạn. Hãy bắt đầu cuộc trò chuyện mới để tiếp tục."
+      "body": "Kohaku đã tạm dừng cuộc trò chuyện này sau một lượt bị gián đoạn. Hãy bắt đầu cuộc trò chuyện mới để tiếp tục."
     },
     "modelRequestFailed": {
       "billingTitle": "Hạn mức của nhà cung cấp mô hình không khả dụng",
@@ -1634,7 +1634,7 @@
       "permissionRefreshing": "Đang kiểm tra quyền truy cập hiện tại…",
       "onceNotActive": "Quyền truy cập một lần không còn hoạt động. Hãy xem lại thư mục trước khi tiếp tục.",
       "onceRetiringActive": "Một lệnh vẫn đang chạy với quyền trước đó. Hãy đợi lệnh kết thúc hoặc dừng lệnh rồi thử lại.",
-      "onceRetiringUnknown": "Nanobot chưa thể xác nhận các lệnh trước đó đã kết thúc hay chưa. Thay đổi quyền truy cập đang chờ xử lý.",
+      "onceRetiringUnknown": "Kohaku chưa thể xác nhận các lệnh trước đó đã kết thúc hay chưa. Thay đổi quyền truy cập đang chờ xử lý.",
       "onceRetiringFinished": "Công việc trước đó đã kết thúc. Quyền truy cập một lần vẫn đang được kết thúc.",
       "onceExpired": "Quyền truy cập một lần đã kết thúc. Hãy xem lại thư mục trước khi tiếp tục.",
       "readyOnce": "Đã cho phép truy cập cho tác vụ này. Sẵn sàng tiếp tục với {{path}}.",
@@ -1644,16 +1644,16 @@
       "allowForTask": "Cho phép trong tác vụ này",
       "changed": "Tác vụ hoặc quyền truy cập thư mục đã thay đổi. Hãy làm mới và kiểm tra quyền hiện tại trước khi thử lại.",
       "chooseAnotherFolder": "Chọn thư mục khác",
-      "chooseNarrowerFolder": "Thư mục này chứa các tệp thời gian chạy riêng tư của Nanobot. Hãy chọn một thư mục dự án có phạm vi hẹp hơn.",
+      "chooseNarrowerFolder": "Thư mục này chứa các tệp thời gian chạy riêng tư của Kohaku. Hãy chọn một thư mục dự án có phạm vi hẹp hơn.",
       "commandsRequested": "Đã yêu cầu chạy lệnh",
       "directoryTarget": "Thư mục được yêu cầu: {{path}}",
       "fileTarget": "Tệp bị chặn: {{path}}. Hãy chọn rõ thư mục chứa tệp đó.",
       "fileTargetWithFolder": "Tệp bị chặn: {{path}}. Thư mục sẽ được cấp quyền: {{folder}}",
       "folderMissing": "Thư mục này không tồn tại hoặc không phải là một thư mục. Hãy chọn thư mục hiện có và thử lại.",
       "folderToAuthorizeLabel": "Thư mục sẽ được cấp quyền",
-      "folderUnavailable": "Nanobot không thể dùng thư mục này với quyền hiện tại. Hãy chọn thư mục khác hoặc kiểm tra quyền truy cập.",
+      "folderUnavailable": "Kohaku không thể dùng thư mục này với quyền hiện tại. Hãy chọn thư mục khác hoặc kiểm tra quyền truy cập.",
       "insufficientCapabilities": "Quyền đã chọn không đáp ứng yêu cầu này. {{required}} Hãy điều chỉnh quyền trước khi cho phép thư mục.",
-      "invalidFolder": "Nanobot không thể xác minh thư mục này. Hãy chọn thư mục hiện có và thử lại.",
+      "invalidFolder": "Kohaku không thể xác minh thư mục này. Hãy chọn thư mục hiện có và thử lại.",
       "purpose": "Mục đích: {{purpose}}",
       "readyInsufficient": "Quyền đã chọn cho {{path}} không đáp ứng yêu cầu này. Hãy chọn thư mục khác hoặc kiểm tra quyền truy cập.",
       "requestedFileLabel": "Tệp được yêu cầu",
@@ -1667,18 +1667,18 @@
       "reviewAccess": "Kiểm tra quyền",
       "selectedCapabilities": "Quyền đã chọn: {{fileAccess}} · {{commands}}",
       "selectedFolderScope": "Phạm vi thư mục đã chọn: {{path}}",
-      "unknownTarget": "Nanobot chưa xác định được thư mục chính xác. Hãy chọn rõ một thư mục."
+      "unknownTarget": "Kohaku chưa xác định được thư mục chính xác. Hãy chọn rõ một thư mục."
     },
     "permissionV2": {
       "actionFailed": "Không thể cập nhật quyền truy cập. Hãy làm mới cuộc trò chuyện này trước khi thử lại.",
       "confirmTitle": "Bật quyền truy cập đầy đủ?",
-      "confirmDescription": "Nanobot có thể đọc, thay đổi tệp và chạy lệnh bên ngoài thư mục đã chọn theo quyền tài khoản hệ điều hành của bạn. Thư mục và ngữ cảnh Working in hiện tại vẫn được giữ nguyên. Cuộc trò chuyện mới bắt đầu ở chế độ Sandbox.",
+      "confirmDescription": "Kohaku có thể đọc, thay đổi tệp và chạy lệnh bên ngoài thư mục đã chọn theo quyền tài khoản hệ điều hành của bạn. Thư mục và ngữ cảnh Working in hiện tại vẫn được giữ nguyên. Cuộc trò chuyện mới bắt đầu ở chế độ Sandbox.",
       "enableFull": "Bật quyền truy cập đầy đủ",
       "fullEnding": "Quyền truy cập đầy đủ đang kết thúc",
       "fullIndicator": "Quyền truy cập đầy đủ",
       "fullReach": "Tệp và lệnh trên thiết bị này theo quyền tài khoản hệ điều hành của bạn.",
       "retiringActive": "Một lệnh vẫn đang chạy với quyền trước đó. Hãy đợi lệnh kết thúc hoặc dừng lệnh rồi thử lại.",
-      "retiringUnknown": "Nanobot chưa thể xác nhận các lệnh trước đó đã kết thúc hay chưa. Thay đổi quyền truy cập đang chờ xử lý.",
+      "retiringUnknown": "Kohaku chưa thể xác nhận các lệnh trước đó đã kết thúc hay chưa. Thay đổi quyền truy cập đang chờ xử lý.",
       "retiringFinished": "Công việc trước đó đã kết thúc. Hãy thử lại để xác nhận quyền Sandbox.",
       "retryRestricted": "Thử lại để quay về Sandbox",
       "returnRestricted": "Quay về Sandbox",
@@ -1689,7 +1689,7 @@
         "controls_unavailable": "Quyền truy cập đầy đủ không khả dụng với các điều khiển cục bộ hiện tại.",
         "session_required": "Gửi tin nhắn để tạo cuộc trò chuyện này trước khi bật quyền truy cập đầy đủ.",
         "configured_sandbox": "Quyền truy cập đầy đủ không khả dụng khi đang cấu hình giới hạn lệnh.",
-        "supervisor_unavailable": "Quyền truy cập đầy đủ không khả dụng vì Nanobot không thể giám sát lệnh một cách an toàn.",
+        "supervisor_unavailable": "Quyền truy cập đầy đủ không khả dụng vì Kohaku không thể giám sát lệnh một cách an toàn.",
         "permission_state_unavailable": "Quyền truy cập hiện tại không khả dụng. Hãy làm mới cuộc trò chuyện này trước khi thử lại.",
         "permission_retiring": "Không thể bật quyền truy cập đầy đủ khi công việc trước đó đang kết thúc."
       }

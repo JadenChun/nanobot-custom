@@ -1,6 +1,6 @@
 # macOS desktop usage and validation
 
-Nanobot Desktop uses AppKit and WKWebView through Tauri. It does not bundle a
+Kohaku uses AppKit and WKWebView through Tauri. It does not bundle a
 second backend or a browser, change the existing CLI installation, or add a
 LaunchAgent. On first launch, the setup window suggests `~/.nanobot/config.json`
 and a managed Python install (`~/.local/share/nanobot/desktop-current` first,
@@ -25,12 +25,14 @@ explicit `XDG_CONFIG_HOME`). Chat's website data uses a nonpersistent
 WKWebView store; backend chat history remains in the selected profile. The
 host grants navigation only to the packaged setup page and the verified
 gateway origin, denies external popups and navigation, and exposes native
-commands only to the local setup page. Microphone capture and native
-notification delivery are not part of this macOS qualification.
+commands only to the local setup page. macOS asks for microphone permission
+after Kohaku opens chat for the first time. If you deny access, use
+**Privacy & Security** in System Settings to permit access. The qualification
+below predates the microphone change.
 
 Closing the window keeps the gateway alive. Reopen from the Dock or use
-**Open Chat** from the menu bar icon. Use **Quit Nanobot Desktop** (Cmd+Q)
-from the application menu or **Quit Nanobot** from the menu bar icon to stop
+**Open Chat** from the menu bar icon. Use **Quit Kohaku** (Cmd+Q)
+from the application menu or the menu bar icon to stop
 the managed gateway and exit. Force Quit and external app termination are
 not managed shutdowns; the persistent gateway can remain available for
 reconciliation on relaunch. On stop, the adapter revalidates the selected

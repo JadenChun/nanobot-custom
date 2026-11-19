@@ -338,7 +338,7 @@ const INDEX_HTML = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
 const PREBOOT_SCRIPT = INDEX_HTML.match(
   /<script>\s*(\(function \(\) \{\s*var localeKey = "nanobot\.locale";[\s\S]*?\}\)\(\);)\s*<\/script>/,
 )?.[1];
-const BOOT_COPY_MARKUP = '<span data-boot-copy>Loading nanobot…</span>';
+const BOOT_COPY_MARKUP = '<span data-boot-copy>Loading Kohaku…</span>';
 
 function runPrebootLocale(storedLocale: string) {
   if (!PREBOOT_SCRIPT) throw new Error("Could not find the preboot locale script in index.html");

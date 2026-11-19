@@ -65,6 +65,13 @@ passed on the A142. Small-image send and the live refresh instrumentation test a
 TalkBack was explicitly skipped. Cellular/Wi-Fi handover passed: Wi-Fi was disabled, cellular became the default network, Wi-Fi was re-enabled, and the existing WebSocket accepted a follow-up message. The QR scanner is locked to portrait; scanning and cancellation return to the normal portrait app. Remaining gate is final human review/acceptance.
 See `docs/mobile-client-tasks.md`.
 
+## Device permissions
+
+Android asks for microphone access on the first launch of Kohaku. **Voice
+input** asks for access again if Android can show another prompt. If Android
+blocks the prompt, allow microphone access in the system settings for Kohaku.
+Android asks for camera access when you select **Camera** or scan a pairing code.
+
 ## Turn-complete notifications
 
 The shared WebUI **Task notifications** setting is bridged to Capacitor Local
@@ -138,8 +145,8 @@ release app:
 
 | Build | Application ID | Label | Signing |
 |---|---|---|---|
-| Release | `ai.nanobot.mobile` | Nanobot Mobile | release keystore |
-| Debug | `ai.nanobot.mobile.debug` | Nanobot Dev | debug keystore |
+| Release | `ai.nanobot.mobile` | Kohaku | release keystore |
+| Debug | `ai.nanobot.mobile.debug` | Kohaku Dev | debug keystore |
 
 The debug app has its own app data, custody, pairing and embedded Tailscale state, so development
 does not overwrite the release app or require re-pairing it.
@@ -152,7 +159,7 @@ adb install -r mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 `build-debug.sh` packages `mobile/www-shared`. The `nanobot://pair` scheme is shared by both
-apps, so Android may show an app chooser; choose **Nanobot Dev** when testing the dev build.
+apps, so Android may show an app chooser. Choose **Kohaku Dev** when you test the debug build.
 
 Release builds and in-place release updates keep their existing flow:
 

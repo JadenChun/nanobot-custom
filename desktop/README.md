@@ -1,4 +1,4 @@
-# Nanobot Desktop
+# Kohaku desktop app
 
 The native bundle contains the Tauri setup/status shell, its local UI, the application
 icon, license notices, and `backend-compat.json`. It does not install Python,
@@ -16,7 +16,7 @@ cd desktop/src-tauri
 cargo tauri build --bundles app -- --locked
 ```
 
-Install the resulting `Nanobot Desktop.app` into an Applications folder.
+Install the resulting `Kohaku.app` into an Applications folder.
 The local build is ad hoc signed, not notarized. Select a matching Python
 environment: macOS additionally requires the `darwin-identity-stop-v1` backend
 capability, so an older Nanobot 0.3.0 wheel is not sufficient. The native window

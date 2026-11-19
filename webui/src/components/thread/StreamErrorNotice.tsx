@@ -82,6 +82,11 @@ function resolveCopy(
         title: t("errors.connectionClosed.title"),
         body: t("errors.connectionClosed.body"),
       };
+    case "session_recovery_required":
+      return {
+        title: t("errors.sessionRecoveryRequired.title"),
+        body: t("errors.sessionRecoveryRequired.body"),
+      };
     case "model_request_failed":
       return resolveModelRequestFailureCopy(error, t);
     default: {

@@ -2096,8 +2096,10 @@ dependencies = [
 name = "nanobot-desktop"
 version = "0.3.0"
 dependencies = [
+ "block2",
  "gio",
  "libc",
+ "objc2",
  "serde",
  "serde_json",
  "sha2",

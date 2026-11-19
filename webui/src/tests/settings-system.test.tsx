@@ -356,7 +356,7 @@ describe("Settings system domains", () => {
     fireEvent.click(browseApps);
     expect(await screen.findByText("AnyGen")).toBeInTheDocument();
     expect(
-      screen.queryByText("Add tools to nanobot, then @ them in chat."),
+      screen.queryByText("Add tools to Kohaku, then @ them in chat."),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Configured" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Browse apps" })).toHaveAttribute("aria-pressed", "true");
@@ -444,7 +444,7 @@ describe("Settings system domains", () => {
     expect(screen.queryByText(/Enabling Nanobot features may install Python packages/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "Matrix channel" }));
     expect(screen.getByRole("dialog", { name: "Install support for Matrix?" })).toBeInTheDocument();
-    expect(screen.getByText("nanobot will add what Matrix needs, then turn it on. Continue?")).toBeInTheDocument();
+    expect(screen.getByText("Kohaku will add what Matrix needs, then turn it on. Continue?")).toBeInTheDocument();
     expect(requestMutationMock).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Install and enable" }));
 
@@ -459,7 +459,7 @@ describe("Settings system domains", () => {
       expect(screen.getByRole("switch", { name: "Matrix channel" })).toHaveAttribute("aria-checked", "true"),
     );
     expect(screen.queryByText("Enabled channel 'matrix'")).not.toBeInTheDocument();
-    expect(screen.queryByText("Restart nanobot to apply updated channel support.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Restart Kohaku to apply updated channel support.")).not.toBeInTheDocument();
     expect(screen.getAllByText("On").length).toBeGreaterThan(0);
 
     expect(screen.getByLabelText("Homeserver")).toBeInTheDocument();

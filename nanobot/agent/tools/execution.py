@@ -502,6 +502,30 @@ async def _execute_tool_call(
 
     raw_result = result
     outcome = result if isinstance(result, ToolOutcome) else None
+    if outcome is not None and outcome.stop_reason == "kohaku_media_settled":
+        from nanobot.agent.tools.mcp import is_kohaku_media_stop_settlement
+
+        if is_kohaku_media_stop_settlement(outcome, tool):
+            event = {
+                "name": tool_call.name,
+                "status": "stopped",
+                "detail": f"Comfy media request settled as {outcome.disposition}",
+            }
+            _attach_media_artifacts(event, outcome)
+            await _record_result(
+                tool_result_callback,
+                ordinal,
+                tool_call,
+                raw_result,
+                outcome,
+                event,
+                dispatched=True,
+            )
+            await hook.after_execute_tool(context, tool_call, tool, params, outcome.content)
+            return outcome, event
+        # A plugin or generic registry result cannot mint the Comfy settlement.
+        outcome = ToolOutcome(content=outcome.content, media_artifacts=outcome.media_artifacts)
+        raw_result = outcome
     if outcome is not None:
         result = outcome.content
         if outcome.stop_reason and outcome.stop_reason != "tool_error":

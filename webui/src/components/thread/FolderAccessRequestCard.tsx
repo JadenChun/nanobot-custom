@@ -67,7 +67,7 @@ const unavailableReasonLabels: Record<string, string> = {
   path_missing: "The selected folder is no longer available.",
   path_changed: "The selected folder changed. Choose a folder again.",
   context_unavailable: "The original task context is unavailable.",
-  continuation_unknown: "Nanobot could not confirm whether the task continued. Check the conversation before trying again.",
+  continuation_unknown: "Kohaku could not confirm whether the task continued. Check the conversation before trying again.",
 };
 
 function ExistingFolderAccessRequestCard({
@@ -200,12 +200,12 @@ function ExistingFolderAccessRequestCard({
   });
   const retiringProjection = workspacePermissions?.retirement;
   const retiringOnceMessage = retiringProjection?.unknown_processes
-    ? `${onceEndingMessage} ${t("workspace.recovery.onceRetiringUnknown", { defaultValue: "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending." })}`
+    ? `${onceEndingMessage} ${t("workspace.recovery.onceRetiringUnknown", { defaultValue: "Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending." })}`
     : retiringProjection?.active_processes || retiringProjection?.active_turn
       ? `${onceEndingMessage} ${t("workspace.recovery.onceRetiringActive", { defaultValue: "A command is still running with the previous access. Wait for it to finish or stop it, then retry." })}`
       : retiringProjection
         ? t("workspace.recovery.onceRetiringFinished", { defaultValue: "Earlier work has finished. One-time access is still ending." })
-        : `${onceEndingMessage} ${t("workspace.recovery.onceRetiringUnknown", { defaultValue: "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending." })}`;
+        : `${onceEndingMessage} ${t("workspace.recovery.onceRetiringUnknown", { defaultValue: "Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending." })}`;
 
   const allowedFolders = useMemo(() => {
     if (!workspaces) return [];
@@ -305,7 +305,7 @@ function ExistingFolderAccessRequestCard({
   const targetDescription = request.target.kind === "unknown"
     ? hasAcknowledgedSelection
       ? null
-      : t("workspace.recovery.unknownTarget", { defaultValue: "Nanobot has not identified the exact folder yet. Choose a folder explicitly." })
+      : t("workspace.recovery.unknownTarget", { defaultValue: "Kohaku has not identified the exact folder yet. Choose a folder explicitly." })
     : request.target.kind === "file"
       ? requestedFolderPath
         ? t("workspace.recovery.fileTargetWithFolder", {
@@ -462,7 +462,7 @@ function ExistingFolderAccessRequestCard({
       if (permissionV2Enabled && selectedDuration === "once") {
         if (!canAllowOnce || !workspacePermissions || workspacePermissionsLoading || workspacePermissionsError) {
           setError(t("workspace.recovery.onceUnavailable", {
-            defaultValue: "One-time access is unavailable until Nanobot confirms current restricted access.",
+            defaultValue: "One-time access is unavailable until Kohaku confirms current restricted access.",
           }));
           return;
         }
@@ -532,7 +532,7 @@ function ExistingFolderAccessRequestCard({
             defaultValue: "Folder access was saved, but this task is still waiting for you to use the folder.",
           }));
           setError(t("workspace.recovery.grantPathUnconfirmed", {
-            defaultValue: "Nanobot could not confirm which folder this task should use. Refresh the task before trying again.",
+            defaultValue: "Kohaku could not confirm which folder this task should use. Refresh the task before trying again.",
           }));
           await refreshAfterFailure(identity);
           return;
@@ -540,7 +540,7 @@ function ExistingFolderAccessRequestCard({
         grantsRevision = receipt.grants_revision;
         canonicalPath = receipt.canonical_path;
         setNotice(t("workspace.recovery.accessSaved", {
-          defaultValue: "Folder access was saved for this Nanobot instance.",
+          defaultValue: "Folder access was saved for this Kohaku instance.",
         }));
         setBusyAction("resolve");
       }
@@ -691,7 +691,7 @@ function ExistingFolderAccessRequestCard({
         defaultValue: `The selected access for ${request.selected_path ?? "the selected folder"} cannot satisfy this request. Choose another folder or review its access.`,
       })
     : !canManage
-    ? t("workspace.recovery.localOnly", { defaultValue: "Open the trusted local Nanobot WebUI to manage folder access for this task." })
+    ? t("workspace.recovery.localOnly", { defaultValue: "Open the trusted local Kohaku WebUI to manage folder access for this task." })
     : request.status === "pending"
     ? requestedFolderPath
       ? t("workspace.recovery.pendingKnown", { defaultValue: "Review the identified folder and required access, then choose how to allow it." })
@@ -704,7 +704,7 @@ function ExistingFolderAccessRequestCard({
           : onceTaskSelected && (!currentTaskAccess || workspacePermissions?.state !== "active")
             ? workspacePermissionsLoading
               ? t("workspace.recovery.permissionRefreshing", { defaultValue: "Checking current access…" })
-              : t("workspace.recovery.onceUnavailable", { defaultValue: "One-time access is unavailable until Nanobot confirms current restricted access." })
+              : t("workspace.recovery.onceUnavailable", { defaultValue: "One-time access is unavailable until Kohaku confirms current restricted access." })
             : canContinueTask
               ? request.selected_duration === "once"
                 ? t("workspace.recovery.readyOnce", { path: request.selected_path ?? "", defaultValue: `Access allowed for this task. Ready to continue using ${request.selected_path ?? "the selected folder"}.` })
@@ -971,7 +971,7 @@ function ExistingFolderAccessRequestCard({
                 {t("workspace.recovery.reviewTitle", { defaultValue: "Review folder access" })}
               </DialogTitle>
               <DialogDescription>
-                {t("workspace.recovery.reviewDescription", { defaultValue: "Choose what Nanobot can do in this folder." })}
+                {t("workspace.recovery.reviewDescription", { defaultValue: "Choose what Kohaku can do in this folder." })}
               </DialogDescription>
             </DialogHeader>
             {reviewing && isReviewable ? (
@@ -1069,7 +1069,7 @@ function ExistingFolderAccessRequestCard({
                             ? t("workspace.recovery.permissionRefreshing", { defaultValue: "Checking current access…" })
                             : workspacePermissions?.mode === "full"
                               ? t("workspace.recovery.onceUnavailableFull", { defaultValue: "One-time folder access is unavailable while Full access is active." })
-                              : t("workspace.recovery.onceUnavailable", { defaultValue: "One-time access is unavailable until Nanobot confirms current restricted access." })}
+                              : t("workspace.recovery.onceUnavailable", { defaultValue: "One-time access is unavailable until Kohaku confirms current restricted access." })}
                       </p>
                     ) : null}
                   </fieldset>
@@ -1084,12 +1084,12 @@ function ExistingFolderAccessRequestCard({
                       {
                         value: "read_only",
                         title: t("workspace.management.readOnly", { defaultValue: "Read only" }),
-                        description: t("workspace.recovery.readOnlyDescription", { defaultValue: "Nanobot can inspect files but cannot change them." }),
+                        description: t("workspace.recovery.readOnlyDescription", { defaultValue: "Kohaku can inspect files but cannot change them." }),
                       },
                       {
                         value: "read_write",
                         title: t("workspace.management.readWrite", { defaultValue: "Read and write" }),
-                        description: t("workspace.recovery.readWriteDescription", { defaultValue: "Nanobot can read and change files in this folder." }),
+                        description: t("workspace.recovery.readWriteDescription", { defaultValue: "Kohaku can read and change files in this folder." }),
                       },
                     ] as const).map((option) => {
                       const optionId = `folder-access-${option.value}-${request.access_request_id}`;
@@ -1134,7 +1134,7 @@ function ExistingFolderAccessRequestCard({
                     ? duration === "once"
                       ? t("workspace.recovery.allowOnceDescription", { defaultValue: "For this task, including Continue steps. Not saved for future tasks." })
                       : t("workspace.recovery.alwaysAllowDescription", { defaultValue: "Saved for future use. Manage in Folders & projects." })
-                    : t("workspace.recovery.persistence", { defaultValue: "Saved folder access applies to normal chats in this Nanobot instance. The folder becomes the current chat's working folder only after you save and use it." })}
+                    : t("workspace.recovery.persistence", { defaultValue: "Saved folder access applies to normal chats in this Kohaku instance. The folder becomes the current chat's working folder only after you save and use it." })}
                 </p>
                 {error ? <p role="alert" className="text-[11.5px] text-destructive">{error}</p> : null}
                 {notice ? <p role="status" className="text-[11.5px] text-muted-foreground">{notice}</p> : null}

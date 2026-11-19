@@ -665,26 +665,26 @@ describe("ThreadComposer", () => {
     expect(tooltip.parentElement).not.toHaveTextContent("Available");
   });
 
-  it("keeps configured capacity separate from a last-known request snapshot", () => {
+  it("shows the last known request without repeating the model settings", () => {
     render(
       <ThreadComposer
         onSend={vi.fn()}
         contextUsage={{ contextTokens: 14_700, contextWindowTokens: 200_000 }}
-        configuredContext={{ model: "selected-model", contextWindowTokens: 65_536 }}
+        modelLabel="selected-model"
+        hasConfiguredModel
         placeholder="Ask anything..."
       />,
     );
 
     fireEvent.click(screen.getByTestId("composer-context-usage"));
 
-    expect(screen.getByText("Last known request")).toBeInTheDocument();
-    expect(screen.getByText("14.7K / 200K")).toBeInTheDocument();
-    expect(screen.getByText("Configured model")).toBeInTheDocument();
-    expect(screen.getByText("selected-model")).toBeInTheDocument();
-    expect(screen.getByText("Configured window")).toBeInTheDocument();
-    expect(screen.getByText("65.5K")).toBeInTheDocument();
-    expect(screen.queryByText("14.7K / 65.5K")).not.toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "Context 7%" })).toHaveAttribute(
+    const usage = within(screen.getByRole("dialog", { name: "Context usage" }));
+    expect(usage.getByText("Last known request")).toBeInTheDocument();
+    expect(usage.getByText("14.7K / 200K")).toBeInTheDocument();
+    expect(usage.queryByText("Configured model")).not.toBeInTheDocument();
+    expect(usage.queryByText("Configured window")).not.toBeInTheDocument();
+    expect(usage.queryByText("selected-model")).not.toBeInTheDocument();
+    expect(usage.getByRole("progressbar", { name: "Context 7%" })).toHaveAttribute(
       "aria-valuenow",
       "7",
     );
@@ -1509,7 +1509,7 @@ describe("ThreadComposer", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Full access is ending" }));
-    expect(screen.getByText("Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending.")).toBeInTheDocument();
+    expect(screen.getByText("Kohaku cannot yet confirm whether earlier commands have finished. Access changes are pending.")).toBeInTheDocument();
     expect(screen.queryByText("A command is still running with the previous access. Wait for it to finish or stop it, then retry.")).not.toBeInTheDocument();
   });
 
@@ -2796,7 +2796,7 @@ describe("ThreadComposer", () => {
       target: { value: "参考 @收费", selectionStart: 6 },
     });
 
-    expect(screen.getByRole("group", { name: "Nanobot conversations" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Kohaku conversations" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /@收费设计/i })).toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Tab" });
 
@@ -4438,7 +4438,7 @@ describe("ThreadComposer", () => {
 describe("ThreadComposer — mobile controls", () => {
   afterEach(() => resetMobileRuntime());
 
-  it("keeps a no-round context control for configured capacity on mobile", () => {
+  it("keeps the context control on mobile before the first measurement", () => {
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
       request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
@@ -4451,7 +4451,7 @@ describe("ThreadComposer — mobile controls", () => {
     const { container } = render(
       <ThreadComposer
         onSend={vi.fn()}
-        configuredContext={{ model: "selected-model", contextWindowTokens: 65_536 }}
+        hasConfiguredModel
         placeholder="Type your message..."
       />,
     );
@@ -4463,10 +4463,6 @@ describe("ThreadComposer — mobile controls", () => {
     expect(screen.queryByTestId("composer-context-meter")).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
-    expect(screen.getByText("Configured model")).toBeInTheDocument();
-    expect(screen.getByText("selected-model")).toBeInTheDocument();
-    expect(screen.getByText("Configured window")).toBeInTheDocument();
-    expect(screen.getByText("65.5K")).toBeInTheDocument();
     expect(screen.getByText("Usage unavailable")).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });

@@ -165,6 +165,12 @@ export type StreamError =
       kind: "connection_closed";
       chatId: string;
       turnId: string;
+    }
+  | {
+      /** Recovery blocks the chat while the input still lacks admission proof. */
+      kind: "session_recovery_required";
+      chatId: string;
+      turnId: string;
     };
 
 export function messageDeliveryErrorKind(error: StreamError): MessageDeliveryErrorKind | undefined {
@@ -815,7 +821,9 @@ export class NanobotClient {
     if (!this.hasOwnedRun(chatId)) return;
     if (ev.event === "turn_end") {
       const turnId = typeof ev.turn_id === "string" ? ev.turn_id : undefined;
-      if (turnId && this.hasSideChannelTurn(chatId, turnId)) return;
+      if (turnId && (!this.isOwnedRun(chatId, turnId) || this.hasSideChannelTurn(chatId, turnId))) {
+        return;
+      }
       const attempts = typeof ev.failure_attempts === "number"
         && Number.isInteger(ev.failure_attempts)
         && ev.failure_attempts > 0
@@ -837,6 +845,7 @@ export class NanobotClient {
     }
     if (ev.event === "recovery_state") {
       if (ev.status !== "awaiting_user" && ev.status !== "failed") return;
+      if (ev.turn_id && !this.isOwnedRun(chatId, ev.turn_id)) return;
       this.emitTaskNotification({ kind: "recovery", chatId, status: ev.status });
     }
   }
@@ -849,17 +858,16 @@ export class NanobotClient {
     if (!this.hasOwnedRun(chatId)) return;
     if (ev.event === "turn_end") {
       const turnId = typeof ev.turn_id === "string" ? ev.turn_id : undefined;
-      const sideChannel = turnId ? this.consumeSideChannelTurn(chatId, turnId) : false;
-      if (!sideChannel) {
-        this.clearOwnedRuns(chatId);
-        stopMobileRunKeepAlive(chatId);
+      if (turnId && (this.consumeSideChannelTurn(chatId, turnId) || !this.isOwnedRun(chatId, turnId))) {
         return;
       }
-      if (!this.hasOwnedRun(chatId)) stopMobileRunKeepAlive(chatId);
+      this.clearOwnedRuns(chatId);
+      stopMobileRunKeepAlive(chatId);
       return;
     }
     if (
       ev.event === "recovery_state"
+      && (!ev.turn_id || this.isOwnedRun(chatId, ev.turn_id))
       && (
         ev.status === "awaiting_user"
         || ev.status === "failed"
@@ -1085,11 +1093,15 @@ export class NanobotClient {
     if (!turnId) return;
     const pending = this.pendingMessageSends.get(this.runSendKey(chatId, turnId));
     if (pending?.recovery && !pending.recovery.proven) return;
+    this.clearPendingMessageSend(chatId, turnId);
+    this.prunePendingInboundTurn(chatId, turnId);
+    this.retireRejectedRun(chatId, turnId);
+  }
+
+  private retireRejectedRun(chatId: string, turnId: string): void {
     const rejectedOwned = this.isOwnedRun(chatId, turnId);
     const rejectedLatest = this.latestRunTurnIdByChatId.get(chatId) === turnId;
-    this.clearPendingMessageSend(chatId, turnId);
     this.settleRunTurn(chatId, turnId);
-    this.prunePendingInboundTurn(chatId, turnId);
     this.consumeSideChannelTurn(chatId, turnId);
     if (rejectedOwned) {
       this.disownRun(chatId, turnId);
@@ -1945,9 +1957,15 @@ export class NanobotClient {
     }
 
     if (parsed.event === "error" && correlatedChatId && turnId) {
-      const pending = this.pendingMessageSends.get(this.runSendKey(correlatedChatId, turnId));
+      const key = this.runSendKey(correlatedChatId, turnId);
+      const pending = this.pendingMessageSends.get(key);
       if (pending?.recovery && !pending.recovery.proven) {
         pending.state = "unknown";
+        if (parsed.detail === "input_attempt_unknown" && parsed.reason === "session_recovery_required") {
+          this.socketPendingMessageSendKeys.delete(key);
+          this.retireRejectedRun(correlatedChatId, turnId);
+          this.emitError({ kind: "session_recovery_required", chatId: correlatedChatId, turnId });
+        }
         return;
       }
       this.recordRunRejection(correlatedChatId, turnId);

@@ -2,10 +2,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
 import { readLocalPreferences } from "@/lib/local-preferences";
-import {
-  buildTaskNotificationBody,
-  showTaskNotification,
-} from "@/lib/task-notifications";
+import { showTaskNotification } from "@/lib/task-notifications";
 import { useClient } from "@/providers/ClientProvider";
 
 /**
@@ -27,8 +24,8 @@ export function useTaskNotifications(): void {
       && document.hasFocus()
     ) return;
     showTaskNotification({
-      body: buildTaskNotificationBody(event, t),
-      tag: `nanobot-turn-${event.chatId}`,
+      event,
+      t,
       requestMutation: (action, payload) => client.requestMutation(action, payload),
     });
   }), [client, t]);

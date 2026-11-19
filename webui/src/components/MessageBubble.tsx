@@ -296,6 +296,16 @@ function UserDeliveryStatus({
     );
   }
 
+  if (errorKind === "session_recovery_required") {
+    const { title, body } = deliveryErrorCopy(errorKind, t);
+    return (
+      <div role="alert" className="max-w-72 break-words text-right text-[12px] leading-4 text-destructive">
+        <p className="font-medium">{title}</p>
+        <p>{body}</p>
+      </div>
+    );
+  }
+
   if (status === "unknown") {
     const label = t("message.delivery.awaitingConfirmation");
     const { title, body } = deliveryErrorCopy(errorKind ?? "connection_closed", t);
@@ -354,14 +364,6 @@ function UserDeliveryStatus({
 
   const label = t("message.delivery.failed");
   const { title, body } = deliveryErrorCopy(errorKind, t);
-  if (errorKind === "session_recovery_required") {
-    return (
-      <div role="alert" className="max-w-72 break-words text-right text-[12px] leading-4 text-destructive">
-        <p className="font-medium">{title}</p>
-        <p>{body}</p>
-      </div>
-    );
-  }
   return (
     <>
       <Tooltip>

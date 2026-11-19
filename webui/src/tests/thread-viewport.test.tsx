@@ -1199,8 +1199,13 @@ describe("ThreadViewport", () => {
     expect(scroller.scrollTop).toBe(700);
   });
 
-  it("keeps the thread scrollport above a mobile soft keyboard", async () => {
-    const visualViewport = stubVisualViewport({ innerHeight: 800, height: 480 });
+  it.each([
+    { name: "visual viewport", layoutHeight: 800, inset: "320px" },
+    { name: "layout viewport", layoutHeight: 480, inset: "" },
+  ])("keeps the chat position when the mobile keyboard shrinks the $name", async ({
+    layoutHeight, inset,
+  }) => {
+    const visualViewport = stubVisualViewport({ innerHeight: 800, height: 800 });
     try {
       const { container } = render(
         <ThreadViewport
@@ -1210,31 +1215,36 @@ describe("ThreadViewport", () => {
         />,
       );
       const scroller = getScroller(container);
-      const viewportFrame = container.querySelector(".thread-viewport-frame");
-      expect(viewportFrame).not.toBeNull();
+      const viewportFrame = container.querySelector<HTMLElement>(".thread-viewport-frame");
       Object.defineProperties(scroller, {
         scrollHeight: { configurable: true, value: 2400 },
         clientHeight: { configurable: true, value: 600 },
-        scrollTop: { configurable: true, value: 0 },
+        scrollTop: { configurable: true, writable: true, value: 700 },
       });
 
       act(() => {
         dispatchUserScroll(scroller);
       });
+      const previousScrollTop = scroller.scrollTop;
 
       const input = screen.getByLabelText("Message input");
       act(() => {
         input.focus();
-        fireEvent.focusIn(input);
       });
-
-      await waitFor(() => expect(viewportFrame).toHaveStyle({ bottom: "320px" }));
-      expect(screen.queryByRole("button", { name: "Scroll to bottom" })).not.toBeInTheDocument();
+      expect(scroller.scrollTop).toBe(previousScrollTop);
 
       act(() => {
+        Object.defineProperty(window, "innerHeight", { configurable: true, value: layoutHeight });
+        Object.defineProperty(visualViewport.viewport, "height", { value: 480 });
+        Object.defineProperty(scroller, "clientHeight", { value: 280 });
         visualViewport.viewport.dispatchEvent(new Event("resize"));
+        if (layoutHeight !== 800) window.dispatchEvent(new Event("resize"));
       });
-      expect(viewportFrame).toHaveStyle({ bottom: "320px" });
+      await flushAnimationFrame();
+
+      expect(scroller.scrollTop).toBe(previousScrollTop);
+      expect(input).toHaveFocus();
+      expect(viewportFrame?.style.bottom).toBe(inset);
     } finally {
       visualViewport.restore();
     }
@@ -1358,8 +1368,7 @@ describe("ThreadViewport", () => {
     );
   });
 
-  it("scrolls recent messages into view when the composer receives focus", async () => {
-    const scrollTo = vi.fn();
+  it("keeps the chat position when the composer receives focus", async () => {
     const { container } = render(
       <ThreadViewport
         messages={messages}
@@ -1371,60 +1380,21 @@ describe("ThreadViewport", () => {
     Object.defineProperties(scroller, {
       scrollHeight: { configurable: true, value: 2400 },
       clientHeight: { configurable: true, value: 600 },
-      scrollTop: { configurable: true, writable: true, value: 0 },
-      scrollTo: { configurable: true, value: scrollTo },
+      scrollTop: { configurable: true, writable: true, value: 700 },
     });
 
     act(() => {
       dispatchUserScroll(scroller);
     });
-    scrollTo.mockClear();
+    const previousScrollTop = scroller.scrollTop;
 
     const input = screen.getByLabelText("Message input");
     act(() => {
       input.focus();
-      fireEvent.focusIn(input);
     });
+    await flushAnimationFrame();
 
-    await waitFor(() => expect(scroller.scrollTop).toBe(1800));
-  });
-
-  it("scrolls recent messages into view when the focused composer resizes the visual viewport without an inset", async () => {
-    const visualViewport = stubVisualViewport({ innerHeight: 500, height: 500 });
-    const scrollTo = vi.fn();
-
-    try {
-      const { container } = render(
-        <ThreadViewport
-          messages={messages}
-          isStreaming={false}
-          composer={<textarea aria-label="Message input" />}
-        />,
-      );
-      const scroller = getScroller(container);
-      Object.defineProperties(scroller, {
-        scrollHeight: { configurable: true, value: 2400 },
-        clientHeight: { configurable: true, value: 600 },
-        scrollTop: { configurable: true, writable: true, value: 0 },
-        scrollTo: { configurable: true, value: scrollTo },
-      });
-
-      const input = screen.getByLabelText("Message input");
-      Object.defineProperty(document, "activeElement", {
-        configurable: true,
-        get: () => input,
-      });
-
-      act(() => {
-        visualViewport.viewport.dispatchEvent(new Event("resize"));
-      });
-
-      await waitFor(() => expect(scroller.scrollTop).toBe(1800));
-      expect(scroller).not.toHaveStyle({ bottom: "320px" });
-    } finally {
-      Reflect.deleteProperty(document, "activeElement");
-      visualViewport.restore();
-    }
+    expect(scroller.scrollTop).toBe(previousScrollTop);
   });
 
   it("hides the scroll-to-bottom button when disabled for the welcome view", () => {

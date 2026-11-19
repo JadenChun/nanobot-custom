@@ -1377,7 +1377,7 @@ describe("ThreadShell", () => {
     expect(within(dialog).queryByRole("button", { name: /Stop|Approve|Cancel/ })).not.toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Load earlier activity" }));
-    fireEvent.click(await within(dialog).findByRole("button", { name: "Worked" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Worked(?: for .+)?$/ }));
     expect(await within(dialog).findByText("Read file README.md")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
 
@@ -1391,6 +1391,8 @@ describe("ThreadShell", () => {
 
   it("renders each logical round in a completed turn as its own usage bar", async () => {
     const client = makeClient();
+    const settings = modelSettings("openai-codex/gpt-5.5", "openai_codex");
+    settings.model_presets[0]!.context_window_tokens = 32_000;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       if (String(input).includes("websocket%3Ausage-chart/webui-thread")) {
         return Promise.resolve(httpJson({
@@ -1419,7 +1421,7 @@ describe("ThreadShell", () => {
               content: "Second response",
               turnId: "turn-2",
               createdAt: 2_000,
-              contextWindowTokens: 65_536,
+              contextWindowTokens: 200_000,
               usage: {
                 prompt_tokens: 29_400,
                 completion_tokens: 416,
@@ -1448,14 +1450,23 @@ describe("ThreadShell", () => {
         session={session("usage-chart")}
         title="Usage chart"
         onToggleSidebar={() => {}}
-        settingsSnapshot={modelSettings("openai-codex/gpt-5.5", "openai_codex")}
+        settingsSnapshot={settings}
       />,
       "openai-codex/gpt-5.5",
     ));
 
     const trigger = await screen.findByTestId("composer-context-usage");
     fireEvent.click(trigger);
-    expect(await screen.findAllByTestId("round-usage-bar")).toHaveLength(4);
+    const usage = within(await screen.findByRole("dialog", { name: "Context usage" }));
+    expect(usage.getByText("Last known request")).toBeInTheDocument();
+    expect(usage.getByText("14.7K / 200K")).toBeInTheDocument();
+    expect(usage.getByRole("progressbar", { name: "Context 7%" })).toBeInTheDocument();
+    expect(usage.getByText("Recent rounds")).toBeInTheDocument();
+    expect(usage.getAllByTestId("round-usage-bar")).toHaveLength(4);
+    expect(usage.queryByText("Configured model")).not.toBeInTheDocument();
+    expect(usage.queryByText("Configured window")).not.toBeInTheDocument();
+    expect(usage.queryByText("openai-codex/gpt-5.5")).not.toBeInTheDocument();
+    expect(usage.queryByText("32K")).not.toBeInTheDocument();
     expect(screen.getByRole("img", {
       name: /input tokens 16,400.*KV cache hit rate 99%.*output tokens 236/i,
     })).toBeInTheDocument();
@@ -1596,7 +1607,7 @@ describe("ThreadShell", () => {
     { rounds: false, replay: true },
     { rounds: true, replay: false },
     { rounds: true, replay: true },
-  ])("shows configured context after successful compaction (rounds=$rounds, replay=$replay)", async ({
+  ])("shows usage unavailable after successful compaction (rounds=$rounds, replay=$replay)", async ({
     rounds,
     replay,
   }) => {
@@ -1664,11 +1675,12 @@ describe("ThreadShell", () => {
     const trigger = await screen.findByTestId("composer-context-usage");
     expect(trigger).toHaveAccessibleName("Open context usage");
     fireEvent.click(trigger);
-    expect(await screen.findByText("Configured model")).toBeInTheDocument();
-    expect(screen.getByText("selected-model")).toBeInTheDocument();
-    expect(screen.getByText("Configured window")).toBeInTheDocument();
-    expect(screen.getByText("65.5K")).toBeInTheDocument();
-    expect(screen.getByText("Usage unavailable")).toBeInTheDocument();
+    const usage = within(await screen.findByRole("dialog", { name: "Context usage" }));
+    expect(usage.getByText("Usage unavailable")).toBeInTheDocument();
+    expect(usage.queryByText("Configured model")).not.toBeInTheDocument();
+    expect(usage.queryByText("Configured window")).not.toBeInTheDocument();
+    expect(usage.queryByText("selected-model")).not.toBeInTheDocument();
+    expect(usage.queryByText("65.5K")).not.toBeInTheDocument();
     expect(screen.queryByText("170K")).not.toBeInTheDocument();
     expect(screen.queryByText("1M")).not.toBeInTheDocument();
     expect(screen.queryByTestId("composer-context-meter")).not.toBeInTheDocument();
@@ -1726,7 +1738,7 @@ describe("ThreadShell", () => {
   });
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 65_536.5])(
-    "keeps a selected model while its configured capacity is invalid (%s)",
+    "shows usage unavailable while the selected model's capacity is invalid (%s)",
     async (contextWindowTokens) => {
       const client = makeClient();
       const settings = modelSettings("global-model", "deepseek");
@@ -1754,10 +1766,7 @@ describe("ThreadShell", () => {
       />));
 
       fireEvent.click(await screen.findByTestId("composer-context-usage"));
-      expect(await screen.findByText("Configured model")).toBeInTheDocument();
-      expect(screen.getByText("selected-model")).toBeInTheDocument();
-      expect(screen.getByText("Configured window")).toBeInTheDocument();
-      expect(screen.getByText("Usage unavailable")).toBeInTheDocument();
+      expect(await screen.findByText("Usage unavailable")).toBeInTheDocument();
       expect(screen.queryByText("1M")).not.toBeInTheDocument();
       expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     },
@@ -2131,9 +2140,7 @@ describe("ThreadShell", () => {
     expect(await screen.findByText("extra")).toBeInTheDocument();
     const contextTrigger = await screen.findByTestId("composer-context-usage");
     fireEvent.click(contextTrigger);
-    expect(await screen.findByText("Configured model")).toBeInTheDocument();
-    expect(screen.getByText("deepseek/extra")).toBeInTheDocument();
-    expect(screen.getByText("88.9K")).toBeInTheDocument();
+    expect(await screen.findByText("Usage unavailable")).toBeInTheDocument();
     fireEvent.click(contextTrigger);
 
     rerender(view("fast"));
@@ -5765,7 +5772,7 @@ describe("ThreadShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
 
     expect(await screen.findByText(
-      "Nanobot could not confirm which folder this task should use. Refresh the task before trying again.",
+      "Kohaku could not confirm which folder this task should use. Refresh the task before trying again.",
     )).toBeInTheDocument();
     expect(screen.getByText(
       "Folder access was saved, but this task is still waiting for you to use the folder.",

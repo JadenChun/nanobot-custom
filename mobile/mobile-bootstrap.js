@@ -24,7 +24,7 @@
             await localNotifications.schedule({
               notifications: [{
                 id: Math.floor(Date.now() % 2147483647),
-                title: options.title || "nanobot",
+                title: options.title || "Kohaku",
                 body: options.body || "",
                 // This is an immediate notification, not a scheduled alarm.
                 // Without this, Capacitor asks for exact-alarm access on
@@ -182,7 +182,7 @@
     var title = textElement("h1", "mobile-pairing-title", "Connect this phone");
     title.id = "mobile-pairing-title";
     card.appendChild(title);
-    var copy = textElement("p", "mobile-pairing-copy", "Pair with the Nanobot desktop app.");
+    var copy = textElement("p", "mobile-pairing-copy", "Pair with the Kohaku desktop app.");
     card.appendChild(copy);
 
     var statusList = textElement("div", "mobile-pairing-status-list");
@@ -399,7 +399,7 @@
       ui.manual.hidden = next !== "idle";
       if (next === "idle") {
         ui.title.textContent = "Connect this phone";
-        ui.copy.textContent = "Pair with the Nanobot desktop app.";
+        ui.copy.textContent = "Pair with the Kohaku desktop app.";
         ui.form.reset();
         ui.manualOrigin.value = "";
         ui.manualCode.value = "";
@@ -460,7 +460,7 @@
           await plugin.pairAccept({ pairingId: pairingId });
           if (stopped || run !== generation || state !== "accepting") return;
           setPill(ui.node, "Connected", "is-ok");
-          ui.status.textContent = "Paired. Loading Nanobot...";
+          ui.status.textContent = "Paired. Kohaku is loading…";
           finish();
           return;
         }
@@ -1031,7 +1031,7 @@
       panel.appendChild(card);
       var title = textElement("h1", "mobile-pairing-title", "Reconnect this phone");
       card.appendChild(title);
-      card.appendChild(textElement("p", "mobile-pairing-copy", "Your Nanobot pairing is saved. This phone can't reach the desktop over Tailscale right now."));
+      card.appendChild(textElement("p", "mobile-pairing-copy", "Your Kohaku pairing is saved. This phone can't reach the desktop over Tailscale right now."));
       var status = textElement("p", "mobile-pairing-status", initialMessage || "Tailscale sign-in is required.");
       status.setAttribute("aria-live", "polite");
       card.appendChild(status);

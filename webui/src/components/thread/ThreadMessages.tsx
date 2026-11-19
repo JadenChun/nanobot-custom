@@ -105,19 +105,22 @@ export function ThreadMessages({
       : new Set<number>(),
     [activeTurnId, isStreaming, units],
   );
-  const pendingTurn = useMemo(
-    () => pendingTurnProjection(messages, activeTurnId),
-    [activeTurnId, messages],
-  );
-  const pendingActivity = (
-    isStreaming
-    && liveActivityClusterIndices.size === 0
-    && pendingTurn !== null
-    && (retryStatus !== null || !pendingTurn.hasVisibleOutput)
-  ) ? pendingTurn : null;
   const currentTurnStartIndex = isStreaming
     ? activeTurnStartIndex(units, activeTurnId)
     : units.length;
+  const promptUnit = units[currentTurnStartIndex];
+  const activePrompt = promptUnit?.type === "message"
+    && (activeTurnId === null || promptUnit.message.turnId === activeTurnId)
+    ? promptUnit.message
+    : null;
+  const activeStartedAtMs = activePrompt
+    && activePrompt.timestampAvailable !== false
+    && Number.isFinite(activePrompt.createdAt)
+    ? activePrompt.createdAt
+    : runStartedAt != null ? runStartedAt * 1000 : undefined;
+  const showPendingActivity = isStreaming
+    && liveActivityClusterIndices.size === 0
+    && (activePrompt !== null || activeStartedAtMs !== undefined);
   const unitKeys = useMemo(() => unitKeysForDisplay(units), [units]);
   let revealMessageId: string | null = null;
   if (revealLatestHistoryMessage && !isStreaming) {
@@ -196,6 +199,7 @@ export function ThreadMessages({
                 ? retryStatus
                 : null
             }
+            activeStartedAtMs={liveActivityClusterIndices.has(index) ? activeStartedAtMs : undefined}
             forkIndex={forkIndex}
             showForkBoundary={index === forkBoundaryAfterUnitIndex}
             forkBoundaryLabel={t("thread.forkedFromHistory")}
@@ -210,67 +214,19 @@ export function ThreadMessages({
           />
         );
       })}
-      {pendingActivity ? (
+      {showPendingActivity ? (
         <div className={units.length > 0 ? "mt-5" : undefined}>
           <AgentActivityCluster
             messages={[]}
             isTurnStreaming
             hasBodyBelow={false}
             retryStatus={retryStatus}
-            startedAtMs={
-              // Match the activity timeline's prompt-based clock across the first output.
-              pendingActivity.startedAtMs ?? (runStartedAt != null ? runStartedAt * 1000 : undefined)
-            }
+            startedAtMs={activeStartedAtMs}
           />
         </div>
       ) : null}
     </div>
   );
-}
-
-interface PendingTurnProjection {
-  startedAtMs?: number;
-  hasVisibleOutput: boolean;
-}
-
-function pendingTurnProjection(
-  messages: UIMessage[],
-  activeTurnId: string | null,
-): PendingTurnProjection | null {
-  let promptIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (
-      message.role === "user"
-      && message.deliveryStatus !== "failed"
-      && (activeTurnId === null || message.turnId === activeTurnId)
-    ) {
-      promptIndex = index;
-      break;
-    }
-  }
-  if (promptIndex < 0) return null;
-
-  const prompt = messages[promptIndex];
-  const hasVisibleOutput = messages.slice(promptIndex + 1).some((message) => {
-    if (message.role === "user") return false;
-    if (activeTurnId && message.turnId && message.turnId !== activeTurnId) return false;
-    return (
-      message.content.trim().length > 0
-      || !!message.reasoning?.trim()
-      || !!message.reasoningStreaming
-      || message.kind === "trace"
-      || !!message.media?.length
-    );
-  });
-
-  return {
-    ...(prompt.timestampAvailable !== false
-      && typeof prompt.createdAt === "number" && Number.isFinite(prompt.createdAt)
-      ? { startedAtMs: prompt.createdAt }
-      : {}),
-    hasVisibleOutput,
-  };
 }
 
 interface ThreadDisplayUnitProps {
@@ -282,6 +238,7 @@ interface ThreadDisplayUnitProps {
   hasBodyBelow: boolean;
   isTurnStreaming: boolean;
   retryStatus: RetryStatus | null;
+  activeStartedAtMs?: number;
   forkIndex?: number;
   showForkBoundary: boolean;
   forkBoundaryLabel: string;
@@ -304,6 +261,7 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   hasBodyBelow,
   isTurnStreaming,
   retryStatus,
+  activeStartedAtMs,
   forkIndex,
   showForkBoundary,
   forkBoundaryLabel,
@@ -332,8 +290,9 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
             isTurnStreaming={isTurnStreaming}
             retryStatus={retryStatus}
             hasBodyBelow={hasBodyBelow}
+            showTurnDuration={isTurnStreaming || unit.showTurnDuration === true}
             turnLatencyMs={unit.turnLatencyMs}
-            startedAtMs={unit.startedAtMs}
+            startedAtMs={activeStartedAtMs ?? unit.startedAtMs}
             cliApps={cliApps}
             mcpPresets={mcpPresets}
             onOpenFilePreview={onOpenFilePreview}
@@ -373,6 +332,7 @@ function threadDisplayUnitPropsEqual(
     && previous.hasBodyBelow === next.hasBodyBelow
     && previous.isTurnStreaming === next.isTurnStreaming
     && previous.retryStatus === next.retryStatus
+    && previous.activeStartedAtMs === next.activeStartedAtMs
     && previous.forkIndex === next.forkIndex
     && previous.showForkBoundary === next.showForkBoundary
     && previous.forkBoundaryLabel === next.forkBoundaryLabel
@@ -419,6 +379,8 @@ function displayUnitsEqual(previous: DisplayUnit, next: DisplayUnit): boolean {
   if (previous.type !== "activity" || next.type !== "activity") return false;
   return (
     previous.sourceMessageCount === next.sourceMessageCount
+    && previous.turnId === next.turnId
+    && previous.showTurnDuration === next.showTurnDuration
     && previous.turnLatencyMs === next.turnLatencyMs
     && previous.startedAtMs === next.startedAtMs
     && previous.messages.length === next.messages.length
@@ -469,7 +431,7 @@ function currentActivityClusterIndices(
       const unit = units[i];
       if (
         unit.type === "activity"
-        && unit.messages.some((message) => message.turnId === activeTurnId)
+        && unit.turnId === activeTurnId
       ) {
         indices.add(i);
         return indices;

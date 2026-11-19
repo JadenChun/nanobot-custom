@@ -83,7 +83,7 @@ describe("Settings providers", () => {
 
     expect(
       screen.getByText(
-        "Complete sign-in in your browser. Nanobot usually finishes automatically; if it does not, paste the authorization code below.",
+        "Complete sign-in in your browser. Kohaku usually finishes automatically; if it does not, paste the authorization code below.",
       ),
     ).toBeInTheDocument();
     const callbackInput = await screen.findByRole("textbox", {
@@ -261,7 +261,7 @@ describe("Settings providers", () => {
     expect(openMock).not.toHaveBeenCalled();
     expect(
       within(dialog).getByText(
-        "Complete sign-in in your browser. Nanobot usually finishes automatically; if it does not, copy the full localhost callback URL from the address bar and paste it below.",
+        "Complete sign-in in your browser. Kohaku usually finishes automatically; if it does not, copy the full localhost callback URL from the address bar and paste it below.",
       ),
     ).toBeInTheDocument();
     expect(within(dialog).getByText("Waiting for the browser callback…")).toBeInTheDocument();
@@ -349,7 +349,7 @@ describe("Settings providers", () => {
       await chooseProviderToConfigure("OpenAI Codex");
       expect(
         screen.getByText(
-          "Sign in through this browser, then paste the full localhost callback URL back into nanobot.",
+          "Sign in through this browser, then paste the full localhost callback URL back into Kohaku.",
         ),
       ).toBeInTheDocument();
 

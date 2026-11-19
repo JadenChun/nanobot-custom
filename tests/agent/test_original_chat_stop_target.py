@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
 from copy import deepcopy
 from dataclasses import replace
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 
 from nanobot.agent.stop_target import parse_stop_expectation
+from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.mcp import MCPToolWrapper
 from nanobot.agent.turn import TurnRequest
 from nanobot.bus.events import (
     INBOUND_META_STOP_CLIENT,
@@ -21,7 +26,7 @@ from nanobot.bus.outbound_events import StopTargetEvent, WebUIAdmissionRejectedE
 from nanobot.bus.runtime_events import TurnRunStatusChanged
 from nanobot.command.builtin import cmd_stop
 from nanobot.command.router import CommandContext
-from nanobot.providers.base import LLMResponse
+from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.execution_owner import acquire_execution
 from nanobot.session.pending_followups import (
     PendingChildFollowup,
@@ -988,3 +993,230 @@ async def test_followup_submitted_before_fence_cannot_commit_after_stop(monkeypa
             release.set()
             provider.release_first.set()
             await asyncio.wait_for(asyncio.gather(first, queued, stopper, root, return_exceptions=True), timeout=5)
+
+
+class _FakeMCPTextContent:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _StopMediaSession:
+    def __init__(self, *, outcome: str, control_accepted: bool) -> None:
+        self.outcome = outcome
+        self.control_accepted = control_accepted
+        self.original_started = asyncio.Event()
+        self.release_original = asyncio.Event()
+        self.call_id: str | None = None
+        self.control_call_id: object = None
+        self.original_meta: object = None
+
+    async def call_tool(self, name: str, *, arguments: dict[str, object], meta=None):
+        if name == "cancel_kohaku_media_call":
+            self.control_call_id = arguments.get("call_id")
+            self.release_original.set()
+            return SimpleNamespace(
+                structuredContent={
+                    "call_id": self.control_call_id,
+                    "accepted": self.control_accepted,
+                },
+                isError=False,
+                content=[],
+            )
+
+        assert name == "generate_video"
+        self.original_meta = meta
+        self.call_id = meta["ai.nanobot.media.call_id"]
+        self.original_started.set()
+        await self.release_original.wait()
+        result = SimpleNamespace(
+            content=[_FakeMCPTextContent("video output saved")],
+            isError=False,
+        )
+        if self.outcome == "absent":
+            return result
+        result.structuredContent = {
+            "call_id": "another-call" if self.outcome == "mismatched" else self.call_id,
+            "stop_status": "settled",
+            "outcome": "stopped" if self.outcome == "mismatched" else self.outcome,
+        }
+        return result
+
+
+class _StopTailTool(Tool):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        return "stop_tail_probe"
+
+    @property
+    def description(self) -> str:
+        return "Count an unstarted serial batch tail."
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs: object) -> str:
+        self.calls += 1
+        return "tail executed"
+
+
+def _install_fake_mcp_types(monkeypatch) -> None:
+    fake_mcp = ModuleType("mcp")
+    fake_mcp.types = SimpleNamespace(TextContent=_FakeMCPTextContent, ResourceLink=type(None))
+    monkeypatch.setitem(sys.modules, "mcp", fake_mcp)
+
+
+def _kohaku_video_tool(session: _StopMediaSession) -> MCPToolWrapper:
+    definition = SimpleNamespace(
+        name="generate_video",
+        description="Generate one video.",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    return MCPToolWrapper(
+        session,
+        "comfy",
+        definition,
+        tool_timeout=30,
+        transport_type="stdio",
+        kohaku_media_cancel_available=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "control_accepted", "expected_stop"),
+    [
+        ("stopped", True, "ComfyUI stopped the video after cleanup and GPU restoration."),
+        (
+            "completed",
+            False,
+            "The ComfyUI video completed before Stop took effect. Its output files remain available.",
+        ),
+    ],
+)
+async def test_kohaku_stop_settlement_preserves_chat_and_skips_serial_tail(
+    monkeypatch, tmp_path, outcome, control_accepted, expected_stop,
+):
+    _install_fake_mcp_types(monkeypatch)
+    provider = _ScriptedProvider([
+        LLMResponse(content="Prior answer stays in this chat."),
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="video", name="mcp_comfy_generate_video", arguments={}),
+            ToolCallRequest(id="tail", name="stop_tail_probe", arguments={}),
+        ]),
+        LLMResponse(content="The next request was accepted."),
+    ])
+    session = _StopMediaSession(outcome=outcome, control_accepted=control_accepted)
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        key = "websocket:exact-stop"
+        handle.tools.register(_kohaku_video_tool(session))
+        tail = _StopTailTool()
+        handle.tools.register(tail)
+        prior = await handle.agent.execute_turn(TurnRequest(
+            content="Keep this result", session_key=key,
+        ))
+        assert prior.content == "Prior answer stays in this chat."
+
+        root = asyncio.create_task(handle.agent.execute_turn(TurnRequest(
+            content="Generate the video", session_key=key,
+        )))
+        stopper: asyncio.Task[object] | None = None
+        try:
+            await asyncio.wait_for(session.original_started.wait(), timeout=5)
+            assert session.call_id is not None
+            UUID(session.call_id)
+            assert session.original_meta == {"ai.nanobot.media.call_id": session.call_id}
+            target = handle.agent.stop_target_for_key(key)
+            assert target is not None
+            stopper = asyncio.create_task(stop_direct(handle.agent, target))
+            reply = await asyncio.wait_for(stopper, timeout=15)
+            assert reply.content == expected_stop
+            await asyncio.wait_for(asyncio.gather(root, return_exceptions=True), timeout=5)
+        finally:
+            session.release_original.set()
+            if not root.done():
+                root.cancel()
+            if stopper is not None and not stopper.done():
+                stopper.cancel()
+            await asyncio.wait_for(asyncio.gather(root, return_exceptions=True), timeout=5)
+
+        assert session.control_call_id == session.call_id
+        assert tail.calls == 0
+        assert len(provider.requests) == 2
+        backend = handle.sessions.source_backend(key)
+        assert backend is not None
+        snapshot = backend.source.load_source_snapshot(key)
+        assert any(
+            event.get("role") == "assistant"
+            and event.get("content") == "Prior answer stays in this chat."
+            for event in snapshot.events
+        )
+        rows = [event for event in snapshot.events if event.get("role") == "tool"]
+        video_row = next(event for event in rows if event.get("name") == "mcp_comfy_generate_video")
+        assert video_row.get("_outcome_status") == "stopped"
+        video_result = json.loads(video_row["content"])
+        assert video_result["media_call"]["call_id"] == session.call_id
+        assert video_result["media_call"]["outcome"] == outcome
+        assert video_result["media_call"]["stop_status"] == "settled"
+        tail_row = next(event for event in rows if event.get("name") == "stop_tail_probe")
+        assert tail_row.get("_outcome_status") == "skipped"
+
+        followup = await handle.agent.execute_turn(TurnRequest(
+            content="Continue in the same chat", session_key=key,
+        ))
+        assert followup.content == "The next request was accepted."
+        assert len(provider.requests) == 3
+
+
+@pytest.mark.parametrize("proof", ["absent", "mismatched"])
+async def test_kohaku_stop_without_matching_original_proof_stays_guarded(
+    monkeypatch, tmp_path, proof,
+):
+    _install_fake_mcp_types(monkeypatch)
+    provider = _ScriptedProvider([
+        LLMResponse(content="Prior answer stays in this chat."),
+        LLMResponse(content=None, tool_calls=[
+            ToolCallRequest(id="video", name="mcp_comfy_generate_video", arguments={}),
+            ToolCallRequest(id="tail", name="stop_tail_probe", arguments={}),
+        ]),
+        LLMResponse(content="This must not be requested."),
+    ])
+    session = _StopMediaSession(outcome=proof, control_accepted=True)
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        key = "websocket:exact-stop"
+        handle.tools.register(_kohaku_video_tool(session))
+        tail = _StopTailTool()
+        handle.tools.register(tail)
+        await handle.agent.execute_turn(TurnRequest(content="Keep this result", session_key=key))
+        root = asyncio.create_task(handle.agent.execute_turn(TurnRequest(
+            content="Generate the video", session_key=key,
+        )))
+        stopper: asyncio.Task[object] | None = None
+        try:
+            await asyncio.wait_for(session.original_started.wait(), timeout=5)
+            target = handle.agent.stop_target_for_key(key)
+            assert target is not None
+            stopper = asyncio.create_task(stop_direct(handle.agent, target))
+            reply = await asyncio.wait_for(stopper, timeout=15)
+            assert reply.content == "Stop could not confirm cleanup. This chat needs recovery."
+            await asyncio.wait_for(asyncio.gather(root, return_exceptions=True), timeout=5)
+        finally:
+            session.release_original.set()
+            if not root.done():
+                root.cancel()
+            if stopper is not None and not stopper.done():
+                stopper.cancel()
+            await asyncio.wait_for(asyncio.gather(root, return_exceptions=True), timeout=5)
+
+        backend = handle.sessions.source_backend(key)
+        assert backend is not None
+        snapshot = backend.source.load_source_snapshot(key)
+        assert snapshot.header["metadata"]["execution_recovery_required"] is True
+        assert tail.calls == 0
+        followup = await handle.agent.execute_turn(TurnRequest(
+            content="Do not replay the unsettled turn", session_key=key,
+        ))
+        assert followup.error == "Source session requires recovery before execution"
+        assert len(provider.requests) == 2

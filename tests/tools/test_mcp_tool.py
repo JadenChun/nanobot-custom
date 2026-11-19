@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import sys
 from contextlib import asynccontextmanager
@@ -676,36 +678,77 @@ async def test_execute_persists_image_block_as_artifact(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_structured_refs_keep_only_generated_candidates(tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing_candidate", [None, 2], ids=["with-file-link", "partial"])
+async def test_execute_image_batch_advertises_only_generated_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_candidate: int | None,
+) -> None:
+    from PIL import Image
+
     from nanobot.agent.turn import ToolOutcome
     from nanobot.config.loader import set_config_path
+    from nanobot.utils import artifacts
 
     set_config_path(tmp_path / "config.json")
-    payload = json.dumps({
-        "candidate_count": 1,
-        "candidates": [{"candidate": 1, "prompt": "candidate prompt"}],
-    })
+
+    def png(color: str) -> bytes:
+        buffer = io.BytesIO()
+        Image.new("RGB", (2, 2), color).save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    source = png("black")
+    images = [png(color) for color in ("red", "green", "blue", "white")]
+    output_root = tmp_path / "generated-candidates"
+    output_root.mkdir()
+    candidate_files = [output_root / f"option-{number}.png" for number in range(1, 5)]
+    for path, data in zip(candidate_files, images, strict=True):
+        path.write_bytes(data)
+
+    if missing_candidate is not None:
+        persist = artifacts.atomic_write_bytes
+        missing_bytes = images[missing_candidate - 1]
+
+        def write_bytes(path: Path, data: bytes) -> None:
+            if data == missing_bytes:
+                raise OSError("Fixture image write failed")
+            persist(path, data)
+
+        monkeypatch.setattr(artifacts, "atomic_write_bytes", write_bytes)
+
+    def image_block(data: bytes) -> _FakeImageContent:
+        return _FakeImageContent(base64.b64encode(data).decode())
+
+    candidates = [
+        {"candidate": number, "prompt": f"Option {number}", "file": str(path)}
+        for number, path in enumerate(candidate_files, 1)
+    ]
 
     async def call_tool(_name: str, arguments: dict) -> object:
-        return SimpleNamespace(
-            content=[
-                _FakeTextContent(payload),
-                _FakeTextContent("CRITIC CONTEXT"),
-                _FakeImageContent(_PNG_B64, "image/png"),
-                _FakeTextContent("CANDIDATE 1"),
-                _FakeImageContent(_PNG_B64, "image/png"),
-            ]
-        )
+        content: list[object] = [
+            _FakeTextContent(json.dumps({"candidate_count": 4, "candidates": candidates})),
+            _FakeTextContent("EDIT TARGET / SOURCE"),
+            image_block(source),
+        ]
+        for number, (data, path) in enumerate(zip(images, candidate_files, strict=True), 1):
+            content.extend([_FakeTextContent(f"CANDIDATE {number}"), image_block(data)])
+            if number == 3 and missing_candidate is None:
+                content.append(_FakeResourceLink(path.as_uri(), "image/png"))
+        return SimpleNamespace(content=content)
 
-    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool))
+    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool), media_output_roots=(output_root,))
 
-    result = await wrapper.execute(prompt="a cat")
+    result = await wrapper.execute(prompt="Edit the source", candidates=4)
 
     assert isinstance(result, ToolOutcome)
     visible = json.loads(result.content)
-    assert len(visible["artifacts"]) == 2
-    assert len(result.media_artifacts) == 1
-    assert result.media_artifacts[0]["id"] == visible["artifacts"][1]["id"]
+    assert [(item["candidate"], Path(item["path"]).read_bytes()) for item in visible["artifacts"]] == [
+        (number, data) for number, data in enumerate(images, 1) if number != missing_candidate
+    ]
+    assert [(item["id"], item["path"]) for item in result.media_artifacts] == [
+        (item["id"], item["path"]) for item in visible["artifacts"]
+    ]
+    assert [Path(path).read_bytes() for path in visible["reference_images"]] == [source]
+    if missing_candidate is not None:
+        assert "image that could not be stored" in visible["text"]
 
 
 @pytest.mark.asyncio

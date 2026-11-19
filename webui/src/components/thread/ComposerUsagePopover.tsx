@@ -20,11 +20,6 @@ export interface ComposerContextUsage {
   contextWindowTokens?: number;
 }
 
-export interface ComposerConfiguredContext {
-  model: string;
-  contextWindowTokens?: number;
-}
-
 export interface ComposerRoundUsage {
   id: string;
   timestamp: number;
@@ -59,12 +54,12 @@ function normalizeRounds(
 
 export function ComposerUsagePopover({
   context,
-  configuredContext,
+  hasConfiguredModel = false,
   rounds,
   isHero = false,
 }: {
   context: ComposerContextUsage | null;
-  configuredContext?: ComposerConfiguredContext | null;
+  hasConfiguredModel?: boolean;
   rounds: readonly ComposerRoundUsage[];
   isHero?: boolean;
 }) {
@@ -76,15 +71,7 @@ export function ComposerUsagePopover({
     && context.contextTokens >= 0
     && Number.isFinite(context.contextWindowTokens)
     && (context.contextWindowTokens ?? 0) > 0;
-  const configuredModel = typeof configuredContext?.model === "string"
-    ? configuredContext.model.trim() || null
-    : null;
-  const configuredWindowTokens = configuredContext?.contextWindowTokens;
-  const hasConfiguredWindow = typeof configuredWindowTokens === "number"
-    && Number.isFinite(configuredWindowTokens)
-    && Number.isInteger(configuredWindowTokens)
-    && configuredWindowTokens > 0;
-  if (!hasContext && !configuredModel && normalizedRounds.length === 0) {
+  if (!hasContext && !hasConfiguredModel && normalizedRounds.length === 0) {
     return null;
   }
 
@@ -260,40 +247,8 @@ export function ComposerUsagePopover({
               </>
             ) : null}
 
-            {configuredModel ? (
-              <div className={cn(
-                "space-y-2",
-                contextPercentage !== null ? "mt-5" : "",
-              )}>
-                <div className="flex min-w-0 items-baseline justify-between gap-3">
-                  <span className="shrink-0 text-[11px] font-medium text-foreground">
-                    {t("thread.composer.context.configuredModel", {
-                      defaultValue: "Configured model",
-                    })}
-                  </span>
-                  <span className="truncate text-right text-[11px] text-muted-foreground">
-                    {configuredModel}
-                  </span>
-                </div>
-                <div className="flex min-w-0 items-baseline justify-between gap-3">
-                  <span className="shrink-0 text-[11px] font-medium text-foreground">
-                    {t("thread.composer.context.configuredWindow", {
-                      defaultValue: "Configured window",
-                    })}
-                  </span>
-                  <span className="text-right text-[11px] tabular-nums text-muted-foreground">
-                    {hasConfiguredWindow
-                      ? formatCompactTokenCount(configuredWindowTokens)
-                      : t("settings.values.notAvailable", {
-                          defaultValue: "Not available",
-                        })}
-                  </span>
-                </div>
-              </div>
-            ) : null}
-
-            {contextPercentage === null && configuredModel ? (
-              <p className="mt-2 text-[11px] text-muted-foreground">
+            {contextPercentage === null && hasConfiguredModel ? (
+              <p className="text-[11px] text-muted-foreground">
                 {t("thread.composer.context.usageUnavailable", {
                   defaultValue: "Usage unavailable",
                 })}
@@ -304,7 +259,8 @@ export function ComposerUsagePopover({
               <>
                 <div className={cn(
                   "flex items-baseline justify-between gap-3",
-                  contextPercentage === null ? "mt-0" : "mt-5",
+                  contextPercentage !== null && "mt-5",
+                  contextPercentage === null && hasConfiguredModel && "mt-3",
                 )}>
                   <span className="text-[12px] font-medium text-foreground">
                     {t("thread.composer.context.recentRounds", {

@@ -596,6 +596,8 @@ export interface ChatSummary {
   preview: string;
   /** Model preset persisted for this session; null means it still follows the global default. */
   modelPreset?: string | null;
+  /** Chat-specific effort. An absent override uses the selected preset's effort. */
+  reasoningEffort?: string | null;
   /** Unix epoch seconds when this session currently has a turn in flight. */
   runStartedAt?: number | null;
   /** Durable recovery state that needs attention after an interrupted turn. */
@@ -1069,6 +1071,7 @@ export interface SettingsPayload {
     temperature: number;
     reasoning_effort: string | null;
     reasoning_effort_values?: string[];
+    chat_reasoning_effort?: boolean;
   }>;
   model_call_order: string[];
   model_call_order_editable: boolean;

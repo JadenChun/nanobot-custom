@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import subprocess
 import sys
@@ -27,7 +28,6 @@ from nanobot.bus.events import (
 from nanobot.bus.outbound_events import WebUIAdmissionRejectedEvent
 from nanobot.command.router import CommandContext, CommandRouter, normalize_command_text
 from nanobot.providers.base import LLMUsage
-from nanobot.session.manager import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.session.pending_followups import PendingFollowupStopError
 from nanobot.utils.helpers import build_status_content
 from nanobot.utils.restart import set_restart_notice_to_env
@@ -35,7 +35,7 @@ from nanobot.utils.workspace_prompts import initialize_workspace_prompt
 
 if TYPE_CHECKING:
     from nanobot.agent.loop import AgentLoop
-    from nanobot.session.manager import Session
+    from nanobot.session.manager import JsonlSessionStore, Session
     from nanobot.utils.gitstore import CommitInfo
 
 # WebUI protocol contract for how a slash command participates in turn state:
@@ -223,6 +223,74 @@ def builtin_command_starts_agent_turn(text: str) -> bool:
     return spec.lifecycle == "agent_turn_with_args" and bool(args.strip())
 
 
+def _source_media_stop_disposition(loop: AgentLoop, key: str) -> str | None:
+    """Read only the latest canonical Stop result for this chat."""
+    try:
+        backend: JsonlSessionStore | None = loop.sessions.source_backend(key)
+        if backend is None:
+            return None
+        snapshot = backend.source.load_source_snapshot(key)
+        metadata = cast(dict[str, object], snapshot.header["metadata"])
+        execution_lease = metadata.get("execution_lease")
+        recovery_fenced = (
+            "execution_recovery_required" in metadata
+            or (
+                isinstance(execution_lease, dict)
+                and cast(dict[str, object], execution_lease).get("recovery_required") is True
+            )
+        )
+        if recovery_fenced:
+            return "unconfirmed"
+        events = cast(list[dict[str, object]], snapshot.events)
+        latest_run_value = events[-1].get("_run_id") if events else None
+        latest_run = latest_run_value if isinstance(latest_run_value, str) else None
+        if not isinstance(latest_run, str):
+            return None
+        for event in reversed(events):
+            if event.get("_run_id") != latest_run:
+                break
+            if (
+                event.get("role") != "tool"
+                or event.get("name") != "mcp_comfy_generate_video"
+                or event.get("_outcome_status") != "stopped"
+            ):
+                continue
+            content = event.get("content")
+            if not isinstance(content, str):
+                continue
+            payload = json.loads(content)
+            if not isinstance(payload, dict):
+                continue
+            payload_mapping = cast(dict[str, object], payload)
+            media_call_value = payload_mapping.get("media_call")
+            if not isinstance(media_call_value, dict):
+                continue
+            media_call = cast(dict[str, object], media_call_value)
+            call_id = media_call.get("call_id")
+            outcome = media_call.get("outcome")
+            disposition: str | None = (
+                "stopped" if outcome == "stopped"
+                else "completed" if outcome == "completed"
+                else None
+            )
+            result_is_error = media_call.get("result_is_error")
+            if (
+                isinstance(call_id, str)
+                and call_id
+                and media_call.get("stop_status") == "settled"
+                and disposition is not None
+                and type(result_is_error) is bool
+            ):
+                return (
+                    f"{disposition}_error"
+                    if result_is_error
+                    else disposition
+                )
+    except Exception as exc:
+        logger.debug("Stop source result could not be read for {}: {}", key, type(exc).__name__)
+    return None
+
+
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Cancel all active tasks and subagents for the session."""
     loop = ctx.loop
@@ -237,7 +305,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     if protocol_client:
         raw_expectation = metadata.get(INBOUND_META_STOP_EXPECTATION)
         if expectation_present and type(raw_expectation) is not StopExpectation:
-            return _stop_admission_rejection(
+            return _webui_admission_rejection(
                 msg,
                 metadata,
                 "invalid_stop_expectation",
@@ -251,7 +319,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 or not target_turn_id
                 or current_turn_id != target_turn_id
             ):
-                return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+                return _webui_admission_rejection(msg, metadata, "stale_stop_target")
         else:
             current_target_fn = getattr(type(loop), "stop_target_for_key", None)
             current_target = (
@@ -274,7 +342,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                     and websocket_turn_id(str(msg.chat_id)) != target_turn_id
                 )
             ):
-                return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+                return _webui_admission_rejection(msg, metadata, "stale_stop_target")
     if isinstance(target_turn_id, str) and target_turn_id:
         current_turn_id = websocket_turn_id(str(msg.chat_id))
         if current_turn_id != target_turn_id:
@@ -302,7 +370,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     except Exception:
         logger.exception("Stop request could not capture its source lifetime for {}", ctx.key)
         if protocol_client:
-            return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+            return _webui_admission_rejection(msg, metadata, "stale_stop_target")
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
@@ -310,7 +378,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
             metadata=metadata,
         )
     if protocol_client and stop_admission is None:
-        return _stop_admission_rejection(msg, metadata, "stale_stop_target")
+        return _webui_admission_rejection(msg, metadata, "stale_stop_target")
     pending_at_admission = getattr(loop, "_pending_queues", {}).get(ctx.key)
 
     if protocol_client:
@@ -369,11 +437,16 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 content="No active task to stop.",
                 metadata=metadata,
             )
+    stop_pending = False
     if stop_admission is None:
         await project("interrupted")
     else:
         live_owner_check = getattr(type(loop), "_original_chat_stop_has_live_owner", None)
-        if callable(live_owner_check) and not live_owner_check(loop, ctx.key, stop_admission):
+        stop_pending = bool(
+            callable(live_owner_check)
+            and live_owner_check(loop, ctx.key, stop_admission)
+        )
+        if not stop_pending:
             await project("interrupted")
     # Also drain pending queue to prevent mid-turn injection deadlock
     pending = (
@@ -392,7 +465,25 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
                 total += 1
             except Exception:
                 break
-    content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    media_stop_disposition = (
+        _source_media_stop_disposition(loop, ctx.key)
+        if stop_admission is not None
+        and stop_admission.active_root_identity
+        and not stop_pending
+        else None
+    )
+    if stop_admission is not None and stop_pending:
+        content = "Stop is still pending. The active task is settling."
+    elif media_stop_disposition == "stopped":
+        content = "ComfyUI stopped the video after cleanup and GPU restoration."
+    elif media_stop_disposition == "completed":
+        content = "The ComfyUI video completed before Stop took effect. Its output files remain available."
+    elif media_stop_disposition in {"stopped_error", "completed_error"}:
+        content = "The ComfyUI call settled, but its original reply reported an error."
+    elif media_stop_disposition == "unconfirmed":
+        content = "Stop could not confirm cleanup. This chat needs recovery."
+    else:
+        content = f"Stopped {total} task(s)." if total else "No active task to stop."
     publish_target = getattr(type(loop), "_publish_stop_target_for_key", None)
     if callable(publish_target):
         with suppress(Exception):
@@ -405,12 +496,12 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-def _stop_admission_rejection(
+def _webui_admission_rejection(
     msg: InboundMessage,
     metadata: dict[str, Any],
     reason: str,
 ) -> OutboundMessage:
-    """Return the existing typed WebUI refusal envelope before Stop mutation."""
+    """Return a typed refusal for a WebUI command."""
     turn_id = metadata.get("webui_turn_id")
     return OutboundMessage(
         channel=msg.channel,
@@ -630,14 +721,23 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
             metadata=metadata,
         )
 
+    effort_request = args.startswith("--effort=") and not any(
+        name.casefold() == args.casefold() for name in _model_preset_names(loop)
+    )
     name = args
+    effort = None
+    if effort_request:
+        option, _, name = args.partition(" ")
+        value = option.removeprefix("--effort=")
+        effort = None if value == "default" else value
     try:
-        if ctx.session is not None and not ctx.session.policy.persist:
-            runtime = loop.runtime_resolver.resolve_preset(name)
-            ctx.session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
-        else:
-            runtime = loop.set_session_model_preset(ctx.key, name)
+        runtime = loop.set_session_model_preset(
+            ctx.key, name, reasoning_effort=effort,
+            temporary_session=ctx.session if ctx.session is not None and not ctx.session.policy.persist else None,
+        )
     except (KeyError, ValueError) as exc:
+        if effort_request and ctx.msg.channel == "websocket" and metadata.get("webui_turn_id"):
+            return _webui_admission_rejection(ctx.msg, metadata, "model_reasoning_effort_unavailable")
         names = _model_preset_names(loop)
         return OutboundMessage(
             channel=ctx.msg.channel,
@@ -656,6 +756,8 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
         f"- Model: `{runtime.model}`",
         f"- Context window: {runtime.context_window_tokens}",
     ]
+    if effort_request:
+        lines.append(f"- Reasoning effort: `{runtime.generation.reasoning_effort or 'default'}`")
     lines.append(f"- Max output tokens: {max_tokens}")
     return OutboundMessage(
         channel=ctx.msg.channel,

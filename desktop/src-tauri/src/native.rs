@@ -283,7 +283,7 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
     let open = MenuItem::with_id(app, "open", "Open Chat", true, None::<&str>)?;
     let retry = MenuItem::with_id(app, "retry", "Retry", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Nanobot", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Kohaku", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status, &open, &retry, &separator, &quit])?;
     shared.set_tray_status_item(status);
     let shared_for_menu = shared.clone();
@@ -367,7 +367,7 @@ pub fn show_setup(app: &AppHandle<Wry>, shared: &Shared) {
                     clear_gateway_origin(app);
                     let _ = window.navigate(setup_url);
                     let _ = window.set_size(LogicalSize::new(650.0, 720.0));
-                    let _ = window.set_title("Nanobot Desktop");
+                    let _ = window.set_title("Kohaku");
                 }
             }
         }
@@ -377,14 +377,13 @@ pub fn show_setup(app: &AppHandle<Wry>, shared: &Shared) {
 
 /// Return the single window to the setup UI after a selection change.
 pub fn return_to_setup(app: &AppHandle<Wry>, shared: &Shared) {
-    #[cfg(target_os = "macos")]
     clear_gateway_origin(app);
     if let Some(window) = app.get_webview_window("chat") {
         if let Some(setup_url) = shared.setup_url() {
             let _ = window.navigate(setup_url);
         }
         let _ = window.set_size(LogicalSize::new(650.0, 720.0));
-        let _ = window.set_title("Nanobot Desktop");
+        let _ = window.set_title("Kohaku");
         reveal_window(shared, &window);
     }
 }
@@ -736,8 +735,22 @@ pub fn new_window_response() -> NewWindowResponse<Wry> {
     NewWindowResponse::Deny
 }
 
-#[cfg(target_os = "macos")]
 type GatewayNavigation = Arc<std::sync::RwLock<Option<Url>>>;
+
+pub fn initialize_gateway_navigation(app: &AppHandle<Wry>) {
+    app.manage(GatewayNavigation::default());
+}
+
+pub fn is_gateway_page(app: &AppHandle<Wry>, target: &Url) -> bool {
+    app.try_state::<GatewayNavigation>().is_some_and(|selected| {
+        selected
+            .read()
+            .ok()
+            .as_deref()
+            .and_then(Option::as_ref)
+            .is_some_and(|origin| navigation_allowed(target, origin, None))
+    })
+}
 
 #[cfg(target_os = "macos")]
 pub fn macos_menu(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
@@ -745,8 +758,8 @@ pub fn macos_menu(app: &AppHandle<Wry>) -> tauri::Result<Menu<Wry>> {
 
     // AppKit's built-in Quit exits immediately. Route the application menu
     // and Cmd+Q through the controller, like the menu bar icon's Quit.
-    let quit = MenuItem::with_id(app, "managed-quit", "Quit Nanobot Desktop", true, Some("Cmd+Q"))?;
-    let application = SubmenuBuilder::new(app, "Nanobot Desktop")
+    let quit = MenuItem::with_id(app, "managed-quit", "Quit Kohaku", true, Some("Cmd+Q"))?;
+    let application = SubmenuBuilder::new(app, "Kohaku")
         .about(None)
         .separator()
         .hide()
@@ -779,8 +792,7 @@ pub fn macos_setup_url() -> Url {
 
 #[cfg(target_os = "macos")]
 pub fn create_setup_window(app: &AppHandle<Wry>) -> tauri::Result<()> {
-    let selected = GatewayNavigation::default();
-    app.manage(selected.clone());
+    let selected = app.state::<GatewayNavigation>().inner().clone();
     let setup = macos_setup_url();
     let config = &app.config().app.windows[0];
     tauri::WebviewWindowBuilder::from_config(app, config)?
@@ -807,7 +819,6 @@ fn macos_navigation_allowed(target: &Url, setup: &Url, selected: Option<&Url>) -
         || selected.is_some_and(|origin| navigation_allowed(target, origin, None))
 }
 
-#[cfg(target_os = "macos")]
 pub fn allow_gateway_origin(app: &AppHandle<Wry>, origin: Url) -> Result<(), &'static str> {
     let selected = app
         .try_state::<GatewayNavigation>()
@@ -816,7 +827,6 @@ pub fn allow_gateway_origin(app: &AppHandle<Wry>, origin: Url) -> Result<(), &'s
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 pub fn clear_gateway_origin(app: &AppHandle<Wry>) {
     if let Some(selected) = app.try_state::<GatewayNavigation>() {
         if let Ok(mut selected) = selected.write() {

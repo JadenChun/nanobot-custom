@@ -35,7 +35,12 @@ from nanobot.providers.oauth_model_catalog import (
     invalidate_oauth_model_catalog,
 )
 from nanobot.providers.provider_policy import ProviderPolicy, resolve_provider_policy
-from nanobot.providers.registry import PROVIDERS, create_dynamic_spec, find_by_name
+from nanobot.providers.registry import (
+    PROVIDERS,
+    create_dynamic_spec,
+    find_by_name,
+    reasoning_effort_values_for,
+)
 from nanobot.webui.settings_contracts import (
     QueryParams,
     SettingsRequest,
@@ -1053,34 +1058,6 @@ def _validate_configured_provider(
         raise WebUISettingsError("provider is not configured")
 
 
-_DEFAULT_REASONING_EFFORT_VALUES: tuple[str, ...] = ("", "low", "medium", "high")
-
-
-def reasoning_effort_values_for(provider_name: str, model: str) -> list[str]:
-    """Return user-facing reasoning_effort options for this provider+model."""
-    spec = find_by_name(provider_name) if provider_name else None
-    if spec is None:
-        return list(_DEFAULT_REASONING_EFFORT_VALUES)
-
-    model_lower = (model or "").lower()
-    if model_lower.rsplit("/", 1)[-1] == "kimi-k3":
-        return ["", "max"]
-
-    implicit = getattr(spec, "implicit_reasoning_models", ())
-    if implicit and any(pattern in model_lower for pattern in implicit):
-        return [""]
-
-    remap = getattr(spec, "reasoning_effort_remap", ())
-    if remap:
-        wire_values: list[str] = []
-        for _user_value, wire_value in remap:
-            if wire_value and wire_value != "none" and wire_value not in wire_values:
-                wire_values.append(wire_value)
-        return ["", *wire_values]
-
-    return list(_DEFAULT_REASONING_EFFORT_VALUES)
-
-
 def model_settings_payload(
     config: Config,
     *,
@@ -1132,6 +1109,7 @@ def model_settings_payload(
             "context_window_tokens": defaults.context_window_tokens,
             "temperature": defaults.temperature,
             "reasoning_effort": defaults.reasoning_effort,
+            "chat_reasoning_effort": True,
             "reasoning_effort_values": reasoning_effort_values_for(
                 config.get_provider_name(
                     defaults.model,
@@ -1159,6 +1137,7 @@ def model_settings_payload(
                 "context_window_tokens": preset.context_window_tokens,
                 "temperature": preset.temperature,
                 "reasoning_effort": preset.reasoning_effort,
+                "chat_reasoning_effort": True,
                 "reasoning_effort_values": reasoning_effort_values_for(
                     resolved_preset_provider,
                     preset.model,

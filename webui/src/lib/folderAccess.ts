@@ -85,12 +85,12 @@ export function folderAccessErrorMessage(error: unknown, t: Translate): string {
   }
   if (error.message === "invalid_access_request") {
     return t("workspace.recovery.invalidFolder", {
-      defaultValue: "Nanobot could not verify that folder. Choose an existing folder and try again.",
+      defaultValue: "Kohaku could not verify that folder. Choose an existing folder and try again.",
     });
   }
   if (error.message === "folder path must be an existing directory" || error.message === "path_missing") {
     return t("workspace.recovery.folderMissing", {
-      defaultValue: "Nanobot could not verify that folder. Choose an existing folder and try again.",
+      defaultValue: "Kohaku could not verify that folder. Choose an existing folder and try again.",
     });
   }
   if (error.message === "folder path must be absolute") {
@@ -102,7 +102,7 @@ export function folderAccessErrorMessage(error: unknown, t: Translate): string {
     error.message === "folder grants cannot overlap private runtime storage"
   ) {
     return t("workspace.recovery.chooseNarrowerFolder", {
-      defaultValue: "This folder includes Nanobot's private runtime files. Choose a narrower project folder.",
+      defaultValue: "This folder includes Kohaku's private runtime files. Choose a narrower project folder.",
     });
   }
   if (error.message === "native_processes_active" || error.message === "permission_retiring") {
@@ -112,7 +112,7 @@ export function folderAccessErrorMessage(error: unknown, t: Translate): string {
   }
   if (error.message === "native_processes_unknown") {
     return t("workspace.management.nativeProcessesUnknown", {
-      defaultValue: "Nanobot cannot verify whether a command from this device is still running. Restarting Nanobot will not clear this state; you may need to restart this device.",
+      defaultValue: "Kohaku cannot verify whether a command from this device is still running. Restarting Kohaku will not clear this state; you may need to restart this device.",
     });
   }
   if (
@@ -133,7 +133,7 @@ export function folderAccessErrorMessage(error: unknown, t: Translate): string {
   }
   if (error.status === 403) {
     return t("workspace.recovery.folderUnavailable", {
-      defaultValue: "Nanobot cannot use that folder with the current access settings. Choose a different folder or review access.",
+      defaultValue: "Kohaku cannot use that folder with the current access settings. Choose a different folder or review access.",
     });
   }
   return t("workspace.recovery.actionFailed", {

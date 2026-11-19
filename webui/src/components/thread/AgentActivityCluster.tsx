@@ -148,6 +148,7 @@ interface AgentActivityClusterProps {
   hasBodyBelow: boolean;
   /** Persisted end-to-end turn latency from the assistant answer, used for history replay. */
   turnLatencyMs?: number;
+  showTurnDuration?: boolean;
   /** User turn start timestamp for live activity before the first trace/reasoning row. */
   startedAtMs?: number;
   retryStatus?: RetryStatus | null;
@@ -157,14 +158,15 @@ interface AgentActivityClusterProps {
 }
 
 /**
- * One fold wrapping the complete middle of a turn: reasoning, model segments,
- * tool traces, and file edits. The final assistant answer stays outside it.
+ * A fold for contiguous reasoning, model events, tools, and file edits.
+ * The last fold shows the total duration of the turn.
  */
 export function AgentActivityCluster({
   messages,
   isTurnStreaming,
   hasBodyBelow,
   turnLatencyMs,
+  showTurnDuration = true,
   startedAtMs,
   retryStatus = null,
   cliApps = [],
@@ -220,13 +222,13 @@ export function AgentActivityCluster({
 
   const hasVisibleActivity = reasoningSteps > 0 || toolCalls > 0 || modelSegments > 0 || cliCount > 0 || mcpCount > 0 || fileCount > 0;
   const hasOnlyFileActivity = fileCount > 0 && activityMessages.every(messageHasOnlyFileActivity);
-  const durationMs = activityDurationMs(
+  const durationMs = showTurnDuration ? activityDurationMs(
     activityMessages,
     isTurnStreaming,
     now,
     turnLatencyMs,
     startedAtMs,
-  );
+  ) : 0;
   const activityDuration = formatActivityDuration(durationMs);
   const retryError = retryStatus?.error_kind === "connection"
     ? t("message.retryConnection", { defaultValue: "Connection failed" })
@@ -243,19 +245,7 @@ export function AgentActivityCluster({
   const retrySeconds = retryStatus?.next_retry_at === undefined
     ? 0
     : Math.max(0, Math.ceil(retryStatus.next_retry_at - now / 1000));
-  const activityLabel = retryStatus?.state === "exhausted"
-    ? t("message.retryExhausted", {
-        error: retryError,
-        defaultValue: "{{error}} · ending turn",
-      })
-    : retryStatus?.state === "waiting"
-      ? t("message.retryWaiting", {
-          error: retryError,
-          seconds: retrySeconds,
-          attempt: retryAttempt,
-          defaultValue: "{{error}} · retrying in {{seconds}}s · attempt {{attempt}}",
-        })
-      : isTurnStreaming
+  const elapsedLabel = isTurnStreaming
     ? t("message.activityWorkingFor", {
         duration: activityDuration,
         defaultValue: "Working for {{duration}}",
@@ -266,6 +256,21 @@ export function AgentActivityCluster({
           duration: activityDuration,
           defaultValue: "Worked for {{duration}}",
         });
+  const activityLabel = !showTurnDuration
+    ? t("message.activityGroup", { defaultValue: "Activity" })
+    : retryStatus?.state === "exhausted"
+      ? t("message.retryExhausted", {
+          error: retryError,
+          defaultValue: "{{error}} · ending turn",
+        })
+      : retryStatus?.state === "waiting"
+        ? t("message.retryWaiting", {
+            error: retryError,
+            seconds: retrySeconds,
+            attempt: retryAttempt,
+            defaultValue: "{{error}} · retrying in {{seconds}}s · attempt {{attempt}}",
+          })
+        : elapsedLabel;
 
   const cancelActivityScrollFrame = useCallback(() => {
     if (scrollFrameRef.current !== null) {
@@ -313,7 +318,7 @@ export function AgentActivityCluster({
   };
 
   useLayoutEffect(() => {
-    if (!outerExpanded || !autoFollowActivityRef.current) return;
+    if (!activityScrollRef.current || !outerExpanded || !autoFollowActivityRef.current) return;
     scheduleActivityScrollToBottom();
   }, [outerExpanded, activityMessages, isTurnStreaming, scheduleActivityScrollToBottom]);
 
@@ -365,44 +370,42 @@ export function AgentActivityCluster({
     syncActivityScrollFade();
   }, [syncActivityScrollFade]);
 
-  if (!hasVisibleActivity && !isTurnStreaming) return null;
+  if (!hasVisibleActivity && !isTurnStreaming && durationMs <= 0) return null;
+  const showHeader = !hasOnlyFileActivity || (showTurnDuration && (isTurnStreaming || durationMs > 0));
 
-  if (hasOnlyFileActivity) {
-    return (
-      <div className={cn("w-full", hasBodyBelow && "mb-2")}>
+  return (
+    <div className={cn("w-full", hasBodyBelow && "mb-2")}>
+      {showHeader ? (
+        <ThinkingReasoningShell
+          active={isTurnStreaming}
+          expanded={outerExpanded}
+          label={activityLabel}
+          viewportRef={activityScrollRef}
+          contentRef={activityContentRef}
+          fadeTop={activityScrollFade.top}
+          fadeBottom={activityScrollFade.bottom}
+          hasDetails={hasVisibleActivity && !hasOnlyFileActivity}
+          onToggle={toggleOuter}
+          onScroll={onActivityScroll}
+        >
+          <ActivityMessageTimeline
+            messages={activityMessages}
+            active={isTurnStreaming}
+            cliAppsByName={cliAppsByName}
+            mcpPresetsByName={mcpPresetsByName}
+            fileEditsByMessage={fileEditsByMessage}
+            fileEditDisplayMode={fileEditDisplayMode}
+            onOpenFilePreview={onOpenFilePreview}
+          />
+        </ThinkingReasoningShell>
+      ) : null}
+      {hasOnlyFileActivity ? (
         <FileEditGroup
           edits={fileEdits}
           displayMode={fileEditDisplayMode}
           onOpenFilePreview={onOpenFilePreview}
         />
-      </div>
-    );
-  }
-
-  return (
-    <div className={cn("w-full", hasBodyBelow && "mb-2")}>
-      <ThinkingReasoningShell
-        active={isTurnStreaming}
-        expanded={outerExpanded}
-        label={activityLabel}
-        viewportRef={activityScrollRef}
-        contentRef={activityContentRef}
-        fadeTop={activityScrollFade.top}
-        fadeBottom={activityScrollFade.bottom}
-        hasDetails={hasVisibleActivity}
-        onToggle={toggleOuter}
-        onScroll={onActivityScroll}
-      >
-        <ActivityMessageTimeline
-          messages={activityMessages}
-          active={isTurnStreaming}
-          cliAppsByName={cliAppsByName}
-          mcpPresetsByName={mcpPresetsByName}
-          fileEditsByMessage={fileEditsByMessage}
-          fileEditDisplayMode={fileEditDisplayMode}
-          onOpenFilePreview={onOpenFilePreview}
-        />
-      </ThinkingReasoningShell>
+      ) : null}
     </div>
   );
 }

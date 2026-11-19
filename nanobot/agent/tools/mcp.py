@@ -10,11 +10,12 @@ import os
 import re
 import shutil
 import urllib.parse
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -22,6 +23,7 @@ from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, invalid_numeric_limit
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import ToolOutcome
 from nanobot.security.network import (
     PinnedDNSAsyncTransport,
     env_proxy_applies_to_url,
@@ -61,6 +63,10 @@ _SANITIZE_RE = re.compile(r"_+")
 _ReconnectCallback = Callable[[str, str, Tool], Awaitable[Tool | None]]
 MCPServerLoader = Callable[[], Mapping[str, "MCPServerConfig"]]
 MCPRuntimeStatus = Literal["connecting", "connected", "failed"]
+_KOHAKU_MEDIA_CONTROL_TOOL = "cancel_kohaku_media_call"
+_KOHAKU_MEDIA_CALL_META_KEY = "ai.nanobot.media.call_id"
+_KOHAKU_MEDIA_SETTLE_STOP_REASON = "kohaku_media_settled"
+_KOHAKU_MEDIA_CONTROL_TIMEOUT_SECONDS = 5.0
 
 
 class MCPConnection(Protocol):
@@ -736,6 +742,45 @@ class _MCPWrapperBase(Tool):
         return False
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KohakuMediaStopSettlement(ToolOutcome):
+    """Exact terminal proof from the configured Comfy video wrapper."""
+
+    call_id: str
+    disposition: Literal["stopped", "completed"]
+    result_is_error: bool
+
+
+def _kohaku_media_terminal_result(
+    result: Any,
+    call_id: str,
+) -> tuple[Literal["stopped", "completed"], bool] | None:
+    """Accept proof only when the original call reply matches its request ID."""
+    structured = getattr(result, "structuredContent", None)
+    if not isinstance(structured, Mapping):
+        return None
+    content = cast(Mapping[str, Any], structured)
+    if content.get("call_id") != call_id or content.get("stop_status") != "settled":
+        return None
+    disposition = content.get("outcome")
+    if disposition not in ("stopped", "completed"):
+        return None
+    return disposition, getattr(result, "isError", False) is True
+
+
+def is_kohaku_media_stop_settlement(
+    result: Any,
+    tool: Tool | None,
+) -> TypeGuard[KohakuMediaStopSettlement]:
+    """Accept the terminal type only from the exact eligible MCP wrapper."""
+    return (
+        type(tool) is MCPToolWrapper
+        and tool.kohaku_media_stop_enabled
+        and type(result) is KohakuMediaStopSettlement
+        and result.stop_reason == _KOHAKU_MEDIA_SETTLE_STOP_REASON
+    )
+
+
 def mcp_generation_lease(tool: Tool) -> MCPGenerationLease | None:
     """Expose a concrete MCP wrapper's existing resource owner to request capture."""
     return tool.generation_lease if isinstance(tool, _MCPWrapperBase) else None
@@ -771,7 +816,12 @@ def _image_block_data_url(block: Any, types: Any) -> str | None:
     return None
 
 
-def _mcp_media_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]]) -> str:
+def _mcp_media_tool_result(
+    text_parts: list[str],
+    artifacts: list[dict[str, Any]],
+    *,
+    reference_images: Sequence[str] = (),
+) -> str:
     """Build the compact tool result for an MCP call that returned media.
 
     The base64 stays out of the model context entirely — only artifact paths and
@@ -782,14 +832,16 @@ def _mcp_media_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]
         "artifacts": artifacts,
         "next_step": (
             "These media files were returned by an MCP tool and saved as local artifacts. "
-            "Call the message tool with the artifact 'path' values in the media "
-            "parameter to deliver them to the user. To copy or inspect a saved "
+            "Use the paths in 'artifacts' for the message tool's 'media' parameter. "
+            "Use 'reference_images' to review the source images. To copy or inspect a saved "
             "file inside a Sandbox command, pass its exact path in the exec tool's "
             "'input_files' list and write only to an authorized workspace folder. "
             "Do not paste base64 or raw paths into your reply unless the user asks "
             "for debug details."
         ),
     }
+    if reference_images:
+        payload["reference_images"] = list(reference_images)
     text = "\n".join(part for part in text_parts if part)
     if text:
         payload["text"] = text
@@ -910,9 +962,16 @@ class MCPToolWrapper(_MCPWrapperBase):
         server_command: str | None = None,
         media_output_roots: Sequence[Path] = (),
         generation: str = "",
+        kohaku_media_cancel_available: bool = False,
     ):
         self._set_mcp_connection(session, server_name)
         self.generation = generation
+        self._kohaku_media_stop_enabled = (
+            server_name == "comfy"
+            and transport_type == "stdio"
+            and tool_def.name == "generate_video"
+            and kohaku_media_cancel_available
+        )
         self._media_output_roots = tuple(
             Path(root).expanduser() for root in media_output_roots
         )
@@ -955,6 +1014,10 @@ class MCPToolWrapper(_MCPWrapperBase):
         return self._mcp_metadata.read_only
 
     @property
+    def kohaku_media_stop_enabled(self) -> bool:
+        return self._kohaku_media_stop_enabled
+
+    @property
     def read_only(self) -> bool:
         return self.is_read_only
 
@@ -965,6 +1028,132 @@ class MCPToolWrapper(_MCPWrapperBase):
     @property
     def exclusive(self) -> bool:
         return not self.supports_parallel_calls
+
+    async def _attempt_media_cancel(self, call_id: str) -> Any | None:
+        """Send one bounded control request without treating its ACK as proof."""
+        try:
+            result = await asyncio.wait_for(
+                self._session.call_tool(
+                    _KOHAKU_MEDIA_CONTROL_TOOL,
+                    arguments={"call_id": call_id},
+                ),
+                timeout=_KOHAKU_MEDIA_CONTROL_TIMEOUT_SECONDS,
+            )
+            structured = getattr(result, "structuredContent", None)
+            if not isinstance(structured, Mapping):
+                logger.debug("Comfy media cancel request for '{}' returned an invalid ACK", call_id)
+            else:
+                ack = cast(Mapping[str, Any], structured)
+                if ack.get("call_id") != call_id or type(ack.get("accepted")) is not bool:
+                    logger.debug("Comfy media cancel request for '{}' returned an invalid ACK", call_id)
+                elif ack["accepted"] is False:
+                    logger.debug("Comfy media cancel request for '{}' was not accepted", call_id)
+            return result
+        except Exception as exc:
+            logger.debug(
+                "Comfy media cancel request for '{}' did not settle: {}",
+                call_id,
+                type(exc).__name__,
+            )
+            return None
+
+    async def _settle_cancelled_media_call(
+        self,
+        original_call: asyncio.Task[Any],
+        call_id: str,
+        cancellation: asyncio.CancelledError,
+        *,
+        arguments: Mapping[str, Any],
+    ) -> KohakuMediaStopSettlement:
+        """Wait for exact original-call proof after attempting the bound cancel RPC."""
+        control = asyncio.create_task(self._attempt_media_cancel(call_id))
+        pending = {original_call, control}
+        while pending:
+            try:
+                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            except asyncio.CancelledError:
+                if not task_is_cancelling():
+                    raise
+                continue
+            pending.difference_update(cast(set[asyncio.Task[Any]], done))
+        with suppress(asyncio.CancelledError, Exception):
+            control.result()
+        try:
+            original_result = original_call.result()
+        except (asyncio.CancelledError, Exception):
+            raise cancellation
+        terminal = _kohaku_media_terminal_result(original_result, call_id)
+        if terminal is None:
+            raise cancellation
+        disposition, result_is_error = terminal
+        return self._render_media_stop_settlement(
+            original_result,
+            arguments,
+            call_id=call_id,
+            disposition=disposition,
+            result_is_error=result_is_error,
+        )
+
+    @staticmethod
+    def _media_status_content(
+        rendered: str,
+        *,
+        call_id: str,
+        disposition: Literal["stopped", "completed"],
+        result_is_error: bool,
+    ) -> str:
+        try:
+            raw_payload = json.loads(rendered)
+        except (ValueError, TypeError):
+            raw_payload: Any = {"result": rendered}
+        payload: dict[str, Any]
+        if isinstance(raw_payload, dict):
+            payload = cast(dict[str, Any], raw_payload)
+        else:
+            payload = {"result": raw_payload}
+        payload["media_call"] = {
+            "call_id": call_id,
+            "stop_status": "settled",
+            "outcome": disposition,
+            "result_is_error": result_is_error,
+            "summary": (
+                "The video completed before Stop took effect. Its output files remain available."
+                if disposition == "completed"
+                else "ComfyUI confirmed the video stopped after cleanup and GPU restoration."
+            ),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _render_media_stop_settlement(
+        self,
+        result: Any,
+        arguments: Mapping[str, Any],
+        *,
+        call_id: str,
+        disposition: Literal["stopped", "completed"],
+        result_is_error: bool,
+    ) -> KohakuMediaStopSettlement:
+        original_content = getattr(result, "content", None)
+        content: list[Any] = (
+            cast(list[Any], original_content) if isinstance(original_content, list) else []
+        )
+        rendered, artifacts = self._render_call_result(content, arguments)
+        from nanobot.utils.artifacts import media_artifact_ref
+
+        status_content = self._media_status_content(
+            rendered,
+            call_id=call_id,
+            disposition=disposition,
+            result_is_error=result_is_error,
+        )
+        return KohakuMediaStopSettlement(
+            content=status_content,
+            stop_reason=_KOHAKU_MEDIA_SETTLE_STOP_REASON,
+            media_artifacts=tuple(media_artifact_ref(artifact) for artifact in artifacts),
+            call_id=call_id,
+            disposition=disposition,
+            result_is_error=result_is_error,
+        )
 
     @property
     def name(self) -> str:
@@ -984,10 +1173,34 @@ class MCPToolWrapper(_MCPWrapperBase):
         refreshed_session = False
         while True:
             try:
-                result = await asyncio.wait_for(
-                    self._session.call_tool(self._original_name, arguments=kwargs),
-                    timeout=self._tool_timeout,
-                )
+                if self._kohaku_media_stop_enabled:
+                    call_id = str(uuid.uuid4())
+                    original_call = asyncio.create_task(
+                        asyncio.wait_for(
+                            self._session.call_tool(
+                                self._original_name,
+                                arguments=kwargs,
+                                meta={_KOHAKU_MEDIA_CALL_META_KEY: call_id},
+                            ),
+                            timeout=self._tool_timeout,
+                        )
+                    )
+                    try:
+                        result = await asyncio.shield(original_call)
+                    except asyncio.CancelledError as cancellation:
+                        if not task_is_cancelling():
+                            raise
+                        return await self._settle_cancelled_media_call(
+                            original_call,
+                            call_id,
+                            cancellation,
+                            arguments=kwargs,
+                        )
+                else:
+                    result = await asyncio.wait_for(
+                        self._session.call_tool(self._original_name, arguments=kwargs),
+                        timeout=self._tool_timeout,
+                    )
             except asyncio.TimeoutError:
                 logger.warning(
                     "MCP tool '{}' timed out after {}s", self._name, self._tool_timeout
@@ -1086,6 +1299,7 @@ class MCPToolWrapper(_MCPWrapperBase):
 
         text_parts: list[str] = []
         artifacts: list[dict[str, Any]] = []
+        inline_images: list[dict[str, Any] | None] = []
         resource_link_type = getattr(types, "ResourceLink", None)
         for block in content:
             if isinstance(block, types.TextContent):
@@ -1094,6 +1308,7 @@ class MCPToolWrapper(_MCPWrapperBase):
             data_url = _image_block_data_url(block, types)
             if data_url is not None:
                 stored = self._store_image_block(data_url, arguments)
+                inline_images.append(stored)
                 if stored is not None:
                     artifacts.append(stored)
                 else:
@@ -1113,11 +1328,22 @@ class MCPToolWrapper(_MCPWrapperBase):
 
         if artifacts:
             from nanobot.utils.artifacts import (
+                candidate_artifact_count,
                 parse_embedded_text_payload,
                 select_candidate_artifacts,
             )
 
             payload = parse_embedded_text_payload("\n".join(text_parts))
+            candidate_count = candidate_artifact_count(payload)
+            if candidate_count is not None and candidate_count <= len(inline_images):
+                # Each inline image has one slot. File links can repeat those images.
+                candidates = select_candidate_artifacts(inline_images, payload)
+                references = [
+                    image["path"] for image in inline_images[:-candidate_count] if image is not None
+                ]
+                return _mcp_media_tool_result(
+                    text_parts, candidates, reference_images=references,
+                ), candidates
             candidates = select_candidate_artifacts(artifacts, payload)
             return _mcp_media_tool_result(text_parts, artifacts), candidates
         return ("\n".join(text_parts) or "(no output)"), []
@@ -1586,8 +1812,26 @@ async def connect_mcp_servers(
             matched_enabled_tools: set[str] = set()
             available_raw_names = [tool_def.name for tool_def in tools.tools]
             available_wrapped_names = [_sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}") for tool_def in tools.tools]
+            kohaku_media_cancel_available = (
+                name == "comfy"
+                and transport_type == "stdio"
+                and any(tool_def.name == _KOHAKU_MEDIA_CONTROL_TOOL for tool_def in tools.tools)
+            )
             for tool_def in tools.tools:
                 wrapped_name = _sanitize_mcp_tool_name(f"mcp_{name}_{tool_def.name}")
+                if tool_def.name == _KOHAKU_MEDIA_CONTROL_TOOL:
+                    if enabled_tools and not allow_all_tools and (
+                        tool_def.name in enabled_tools or wrapped_name in enabled_tools
+                    ):
+                        matched_enabled_tools.add(
+                            tool_def.name if tool_def.name in enabled_tools else wrapped_name
+                        )
+                    logger.debug(
+                        "MCP: keeping control tool '{}' private on server '{}'",
+                        tool_def.name,
+                        name,
+                    )
+                    continue
                 if (
                     not allow_all_tools
                     and tool_def.name not in enabled_tools
@@ -1618,6 +1862,7 @@ async def connect_mcp_servers(
                     server_command=cfg.command,
                     media_output_roots=media_output_roots,
                     generation=generation,
+                    kohaku_media_cancel_available=kohaku_media_cancel_available,
                 )
                 pending_tools.append(wrapper)
                 registered_count += 1

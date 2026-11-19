@@ -27,7 +27,6 @@ import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import type {
-  ComposerConfiguredContext,
   ComposerContextUsage,
   ComposerRoundUsage,
 } from "@/components/thread/ComposerUsagePopover";
@@ -704,7 +703,6 @@ function preserveUnknownDeliveryStatus(
       message.role === "user"
       && message.turnId
       && message.deliveryStatus === "unknown"
-      && message.deliveryErrorKind === "connection_closed"
     ) {
       uncertainRows.set(message.turnId, message);
     }
@@ -902,6 +900,10 @@ function modelPresetOptionsFromSettings(
         provider: preset.resolved_provider || preset.provider,
       };
     });
+}
+
+function modelReasoningCommand(preset: string, effort: string | null): string {
+  return `/model --effort=${effort ?? "default"} ${preset}`;
 }
 
 const HERO_GREETING_KEYS = [
@@ -1959,9 +1961,25 @@ export function ThreadShell({
   const wasShowingHeroComposerRef = useRef(showHeroComposer);
   const sessionModelPreset = session?.modelPreset?.trim() || null;
   const [localModelPreset, setLocalModelPreset] = useState<string | null>(null);
+  const [localReasoning, setLocalReasoning] = useState<{
+    chatId: string | null;
+    preset: string;
+    effort: string | null;
+  } | null>(null);
+  const [reasoningUpdate, setReasoningUpdate] = useState<{
+    chatId: string;
+    pending: boolean;
+  } | null>(null);
   useEffect(() => {
     setLocalModelPreset(null);
   }, [session?.key, sessionModelPreset]);
+  useEffect(() => {
+    if (!temporary && localReasoning && localReasoning.chatId === chatId
+      && localReasoning.preset === sessionModelPreset
+      && localReasoning.effort === (session?.reasoningEffort ?? null)) {
+      setLocalReasoning(null);
+    }
+  }, [chatId, localReasoning, session?.reasoningEffort, sessionModelPreset, temporary]);
   const configuredPresetNames = useMemo(
     () => new Set(settings?.model_presets.map((preset) => preset.name) ?? []),
     [settings],
@@ -1983,29 +2001,42 @@ export function ThreadShell({
     || sessionModelPreset
     || configuredAgentPreset
     || "default";
-  const configuredContext: ComposerConfiguredContext | null = (() => {
-    const preset = settings?.model_presets.find(
-      (candidate) => candidate.name === configuredPresetName,
-    );
-    const modelValue = preset?.model;
-    const model = typeof modelValue === "string" ? modelValue.trim() : "";
-    if (!preset || !model) return null;
-    const contextWindowTokens = preset.context_window_tokens;
-    return {
-      model,
-      ...(Number.isFinite(contextWindowTokens)
-        && Number.isInteger(contextWindowTokens)
-        && contextWindowTokens > 0
-        ? { contextWindowTokens }
-        : {}),
-    };
-  })();
+  const configuredModel = settings?.model_presets.find(
+    (candidate) => candidate.name === configuredPresetName,
+  )?.model;
+  const hasConfiguredModel = typeof configuredModel === "string" && configuredModel.trim().length > 0;
   const handleModelPresetChange = useCallback((name: string) => {
     setLocalModelPreset(name);
+    setLocalReasoning((current) => current?.chatId === chatId ? null : current);
+    setReasoningUpdate((current) => current?.chatId === chatId ? null : current);
     if (chatId) {
       void client.sendSystemCommand(chatId, `/model ${name}`).catch(() => {});
     }
   }, [chatId, client]);
+  const reasoningPreset = modelPresetForBadge(settings, activeModelPreset);
+  const reasoningOptions = reasoningPreset?.reasoning_effort_values?.filter(Boolean) ?? [];
+  const selectedReasoning = localReasoning?.chatId === chatId && localReasoning.preset === activeModelPreset
+    ? localReasoning.effort
+    : !localModelPreset ? session?.reasoningEffort ?? null : null;
+  const reasoningEffort = selectedReasoning && reasoningOptions.includes(selectedReasoning)
+    ? selectedReasoning : null;
+  const reasoningPending = reasoningUpdate?.chatId === chatId && reasoningUpdate.pending;
+  const handleReasoningChange = (effort: string | null) => {
+    if (reasoningPending || (effort && !reasoningOptions.includes(effort))) return;
+    const selection = { chatId, preset: activeModelPreset, effort };
+    if (!chatId) {
+      setLocalReasoning(selection);
+      return;
+    }
+    const update = { chatId, pending: true };
+    setReasoningUpdate(update);
+    void client.sendSystemCommand(chatId, modelReasoningCommand(activeModelPreset, effort)).then(() => {
+      setLocalReasoning(selection);
+      setReasoningUpdate((current) => current === update ? null : current);
+    }).catch(() => {
+      setReasoningUpdate((current) => current === update ? { chatId, pending: false } : current);
+    });
+  };
   const modelPresetOptions = useMemo(
     () => modelPresetOptionsFromSettings(settings),
     [settings],
@@ -2023,6 +2054,16 @@ export function ThreadShell({
   const modelBadgeLabel = modelBadge.needsSetup
     ? t("thread.composer.chooseAI", { defaultValue: "Choose your AI" })
     : modelBadge.label;
+  const modelReasoning = !modelBadge.needsSetup && reasoningPreset?.chat_reasoning_effort && reasoningOptions.length
+    ? {
+      value: reasoningEffort,
+      defaultValue: reasoningPreset?.reasoning_effort ?? null,
+      options: reasoningOptions,
+      onChange: handleReasoningChange,
+      pending: reasoningPending,
+      failed: reasoningUpdate?.chatId === chatId && !reasoningUpdate.pending,
+    }
+    : undefined;
   useEffect(() => {
     if (showHeroComposer && !wasShowingHeroComposerRef.current) {
       setHeroGreetingKey(randomHeroGreetingKey());
@@ -2727,13 +2768,24 @@ export function ThreadShell({
         setBooting(false);
         return false;
       }
-      if (localModelPreset) {
+      if (reasoningEffort) {
+        try {
+          await client.sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort));
+          setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
+        } catch {
+          setReasoningUpdate({ chatId: newId, pending: false });
+          setPendingFullDraft({ chatId: newId, text: content });
+          pendingFirstRef.current = null;
+          setBooting(false);
+          return false;
+        }
+      } else if (localModelPreset) {
         await client.sendSystemCommand(newId, `/model ${localModelPreset}`).catch(() => {});
       }
       setPendingFirstTargetChatId(newId);
       return true;
     },
-    [booting, client, localModelPreset, onCreateChat, workspaceScope],
+    [activeModelPreset, booting, client, localModelPreset, onCreateChat, reasoningEffort, workspaceScope],
   );
 
   const handleDraftFullAccess = useCallback(async (draft: string) => {
@@ -2750,6 +2802,10 @@ export function ThreadShell({
           defaultValue: "Access could not be updated. Refresh this chat before retrying.",
         }));
       } else {
+        if (reasoningEffort) {
+          await client.sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort));
+          setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
+        }
         setPendingFullDraft(draftToTransfer ? { chatId: newId, text: draftToTransfer } : null);
       }
     } catch {
@@ -2759,7 +2815,7 @@ export function ThreadShell({
     } finally {
       setPreparingFull(false);
     }
-  }, [booting, localModelPreset, onCreateChat, preparingFull, t, workspaceScope]);
+  }, [activeModelPreset, booting, client, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
 
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
@@ -3092,7 +3148,7 @@ export function ThreadShell({
           onConsumeQueuedAttempt={consumeQueuedAttempt}
           admissionRejectedTurn={admissionRejectedTurn}
           onAdmissionRejectedPromptRestored={handleAdmissionRejectedPromptRestored}
-          disabled={!chatId}
+          disabled={!chatId || reasoningPending}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
           automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
@@ -3109,6 +3165,7 @@ export function ThreadShell({
           modelPreset={activeModelPreset}
           modelPresets={modelPresetOptions}
           onModelPresetChange={handleModelPresetChange}
+          modelReasoning={modelReasoning}
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
@@ -3118,7 +3175,7 @@ export function ThreadShell({
             isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
           }
           contextUsage={composerContextUsage}
-          configuredContext={configuredContext}
+          hasConfiguredModel={hasConfiguredModel}
           recentRoundUsage={composerRoundUsage}
           variant={composerVariant}
           slashCommands={availableSlashCommands}
@@ -3190,6 +3247,7 @@ export function ThreadShell({
           modelPreset={activeModelPreset}
           modelPresets={modelPresetOptions}
           onModelPresetChange={handleModelPresetChange}
+          modelReasoning={modelReasoning}
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
@@ -3199,7 +3257,7 @@ export function ThreadShell({
             isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
           }
           contextUsage={composerContextUsage}
-          configuredContext={configuredContext}
+          hasConfiguredModel={hasConfiguredModel}
           recentRoundUsage={composerRoundUsage}
           variant={composerVariant}
           slashCommands={availableSlashCommands}

@@ -1,12 +1,12 @@
 {
   "app": {
-    "brand": "nanobot",
+    "brand": "Kohaku",
     "loading": {
-      "connecting": "nanobot に接続中…",
-      "boot": "nanobot を読み込み中…"
+      "connecting": "Kohaku に接続中…",
+      "boot": "Kohaku を読み込み中…"
     },
     "error": {
-      "title": "nanobot に接続できませんでした",
+      "title": "Kohaku に接続できませんでした",
       "gatewayHint": "gateway（`nanobot gateway`）が起動しており、このページが同じマシン上で開かれていることを確認してください。"
     },
     "auth": {
@@ -24,8 +24,8 @@
     },
     "system": {
       "section": "システム",
-      "restartHint": "実行時の変更を適用するには nanobot を再起動します。",
-      "restart": "nanobot を再起動",
+      "restartHint": "実行時の変更を適用するには Kohaku を再起動します。",
+      "restart": "Kohaku を再起動",
       "restarting": "再起動中...",
       "restartEngine": "エンジンを再起動",
       "restartingEngine": "エンジンを再起動中..."
@@ -34,11 +34,11 @@
       "completed": "{{seconds}} 秒で再起動が完了しました。"
     },
     "documentTitle": {
-      "base": "nanobot",
-      "chat": "{{title}} · nanobot"
+      "base": "Kohaku",
+      "chat": "{{title}} · Kohaku"
     },
     "meta": {
-      "description": "nanobot Web UI — nanobot ワークスペースと会話します。"
+      "description": "Kohaku Web UI — Kohaku ワークスペースと会話します。"
     },
     "pairing": {
       "title": "チャットユーザーをペアリング",
@@ -136,7 +136,7 @@
       "language": "言語",
       "provider": "プロバイダー",
       "model": "モデル",
-      "restart": "nanobot を再起動",
+      "restart": "Kohaku を再起動",
       "configPath": "設定パス",
       "activePreset": "アクティブなプリセット",
       "gateway": "ゲートウェイ",
@@ -229,7 +229,7 @@
       "selectedModelValue": "選択したモデルによって設定されます。",
       "brandLogos": "設定で第三者プロバイダーと CLI のロゴを表示します。",
       "browserNotifications": "アプリがフォーカスされていないときにリクエスト完了を通知します。既定ではオフです。",
-      "cliAppsCatalog": "nanobot がローカルで実行できるアプリ CLI アダプターだけをインストールします。ネイティブアプリは変更しません。",
+      "cliAppsCatalog": "Kohaku がローカルで実行できるアプリ CLI アダプターだけをインストールします。ネイティブアプリは変更しません。",
       "cliAppsFilter": "アプリ、カテゴリ、機能で検索します。",
       "logs": "ネイティブエンジンのログフォルダーを開きます。",
       "diagnostics": "サポート用の小さなランタイムレポートを書き出します。",
@@ -282,11 +282,11 @@
       "loadError": "設定を読み込めませんでした",
       "unsaved": "未保存の変更があります。",
       "upToDate": "最新です。",
-      "savedRestart": "保存しました。反映するには nanobot を再起動してください。",
+      "savedRestart": "保存しました。反映するには Kohaku を再起動してください。",
       "restartAfterSaving": "変更を保存してから、準備ができたら再起動してください。",
       "savedRestartApply": "保存しました。準備ができたら再起動してください。",
       "imageProviderRestart": "画像プロバイダーの変更を保存しました。準備ができたら再起動してください。",
-      "hostRestartAfterSaving": "保存すると nanobot がエンジンを再起動します。",
+      "hostRestartAfterSaving": "保存すると Kohaku がエンジンを再起動します。",
       "hostRestartPending": "保存しました。準備ができたらエンジンを再起動します。",
       "hostApiUnavailable": "ホスト操作はネイティブアプリ内でのみ利用できます。",
       "logsOpened": "ログフォルダーを開きました。",
@@ -310,7 +310,7 @@
       "exporting": "書き出しています..."
     },
     "byok": {
-      "description": "自分のプロバイダーキーを使います。Nanobot は現在の設定から値を読み込み、設定済みのプロバイダーだけをモデルプリセットで使用できます。",
+      "description": "自分のプロバイダーキーを使います。Kohaku は現在の設定から値を読み込み、設定済みのプロバイダーだけをモデルプリセットで使用できます。",
       "configured": "設定済み",
       "notConfigured": "未設定",
       "configuredSection": "設定済み",
@@ -558,7 +558,7 @@
       "saveCustom": "MCP を保存",
       "configImport": "mcp.json をインポート",
       "importConfig": "インポート",
-      "restartRequired": "更新された MCP ツールに接続するには nanobot を再起動してください。",
+      "restartRequired": "更新された MCP ツールに接続するには Kohaku を再起動してください。",
       "toolsFound": "{{count}} 個のツール",
       "loading": "MCP プリセットを読み込み中...",
       "empty": "この条件に一致する MCP プリセットはありません。",
@@ -586,14 +586,14 @@
       "preparingSignIn": "安全なサインインを準備しています…",
       "openSignInToContinue": "サインインページを開いて続行してください。",
       "finishSignInInBrowser": "ブラウザウィンドウでサインインを完了してください。",
-      "manualCallbackRequired": "サインインを完了し、コールバック URL を nanobot に貼り付けてください。",
+      "manualCallbackRequired": "サインインを完了し、コールバック URL を Kohaku に貼り付けてください。",
       "manualCallbackHelp": "アクセスを承認すると localhost ページは開きません。アドレスバーから完全な URL をコピーして、ここに貼り付けてください。",
       "finishingConnection": "接続を完了しています…",
       "activatingTools": "ツールを有効にしています…",
       "connected": "接続しました。",
       "connectionFailed": "接続に失敗しました。",
       "connectionCancelled": "接続をキャンセルしました。",
-      "reloadFailed": "サインインしましたが、nanobot はツールに接続できませんでした。nanobot を再起動してください。",
+      "reloadFailed": "サインインしましたが、Kohaku はツールに接続できませんでした。Kohaku を再起動してください。",
       "oauthFailed": "接続できません。もう一度サインインしてください。",
       "statusMissingDependency": "依存関係が必要",
       "statusComingSoon": "近日公開",
@@ -666,15 +666,15 @@
     },
     "observability": {
       "title": "可観測性",
-      "configured": "nanobot がトレース認証情報を利用できます。",
-      "environment": "LANGFUSE_SECRET_KEY と LANGFUSE_PUBLIC_KEY を設定して nanobot を再起動してください。",
+      "configured": "Kohaku がトレース認証情報を利用できます。",
+      "environment": "LANGFUSE_SECRET_KEY と LANGFUSE_PUBLIC_KEY を設定して Kohaku を再起動してください。",
       "enable": "トレースサポートを有効化"
     },
     "legal": {
       "thirdPartyBrands": "製品名、ロゴ、ブランドはそれぞれの所有者に帰属します。使用は識別のみを目的とし、承認を意味するものではありません。"
     },
     "apps": {
-      "description": "nanobot にツールを追加し、チャットで @ を付けて使用できます。",
+      "description": "Kohaku にツールを追加し、チャットで @ を付けて使用できます。",
       "cliLabel": "アプリ",
       "mcpLabel": "MCP",
       "channelLabel": "チャンネル",
@@ -697,21 +697,21 @@
       "browseApps": "アプリを見る",
       "browseIntegrations": "MCP ツールを見る",
       "emptyIntegrationsHint": "下からカスタム MCP サーバーを追加できます。",
-      "restartRequired": "更新したアプリと MCP ツールを反映するには nanobot を再起動してください。"
+      "restartRequired": "更新したアプリと MCP ツールを反映するには Kohaku を再起動してください。"
     },
     "channels": {
-      "description": "nanobot をチャットアプリに接続します。サポートのインストールは統合パッケージを追加するだけで、多くのチャンネルでは引き続きトークンやワークスペース設定が必要です。",
+      "description": "Kohaku をチャットアプリに接続します。サポートのインストールは統合パッケージを追加するだけで、多くのチャンネルでは引き続きトークンやワークスペース設定が必要です。",
       "caption": "{{enabled}} 件有効 · 全 {{total}} チャンネル",
       "searchPlaceholder": "チャンネルを検索",
       "backToChannels": "すべてのチャンネル",
       "catalog": "チャンネル",
       "loading": "チャンネルを読み込み中...",
       "empty": "一致するチャンネルはありません。",
-      "restartRequired": "更新したチャンネルサポートを反映するには nanobot を再起動してください。",
+      "restartRequired": "更新したチャンネルサポートを反映するには Kohaku を再起動してください。",
       "requires": "必要: {{requirements}}",
       "setUp": "設定",
       "setupGuide": "設定ガイド",
-      "setupSummary": "有効化は nanobot 側のサポートをオンにするだけです。プラットフォームの認証情報を追加してから nanobot を再起動してください。",
+      "setupSummary": "有効化は Kohaku 側のサポートをオンにするだけです。プラットフォームの認証情報を追加してから Kohaku を再起動してください。",
       "configKeys": "設定キー",
       "enable": "チャンネルを有効化",
       "disable": "チャンネルを無効化",
@@ -774,7 +774,7 @@
       "missingDependency": "サポート不足",
       "installSupport": "サポートをインストール",
       "installConfirmTitle": "{{name}} のサポートをインストールしますか？",
-      "installConfirmDescription": "nanobot が {{name}} に必要なものを追加し、その後有効化します。続けますか？",
+      "installConfirmDescription": "Kohaku が {{name}} に必要なものを追加し、その後有効化します。続けますか？",
       "installConfirmAction": "インストールして有効化",
       "websocketRequired": "WebUI に必須",
       "channelDisabled": "チャンネルは無効",
@@ -918,7 +918,7 @@
       "signedInAs": "{{account}} としてサインイン済み",
       "signInHelp": "このデバイスからサインインします。API キーは設定に保存されません。",
       "remoteSignInHelp": "「サインイン」を選択して自分のコンピューターで xAI を開き、サインイン後に表示される認証コードを貼り付けてください。",
-      "codexRemoteSignInHelp": "このブラウザーでサインインし、localhost の完全なコールバック URL を nanobot に貼り付けてください。",
+      "codexRemoteSignInHelp": "このブラウザーでサインインし、localhost の完全なコールバック URL を Kohaku に貼り付けてください。",
       "signInRequired": "サインインが必要です",
       "signInBeforeSaving": "プリセットを保存する前に、このプロバイダーへサインインしてください。",
       "signedIn": "サインイン済み",
@@ -926,9 +926,9 @@
       "proxyLabel": "ネットワークプロキシ",
       "proxySaveBeforeSignIn": "サインイン前にプロキシの変更を保存してください。",
       "saveProxy": "プロキシを保存",
-      "localCodeHelp": "ブラウザーでサインインを完了してください。通常は nanobot が自動で完了します。完了しない場合は、認証コードを下に貼り付けてください。",
+      "localCodeHelp": "ブラウザーでサインインを完了してください。通常は Kohaku が自動で完了します。完了しない場合は、認証コードを下に貼り付けてください。",
       "remoteCodeHelp": "「サインイン」を選択して自分のコンピューターで xAI を開いてください。サインイン後、xAI に表示された認証コードを下に貼り付けてください。",
-      "localCallbackHelp": "ブラウザーでサインインを完了してください。通常は nanobot が自動で完了します。完了しない場合は、アドレスバーから localhost の完全なコールバック URL をコピーして下に貼り付けてください。",
+      "localCallbackHelp": "ブラウザーでサインインを完了してください。通常は Kohaku が自動で完了します。完了しない場合は、アドレスバーから localhost の完全なコールバック URL をコピーして下に貼り付けてください。",
       "remoteCallbackHelp": "このブラウザーで ChatGPT を開いてサインインを完了してください。localhost ページを開けない場合は、アドレスバーの完全な URL をコピーして下に貼り付けてください。",
       "authorizationCode": "認証コード",
       "callbackUrl": "完全なコールバック URL",
@@ -971,7 +971,7 @@
       "deleteConfirmAction": "スキルを削除",
       "instructionsTitle": "スキルの説明",
       "setupRequired": "セットアップが必要",
-      "setupDescription": "nanobot を実行しているマシンに不足している依存関係をインストールしてから、再確認してください。",
+      "setupDescription": "Kohaku を実行しているマシンに不足している依存関係をインストールしてから、再確認してください。",
       "copySetupCommand": "セットアップコマンドをコピー",
       "checkAgain": "再確認",
       "marketplaceSearchFailed": "スキルマーケットを検索できませんでした。",
@@ -1030,7 +1030,7 @@
     },
     "agentHome": {
       "change": "エージェントのホームを変更",
-      "changeHint": "上記の設定ファイルで agents.defaults.workspace を変更してから Nanobot を再起動してください。既存のエージェントファイルは自動では移動されません。",
+      "changeHint": "上記の設定ファイルで agents.defaults.workspace を変更してから Kohaku を再起動してください。既存のエージェントファイルは自動では移動されません。",
       "description": "エージェントの指示、メモリ、スキル、既定の出力を保存します。",
       "summary": "指示、メモリ、スキル",
       "title": "エージェントのホーム"
@@ -1161,7 +1161,7 @@
       "imageQuickActions": {
         "icon": {
           "title": "アプリアイコンを作る",
-          "prompt": "nanobot のクリーンな 1:1 アプリアイコンを生成してください。親しみやすいロボット、シンプルなベクター風、柔らかい青と白の配色、文字なし。"
+          "prompt": "Kohaku のクリーンな 1:1 アプリアイコンを生成してください。親しみやすいロボット、シンプルなベクター風、柔らかい青と白の配色、文字なし。"
         },
         "sticker": {
           "title": "ステッカーを作る",
@@ -1247,8 +1247,6 @@
         "detailsLabel": "コンテキスト使用量を開く",
         "panelTitle": "コンテキスト使用量",
         "contextTitle": "コンテキスト",
-        "configuredModel": "設定済みモデル",
-        "configuredWindow": "設定済みコンテキスト長",
         "usageUnavailable": "使用状況を確認できません",
         "lastKnownRequest": "最後に確認されたリクエスト",
         "recentRounds": "最近のラウンド",
@@ -1298,6 +1296,7 @@
         "insecureContext": "セキュリティ上、Chrome などのブラウザーはリモートの HTTP ページからのマイクアクセスをブロックします。音声入力を使用するには、この WebUI を HTTPS で開いてください。",
         "unsupported": "このブラウザーは音声入力に対応していません。",
         "permission": "アドレスバーでマイクを許可してから再試行してください。",
+        "nativePermission": "Kohaku にマイクへのアクセスを許可してから、もう一度お試しください。アクセスがブロックされている場合は、システム設定を確認してください。",
         "notConfigured": "先に文字起こしプロバイダーを設定してください。",
         "tooLong": "録音が長すぎます。",
         "tooShort": "もう少し長く録音してください。",
@@ -1325,7 +1324,7 @@
             "description": "このチャットで実行中のエージェントのターンをキャンセルします。"
           },
           "restart": {
-            "title": "nanobot を再起動",
+            "title": "Kohaku を再起動",
             "description": "bot プロセスをその場で再起動します。"
           },
           "status": {
@@ -1405,14 +1404,14 @@
         "label": "アプリ",
         "cliGroup": "CLI アプリ",
         "mcpGroup": "MCP サービス",
-        "sessionGroup": "Nanobot の会話",
+        "sessionGroup": "Kohaku の会話",
         "cliBadge": "CLI",
         "mcpBadge": "MCP",
         "cliDescription": "@{{name}} をローカル CLI アプリとして使用",
         "mcpDescription": "@{{name}} を MCP サーバーとして使用",
         "cliTitle": "CLI アプリ: {{name}}",
         "mcpTitle": "MCP サーバー: {{name}}",
-        "sessionBadge": "Nanobot の会話",
+        "sessionBadge": "Kohaku の会話",
         "sessionDescription": "@{{name}} を過去のチャットとして参照"
       },
       "workspace": {
@@ -1512,6 +1511,7 @@
     "activityThinkingFor": "{{duration}}考えています",
     "activityThought": "思考しました",
     "activityThoughtFor": "{{duration}}考えました",
+    "activityGroup": "アクティビティ",
     "activityWorkingFor": "{{duration}}作業中",
     "activityWorked": "作業しました",
     "activityWorkedFor": "{{duration}}作業しました",
@@ -1593,7 +1593,7 @@
     },
     "sessionRecoveryRequired": {
       "title": "チャットの復旧が必要です",
-      "body": "ターンが中断されたため、Nanobot はこのチャットを一時停止しました。続行するには新しいチャットを開始してください。"
+      "body": "ターンが中断されたため、Kohaku はこのチャットを一時停止しました。続行するには新しいチャットを開始してください。"
     },
     "modelRequestFailed": {
       "billingTitle": "モデルプロバイダーの利用枠を使用できません",
@@ -1634,7 +1634,7 @@
       "permissionRefreshing": "現在のアクセスを確認中…",
       "onceNotActive": "今回のみのアクセスは有効ではありません。続行する前にフォルダーを確認してください。",
       "onceRetiringActive": "以前のアクセスでコマンドが実行中です。終了を待つか停止してから、もう一度お試しください。",
-      "onceRetiringUnknown": "以前のコマンドが終了したか Nanobot がまだ確認できません。アクセス変更は保留中です。",
+      "onceRetiringUnknown": "以前のコマンドが終了したか Kohaku がまだ確認できません。アクセス変更は保留中です。",
       "onceRetiringFinished": "以前の処理は終了しました。今回のみのアクセスはまだ終了処理中です。",
       "onceExpired": "今回のみのアクセスは終了しました。続行する前にフォルダーをもう一度確認してください。",
       "readyOnce": "このタスクへのアクセスが許可されました。{{path}} を使って続行できます。",
@@ -1644,16 +1644,16 @@
       "allowForTask": "このタスクで許可",
       "changed": "タスクまたはフォルダーの権限が変更されました。更新して現在の権限を確認してから再試行してください。",
       "chooseAnotherFolder": "別のフォルダーを選択",
-      "chooseNarrowerFolder": "このフォルダーには Nanobot の非公開ランタイムファイルが含まれています。範囲を絞ったプロジェクトフォルダーを選択してください。",
+      "chooseNarrowerFolder": "このフォルダーには Kohaku の非公開ランタイムファイルが含まれています。範囲を絞ったプロジェクトフォルダーを選択してください。",
       "commandsRequested": "コマンド実行が要求されています",
       "directoryTarget": "要求されたフォルダー：{{path}}",
       "fileTarget": "ブロックされたファイル：{{path}}。そのファイルを含むフォルダーを明示的に選択してください。",
       "fileTargetWithFolder": "ブロックされたファイル：{{path}}。許可するフォルダー：{{folder}}",
       "folderMissing": "このフォルダーは存在しないか、ディレクトリではありません。既存のフォルダーを選択して再試行してください。",
       "folderToAuthorizeLabel": "許可するフォルダー",
-      "folderUnavailable": "現在の権限では Nanobot はこのフォルダーを使用できません。別のフォルダーを選ぶか、権限を確認してください。",
+      "folderUnavailable": "現在の権限では Kohaku はこのフォルダーを使用できません。別のフォルダーを選ぶか、権限を確認してください。",
       "insufficientCapabilities": "選択した権限ではこの要求を満たせません。{{required}} 許可する前に権限を調整してください。",
-      "invalidFolder": "Nanobot はこのフォルダーを確認できませんでした。既存のフォルダーを選択して再試行してください。",
+      "invalidFolder": "Kohaku はこのフォルダーを確認できませんでした。既存のフォルダーを選択して再試行してください。",
       "purpose": "目的：{{purpose}}",
       "readyInsufficient": "{{path}} に対して選択した権限ではこの要求を満たせません。別のフォルダーを選ぶか、権限を確認してください。",
       "requestedFileLabel": "要求されたファイル",
@@ -1667,18 +1667,18 @@
       "reviewAccess": "権限を確認",
       "selectedCapabilities": "選択した権限：{{fileAccess}} · {{commands}}",
       "selectedFolderScope": "選択したフォルダーの範囲：{{path}}",
-      "unknownTarget": "Nanobot はまだ対象フォルダーを特定していません。フォルダーを明示的に選択してください。"
+      "unknownTarget": "Kohaku はまだ対象フォルダーを特定していません。フォルダーを明示的に選択してください。"
     },
     "permissionV2": {
       "actionFailed": "アクセスを更新できませんでした。再試行する前にこのチャットを更新してください。",
       "confirmTitle": "フルアクセスを有効にしますか？",
-      "confirmDescription": "選択したフォルダーの外でも、OS アカウントの権限に従って Nanobot がファイルの読み書きやコマンド実行を行います。Working in の現在のディレクトリとコンテキストは維持されます。新しいチャットはサンドボックスで開始します。",
+      "confirmDescription": "選択したフォルダーの外でも、OS アカウントの権限に従って Kohaku がファイルの読み書きやコマンド実行を行います。Working in の現在のディレクトリとコンテキストは維持されます。新しいチャットはサンドボックスで開始します。",
       "enableFull": "フルアクセスを有効にする",
       "fullEnding": "フルアクセスを終了しています",
       "fullIndicator": "フルアクセス",
       "fullReach": "OS アカウントの権限に従い、このデバイス上のファイルとコマンドにアクセスします。",
       "retiringActive": "以前のアクセスでコマンドが実行中です。終了を待つか停止してから、もう一度お試しください。",
-      "retiringUnknown": "以前のコマンドが終了したか Nanobot がまだ確認できません。アクセス変更は保留中です。",
+      "retiringUnknown": "以前のコマンドが終了したか Kohaku がまだ確認できません。アクセス変更は保留中です。",
       "retiringFinished": "以前の処理は終了しました。もう一度試してサンドボックスアクセスを確定してください。",
       "retryRestricted": "サンドボックスに戻す処理を再試行",
       "returnRestricted": "サンドボックスに戻す",
@@ -1689,7 +1689,7 @@
         "controls_unavailable": "現在のローカル制御ではフルアクセスを利用できません。",
         "session_required": "フルアクセスを有効にする前に、メッセージを送ってこのチャットを作成してください。",
         "configured_sandbox": "コマンドのサンドボックス設定があるため、フルアクセスを利用できません。",
-        "supervisor_unavailable": "Nanobot がコマンドを安全に監視できないため、フルアクセスを利用できません。",
+        "supervisor_unavailable": "Kohaku がコマンドを安全に監視できないため、フルアクセスを利用できません。",
         "permission_state_unavailable": "現在のアクセス権限を確認できません。再試行する前にこのチャットを更新してください。",
         "permission_retiring": "以前の処理が終了するまでフルアクセスを有効にできません。"
       }

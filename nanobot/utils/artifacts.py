@@ -235,31 +235,34 @@ def parse_embedded_text_payload(value: Any) -> Mapping[str, Any] | None:
     return cast(Mapping[str, Any], parsed) if isinstance(parsed, Mapping) else None
 
 
+def candidate_artifact_count(payload: Mapping[str, Any] | None) -> int | None:
+    """Read the declared size of a media candidate batch."""
+    count = payload.get("candidate_count") if payload is not None else None
+    if isinstance(count, int) and not isinstance(count, bool):
+        return count if count > 0 else None
+    candidates = payload.get("candidates") if payload is not None else None
+    if isinstance(candidates, list) and candidates:
+        return len(cast(list[object], candidates))
+    return None
+
+
 def select_candidate_artifacts(
-    artifacts: list[dict[str, Any]],
+    artifacts: Sequence[dict[str, Any] | None],
     payload: Mapping[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Keep generated candidates, not the reference/critic image blocks.
-
-    MCP image batches put critic/reference images before the generated
-    candidates. The payload reports ``candidate_count``, so the trailing items
-    are the generated candidates. If the count is unavailable, keep every item.
-    """
-    clean = [item for item in artifacts if item]
-    if not clean:
-        return []
-    candidate_count = payload.get("candidate_count") if payload is not None else None
-    if isinstance(candidate_count, bool) or not isinstance(candidate_count, int):
-        candidate_count = None
+    """Select trailing candidates, preserving the positions of failed stores."""
+    slots = [item for item in artifacts if item is None or item]
+    candidate_count = candidate_artifact_count(payload)
+    if candidate_count is None or candidate_count > len(slots):
+        return [item for item in slots if item is not None]
     raw_candidates = payload.get("candidates") if payload is not None else None
     candidates = cast(list[Any], raw_candidates) if isinstance(raw_candidates, list) else []
-    if candidate_count is None and candidates:
-        candidate_count = len(candidates)
-    if candidate_count is None or not 0 < candidate_count <= len(clean):
-        return clean
 
-    selected = [dict(item) for item in clean[-candidate_count:]]
-    for index, item in enumerate(selected):
+    selected: list[dict[str, Any]] = []
+    for index, artifact in enumerate(slots[-candidate_count:]):
+        if artifact is None:
+            continue
+        item = dict(artifact)
         candidate = candidates[index] if index < len(candidates) else None
         if isinstance(candidate, Mapping):
             candidate_map = cast(Mapping[str, Any], candidate)
@@ -269,4 +272,5 @@ def select_candidate_artifacts(
                 item["prompt"] = candidate_prompt
         else:
             item.setdefault("candidate", index + 1)
+        selected.append(item)
     return selected

@@ -577,13 +577,12 @@ export function useNanobotStream(
     // belongs only to its target chat. An uncorrelated transport close can
     // still be shown in the mounted thread, but cannot roll back any turn.
     if (!chatId || (err.chatId && err.chatId !== chatId)) return;
-    if (err.kind === "connection_closed") {
+    if (err.kind === "connection_closed" || err.kind === "session_recovery_required") {
       const currentRow = messagesRef.current.find((message) => (
         message.role === "user" && message.turnId === err.turnId
       ));
-      const alreadyUncertain = (
-        currentRow?.deliveryStatus === "unknown"
-        && currentRow.deliveryErrorKind === "connection_closed"
+      const alreadyUncertain = currentRow?.deliveryStatus === "unknown" && (
+        err.kind === "session_recovery_required" || currentRow.deliveryErrorKind === "connection_closed"
       );
       const legacyUncertain = (
         currentRow?.deliveryStatus === "failed"
@@ -599,14 +598,20 @@ export function useNanobotStream(
       setMessages((prev) => prev.map((message) => (
         message.role === "user"
         && message.turnId === err.turnId
-        && message.deliveryStatus === "sending"
+        && (message.deliveryStatus === "sending"
+          || (err.kind === "session_recovery_required" && message.deliveryStatus === "unknown"))
           ? {
               ...message,
               deliveryStatus: "unknown",
-              deliveryErrorKind: "connection_closed",
+              deliveryErrorKind: err.kind,
             }
           : message
       )));
+      if (err.kind === "session_recovery_required") {
+        const startedAt = client.getRunStartedAt(chatId);
+        setRunStartedAt(startedAt);
+        setIsStreaming(startedAt !== null || client.hasUnsettledRun(chatId));
+      }
       return;
     }
     setStreamError(err);
@@ -1047,7 +1052,8 @@ export function useNanobotStream(
         resolveAdmission(admission.turnId, true);
         setMessages((prev) => transitionTurnDelivery(prev, admission.turnId, "accepted", true));
         setStreamError((current) => (
-          current?.kind === "connection_closed" && current.turnId === admission.turnId
+          (current?.kind === "connection_closed" || current?.kind === "session_recovery_required")
+          && current.turnId === admission.turnId
             ? null
             : current
         ));
