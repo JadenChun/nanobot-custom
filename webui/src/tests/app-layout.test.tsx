@@ -34,6 +34,7 @@ const sessionUpdateHandlers = new Set<(
 ) => void>();
 const sidebarStateUpdateHandlers = new Set<(state: SidebarStatePayload) => void>();
 let mockSessions: ChatSummary[] = [];
+let mockSessionsLoading = false;
 const HERO_GREETING_PATTERN =
   /What should we work on\?|Where should we start\?|What are we building today\?|What should we tackle together\?/;
 
@@ -171,7 +172,7 @@ vi.mock("@/hooks/useSessions", async (importOriginal) => {
       const [sessions, setSessions] = React.useState(mockSessions);
       return {
         sessions,
-        loading: false,
+        loading: mockSessionsLoading,
         error: null,
         refresh: refreshSpy,
         createChat: async (scope?: WorkspaceScopePayload | null) => {
@@ -303,6 +304,7 @@ describe("App layout", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     mockSessions = [];
+    mockSessionsLoading = false;
     connectSpy.mockClear();
     updateUrlSpy.mockClear();
     refreshSpy.mockReset();
@@ -567,6 +569,26 @@ describe("App layout", () => {
       "data-active-id",
       "new-chat",
     );
+  });
+
+  it("opens a saved topic before the sidebar returns without enabling a draft send", async () => {
+    const key = "websocket:linked-topic";
+    const path = `#/chat/${encodeURIComponent(key)}`;
+    mockSessionsLoading = true;
+    window.history.replaceState(null, "", path);
+    mockFetchRoutes({
+      [`/api/sessions/${encodeURIComponent(key)}/webui-thread?limit=40&direction=latest`]: {
+        schemaVersion: 3,
+        sessionKey: key,
+        messages: [{ id: "saved", role: "assistant", content: "Saved topic reply", createdAt: 1 }],
+      },
+    });
+    render(<App />);
+
+    expect(await screen.findByText("Saved topic reply")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Message input" })).toBeDisabled();
+    expect(window.location.hash).toBe(path);
+    expect(createChatSpy).not.toHaveBeenCalled();
   });
 
   it("keeps a just-created topic route while the session list catches up", async () => {

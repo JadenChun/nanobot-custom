@@ -13,8 +13,7 @@ import {
 } from "@/lib/api";
 import { hasPendingAgentActivity } from "@/lib/activity-timeline";
 import {
-  delegatedChildRows,
-  delegatedChildSummaryRows,
+  delegatedChildReferences,
   mergeDelegatedChildRows,
   parseStopExpectation,
 } from "@/lib/delegated-child-projection";
@@ -48,11 +47,6 @@ function isAbortError(error: unknown): boolean {
 
 export type SessionHistoryContinuity = "initial" | "overlap" | "reset";
 
-type OpeningHistoryPage = {
-  messages: UIMessage[];
-  userMessageOffset: number;
-};
-
 function mergePermissionProjection(
   current: WorkspacePermissionProjection | null,
   incoming: WorkspacePermissionProjection | null,
@@ -76,28 +70,19 @@ function persistedMessagesToUi(messages: UIMessage[]): UIMessage[] {
 
 function hydrateDelegatedChildren(
   messages: UIMessage[],
-  children: DelegatedChildReference[] | undefined,
+  children: DelegatedChildReference[],
   parentKey: string,
   rootSource: StopExpectation["source"] | null,
-): { messages: UIMessage[]; refreshRequired: boolean } {
-  const embedded = [
-    ...delegatedChildRows(messages),
-    ...delegatedChildSummaryRows(messages),
-  ];
-  const transcript = messages.filter((message) => message.kind !== "delegated_child");
+): { children: DelegatedChildReference[]; refreshRequired: boolean } {
   const options = {
     expectedRootKey: parentKey,
     expectedRoot: rootSource,
     mode: "hydration" as const,
   };
-  const persisted = mergeDelegatedChildRows(transcript, embedded, options);
-  const hydrated = mergeDelegatedChildRows(
-    persisted.messages,
-    children ?? [],
-    options,
-  );
+  const persisted = mergeDelegatedChildRows([], delegatedChildReferences(messages), options);
+  const hydrated = mergeDelegatedChildRows(persisted.messages, children, options);
   return {
-    messages: hydrated.messages,
+    children: delegatedChildReferences(hydrated.messages),
     refreshRequired: persisted.refreshRequired || hydrated.refreshRequired,
   };
 }
@@ -403,7 +388,6 @@ export function useSessions(): {
 /** Lazy-load a session's on-disk messages the first time the UI displays it. */
 export function useSessionHistory(key: string | null): {
   messages: UIMessage[];
-  openingPage: OpeningHistoryPage | null;
   loading: boolean;
   loadingOlder: boolean;
   error: string | null;
@@ -429,6 +413,9 @@ export function useSessionHistory(key: string | null): {
   stopTarget: StopExpectation | null;
   /** True when authenticated history explicitly included the live Stop field, even when null. */
   stopTargetSnapshotAvailable: boolean;
+  /** Child activity is hydrated separately; it cannot delay root history or permissions. */
+  delegatedChildren: DelegatedChildReference[];
+  delegatedChildrenLoading: boolean;
   /** True when a bounded child-history page failed or conflicted. */
   delegatedChildrenError: boolean;
   workspaceAccessRequest: FolderAccessRequest | null;
@@ -457,7 +444,6 @@ export function useSessionHistory(key: string | null): {
   const [state, setState] = useState<{
     key: string | null;
     messages: UIMessage[];
-    openingPage: OpeningHistoryPage | null;
     loading: boolean;
     loadingOlder: boolean;
     error: string | null;
@@ -474,6 +460,8 @@ export function useSessionHistory(key: string | null): {
     activitySnapshotAvailable: boolean;
     stopTarget: StopExpectation | null;
     stopTargetSnapshotAvailable: boolean;
+    delegatedChildren: DelegatedChildReference[];
+    delegatedChildrenLoading: boolean;
     delegatedChildrenError: boolean;
     workspaceAccessRequest: FolderAccessRequest | null;
     workspaceAccessRequestLoading: boolean;
@@ -484,7 +472,6 @@ export function useSessionHistory(key: string | null): {
   }>({
     key: null,
     messages: [],
-    openingPage: null,
     loading: false,
     loadingOlder: false,
     error: null,
@@ -501,6 +488,8 @@ export function useSessionHistory(key: string | null): {
     activitySnapshotAvailable: false,
     stopTarget: null,
     stopTargetSnapshotAvailable: false,
+    delegatedChildren: [],
+    delegatedChildrenLoading: false,
     delegatedChildrenError: false,
     workspaceAccessRequest: null,
     workspaceAccessRequestLoading: false,
@@ -524,7 +513,6 @@ export function useSessionHistory(key: string | null): {
       setState({
         key: null,
         messages: [],
-        openingPage: null,
         loading: false,
         loadingOlder: false,
         error: null,
@@ -541,6 +529,8 @@ export function useSessionHistory(key: string | null): {
         activitySnapshotAvailable: false,
         stopTarget: null,
         stopTargetSnapshotAvailable: false,
+        delegatedChildren: [],
+        delegatedChildrenLoading: false,
         delegatedChildrenError: false,
         workspaceAccessRequest: null,
         workspaceAccessRequestLoading: false,
@@ -563,11 +553,11 @@ export function useSessionHistory(key: string | null): {
     setState((prev) => prev.key === key
       ? {
           ...prev,
-          openingPage: null,
           loading: true,
           loadingOlder: false,
           error: null,
           activitySnapshotAvailable: false,
+          delegatedChildrenLoading: true,
           workspaceAccessRequestLoading: true,
           workspaceAccessRequestError: false,
           workspacePermissionsLoading: true,
@@ -576,7 +566,6 @@ export function useSessionHistory(key: string | null): {
       : {
           key,
           messages: [],
-          openingPage: null,
           loading: true,
           loadingOlder: false,
           error: null,
@@ -593,6 +582,8 @@ export function useSessionHistory(key: string | null): {
           activitySnapshotAvailable: false,
           stopTarget: null,
           stopTargetSnapshotAvailable: false,
+          delegatedChildren: [],
+          delegatedChildrenLoading: true,
           delegatedChildrenError: false,
           workspaceAccessRequest: null,
           workspaceAccessRequestLoading: true,
@@ -610,40 +601,14 @@ export function useSessionHistory(key: string | null): {
         });
         if (cancelled) return;
         const persisted = persistedMessagesToUi(body?.messages ?? []);
+        const ui = persisted.filter((message) => message.kind !== "delegated_child");
         const userMessageOffset = Math.max(0, body?.page?.user_message_offset ?? 0);
-        if (persisted.length > 0) {
-          // Show the transcript while the delegated activity lookup runs.
-          // Only the verified page below can update the live chat state.
-          setState((prev) => prev.key === key && prev.version === 0
-            ? { ...prev, openingPage: { messages: persisted, userMessageOffset } }
-            : prev);
-        }
-        const childPages = await fetchAllDelegatedChildren(getToken, key, controller.signal)
-          .catch(() => ({
-            children: [],
-            stopTarget: null,
-            stopTargetSnapshotAvailable: false,
-            incomplete: true,
-          }));
-        if (cancelled) return;
         historyVersionRef.current += 1;
         const responseVersion = historyVersionRef.current;
         const completedTurnIds = completedTurnIdsFromThread(body);
         const permissionProjection = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
         const threadStopTargetSnapshotAvailable = body !== null && "stop_target" in body;
-        const stopTargetSnapshotAvailable = threadStopTargetSnapshotAvailable
-          || childPages.stopTargetSnapshotAvailable;
-        const stopTarget = threadStopTargetSnapshotAvailable
-          ? parseStopExpectation(body?.stop_target)
-          : childPages.stopTarget;
-        const hydrated = hydrateDelegatedChildren(
-          persisted,
-          childPages.children,
-          key,
-          stopTarget?.source ?? null,
-        );
-        const ui = hydrated.messages;
-        const delegatedChildrenError = childPages.incomplete || hydrated.refreshRequired;
+        const threadStopTarget = parseStopExpectation(body?.stop_target);
         const hasPending = hasPendingToolCallsFromThread(body, ui);
         const forkBoundary = typeof body?.fork_boundary_message_count === "number"
           ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))
@@ -663,7 +628,6 @@ export function useSessionHistory(key: string | null): {
           return {
             key,
             messages: merged.messages,
-            openingPage: null,
             loading: false,
             loadingOlder: false,
             error: null,
@@ -697,9 +661,11 @@ export function useSessionHistory(key: string | null): {
               && (body.root_key === undefined || body.root_key === key)
               && (body.active_turn_id === null || typeof body.active_turn_id === "string")
               && typeof body.has_pending_tool_calls === "boolean",
-            stopTarget,
-            stopTargetSnapshotAvailable,
-            delegatedChildrenError,
+            stopTarget: threadStopTarget,
+            stopTargetSnapshotAvailable: threadStopTargetSnapshotAvailable,
+            delegatedChildren: [],
+            delegatedChildrenLoading: body !== null,
+            delegatedChildrenError: false,
             workspaceAccessRequest: accessRequestReadVersion === accessRequestReadVersionRef.current
               ? body?.workspace_access_request ?? null
               : prev.workspaceAccessRequest,
@@ -720,6 +686,30 @@ export function useSessionHistory(key: string | null): {
               : prev.workspacePermissionsError,
           };
         });
+        if (body === null) return;
+
+        const childPages = await fetchAllDelegatedChildren(getToken, key, controller.signal)
+          .catch(() => ({
+            children: [],
+            stopTarget: null,
+            stopTargetSnapshotAvailable: false,
+            incomplete: true,
+          }));
+        if (cancelled) return;
+        // Explicit null is a modern idle snapshot, not a request to fall back.
+        const stopTarget = threadStopTargetSnapshotAvailable ? threadStopTarget : childPages.stopTarget;
+        const hydrated = hydrateDelegatedChildren(persisted, childPages.children, key, stopTarget?.source ?? null);
+        setState((prev) => prev.key === key && prev.version === responseVersion
+          ? {
+              ...prev,
+              stopTarget,
+              stopTargetSnapshotAvailable: threadStopTargetSnapshotAvailable
+                || childPages.stopTargetSnapshotAvailable,
+              delegatedChildren: hydrated.children,
+              delegatedChildrenLoading: false,
+              delegatedChildrenError: childPages.incomplete || hydrated.refreshRequired,
+            }
+          : prev);
       } catch (e) {
         if (cancelled || isAbortError(e)) return;
         controller.abort();
@@ -733,7 +723,6 @@ export function useSessionHistory(key: string | null): {
             return {
               key,
               messages: [],
-              openingPage: null,
               loading: false,
               loadingOlder: false,
               error: null,
@@ -750,6 +739,8 @@ export function useSessionHistory(key: string | null): {
               activitySnapshotAvailable: false,
               stopTarget: null,
               stopTargetSnapshotAvailable: false,
+              delegatedChildren: [],
+              delegatedChildrenLoading: false,
               delegatedChildrenError: false,
               workspaceAccessRequest: null,
               workspaceAccessRequestLoading: false,
@@ -763,7 +754,6 @@ export function useSessionHistory(key: string | null): {
           setState((prev) => ({
             key,
             messages: [],
-            openingPage: null,
             loading: false,
             loadingOlder: false,
             error: (e as Error).message,
@@ -782,6 +772,8 @@ export function useSessionHistory(key: string | null): {
             stopTargetSnapshotAvailable: prev.key === key
               ? prev.stopTargetSnapshotAvailable
               : false,
+            delegatedChildren: [],
+            delegatedChildrenLoading: false,
             delegatedChildrenError: prev.key === key
               ? prev.delegatedChildrenError
               : false,
@@ -990,7 +982,6 @@ export function useSessionHistory(key: string | null): {
   if (!key) {
     return {
       messages: EMPTY_MESSAGES,
-      openingPage: null,
       loading: false,
       loadingOlder: false,
       error: null,
@@ -1008,6 +999,8 @@ export function useSessionHistory(key: string | null): {
       activitySnapshotAvailable: false,
       stopTarget: null,
       stopTargetSnapshotAvailable: false,
+      delegatedChildren: [],
+      delegatedChildrenLoading: false,
       delegatedChildrenError: false,
       workspaceAccessRequest: null,
       workspaceAccessRequestLoading: false,
@@ -1029,7 +1022,6 @@ export function useSessionHistory(key: string | null): {
   if (state.key !== key) {
     return {
       messages: EMPTY_MESSAGES,
-      openingPage: null,
       loading: true,
       loadingOlder: false,
       error: null,
@@ -1047,6 +1039,8 @@ export function useSessionHistory(key: string | null): {
       activitySnapshotAvailable: false,
       stopTarget: null,
       stopTargetSnapshotAvailable: false,
+      delegatedChildren: [],
+      delegatedChildrenLoading: true,
       delegatedChildrenError: false,
       workspaceAccessRequest: null,
       workspaceAccessRequestLoading: true,
@@ -1065,7 +1059,6 @@ export function useSessionHistory(key: string | null): {
 
   return {
     messages: state.messages,
-    openingPage: state.openingPage,
     loading: state.loading,
     loadingOlder: state.loadingOlder,
     error: state.error,
@@ -1083,6 +1076,8 @@ export function useSessionHistory(key: string | null): {
     activitySnapshotAvailable: state.activitySnapshotAvailable,
     stopTarget: state.stopTarget,
     stopTargetSnapshotAvailable: state.stopTargetSnapshotAvailable,
+    delegatedChildren: state.delegatedChildren,
+    delegatedChildrenLoading: state.delegatedChildrenLoading,
     delegatedChildrenError: state.delegatedChildrenError,
     workspaceAccessRequest: state.workspaceAccessRequest,
     workspaceAccessRequestLoading: state.workspaceAccessRequestLoading,

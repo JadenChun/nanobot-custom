@@ -598,27 +598,18 @@ describe("useSessions", () => {
       wrapper: wrap(fakeClient()),
     });
 
-    await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.messages).toHaveLength(2);
-    expect(result.current.messages.map((message) => message.id)).toContain(
-      "delegated-child-child-a",
-    );
-    expect(result.current.messages.find((message) => message.id === "delegated-child-child-a"))
+    await waitFor(() => expect(result.current.delegatedChildrenLoading).toBe(false));
+    expect(result.current.delegatedChildren).toHaveLength(2);
+    expect(result.current.delegatedChildren.find((child) => child.child_id === "child-a"))
       .toMatchObject({
-        kind: "delegated_child",
-        delegatedChild: {
-          child_id: "child-a",
-          state: "waiting_approval",
-          state_sequence: 2,
-          turn_id: null,
-          pending_approval_id: "approval-1",
-          can_stop: true,
-        },
+        state: "waiting_approval",
+        state_sequence: 2,
+        turn_id: null,
+        pending_approval_id: "approval-1",
+        can_stop: true,
       });
-    expect(result.current.messages.find((message) => message.id === "delegated-child-child-b"))
-      .toMatchObject({
-        delegatedChild: { child_id: "child-b", result_summary: "Notes were reviewed" },
-      });
+    expect(result.current.delegatedChildren.find((child) => child.child_id === "child-b"))
+      .toMatchObject({ result_summary: "Notes were reviewed" });
     expect(result.current.delegatedChildrenError).toBe(false);
     expect(api.fetchDelegatedChildren).toHaveBeenNthCalledWith(
       2,
@@ -1430,6 +1421,48 @@ describe("useSessions", () => {
       .toBe(folderAccessThreadFixture.workspace_access_request?.access_request_id);
     expect(result.current.workspaceAccessRequestLoading).toBe(false);
     expect(result.current.workspaceAccessRequestError).toBe(true);
+  });
+
+  it("commits the root page and permissions before delegated activity settles", async () => {
+    const key = "websocket:chat-title";
+    const permissions = {
+      version: 1 as const,
+      runtime_id: "a".repeat(32),
+      revision: 4,
+      mode: "restricted" as const,
+      state: "active" as const,
+      can_enable_full: true,
+      full_access_unavailable_reason: null,
+      task_access: null,
+      retirement: null,
+    };
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      ...folderAccessThreadFixture,
+      workspace_permissions: permissions,
+      stop_target: null,
+    });
+    let finishChildren!: (value: Awaited<ReturnType<typeof api.fetchDelegatedChildren>>) => void;
+    vi.mocked(api.fetchDelegatedChildren).mockReturnValueOnce(new Promise((resolve) => {
+      finishChildren = resolve;
+    }));
+
+    const { result } = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient()) });
+    await waitFor(() => expect(api.fetchDelegatedChildren).toHaveBeenCalledTimes(1));
+    expect(result.current.messages).toEqual(folderAccessThreadFixture.messages);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.workspaceAccessRequest).toEqual(folderAccessThreadFixture.workspace_access_request);
+    expect(result.current.workspaceAccessRequestLoading).toBe(false);
+    expect(result.current.workspacePermissions).toEqual(permissions);
+    expect(result.current.workspacePermissionsLoading).toBe(false);
+    expect(result.current.delegatedChildrenLoading).toBe(true);
+    expect(result.current.stopTargetSnapshotAvailable).toBe(true);
+    const version = result.current.version;
+
+    act(() => result.current.updateWorkspacePermissions({ ...permissions, revision: 5 }));
+    await act(async () => finishChildren(null));
+    expect(result.current.delegatedChildrenLoading).toBe(false);
+    expect(result.current.workspacePermissions).toEqual({ ...permissions, revision: 5 });
+    expect(result.current.version).toBe(version);
   });
 
   it("does not revive an older request revision or clear its stale loading guard", async () => {

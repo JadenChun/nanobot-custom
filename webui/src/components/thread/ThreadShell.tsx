@@ -70,6 +70,7 @@ import { parseRiskyApprovalPrompt } from "@/lib/risky-approval";
 import {
   delegatedChildReferences,
   delegatedChildRows,
+  mergeDelegatedChildRows,
   parseDelegatedChildSummaryPayload,
   parseDelegatedChildPayload,
   sameSourceOrigin,
@@ -763,6 +764,7 @@ type FilePreviewAvailabilityCacheEntry = {
 
 interface ThreadShellProps {
   session: ChatSummary | null;
+  routeSessionKey?: string | null;
   openingConversation?: boolean;
   sessions?: ChatSummary[];
   title: string;
@@ -1076,6 +1078,7 @@ function useInstalledSettingItems<Payload, Item>({
 
 export function ThreadShell({
   session,
+  routeSessionKey = null,
   openingConversation = false,
   sessions = [],
   title,
@@ -1116,7 +1119,9 @@ export function ThreadShell({
 }: ThreadShellProps) {
   const { t } = useTranslation();
   const chatId = session?.chatId ?? null;
-  const historyKey = temporary ? null : session?.key ?? null;
+  // A route can select a read before the sidebar supplies the chat summary.
+  // Only the verified/optimistically created session can own a live composer.
+  const historyKey = temporary ? null : session?.key ?? routeSessionKey;
   const permissionOwnerChatIdRef = useRef(chatId);
   permissionOwnerChatIdRef.current = chatId;
   const currentScopeFocus = workspaceFocusIdentity(workspaceScope);
@@ -1136,7 +1141,6 @@ export function ThreadShell({
   );
   const {
     messages: historical,
-    openingPage,
     loading,
     error: historyError,
     loadingOlder,
@@ -1151,6 +1155,8 @@ export function ThreadShell({
     activitySnapshotAvailable: historyActivitySnapshotAvailable,
     stopTarget: historyStopTarget,
     stopTargetSnapshotAvailable: historyStopTargetSnapshotAvailable,
+    delegatedChildren,
+    delegatedChildrenLoading,
     delegatedChildrenError,
     workspaceAccessRequest,
     workspaceAccessRequestLoading,
@@ -1653,7 +1659,7 @@ export function ThreadShell({
   const inspectorVisible = inspectorDocked || composerActive;
   const inspectorModal = inspectorVisible && inspectorTab !== null && !inspectorDocked;
   const childHistoryModal = inspectorModal && inspectorTab === "subagents";
-  const delegatedStatusAvailable = connectionOpen && !delegatedChildrenError;
+  const delegatedStatusAvailable = connectionOpen && !delegatedChildrenLoading && !delegatedChildrenError;
   const inspectedCurrentChild = activeChildHistoryInspection
     ? currentDelegatedChildReferences.find((child) => (
         child.child_id === activeChildHistoryInspection.child.child_id
@@ -1665,6 +1671,7 @@ export function ThreadShell({
     ?? null;
   const childHistoryProvenanceComplete = Boolean(activeChildHistoryInspection
     && inspectedCurrentChild
+    && !delegatedChildrenLoading
     && !delegatedChildrenError
     && (activeChildHistoryInspection.child.history_kind === "summary"
       ? inspectedCurrentChild.history_kind === "summary"
@@ -1728,7 +1735,7 @@ export function ThreadShell({
           historyKey,
           expectedRoot,
         );
-    if (!authorized || !child || !candidate || delegatedChildrenError) {
+    if (!authorized || !child || !candidate || delegatedChildrenLoading || delegatedChildrenError) {
       setChildHistoryError("This delegated history cannot be verified from complete current parent records. Refresh the parent chat and try again.");
       return;
     }
@@ -1745,6 +1752,7 @@ export function ThreadShell({
     currentDelegatedChildren,
     currentDelegatedChildReferences,
     delegatedChildrenError,
+    delegatedChildrenLoading,
     historyKey,
     historyStopTarget?.source,
     inspectorDocked,
@@ -1820,7 +1828,7 @@ export function ThreadShell({
       !chatId
       || !historyKey
       || !messagesReady
-      || !connectionOpen
+      || !delegatedStatusAvailable
       || prompt.status !== "ready"
       || !prompt.approvalId
       || !current
@@ -1860,7 +1868,7 @@ export function ThreadShell({
   }, [
     chatId,
     client,
-    connectionOpen,
+    delegatedStatusAvailable,
     currentDelegatedChildren,
     historyKey,
     historyStopTarget?.source,
@@ -1942,20 +1950,15 @@ export function ThreadShell({
   const historyIsPending = historyKey !== null && (
     loading || !messagesReady || historyVersion !== appliedHistoryVersion
   );
-  const showingOpeningPage = historyIsPending && messagesReady && displayMessages.length === 0;
+  const showingOpeningPage = historyKey !== null && (
+    !chatId || (historyIsPending && messagesReady && displayMessages.length === 0)
+  );
   const openingMessages = useMemo(() => {
     if (!showingOpeningPage) return [];
-    const pendingMessages = loading ? openingPage?.messages : historical;
-    return projectWebuiThreadMessages(
-      (pendingMessages ?? []).filter((message) => message.kind !== "delegated_child"),
-    );
-  }, [historical, loading, openingPage, showingOpeningPage]);
-  const viewportMessages = messagesReady
-    ? (showingOpeningPage ? openingMessages : displayMessages)
-    : openingMessages;
-  const conversationLoading = openingConversation || (
-    historyIsPending && viewportMessages.length === 0
-  );
+    return projectWebuiThreadMessages(historical);
+  }, [historical, showingOpeningPage]);
+  const viewportMessages = showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
+  const conversationLoading = (openingConversation || historyIsPending) && viewportMessages.length === 0;
   const showHeroComposer = viewportMessages.length === 0 && !conversationLoading;
   const composerVariant = showHeroComposer ? emptyComposerVariant : "thread";
   const wasShowingHeroComposerRef = useRef(showHeroComposer);
@@ -2269,32 +2272,35 @@ export function ThreadShell({
       });
       return;
     }
-    const mergedHistory = preserveUnknownDeliveryStatus(historySource, normalizedHistory);
-    const adoptsNormalizedHistory = cached && cached.length > 0
-      ? (
-          normalizedHistory.length > cached.length
-          && !isStaleThreadSnapshot(messages, normalizedHistory)
-        )
-      : !isStaleThreadSnapshot(messages, normalizedHistory);
-    if (adoptsNormalizedHistory) {
+    // History no longer includes delegated activity. Compare like with like,
+    // and keep the current child rows for the independent hydration to update.
+    const transcriptRows = (rows: UIMessage[]) => rows.filter((row) => row.kind !== "delegated_child");
+    const cachedTranscriptLength = cached ? transcriptRows(cached).length : 0;
+    const canAdoptHistory = (current: UIMessage[]) => (
+      (cachedTranscriptLength === 0 || normalizedHistory.length > cachedTranscriptLength)
+      && !isStaleThreadSnapshot(transcriptRows(current), normalizedHistory)
+    );
+    const mergeHistory = (current: UIMessage[]) => mergeDelegatedChildRows(
+      preserveUnknownDeliveryStatus(current, normalizedHistory),
+      delegatedChildReferences(current),
+      {
+        expectedRootKey: historyKey,
+        expectedRoot: historyStopTarget?.source ?? null,
+        mode: "hydration",
+      },
+    ).messages;
+    const mergedHistory = mergeHistory(historySource);
+    if (canAdoptHistory(messages)) {
       pendingHistoryLineageCommitRef.current.set(chatId, {
         lineage: historyLineage,
         messages: mergedHistory,
       });
     }
     setMessages((current) => {
-      if (cached && cached.length > 0) {
-        if (
-          normalizedHistory.length > cached.length
-          && !isStaleThreadSnapshot(current, normalizedHistory)
-        ) {
-          return mergedHistory;
-        }
-        return isStaleThreadSnapshot(current, cached) ? keepLiveMessages(current) : cached;
+      if (canAdoptHistory(current)) {
+        return messagesReady && current !== historySource ? mergeHistory(current) : mergedHistory;
       }
-      return isStaleThreadSnapshot(current, normalizedHistory)
-        ? keepLiveMessages(current)
-        : mergedHistory;
+      return cached && !isStaleThreadSnapshot(current, cached) ? cached : keepLiveMessages(current);
     });
   }, [
     loading,
@@ -2311,6 +2317,19 @@ export function ThreadShell({
     hasPendingToolCalls,
     historyKey,
   ]);
+
+  useEffect(() => {
+    if (!chatId || !historyKey || !messagesReady || delegatedChildren.length === 0) return;
+    // Late child pages may enrich the current thread, but must never replay its
+    // transcript or overwrite a newer live child version.
+    setMessages((current) => mergeDelegatedChildRows(current, delegatedChildren, {
+      expectedRootKey: historyKey,
+      expectedRoot: stopTarget?.source ?? historyStopTarget?.source ?? null,
+      mode: "hydration",
+      allowLifetimeReplacement: false,
+    }).messages);
+  }, [chatId, delegatedChildren, historyKey, historyStopTarget?.source, messagesReady, setMessages,
+    stopTarget?.source]);
 
   useLayoutEffect(() => {
     if (!historyKey || !chatId) return;
@@ -2679,9 +2698,9 @@ export function ThreadShell({
   }, [client, refreshCanonicalHistory]);
 
   useEffect(() => {
-    if (chatId) return;
+    if (chatId || historyKey) return;
     setMessages(projectWebuiThreadMessages(historical));
-  }, [chatId, historical, setMessages]);
+  }, [chatId, historical, historyKey, setMessages]);
 
   useLayoutEffect(() => {
     if (chatId) {
@@ -3101,7 +3120,7 @@ export function ThreadShell({
                 prompt.status !== "ready"
                 || pendingChildApprovalIds.has(prompt.approvalId ?? "")
                 || !messagesReady
-                || !connectionOpen
+                || !delegatedStatusAvailable
                 || !delegatedChildHasValidAncestry(
                   prompt.child,
                   currentDelegatedChildren,
@@ -3153,7 +3172,7 @@ export function ThreadShell({
           isStreaming={turnActive}
           automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
           stopAvailable={hasOwnedWork}
-          stopDisabled={!stopCanBeSent}
+          stopDisabled={!stopCanBeSent || (delegatedChildrenLoading && !stopTarget)}
           stopPending={stopPending}
           placeholder={
             composerVariant === "hero"
@@ -3269,7 +3288,7 @@ export function ThreadShell({
           onTranscribeAudio={transcribeAudio}
           goalState={currentGoalState}
           workspaceScope={workspaceScope}
-          workspaceControlsHidden={temporary}
+          workspaceControlsHidden={temporary || openingConversation}
           workspaceDefaultScope={workspaceDefaultScope}
           workspaceControls={workspaceControls}
           workspaces={workspaces}
@@ -3434,9 +3453,7 @@ export function ThreadShell({
             forkBoundaryMessageCount={forkBoundaryMessageCount}
             hasMoreBefore={hasMoreBefore}
             loadingOlder={loadingOlder}
-            userMessageOffset={showingOpeningPage && loading
-              ? openingPage?.userMessageOffset ?? 0
-              : userMessageOffset}
+            userMessageOffset={userMessageOffset}
             onLoadOlder={loadOlder}
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
             onForkFromMessage={onForkChat && !showingOpeningPage ? handleForkFromMessage : undefined}

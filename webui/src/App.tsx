@@ -1001,6 +1001,7 @@ function Shell({
   const {
     sessions,
     loading,
+    error: sessionsError,
     refresh,
     createChat,
     forkChat,
@@ -1327,6 +1328,8 @@ function Shell({
     // WebKit can commit the route before useSessions' optimistic insert.
     // Keep that just-created destination valid until the session list catches up.
     if (pendingCreatedKey === activeKey) return;
+    // A list request that failed cannot prove that a saved chat was deleted.
+    if (sessionsError) return;
     navigate(
       currentRoute.view === "chat"
         ? defaultShellRoute()
@@ -1336,7 +1339,7 @@ function Shell({
           },
       { replace: true },
     );
-  }, [activeKey, loading, navigate, sessions, temporarySessions]);
+  }, [activeKey, loading, navigate, sessions, sessionsError, temporarySessions]);
 
   useEffect(() => {
     return client.onSessionUpdate((chatId, scope, workspaceScope) => {
@@ -2374,6 +2377,10 @@ function Shell({
             >
               <ThreadShell
                 session={activeSession}
+                routeSessionKey={
+                  activeKey && /^websocket:[A-Za-z0-9_:-]{1,64}$/.test(activeKey)
+                    && !readShellRoute().temporary ? activeKey : null
+                }
                 openingConversation={activeKey !== null && activeSession === null}
                 sessions={sessions}
                 title={headerTitle}

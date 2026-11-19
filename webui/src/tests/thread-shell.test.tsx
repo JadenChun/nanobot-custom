@@ -7014,6 +7014,62 @@ describe("ThreadShell", () => {
     expect(screen.queryByText(replyText("from chat a"))).not.toBeInTheDocument();
   });
 
+  it("shows newly persisted replies when returning to a chat with loaded child rows", async () => {
+    const client = makeClient();
+    const firstKey = "websocket:with-children";
+    let added = false;
+    const children = ["a", "b"].map((id) => ({
+      history_kind: "summary",
+      parent_session_key: firstKey,
+      root_key: firstKey,
+      child_session_key: `delegated:probe-${id}`,
+      child_id: `probe-${id}`,
+      profile: "worker",
+      state: "completed",
+      outcome: "completed",
+      task_label: `Finished child ${id}`,
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      runtime_generation: null, parent_run_id: null, child_run_id: null,
+      parent_store_identity: null, parent_incarnation: null, parent_generation: null,
+      root_store_identity: null, root_incarnation: null, root_generation: null,
+      child_store_identity: null, child_incarnation: null, child_generation: null,
+      run_sequence: null, state_sequence: null, control_epoch: null, can_stop: false,
+    }));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(encodeURIComponent(firstKey) + "/delegated-children")) {
+        if (added) return { ok: false, status: 503, json: async () => ({}) };
+        return httpJson({ schemaVersion: 3, parentSessionKey: firstKey, children });
+      }
+      if (url.includes(encodeURIComponent(firstKey) + "/webui-thread")) {
+        const replies = added ? ["First saved reply", "Later saved reply"] : ["First saved reply"];
+        return httpJson(transcriptFromSimpleMessages(
+          replies.map((content) => ({ role: "assistant", content })),
+        ));
+      }
+      if (url.includes("websocket%3Aaway/webui-thread")) {
+        return httpJson(transcriptFromSimpleMessages([{ role: "assistant", content: "Other chat" }]));
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+    const open = (id: string) => wrap(client, (
+      <ThreadShell session={session(id)} title={id} onToggleSidebar={() => {}} />
+    ));
+    const { rerender } = render(open("with-children"));
+    expect(await screen.findByLabelText("Finished child b")).toBeVisible();
+
+    rerender(open("away"));
+    expect(await screen.findByText(replyText("Other chat"))).toBeVisible();
+
+    added = true;
+    rerender(open("with-children"));
+    expect(await screen.findByText(replyText("Later saved reply"))).toBeVisible();
+    expect(screen.getByLabelText("Finished child b")).toBeVisible();
+    expect(await screen.findByText(/Delegated activity could not be fully verified/)).toBeVisible();
+  });
+
   it("shows the transcript while delegated activity loads and ignores the old chat's reply", async () => {
     const client = makeClient();
     const childRequests = new Map<string, (response: ReturnType<typeof httpJson>) => void>();
