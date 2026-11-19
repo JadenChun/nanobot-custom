@@ -1051,7 +1051,8 @@ class SessionModeResolver:
             raise SessionInterruptionRecoveryRefusedError(_MODE_ERROR)
         return archive
 
-    def _source_inventory(self) -> tuple[_SourceInventory, ...]:
+    def _source_inventory(self, *, only_key: str | None = None) -> tuple[_SourceInventory, ...]:
+        """Validate namespace layout, reading only the requested source pair for a point lookup."""
         if not self.backend.session_files_locked:
             raise _fail()
         names = self.storage.list_namespace()
@@ -1084,6 +1085,8 @@ class SessionModeResolver:
             key = self.backend.decode_storage_key(storage_key)
             if key is None or self.backend.storage_key(key) != storage_key:
                 raise _fail()
+            if only_key is not None and key != only_key:
+                continue
             source: bytes | None
             try:
                 source = self.storage.read(
@@ -1139,7 +1142,7 @@ class SessionModeResolver:
         return tuple(item.source_name for item in self._source_inventory())
 
     def _inventory_for_key(self, key: str) -> _SourceInventory:
-        matches = [item for item in self._source_inventory() if item.key == key]
+        matches = self._source_inventory(only_key=key)
         if len(matches) != 1:
             raise _fail()
         return matches[0]

@@ -21,6 +21,8 @@ from nanobot.security.workspace_access import default_workspace_scope
 from nanobot.session.execution_owner import acquire_execution
 from nanobot.session.manager import Session, SessionManager, SessionWriteConflict
 from nanobot.session.pending_followups import PendingFollowupRecord
+from nanobot.session.runtime_authority import DurableSessionAuthority
+from nanobot.session.source_store import SourceSessionStore
 from nanobot.session.webui_turns import (
     clear_websocket_turn_if_current,
     register_queued_websocket_turn_if_idle,
@@ -31,8 +33,10 @@ from nanobot.session.workspace_access_recovery import (
 )
 from nanobot.webui import ws_http
 from nanobot.webui.inbound_commands import WebUICommandRouter
+from nanobot.webui.transcript import write_session_messages_as_transcript
 from nanobot.webui.workspaces import WebUIWorkspaceController, WorkspacePermissionActionError
 from nanobot.webui.ws_http import WEBSOCKET_MUTATION_ROUTES, GatewayHTTPHandler
+from tests.webui.test_child_thread_route import _make_channel
 
 
 @pytest.mark.parametrize(("action", "path"), [
@@ -1386,6 +1390,66 @@ async def test_local_thread_request_permissions_and_scope_share_live_once_author
     assert body["workspace_permissions"]["task_access"]["folders"] == [
         {"path": str(project.resolve()), "file_access": "read_only", "commands": False},
     ]
+
+
+async def test_first_managed_chat_open_does_not_read_unrelated_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = await DurableSessionAuthority(workspace, sessions_root=tmp_path / "sessions").acquire()
+    try:
+        manager = lease.manager
+        key = "websocket:first-open"
+        assert manager.upsert_session_metadata(key, {
+            "webui": True,
+            "workspace_scope": default_workspace_scope(workspace, True).metadata(),
+        }, create_if_absent=True)
+        write_session_messages_as_transcript(key, [
+            {"role": "user", "content": "saved question"},
+            {"role": "assistant", "content": "saved reply"},
+        ])
+        # A new journal entry also invalidates the mode-resolution cache.
+        manager.admit_persistent_write("cli:unrelated")
+
+        resolver = manager._mode_resolver
+        assert resolver is not None
+        read = resolver.storage.read
+        load_snapshot = SourceSessionStore.load_source_snapshot
+        source_reads: set[str] = set()
+        snapshots: list[str] = []
+
+        def observe_source_read(name: str, **kwargs: Any) -> bytes:
+            if name.endswith(".jsonl") and "/" not in name:
+                source_reads.add(name)
+            return read(name, **kwargs)
+
+        def observe_snapshot(store: SourceSessionStore, session_key: str, **kwargs: Any):
+            snapshots.append(session_key)
+            return load_snapshot(store, session_key, **kwargs)
+
+        monkeypatch.setattr(resolver.storage, "read", observe_source_read)
+        monkeypatch.setattr(SourceSessionStore, "load_source_snapshot", observe_snapshot)
+        gateway = _make_channel(tmp_path, manager).gateway
+        token = gateway.tokens.issue_api_token(300)
+        headers = Headers([("Host", "127.0.0.1:8765"), ("Authorization", f"Bearer {token}")])
+        connection = SimpleNamespace(
+            remote_address=("127.0.0.1", 1234), request=SimpleNamespace(headers=headers),
+        )
+        path = "/api/sessions/websocket%3Afirst-open/webui-thread?limit=40&direction=latest"
+
+        response = await gateway.http.dispatch(connection, Request(path, headers))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert [row["content"] for row in body["messages"]] == ["saved question", "saved reply"]
+        assert body["workspace_permissions"]["mode"] == "restricted"
+        assert body["workspace_access_request"] is None
+        assert source_reads == {f"{manager.storage_key(key)}.jsonl"}
+        assert snapshots == [key]
+    finally:
+        assert lease.close is not None
+        await lease.close()
 
 
 def test_restricted_mode_is_idempotent_while_once_is_live(tmp_path: Path) -> None:
