@@ -2749,6 +2749,7 @@ class SessionModeResolver:
         operation_id = secrets.token_hex(16)
         registry_id = cast(str, registry["registry_id"])
         session = Session(key)
+        self.backend.assign_initial_webui_handle(session)
         output, revision = self._render_canonical(session)
         staging_name = f"staging/{operation_id}/canonical-source.jsonl"
         record = self._record(key, registry_id=registry_id, operation_id=operation_id,
@@ -3441,6 +3442,7 @@ class SessionModeResolver:
             metadata=metadata,
             last_consolidated=last_consolidated,
         )
+        self.backend.assign_initial_webui_handle(target_session)
         if header is not None:
             target_header = deepcopy(header)
             target_header.update({

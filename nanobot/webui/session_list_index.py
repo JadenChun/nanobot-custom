@@ -36,6 +36,11 @@ from nanobot.session.model_selection import (
     reasoning_effort_from_metadata,
 )
 from nanobot.session.recovery import recovery_state_from_metadata
+from nanobot.session.session_handles import (
+    SESSION_HANDLE_METADATA_KEY,
+    session_handle_for_name,
+    stored_session_handle_name,
+)
 from nanobot.webui.session_identity import (
     WEBUI_SESSION_STORAGE_PREFIX,
     is_webui_session_key,
@@ -43,7 +48,7 @@ from nanobot.webui.session_identity import (
     webui_session_key,
 )
 
-_INDEX_VERSION = 9
+_INDEX_VERSION = 10
 _MODEL_PRESET_FIELD = "model_preset"
 _ROW_SOURCE_FIELD = "_source"
 _SESSION_SOURCE = "session"
@@ -274,8 +279,9 @@ def _public_row(sessions_dir: Path, webui_dir: Path, row: dict[str, Any]) -> dic
         path = webui_dir / f"{file}.jsonl"
     else:
         path = sessions_dir / file
-    return {
-        "key": row.get("key"),
+    key = row.get("key")
+    public = {
+        "key": key,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "title": row.get("title", ""),
@@ -287,6 +293,10 @@ def _public_row(sessions_dir: Path, webui_dir: Path, row: dict[str, Any]) -> dic
         _WORKSPACE_SCOPE_VALUE_FIELD: row.get(_WORKSPACE_SCOPE_VALUE_FIELD),
         "path": str(path),
     }
+    name = stored_session_handle_name(row)
+    if isinstance(key, str) and is_webui_session_key(key) and name is not None:
+        public["handle"] = session_handle_for_name(key, name).public_payload()
+    return public
 
 
 def indexed_workspace_scope(row: dict[str, Any]) -> tuple[bool, object]:
@@ -526,6 +536,7 @@ def _indexed_row_for_session(session: Session, path: Path, webui_dir: Path) -> d
         _MODEL_PRESET_FIELD: model_preset_from_metadata(session.metadata),
         "reasoning_effort": reasoning_effort_from_metadata(session.metadata),
         "recovery_state": recovery_state_from_metadata(session.metadata),
+        SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(session.metadata),
         **_indexed_workspace_scope_fields(session.metadata),
         _ROW_SOURCE_FIELD: _SESSION_SOURCE,
         "file": path.name,
@@ -733,6 +744,7 @@ def _scan_session_row(
                 _MODEL_PRESET_FIELD: model_preset_from_metadata(metadata),
                 "reasoning_effort": reasoning_effort_from_metadata(metadata),
                 "recovery_state": recovery_state_from_metadata(metadata),
+                SESSION_HANDLE_METADATA_KEY: stored_session_handle_name(metadata),
                 **_indexed_workspace_scope_fields(metadata),
                 _ROW_SOURCE_FIELD: _SESSION_SOURCE,
                 "file": path.name,

@@ -52,6 +52,11 @@ from nanobot.session.persistence_metadata import (
     accepted_metadata_updates,
     is_busy_recovery_key,
 )
+from nanobot.session.session_handles import (
+    SESSION_HANDLE_METADATA_KEY,
+    allocate_session_handle_name,
+    stored_session_handle_name,
+)
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
@@ -63,6 +68,7 @@ from nanobot.utils.helpers import (
     strip_think,
 )
 from nanobot.utils.subagent_channel_display import scrub_subagent_announce_body
+from nanobot.webui.session_identity import is_webui_session_key
 from nanobot.workspace_access_recovery import (
     WorkspaceAccessRecord,
     WorkspaceAccessSourceBinding,
@@ -2034,11 +2040,31 @@ class JsonlSessionStore:
         with self.locked_session_files():
             self._save_checked_unlocked(session, fsync=fsync)
 
+    def assign_initial_webui_handle(self, session: Session) -> None:
+        """Reserve a name in the initial source bytes, under the creation lock."""
+        if not is_webui_session_key(session.key) or stored_session_handle_name(session.metadata):
+            return
+        if not self.session_files_locked:
+            raise RuntimeError("session handle assignment requires the session files lock")
+        used: set[str] = set()
+        for path in self.sessions_dir.glob("*.jsonl"):
+            if self.session_key_from_path(path) is None:
+                continue
+            try:
+                metadata: object = self._format_header(path).get("metadata")
+            except SessionStorageError:
+                continue
+            if (name := stored_session_handle_name(metadata)) is not None:
+                used.add(name)
+        session.metadata[SESSION_HANDLE_METADATA_KEY] = allocate_session_handle_name(used)
+
     def _save_checked_unlocked(self, session: Session, *, fsync: bool = False) -> None:
         disk = self._load_unlocked(session.key, strict=True)
         if disk is not None:
             self._overlay_checkpoint_unlocked(disk, self.get_session_path(session.key))
         candidate = Session.prepare_legacy_commit(session, disk)
+        if disk is None:
+            self.assign_initial_webui_handle(candidate)
         self._save_unlocked(candidate, fsync=fsync)
         # Publish only after the complete write (including requested fsync) succeeds.
         Session.publish_legacy_commit(session, candidate)

@@ -55,9 +55,6 @@ from nanobot.security.folder_locations import FolderEditIncompleteError
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import JsonlSessionStore, SessionManager
 from nanobot.session.recovery import RecoveryActionError
-from nanobot.session.session_handles import (
-    SessionHandleResolver,
-)
 from nanobot.session.source_store import SourceSnapshot, SourceState
 from nanobot.triggers.local_types import LocalTrigger
 from nanobot.webui.file_preview import (
@@ -1517,7 +1514,6 @@ class GatewayHTTPHandler:
         from nanobot.session.webui_turns import websocket_turn_wall_started_at
 
         sessions = list_webui_sessions(self.session_manager)
-        handles = SessionHandleResolver(self.session_manager).list_all_by_key()
         cleaned: list[dict[str, Any]] = []
         default_scope: WorkspaceScope | None = None
         for s in sessions:
@@ -1546,9 +1542,6 @@ class GatewayHTTPHandler:
                 default_scope=default_scope,
             )
             row["workspace_scope"] = self.workspaces.scope_payload(scope)
-            handle = handles.get(key)
-            if handle is not None:
-                row["handle"] = handle.public_payload()
             cleaned.append(row)
         return {"sessions": cleaned}
 

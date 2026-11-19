@@ -5643,6 +5643,7 @@ def test_sessions_list_includes_active_run_started_at(monkeypatch) -> None:
 
     bus = MagicMock()
     session_manager = MagicMock()
+    handle = session_handle_for_name("websocket:chat-1", "luma")
     sessions = [
         {
             "key": "websocket:chat-1",
@@ -5651,6 +5652,7 @@ def test_sessions_list_includes_active_run_started_at(monkeypatch) -> None:
             "title": "Running",
             "preview": "work",
             "model_preset": "fast",
+            "handle": handle.public_payload(),
             "path": "/private/path",
         },
         {
@@ -5660,14 +5662,6 @@ def test_sessions_list_includes_active_run_started_at(monkeypatch) -> None:
         },
     ]
     monkeypatch.setattr(ws_http_module, "list_webui_sessions", lambda _session_manager: sessions)
-    handle = session_handle_for_name("websocket:chat-1", "luma")
-    monkeypatch.setattr(
-        ws_http_module,
-        "SessionHandleResolver",
-        lambda _session_manager: SimpleNamespace(
-            list_all_by_key=lambda: {handle.session_key: handle}
-        ),
-    )
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"]},
         bus,
