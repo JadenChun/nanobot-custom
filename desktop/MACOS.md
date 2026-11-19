@@ -31,8 +31,10 @@ after Kohaku opens chat for the first time. If you deny access, use
 below predates the microphone change.
 
 Closing the window keeps the gateway alive. Reopen from the Dock or use
-**Open Chat** from the menu bar icon. Use **Quit Kohaku** (Cmd+Q)
-from the application menu or the menu bar icon to stop
+**Open Chat** from the menu bar icon. Gateway readiness and status changes
+do not restore the window or take focus. If the gateway becomes unavailable,
+use the Dock or **Open Chat** to see the setup/status controls. Use
+**Quit Kohaku** (Cmd+Q) from the application menu or the menu bar icon to stop
 the managed gateway and exit. Force Quit and external app termination are
 not managed shutdowns; the persistent gateway can remain available for
 reconciliation on relaunch. On stop, the adapter revalidates the selected

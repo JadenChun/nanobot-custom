@@ -415,7 +415,7 @@ struct Controller {
     quit_deadline: Option<Instant>,
     quit_ui_expired: bool,
     exit_requested: bool,
-    start_open_chat: bool,
+    load_chat_when_ready: bool,
     chat_origin: Option<Url>,
 }
 
@@ -440,7 +440,7 @@ impl Controller {
             quit_deadline: None,
             quit_ui_expired: false,
             exit_requested: false,
-            start_open_chat: true,
+            load_chat_when_ready: true,
             chat_origin: None,
         }
     }
@@ -470,7 +470,10 @@ impl Controller {
                 false
             }
             Job::OpenChat(reply) => {
-                let result = self.show_chat();
+                let result = self.load_chat();
+                if result.is_ok() {
+                    native::focus_existing_window(&self.app);
+                }
                 let snapshot = result.map(|_| self.shared.snapshot());
                 let _ = reply.send(snapshot);
                 self.shared.busy.store(false, Ordering::Release);
@@ -548,7 +551,7 @@ impl Controller {
         }
         self.admission_pending = true;
         self.admission_unknown = false;
-        self.start_open_chat = true;
+        self.load_chat_when_ready = true;
         self.publish("starting", "gateway_starting");
         let dispatch = self
             .adapter
@@ -680,7 +683,7 @@ impl Controller {
             if status.state == "running" {
                 self.apply_lifecycle(status);
                 if !self.chat_window_on_origin() {
-                    self.show_chat()?;
+                    self.load_chat()?;
                 }
                 return Ok(());
             }
@@ -739,7 +742,7 @@ impl Controller {
         Err("stop_unconfirmed".to_owned())
     }
 
-    fn show_chat(&mut self) -> Result<(), String> {
+    fn load_chat(&mut self) -> Result<(), String> {
         if self.shared.snapshot().state != "running" {
             return Err("gateway_unavailable".to_owned());
         }
@@ -757,7 +760,7 @@ impl Controller {
                 return Err(error.0);
             }
         };
-        self.open_bootstrapped_chat(bootstrap)
+        self.load_bootstrapped_chat(bootstrap)
     }
 
     fn chat_window_on_origin(&self) -> bool {
@@ -770,7 +773,9 @@ impl Controller {
             .is_some_and(|url| url.origin() == origin.origin())
     }
 
-    fn open_bootstrapped_chat(&mut self, bootstrap: BootstrapResult) -> Result<(), String> {
+    // Gateway readiness can arrive after the user switches away or closes the
+    // window. Load the page without changing that window's presentation.
+    fn load_bootstrapped_chat(&mut self, bootstrap: BootstrapResult) -> Result<(), String> {
         if self.shared.quit_requested.load(Ordering::Acquire) {
             return Err("operation_busy".to_owned());
         }
@@ -801,6 +806,8 @@ impl Controller {
         }
         #[cfg(target_os = "linux")]
         let setup_url = self.shared.setup_url();
+        #[cfg(target_os = "linux")]
+        let window_was_open = self.shared.window_open();
         let mut reuse_existing = None;
         if let Some(existing) = self.app.get_webview_window("chat") {
             let current = existing.url().ok();
@@ -812,7 +819,6 @@ impl Controller {
                     .as_ref()
                     .is_some_and(|url| url.origin() == origin.origin());
             if on_chat_origin {
-                native::reveal_window(&self.shared, &existing);
                 return Ok(());
             }
             #[cfg(target_os = "macos")]
@@ -852,7 +858,6 @@ impl Controller {
         let setup_for_reuse = setup_url.clone();
         if let Some(existing) = reuse_existing {
             let app_for_reuse = self.app.clone();
-            let shared_for_reuse = self.shared.clone();
             let _ = self.app.run_on_main_thread(move || {
                 let _ = existing.set_title("Kohaku");
                 let _ = existing.set_size(LogicalSize::new(1120.0, 780.0));
@@ -876,7 +881,6 @@ impl Controller {
                     let _ = sender.send(Err("chat_window_unavailable".to_owned()));
                     return;
                 }
-                native::reveal_window(&shared_for_reuse, &existing);
                 let _ = sender.send(Ok(()));
             });
         } else {
@@ -897,6 +901,8 @@ impl Controller {
                     )
                     .title("Kohaku")
                     .inner_size(1120.0, 780.0)
+                    .visible(window_was_open)
+                    .focused(false)
                     .data_directory(data_directory)
                     .on_navigation({
                         let selected = target_origin.clone();
@@ -927,7 +933,7 @@ impl Controller {
                     }
                     let _ = crate::microphone::install(&chat);
                     native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
-                    shared_for_flag.set_window_open(true);
+                    shared_for_flag.set_window_open(window_was_open);
                     let _ = sender.send(Ok(()));
                 });
             }
@@ -986,9 +992,9 @@ impl Controller {
                     return;
                 }
                 self.publish("running", &result.code);
-                if self.start_open_chat && !self.shared.quit_requested.load(Ordering::Acquire) {
-                    if self.show_chat().is_ok() {
-                        self.start_open_chat = false;
+                if self.load_chat_when_ready && !self.shared.quit_requested.load(Ordering::Acquire) {
+                    if self.load_chat().is_ok() {
+                        self.load_chat_when_ready = false;
                     } else {
                         self.publish("unavailable", "gateway_bootstrap_failed");
                     }
@@ -1084,6 +1090,8 @@ impl Controller {
             self.quit_ui_expired = true;
             if self.shared.quit_requested.load(Ordering::Acquire) && !self.exit_requested {
                 self.publish("unavailable", "stop_unconfirmed");
+                // Fedora retains its explicit Quit failure recovery window.
+                #[cfg(target_os = "linux")]
                 if self.shared.window_open() {
                     native::open_setup(&self.app, &self.shared);
                 }
@@ -1124,7 +1132,7 @@ impl Controller {
                 self.admission_unknown = false;
                 self.apply_lifecycle(result);
                 if self.shared.quit_requested.load(Ordering::Acquire) {
-                    self.start_open_chat = false;
+                    self.load_chat_when_ready = false;
                     self.advance_quit();
                 }
             }
@@ -1274,7 +1282,6 @@ impl Controller {
 
     fn publish(&self, state: &str, code: &str) {
         let mut snapshot = self.shared.snapshot();
-        let reveal_status = snapshot.state == "running" && state != "running";
         snapshot.state = state.to_owned();
         snapshot.code = code.to_owned();
         snapshot.selection_locked = self.is_selection_locked();
@@ -1294,9 +1301,6 @@ impl Controller {
             });
         snapshot.effective_workspace = self.effective_workspace.clone();
         self.shared.replace_snapshot(snapshot);
-        if reveal_status && self.shared.window_open() {
-            native::open_setup(&self.app, &self.shared);
-        }
     }
 
     fn exit_after_quit(&mut self) {
