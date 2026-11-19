@@ -1202,6 +1202,7 @@ async def test_permission_projection_is_attached_only_to_local_owning_thread_rea
             _snapshot: object,
             *,
             controls_available: bool,
+            scope: object,
         ) -> tuple[dict[str, object], dict[str, object], None]:
             self.permission_calls.append((chat_id, controls_available))
             return {"chat_id": chat_id, "status": "ready"}, permission_projection, None
@@ -1213,9 +1214,7 @@ async def test_permission_projection_is_attached_only_to_local_owning_thread_rea
     handler.workspace_controls_available = lambda _connection: True
     handler.check_api_token = lambda _request: True
     handler.session_manager = SimpleNamespace(
-        source_backend=lambda _key: SimpleNamespace(
-            source=SimpleNamespace(load_source_snapshot=lambda _session_key: object()),
-        ),
+        read_existing_canonical_source=lambda _key: (object(), object()),
         read_session_file=lambda _key: {"messages": []},
     )
     handler.workspaces = SimpleNamespace(
@@ -1335,6 +1334,7 @@ async def test_local_thread_request_permissions_and_scope_share_live_once_author
             _snapshot: object,
             *,
             controls_available: bool,
+            scope: object,
         ) -> tuple[dict[str, object], dict[str, object], object]:
             assert controls_available
             return (

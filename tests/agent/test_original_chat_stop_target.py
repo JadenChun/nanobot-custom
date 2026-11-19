@@ -254,6 +254,48 @@ async def test_real_children_get_derives_live_stop_target_without_event(monkeypa
             await channel.stop()
 
 
+async def test_thread_get_reuses_one_root_snapshot_for_history_permissions_and_stop(monkeypatch, tmp_path):
+    from urllib.parse import quote
+
+    from nanobot.channels.websocket.tests.ws_test_client import http_get
+    from tests.webui.test_child_thread_route import _auth_headers, _make_channel
+
+    provider = _ScriptedProvider([LLMResponse(content="parent answered")])
+    async with _running_composition(_config(tmp_path), provider, monkeypatch) as (handle, _run):
+        key = "websocket:exact-stop"
+        await handle.agent.execute_turn(TurnRequest(content="first", session_key=key))
+        assert handle.sessions.update_session_metadata(key, {"webui": True})
+        await pending_record(handle, key)
+        expected_target = handle.agent.stop_target_for_key(key)
+        assert expected_target is not None
+        selections = Mock(wraps=handle.sessions.source_backend)
+        monkeypatch.setattr(handle.sessions, "source_backend", selections)
+        snapshot_reads = []
+        load = SourceSessionStore.load_source_snapshot
+
+        def read(store, session_key, **kwargs):
+            snapshot_reads.append(session_key)
+            return load(store, session_key, **kwargs)
+
+        monkeypatch.setattr(SourceSessionStore, "load_source_snapshot", read)
+        channel = _make_channel(tmp_path, handle.sessions)
+        channel.gateway.http.stop_target_for_key = handle.agent.stop_target_for_key
+        try:
+            response = await http_get(
+                f"http://127.0.0.1:{channel.config.port}/api/sessions/{quote(key, safe='')}/webui-thread",
+                headers=_auth_headers(channel),
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["workspace_permissions"]["state"] == "active"
+            assert body["workspace_access_request"] is None
+            assert body["stop_target"] == expected_target
+            assert snapshot_reads == [key]
+            selections.assert_called_once_with(key)
+        finally:
+            await channel.stop()
+
+
 @pytest.mark.parametrize("entry", ["bus", "sdk"])
 async def test_canonical_root_publishes_live_target_after_queue_binding(monkeypatch, tmp_path, entry):
     provider = _ScriptedProvider([LLMResponse(content="done")], block_first=True)

@@ -2397,6 +2397,14 @@ class JsonlSessionStore:
         with self.locked_session_files():
             return self._read_metadata_unlocked(key)
 
+    def read_canonical_snapshot(self, key: str) -> "SourceSnapshot | None":
+        """Classify an unmanaged file by its header, then validate the source once."""
+        with self.locked_session_files():
+            path = self.get_session_path(key)
+            if not path.exists() or "source_schema_version" not in self._format_header(path).get("metadata", {}):
+                return None
+            return self.source.load_source_snapshot(key)
+
     def _read_metadata_unlocked(self, key: str) -> SessionMetadataPayload | None:
         path = self.get_session_path(key)
         if not path.exists():
@@ -3071,14 +3079,18 @@ class SessionManager:
         cached = self.get_cached(key)
         if cached is not None and not cached.policy.persist:
             return None
-        backend = self.source_backend(key)
-        if backend is None:
-            return None
         try:
-            snapshot = backend.source.load_source_snapshot(key)
+            if self._mode_resolver is None and self._store is self._jsonl_store:
+                backend = self._jsonl_store
+                snapshot = backend.read_canonical_snapshot(key)
+            else:
+                backend = self.source_backend(key)
+                if backend is None:
+                    return None
+                snapshot = backend.source.load_source_snapshot(key)
         except FileNotFoundError:
             return None
-        if snapshot.state.session_key != key:
+        if snapshot is None or snapshot.state.session_key != key:
             return None
         if expected_binding is not None:
             from nanobot.workspace_access_recovery import parse_workspace_access_source_binding

@@ -49,9 +49,10 @@ def _handler(tmp_path: Path) -> GatewayHTTPHandler:
     handler.check_api_token = lambda _request: True
     handler.session_manager = SimpleNamespace(
         read_session_file=lambda _key: {"messages": []},
+        read_existing_canonical_source=lambda _key: None,
     )
     handler.workspaces = SimpleNamespace(
-        scope_for_session_key=lambda _key: SimpleNamespace(project_path=str(tmp_path)),
+        scope_for_session_key=lambda _key, **_kwargs: SimpleNamespace(project_path=str(tmp_path)),
         scope_payload=lambda _scope, **_kwargs: {"project_path": str(tmp_path)},
         folder_grants_allowed_for_session=lambda _key: False,
     )

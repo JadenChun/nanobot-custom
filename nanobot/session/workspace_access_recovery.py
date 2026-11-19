@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from nanobot.agent.loop import TurnContext
     from nanobot.agent.turn import TurnContext as RunTurnContext
     from nanobot.bus.queue import MessageBus
+    from nanobot.security.workspace_access import WorkspaceScope
     from nanobot.session.manager import SessionManager
     from nanobot.session.source_store import SourceSnapshot
     from nanobot.session.workspace_access_continuation import (
@@ -528,6 +529,8 @@ class WorkspaceAccessRecoveryOwner:
         chat_id: str,
         snapshot: Any,
         record: WorkspaceAccessRecord,
+        *,
+        projected_scope: WorkspaceScope | None = None,
     ) -> Any:
         from nanobot.session.webui_turns import websocket_turn_wall_started_at
 
@@ -566,7 +569,10 @@ class WorkspaceAccessRecoveryOwner:
         except (TypeError, ValueError):
             raise WorkspaceAccessActionError(409, "context_unavailable") from None
 
-        current_scope = self.workspaces.scope_for_session_key(key)
+        current_scope = (
+            projected_scope if projected_scope is not None
+            else self.workspaces.scope_for_session_key(key)
+        )
         if {
             "project_path": str(current_scope.project_path),
             "access_mode": current_scope.access_mode,
@@ -599,6 +605,7 @@ class WorkspaceAccessRecoveryOwner:
         snapshot: SourceSnapshot,
         *,
         controls_available: bool,
+        scope: WorkspaceScope,
     ) -> tuple[FolderAccessRequest | None, Any, WorkspacePermissionReference | None]:
         """Project the history response from one validated canonical source."""
         key, checked_chat = self._key(chat_id)
@@ -609,7 +616,9 @@ class WorkspaceAccessRecoveryOwner:
             raise WorkspaceAccessActionError(503, "permission_state_unavailable")
         source = self._binding(snapshot)
         record = self._access_record(snapshot)
-        request = None if record is None else self._public_request(key, checked_chat, snapshot, record)
+        request = None if record is None else self._public_request(
+            key, checked_chat, snapshot, record, projected_scope=scope,
+        )
         permissions = self._workspace_permissions_for_source(
             key, owner, source, record, controls_available=controls_available,
         )
@@ -750,6 +759,8 @@ class WorkspaceAccessRecoveryOwner:
         chat_id: str,
         snapshot: Any,
         record: WorkspaceAccessRecord,
+        *,
+        projected_scope: WorkspaceScope | None = None,
     ) -> FolderAccessRequest:
         events = cast(list[dict[str, object]], snapshot.events)
         task_input = next(
@@ -781,7 +792,7 @@ class WorkspaceAccessRecoveryOwner:
             unavailable = "context_unavailable"
         if record["status"] in {"pending", "ready"} and unavailable is None:
             try:
-                self._validate_current(key, chat_id, snapshot, record)
+                self._validate_current(key, chat_id, snapshot, record, projected_scope=projected_scope)
                 if record["status"] == "ready":
                     selected_path = record["selected_path"]
                     if selected_path is None:

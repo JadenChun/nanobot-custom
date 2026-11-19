@@ -65,7 +65,7 @@ async def test_thread_response_includes_stop_target_when_authority_exists(
     )
     assert sessions.source_backend(PARENT_KEY) is not None
     channel = _make_channel(tmp_path, sessions)
-    channel.gateway.http.stop_target_for_key = lambda key: None
+    channel.gateway.http.stop_target_for_key = lambda key, **kwargs: None
     server_task = asyncio.create_task(channel.start())
     try:
         response = await http_get(_thread_url(channel, PARENT_KEY), headers=_auth_headers(channel))

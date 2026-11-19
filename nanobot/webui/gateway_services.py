@@ -26,6 +26,7 @@ from nanobot.webui.workspaces import WebUIWorkspaceController
 from nanobot.webui.ws_http import GatewayHTTPHandler
 
 if TYPE_CHECKING:
+    from nanobot.agent.stop_target import StopTargetReader
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.websocket.runtime import WebSocketConfig
     from nanobot.config.schema import RemoteAccessConfig
@@ -63,7 +64,7 @@ def build_gateway_services(
     config: WebSocketConfig,
     bus: MessageBus,
     session_manager: SessionManager | None,
-    stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
+    stop_target_for_key: StopTargetReader | None = None,
     child_control: Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None = None,
     static_dist_path: Path | None = None,
     workspace_path: Path,

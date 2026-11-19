@@ -7,10 +7,13 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from nanobot.session.pending_followups import PendingFollowupRecord
 from nanobot.session.source_store import SourceState
+
+if TYPE_CHECKING:
+    from nanobot.session.source_store import SourceSnapshot
 
 STOP_TARGET_VERSION = 1
 MAX_STOP_TARGET_CHILDREN = 256
@@ -38,6 +41,14 @@ _CHILD_FIELDS = frozenset({
 
 class StopTargetUnavailableError(ValueError):
     """The complete current Stop target could not be proven safely."""
+
+
+class StopTargetReader(Protocol):
+    """Project live Stop on the owning loop, optionally reusing a validated read."""
+
+    def __call__(
+        self, key: str, /, *, source_snapshot: SourceSnapshot | None = None,
+    ) -> dict[str, object] | None: ...
 
 
 @dataclass(frozen=True, slots=True)

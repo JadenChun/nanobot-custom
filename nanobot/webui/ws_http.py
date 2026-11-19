@@ -21,6 +21,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlencode, urlsplit, urlunsplit
@@ -436,6 +437,7 @@ for _ext, _ctype in _MIME_FIXES.items():
 
 
 if TYPE_CHECKING:
+    from nanobot.agent.stop_target import StopTargetReader
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.websocket.runtime import WebSocketConfig
     from nanobot.cron.service import CronService
@@ -579,7 +581,7 @@ class GatewayHTTPHandler:
         recovery_action: (
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
-        stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
+        stop_target_for_key: StopTargetReader | None = None,
         log: Any = logger,
     ) -> None:
         self.config = config
@@ -1555,16 +1557,6 @@ class GatewayHTTPHandler:
             request, key, self._live_stop_target(key)
         )
 
-    def _derives_stop_target(self, session_key: str) -> bool:
-        """Return whether this gateway can derive a modern Stop target at all."""
-        if self.stop_target_for_key is None or self.session_manager is None:
-            return False
-        try:
-            return self.session_manager.source_backend(session_key) is not None
-        except Exception:
-            self._log.exception("stop target source classification failed")
-            return False
-
     def _live_stop_target(self, key: str) -> dict[str, object] | None:
         """Resolve the live Stop target on the event loop that owns the run."""
         decoded_key = _decode_api_key(key)
@@ -1791,8 +1783,13 @@ class GatewayHTTPHandler:
             scope_key = child_ancestry.root_key
         else:
             scope_key = decoded_key
+        snapshot: SourceSnapshot | None = None
         try:
-            scope = self.workspaces.scope_for_session_key(scope_key)
+            if not is_child and self.session_manager is not None:
+                source = self.session_manager.read_existing_canonical_source(decoded_key)
+                if source is not None:
+                    _, snapshot = source
+            scope = self.workspaces.scope_for_session_key(scope_key, source_snapshot=snapshot)
         except Exception:
             self._log.exception("workspace thread scope projection failed")
             return _http_error(503, "permission_state_unavailable")
@@ -1814,7 +1811,10 @@ class GatewayHTTPHandler:
                 allow_folder_grants=allow_folder_grants,
             )
 
+        @cache
         def load_session_messages() -> list[dict[str, Any]] | None:
+            if snapshot is not None:
+                return snapshot.events
             if self.session_manager is None:
                 return None
             session_data = self.session_manager.read_session_file(decoded_key)
@@ -1826,14 +1826,6 @@ class GatewayHTTPHandler:
                     for raw_message in raw_session_messages
                     if isinstance(raw_message, dict)
                 ]
-            if is_child and child_payload is not None:
-                transcript = child_payload.get("transcript")
-                if isinstance(transcript, list):
-                    return [
-                        cast(dict[str, Any], item)
-                        for item in cast(list[Any], transcript)
-                        if isinstance(item, dict)
-                    ]
             return None
 
         raw_limit = _query_first(query, "limit")
@@ -1912,14 +1904,14 @@ class GatewayHTTPHandler:
                 data = smaller_page
 
         if data is None:
-            metadata_payload = (
-                self.session_manager.read_session_metadata(decoded_key)
-                if self.session_manager is not None else None
-            )
-            metadata = (
-                metadata_payload.get("metadata")
-                if type(metadata_payload) is dict else None
-            )
+            if snapshot is not None:
+                metadata: object = snapshot.header["metadata"]
+            else:
+                metadata_payload = (
+                    self.session_manager.read_session_metadata(decoded_key)
+                    if self.session_manager is not None else None
+                )
+                metadata = metadata_payload.get("metadata") if metadata_payload is not None else None
             if type(metadata) is not dict or cast(dict[str, object], metadata).get("webui") is not True:
                 return _http_error(404, "webui thread not found")
             data = {
@@ -1942,10 +1934,9 @@ class GatewayHTTPHandler:
         # canonical source has no such authority, and an explicit null would tell
         # the client that modern Stop exists and is empty, permanently disabling
         # the legacy Stop path it still needs.
-        if not is_child and self._derives_stop_target(decoded_key):
-            data["stop_target"] = (
-                self.stop_target_for_key(decoded_key)
-                if self.stop_target_for_key is not None else None
+        if snapshot is not None and self.stop_target_for_key is not None:
+            data["stop_target"] = self.stop_target_for_key(
+                decoded_key, source_snapshot=snapshot,
             )
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
         local_permission_projection = (
@@ -1958,23 +1949,17 @@ class GatewayHTTPHandler:
             and self.workspace_access_recovery is not None
             and self.session_manager is not None
         ):
-            chat_id = decoded_key.split(":", 1)[1]
-            try:
-                backend = self.session_manager.source_backend(decoded_key)
-            except Exception:
-                self._log.exception("workspace permission source classification failed")
-                return _http_error(503, "permission_state_unavailable")
-            if backend is None:
+            if snapshot is None:
                 if not self._legacy_thread_history_without_permission_source(decoded_key):
                     return _http_error(503, "permission_state_unavailable")
                 data["workspace_access_request"] = None
             else:
                 try:
-                    snapshot = backend.source.load_source_snapshot(decoded_key)
                     request_state, permissions, permission_reference = (
                         self.workspace_access_recovery.thread_permission_context(
                             chat_id,
                             snapshot,
+                            scope=scope,
                             controls_available=(
                                 self.workspace_controls_available(connection)
                                 if local_permission_projection

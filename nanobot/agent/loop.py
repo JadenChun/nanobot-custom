@@ -2472,6 +2472,7 @@ class AgentLoop:
         descendants: tuple[ChildAdmission, ...],
         *,
         include_fenced_evidence: bool = False,
+        root_snapshot: SourceSnapshot | None = None,
     ) -> tuple[tuple[SourceState, tuple[PendingFollowupRecord, ...]], ...]:
         """Read a bounded, complete inventory under the existing source owners."""
         sources = [(key, root_source)]
@@ -2484,10 +2485,13 @@ class AgentLoop:
         tree = self._fork_dependencies.foreground_manager._delegation_tree
         total = 0
         for session_key, expected in sources:
-            backend = self.sessions.source_backend(session_key)
-            if backend is None:
-                raise StopTargetUnavailableError("pending source owner is unavailable")
-            snapshot = backend.source.load_source_snapshot(session_key)
+            if session_key == key and root_snapshot is not None:
+                snapshot = root_snapshot
+            else:
+                backend = self.sessions.source_backend(session_key)
+                if backend is None:
+                    raise StopTargetUnavailableError("pending source owner is unavailable")
+                snapshot = backend.source.load_source_snapshot(session_key)
             if (
                 len(snapshot.events) > MAX_STOP_TARGET_SOURCE_EVENTS
                 or not snapshot.state.same_origin(expected)
@@ -2541,7 +2545,9 @@ class AgentLoop:
         except ValueError:
             return None
 
-    def stop_target_for_key(self, key: str) -> dict[str, object] | None:
+    def stop_target_for_key(
+        self, key: str, *, source_snapshot: SourceSnapshot | None = None,
+    ) -> dict[str, object] | None:
         """Return the complete live original-chat Stop target, or unavailable."""
         if not is_webui_session_key(key):
             return None
@@ -2550,13 +2556,17 @@ class AgentLoop:
             tree = manager._delegation_tree
             if tree is None:
                 return None
-            backend = self.sessions.source_backend(key)
-            if backend is None:
+            if source_snapshot is None:
+                source = self.sessions.read_existing_canonical_source(key)
+                if source is None:
+                    return None
+                _, source_snapshot = source
+            if (
+                source_snapshot.state.session_key != key
+                or len(source_snapshot.events) > MAX_STOP_TARGET_SOURCE_EVENTS
+            ):
                 return None
-            root_snapshot = backend.source.load_source_snapshot(key)
-            if len(root_snapshot.events) > MAX_STOP_TARGET_SOURCE_EVENTS:
-                return None
-            root_source_state = root_snapshot.state
+            root_source_state = source_snapshot.state
             root_source = StopSourceOrigin.from_source_state(root_source_state)
             descendants = self._stop_descendants_for_key(
                 tree, key, root_source_state, root_source,
@@ -2618,7 +2628,9 @@ class AgentLoop:
                 active_turn_id = websocket_turn_id(chat_id)
 
             children: list[StopChildExpectation] = []
-            pending_sources = self._stop_pending_inventory(key, root_source_state, descendants)
+            pending_sources = self._stop_pending_inventory(
+                key, root_source_state, descendants, root_snapshot=source_snapshot,
+            )
             for child in descendants:
                 if child.source_state is None:
                     raise StopTargetUnavailableError("child source identity is unavailable")

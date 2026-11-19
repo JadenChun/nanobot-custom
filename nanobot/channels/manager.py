@@ -43,6 +43,7 @@ from nanobot.utils.restart import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.stop_target import StopTargetReader
     from nanobot.cron.service import CronService
     from nanobot.session.manager import SessionManager
     from nanobot.triggers.local_store import LocalTriggerStore
@@ -145,7 +146,7 @@ class ChannelManager:
         webui_child_control: (
             Callable[[str, str, str, str | None], Awaitable[dict[str, Any]]] | None
         ) = None,
-        webui_stop_target_for_key: Callable[[str], dict[str, object] | None] | None = None,
+        webui_stop_target_for_key: StopTargetReader | None = None,
         config_path: Path | None = None,
     ):
         if config_path is None:

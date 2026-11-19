@@ -178,7 +178,9 @@ async def test_channel_manager_wires_live_callback_to_attach_hydration_and_threa
     target = target_value()
     keys = []
 
-    def current(key):
+    def current(key, *, source_snapshot=None):
+        if source_snapshot is not None:
+            assert source_snapshot.state.session_key == key
         keys.append(key)
         return target
 
