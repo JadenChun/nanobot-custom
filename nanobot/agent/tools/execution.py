@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.policy import RiskyActionPolicy, ToolPolicy
+from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.base import (
     PRIVATE_NETWORK_DENIAL_NOTE,
     Tool,
@@ -22,6 +22,7 @@ from nanobot.agent.tools.base import (
     ToolPreparationErrorKind,
 )
 from nanobot.agent.tools.filesystem import (
+    EditContentBinding,
     reset_assessed_write_target,
     set_assessed_write_target,
 )
@@ -30,7 +31,8 @@ from nanobot.agent.tools.filesystem_effect import (
     FilesystemEffectFact,
     FilesystemEffectReconciliationRequiredError,
 )
-from nanobot.agent.tools.registry import CapturedToolBindings, ToolRegistry, is_tool_error_result
+from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nanobot.agent.tools.shell import bind_approved_exec_cwd
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
 from nanobot.utils.cancellation import task_is_cancelling
@@ -151,19 +153,10 @@ async def execute_tool_calls(
     """Execute one model response's tool calls in stable result order."""
     if turn_context is not None and turn_context.execution_owner is not None and tool_result_callback is None:
         raise ValueError("Execution ownership requires durable tool-result recording")
-    if (isinstance(tools, CapturedToolBindings) and type(tool_policy) is RiskyActionPolicy
-            and tool_policy.write_target_resolver is not None):
-        def resolve_captured_target(name: str, raw_path: str) -> Path | None:
-            resolver = getattr(tools.get(name), "resolve_write_path", None)
-            if not callable(resolver):
-                return None
-            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
-            return Path(resolved).expanduser().resolve(strict=False)
-
-        tool_policy = replace(tool_policy, write_target_resolver=resolve_captured_target)
     # Policy inspects the complete response before any side effect can begin.
     terminal: ToolOutcome | None = None
     if tool_policy is not None:
+        tool_policy = tool_policy.for_tools(tools)
         decision = await tool_policy.evaluate(messages=messages or [], tool_calls=tool_calls)
         if decision.action != "allow":
             terminal = ToolOutcome(decision.response, decision.stop_reason or "policy_blocked",
@@ -375,21 +368,9 @@ async def _execute_tool_call(
     assessed_write_target: Path | None = None
     if tool_policy is not None:
         validation_tool = tool if tool is not None else tools.get(tool_call.name)
-        validate_binding = getattr(tool_policy, "validate_write_target_binding", None)
-        if callable(validate_binding):
-            target_error, assessed_write_target = cast(
-                Callable[[ToolCallRequest, Any, Any], tuple[str | ToolOutcome | None, Path | None]],
-                validate_binding,
-            )(tool_call, validation_tool, params)
-        else:
-            validate_target = getattr(tool_policy, "validate_write_target", None)
-            if callable(validate_target):
-                target_error = cast(
-                    Callable[[ToolCallRequest, Any], str | None],
-                    validate_target,
-                )(tool_call, validation_tool)
-            else:
-                target_error = None
+        target_error, assessed_write_target = tool_policy.validate_write_target_binding(
+            tool_call, validation_tool, params,
+        )
         if isinstance(target_error, ToolOutcome):
             stopped = {"name": tool_call.name, "status": "stopped", "detail": target_error.stop_reason}
             await _record_result(tool_result_callback, ordinal, tool_call, target_error,
@@ -415,6 +396,9 @@ async def _execute_tool_call(
                                  target_error, payload, event, dispatched=False)
             await hook.on_execute_tool_error(context, tool_call, tool, params, target_error)
             return payload, event
+    preflight_result: str | ToolOutcome | None = None
+    edit_binding: EditContentBinding | None = None
+    exec_cwd: Path | None = None
     with tools.dispatch_admission(tool_call.name) as dispatch_error:
         if dispatch_error is not None:
             payload = _with_retry_hint(dispatch_error)
@@ -446,18 +430,25 @@ async def _execute_tool_call(
                 await _record_result(tool_result_callback, ordinal, tool_call, refused,
                                      refused, event, dispatched=False)
                 return refused, event
+            preflight_result = decision.preflight_result
+            edit_binding = decision.edit_binding
+            exec_cwd = decision.exec_cwd
+        dispatched = preflight_result is None
         try:
-            binding_token = set_assessed_write_target(assessed_write_target)
+            binding_token = set_assessed_write_target(assessed_write_target, edit_binding)
             previous_intent = (
                 turn_context.active_tool_intent_binding if turn_context is not None else None
             )
             if turn_context is not None:
                 turn_context.active_tool_intent_binding = tool_intent_binding
             try:
-                if tool is not None:
-                    result = await tools.execute_prepared(tool, params, turn_context)
-                else:
-                    result = await tools.execute(tool_call.name, params)
+                with bind_approved_exec_cwd(exec_cwd):
+                    if preflight_result is not None:
+                        result = preflight_result
+                    elif tool is not None:
+                        result = await tools.execute_prepared(tool, params, turn_context)
+                    else:
+                        result = await tools.execute(tool_call.name, params)
             finally:
                 if turn_context is not None:
                     turn_context.active_tool_intent_binding = previous_intent
@@ -532,7 +523,7 @@ async def _execute_tool_call(
             event = {"name": tool_call.name, "status": "stopped", "detail": outcome.stop_reason}
             _attach_media_artifacts(event, outcome)
             await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
-                                 outcome, event, dispatched=True)
+                                 outcome, event, dispatched=dispatched)
             await hook.after_execute_tool(context, tool_call, tool, params, result)
             return outcome, event
 
@@ -564,7 +555,7 @@ async def _execute_tool_call(
         )
         _attach_media_artifacts(event, classified)
         await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
-                             classified, event, dispatched=True)
+                             classified, event, dispatched=dispatched)
         await hook.on_execute_tool_error(context, tool_call, tool, params, result)
         return classified, event
 
@@ -577,7 +568,7 @@ async def _execute_tool_call(
     event = {"name": tool_call.name, "status": "ok", "detail": detail}
     _attach_media_artifacts(event, outcome)
     await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
-                         result, event, dispatched=True,
+                         result, event, dispatched=dispatched,
                          producer_receipt=outcome.producer_receipt if outcome else None,
                          retrieval_receipt=outcome.retrieval_receipt if outcome else None,
                          handoff_receipt=outcome.handoff_receipt if outcome else None)

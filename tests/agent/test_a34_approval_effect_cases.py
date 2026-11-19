@@ -300,7 +300,9 @@ async def test_c6_repeat_child_effect_needs_fresh_approval_and_applies_once(engi
         arguments={
             "path": "protected.txt",
             "old_text": "protected line",
-            "new_text": "approved line",
+            # Keep the second call valid. A missing match is now validation
+            # feedback, not an action the user could approve.
+            "new_text": "approved protected line",
             "replace_all": True,
         },
     )
@@ -328,7 +330,7 @@ async def test_c6_repeat_child_effect_needs_fresh_approval_and_applies_once(engi
         approved = await decision(loop)
         assert approved.error is None, approved.error
         after_first = target.read_text()
-        assert after_first.count("approved line") == 20
+        assert after_first == original.replace("protected line", "approved protected line")
         settled = tree.child(child.child_id)
         assert settled is not None
         assert settled.state == "waiting_approval"

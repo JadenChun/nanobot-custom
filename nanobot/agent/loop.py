@@ -2020,24 +2020,6 @@ class AgentLoop:
         ))
         await self._publish_stop_target_for_key(child.root_key)
 
-    def _resolve_policy_write_target(
-        self,
-        tool_name: str,
-        raw_path: str,
-        *,
-        tools: ToolRegistry | None = None,
-    ) -> Path | None:
-        """Resolve risk assessment through the same tool boundary as dispatch."""
-        tool = (tools or self.tools).get(tool_name)
-        resolver = getattr(tool, "resolve_write_path", None)
-        if not callable(resolver):
-            return None
-        try:
-            resolved = cast(Callable[[str], str | Path], resolver)(raw_path)
-            return Path(resolved).expanduser().resolve(strict=False)
-        except (OSError, PermissionError, ValueError):
-            return None
-
     def _workspace_focus_owner(self) -> WorkspaceFocusOwner | None:
         from nanobot.context_repo.catalog import RepositoryCatalog
         from nanobot.session.workspace_focus import WorkspaceFocusOwner
@@ -3564,11 +3546,6 @@ class AgentLoop:
             approval_granted=bool(run_context.policy.approval_granted),
             context_manager=run_context.policy.context_manager,
             effect_authority=run_context.policy.effect_authority,
-            write_target_resolver=lambda name, path: self._resolve_policy_write_target(
-                name,
-                path,
-                tools=tools if tools is not None else self.tools,
-            ),
         )
         tool_policy: ToolPolicy = risky_policy
         if run_context.internal_tool_policy is not None:

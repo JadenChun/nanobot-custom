@@ -151,6 +151,34 @@ async def test_denied_decision_with_instrumented_risky_tool_starts_no_call(engin
         await loop.aclose()
 
 
+async def test_hard_shell_refusal_never_creates_a_pending_approval(engine_config):
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="forbidden", name="exec", arguments={"cmd": "rm -f scratch.txt"},
+        )]),
+        LLMResponse(content="The shell refused the command."),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    upgrade(loop)
+    try:
+        target = engine_config.workspace_path / "scratch.txt"
+        target.write_text("keep this\n")
+        result = await loop.execute_turn(TurnRequest(
+            content="Clean up the scratch file.", session_key="cli:source",
+            route=DeliveryTarget(channel="cli", chat_id="original"),
+        ))
+        assert result.stop_reason != "approval_required"
+        assert (await loop.approval_admission.snapshot_decision("cli:original", None)).pending is None
+        messages, _, _ = provider.calls[1]
+        assert any(
+            message.get("role") == "tool" and "deny pattern filter" in message["content"]
+            for message in messages
+        )
+        assert target.read_text() == "keep this\n"
+    finally:
+        await loop.aclose()
+
+
 @pytest.mark.parametrize("failure", [False, True])
 async def test_failed_attempt_never_refills_grant(engine_config, failure):
     provider = ScriptedProvider([
@@ -490,10 +518,14 @@ async def test_restart_does_not_reconstruct_saved_approval(engine_config):
     first_provider = ScriptedProvider([LLMResponse(content=None, tool_calls=[risky_call("blocked")])])
     first = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first_provider)
     upgrade(first)
+    # Exercise approval lifetime, not native shell availability on this host.
+    first.tools.replace(CountExec())
     try:
-        await first.execute_turn(TurnRequest(content="risky", session_key="cli:source",
+        blocked = await first.execute_turn(TurnRequest(content="risky", session_key="cli:source",
             route=DeliveryTarget(channel="cli", chat_id="original")))
+        assert blocked.stop_reason == "approval_required"
         pending = (await first.approval_admission.snapshot_decision("cli:source", None)).pending
+        assert pending is not None
     finally:
         await first.aclose()
     provider = ScriptedProvider([])

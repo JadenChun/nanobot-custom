@@ -1,5 +1,21 @@
 # A3 implementation correction handoff
 
+## Permission-policy review — 2026-11-19
+
+The [permission and macOS shell review](permission-policy-review.md) records
+the verified policy correction: routine structured edits use the editor's
+actual candidate, and shell refusals that consent cannot change do not become
+approval prompts. Material changes still need single-use approval bound to
+the prepared effect. Source verification covered macOS and the shared Linux
+paths; no installed app was updated.
+
+Native macOS Sandbox execution is the remaining gate, not part of the policy
+fix. Seatbelt passed the filesystem fixtures; the existing POSIX owner
+reported quiescence while a child in another session was still alive. Use
+the [A3-2 lifecycle criteria](../../audits/implementation-packets/A3-2-runtime-process-ownership.md)
+to qualify a supported native backend before exposing it. Keep the existing
+refusal and do not fall back to unsandboxed execution.
+
 ## Git checkpoint — 2026-11-18
 
 The [client-fix record](client-ux-followups.md#git-checkpoint--2026-11-18)

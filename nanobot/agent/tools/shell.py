@@ -13,7 +13,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import suppress
+from collections.abc import Generator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -69,6 +71,7 @@ from nanobot.context_repo import ResourceAccessPolicy
 from nanobot.context_repo.policy import FolderAccessNeededError
 from nanobot.security.folder_grants import (
     FolderGrantSnapshot,
+    FolderGrantView,
 )
 from nanobot.security.native_admission import NativeProcessReservation
 from nanobot.security.workspace_access import (
@@ -80,10 +83,25 @@ from nanobot.security.workspace_access import (
 if TYPE_CHECKING:
     from nanobot.agent.policy import LaunchConfinementAttestation
     from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.security.desktop_permissions import (
+        DesktopPermissionOwner,
+        WorkspacePermissionReference,
+    )
 from nanobot.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
 _PROCESS_TREE_OWNER_ATTR = "_nanobot_process_tree_owner"
+_approved_exec_cwd: ContextVar[Path | None] = ContextVar("nanobot_approved_exec_cwd", default=None)
+
+
+@contextmanager
+def bind_approved_exec_cwd(cwd: Path | None) -> Generator[None, None, None]:
+    """Carry the server-approved working directory to the shell executor."""
+    token = _approved_exec_cwd.set(cwd)
+    try:
+        yield
+    finally:
+        _approved_exec_cwd.reset(token)
 
 
 class _ProcessTreeOwner(Protocol):
@@ -442,12 +460,7 @@ class ExecTool(Tool):
         if not values:
             return None, []
         reader = self._read_file_tool
-        if reader is None:
-            return ToolResult.error("Error: input file read policy is unavailable")
-        if len(values) > self._MAX_INPUT_FILES:
-            return ToolResult.error(
-                f"Error: input_files accepts at most {self._MAX_INPUT_FILES} files"
-            )
+        assert reader is not None  # execute validated the input options.
         staging = Path(tempfile.mkdtemp(prefix="nanobot-exec-inputs-"))
         staged: list[_StagedInput] = []
         seen: set[Path] = set()
@@ -550,6 +563,63 @@ class ExecTool(Tool):
     def exclusive(self) -> bool:
         return True
 
+    @staticmethod
+    def request_location(
+        command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None, **kwargs: object,
+    ) -> tuple[str | None, str | None]:
+        """Resolve compatibility aliases identically for policy and execution."""
+        return command or cmd, working_dir or workdir
+
+    def approval_preflight(
+        self, command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None,
+        timeout: int | None = None, shell: str | None = None,
+        login: bool | None = None, yield_time_ms: int | None = None,
+        notify_on_exit: bool = False, input_files: list[str] | None = None,
+        **kwargs: object,
+    ) -> Path | str | ToolOutcome:
+        """Return the effective cwd, or a refusal consent cannot change.
+
+        Prepare the command, but do not copy inputs, reserve admission, or
+        launch it. The live launch must still independently enforce these checks.
+        """
+        command, working_dir = self.request_location(command, cmd, working_dir, workdir)
+        if not command:
+            return ToolResult.error("Error: Missing command. Provide command or cmd.")
+        if (error := self._input_options_error(input_files, yield_time_ms, notify_on_exit)) is not None:
+            return error
+        try:
+            prepared = self._prepare_command(command, working_dir, timeout, shell, login)
+            if not isinstance(prepared, _PreparedCommand):
+                return prepared
+            policy = self.resource_policy
+            grants = policy.folder_grants if policy is not None else None
+            refusal = self._native_command_refusal(
+                grants, managed=prepared.managed, owned=self._owned_native_permission() is not None,
+            )
+            if refusal is not None:
+                return refusal
+            cwd = Path(prepared.logical_cwd or prepared.cwd).resolve(strict=True)
+            if not cwd.is_dir():
+                return ToolResult.error("Error: working_dir is not a directory")
+            return cwd
+        except (OSError, RuntimeError, ValueError) as exc:
+            return ToolResult.error(f"Error: Command preparation failed ({exc})")
+
+    def _input_options_error(
+        self, input_files: list[str] | None, yield_time_ms: int | None, notify_on_exit: bool,
+    ) -> ToolResult | None:
+        if not input_files:
+            return None
+        if yield_time_ms is not None or notify_on_exit:
+            return ToolResult.error("Error: input_files is supported only for foreground commands")
+        if self._read_file_tool is None:
+            return ToolResult.error("Error: input file read policy is unavailable")
+        if len(input_files) > self._MAX_INPUT_FILES:
+            return ToolResult.error(f"Error: input_files accepts at most {self._MAX_INPUT_FILES} files")
+        return None
+
     async def execute(
         self, command: str | None = None, cmd: str | None = None,
         working_dir: str | None = None, workdir: str | None = None,
@@ -567,10 +637,8 @@ class ExecTool(Tool):
         confinement. Supplying a path is not an access grant; each path passes
         the same read resolver and current policy as ``read_file``.
         """
-        if input_files and (yield_time_ms is not None or notify_on_exit):
-            return ToolResult.error(
-                "Error: input_files is supported only for foreground commands"
-            )
+        if (error := self._input_options_error(input_files, yield_time_ms, notify_on_exit)) is not None:
+            return error
         staged_result = self._stage_input_files(input_files)
         if isinstance(staged_result, str):
             return staged_result
@@ -612,8 +680,7 @@ class ExecTool(Tool):
         staged_inputs: list[_StagedInput] | None = None,
         **kwargs: Any,
     ) -> str | ToolOutcome:
-        command = command or cmd
-        working_dir = working_dir or workdir
+        command, working_dir = self.request_location(command, cmd, working_dir, workdir)
         if not command:
             return ToolResult.error("Error: Missing command. Provide command or cmd.")
         if max_output_chars is None:
@@ -818,6 +885,15 @@ class ExecTool(Tool):
             )
         else:
             cwd = workspace_root or os.getcwd()
+        if (approved_cwd := _approved_exec_cwd.get()) is not None:
+            try:
+                resolved_cwd = Path(cwd).expanduser().resolve(strict=True)
+            except (OSError, RuntimeError, ValueError):
+                return ToolResult.error("Error: working_dir is no longer available after approval.")
+            if resolved_cwd != approved_cwd or not resolved_cwd.is_dir():
+                return ToolResult.error("Error: working_dir changed after approval. Reassess the command.")
+            # Do not hand the original alias to a later launch step.
+            cwd = str(resolved_cwd)
         # Prevent an LLM-supplied working_dir from escaping the configured
         # workspace when restrict_to_workspace is enabled (#2826). Without
         # this, a caller can pass working_dir="/etc" and then all absolute
@@ -848,7 +924,7 @@ class ExecTool(Tool):
         if isinstance(launch_admission, str):
             return launch_admission
         grant_snapshot: FolderGrantSnapshot | None = None
-        logical_cwd = cwd if managed else None
+        logical_cwd = cwd
         if managed:
             policy = self.resource_policy
             grants = policy.folder_grants if policy is not None else None
@@ -948,6 +1024,28 @@ class ExecTool(Tool):
             launch_attestation=launch_admission,
         )
 
+    @staticmethod
+    def _owned_native_permission() -> tuple[DesktopPermissionOwner, WorkspacePermissionReference] | None:
+        focus = current_workspace_focus()
+        if focus is None or (owner := focus.permission_owner) is None:
+            return None
+        if (task := focus.task_reference) is not None and owner.is_current_task_reference(task):
+            return owner, task
+        if (full := focus.full_reference) is not None and owner.is_current_full_reference(full):
+            return owner, full
+        return None
+
+    @staticmethod
+    def _native_command_refusal(
+        grants: FolderGrantView | None, *, managed: bool, owned: bool,
+    ) -> ToolResult | None:
+        if owned and grants is None:
+            return ToolResult.error("Error: native command admission is unavailable")
+        needs_supervisor = owned or (not managed and grants is not None and not grants.is_managed)
+        if needs_supervisor and not native_supervisor_available():
+            return ToolResult.error("Error: whole-tree native process proof is unavailable")
+        return None
+
     def _reserve_native_admission(
         self,
         prepared: _PreparedCommand,
@@ -960,27 +1058,13 @@ class ExecTool(Tool):
         """Close the first-activation race around legacy process launch."""
         policy = self.resource_policy
         grants = policy.folder_grants if policy is not None else None
-        focus = current_workspace_focus()
-        permission_owner = focus.permission_owner if focus is not None else None
-        permission_reference = None
-        if focus is not None and permission_owner is not None:
-            task_reference = focus.task_reference
-            full_reference = focus.full_reference
-            if task_reference is not None and permission_owner.is_current_task_reference(
-                task_reference,
-            ):
-                permission_reference = task_reference
-            elif full_reference is not None and permission_owner.is_current_full_reference(
-                full_reference,
-            ):
-                permission_reference = full_reference
-        if permission_reference is not None:
-            if permission_owner is None:
-                return ToolResult.error("Error: workspace permission owner is unavailable"), None
-            if policy is None or grants is None:
-                return ToolResult.error("Error: native command admission is unavailable"), None
-            if not native_supervisor_available():
-                return ToolResult.error("Error: whole-tree native process proof is unavailable"), None
+        owned = self._owned_native_permission()
+        refusal = self._native_command_refusal(grants, managed=prepared.managed, owned=owned is not None)
+        if refusal is not None:
+            return refusal, None
+        if owned is not None:
+            permission_owner, permission_reference = owned
+            assert grants is not None  # Checked by _native_command_refusal.
             try:
                 reservation = grants.try_begin_owned_native_process(
                     permission_owner,
