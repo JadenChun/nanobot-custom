@@ -364,6 +364,10 @@ export class NanobotClient {
   private static readonly PENDING_INBOUND_MAX = 2000;
   // chat_ids we've attached to since connect; re-attached after reconnects
   private knownChats = new Set<string>();
+  /** Live socket whose attach handshake for a chat is still valid. */
+  private attachedSockets = new Map<string, WebSocket>();
+  /** Chats whose source incarnation changed; they need a fresh attach. */
+  private sourceReplacedChats = new Set<string>();
   /** Temporary chats are connection-owned and intentionally not reattached. */
   private temporaryChatIds = new Set<string>();
   /** Wall-clock run strip: updated from ``goal_status`` even with no ``onChat`` subscriber. */
@@ -1339,6 +1343,8 @@ export class NanobotClient {
     this.preparationGeneration += 1;
     this.inputAttemptSources.clear();
     this.inputAttemptQueries.clear();
+    this.attachedSockets.clear();
+    this.sourceReplacedChats.clear();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -1549,9 +1555,41 @@ export class NanobotClient {
   attach(chatId: string): void {
     if (this.temporaryChatIds.has(chatId)) return;
     this.knownChats.add(chatId);
-    if (this.socket?.readyState === WS_OPEN) {
-      this.queueSend(this.inputAttemptAttach(chatId, this.socket));
-    }
+    if (this.socket?.readyState !== WS_OPEN) return;
+    const socket = this.socket;
+    if (this.canReuseWarmAttach(chatId, socket)) return;
+    this.queueSend(this.inputAttemptAttach(chatId, socket));
+  }
+
+  /**
+   * Warm revisit: the same live socket still holds this chat's subscription.
+   *
+   * A -> B -> A over one still-open socket reuses the live projection, so no
+   * duplicate full attach or stale recovery/Stop replay is sent. A reconnect,
+   * a source replacement, an unsettled run, or unresolved input-attempt proof
+   * always requires a fresh attach.
+   */
+  private canReuseWarmAttach(chatId: string, socket: WebSocket): boolean {
+    if (this.attachedSockets.get(chatId) !== socket) return false;
+    if (this.sourceReplacedChats.has(chatId)) return false;
+    if (this.hasUnsettledRun(chatId)) return false;
+    const unsettledProof = [...this.pendingMessageSends.values()].some((pending) => (
+      pending.chatId === chatId
+      && pending.recovery !== undefined
+      && !pending.recovery.proven
+    ));
+    return !unsettledProof;
+  }
+
+  /**
+   * Mark a chat's cached attachment stale after an observed source replacement.
+   *
+   * The next subscription must perform a fresh attach so recovery, Stop and
+   * canonical admission are reconciled against the new incarnation.
+   */
+  invalidateAttachment(chatId: string): void {
+    this.attachedSockets.delete(chatId);
+    this.sourceReplacedChats.add(chatId);
   }
 
   private inputAttemptAttach(chatId: string, socket: WebSocket): Extract<Outbound, { type: "attach" }> {
@@ -2106,6 +2144,13 @@ export class NanobotClient {
       const capability = parseAttemptCapability(parsed.input_attempt_source, parsed.chat_id);
       if (capability && parsed.temporary !== true) this.inputAttemptSources.set(parsed.chat_id, capability);
       else this.inputAttemptSources.delete(parsed.chat_id);
+      if (parsed.temporary === true) {
+        this.attachedSockets.delete(parsed.chat_id);
+        this.sourceReplacedChats.delete(parsed.chat_id);
+      } else {
+        this.attachedSockets.set(parsed.chat_id, sock);
+        this.sourceReplacedChats.delete(parsed.chat_id);
+      }
       this.applyAttachedNextTurn(parsed);
       const query = this.inputAttemptQueries.get(parsed.chat_id);
       this.inputAttemptQueries.delete(parsed.chat_id);
@@ -2426,6 +2471,8 @@ export class NanobotClient {
     this.socket = null;
     this.inputAttemptSources.clear();
     this.inputAttemptQueries.clear();
+    // A reconnect gap always needs a fresh attach for every known chat.
+    this.attachedSockets.clear();
     this.clearTemporaryChats();
     const willReconnect = !this.intentionallyClosed && this.shouldReconnect;
     if (this.pendingNewChat) {

@@ -4516,6 +4516,43 @@ describe("useNanobotStream", () => {
     expect(result.current.goalState).toEqual({ active: false });
   });
 
+  it("keeps live delivery for the revisited chat after switching away and back", () => {
+    const fake = fakeClient();
+    const { result, rerender } = renderHook(
+      ({ chatId }: { chatId: string }) => useNanobotStream(chatId, EMPTY_MESSAGES),
+      {
+        wrapper: wrap(fake.client),
+        initialProps: { chatId: "chat-a" },
+      },
+    );
+
+    act(() => {
+      fake.emit("chat-a", {
+        event: "goal_status",
+        chat_id: "chat-a",
+        status: "running",
+        started_at: 777,
+        turn_id: "turn-a",
+      });
+    });
+    expect(result.current.isStreaming).toBe(true);
+
+    rerender({ chatId: "chat-b" });
+    rerender({ chatId: "chat-a" });
+
+    // The restarted stream still consumes live events for the revisited chat.
+    // A warm reconnect does not drop the subscription or leave a stale run.
+    act(() => {
+      fake.emit("chat-a", {
+        event: "turn_end",
+        chat_id: "chat-a",
+        turn_id: "turn-a",
+      });
+    });
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.runStartedAt).toBeNull();
+  });
+
   it("projects and updates a typed delegated child row", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useNanobotStream(

@@ -596,6 +596,118 @@ describe("NanobotClient", () => {
     expect(second.mock.calls[0]?.[0]).toEqual(attached);
   });
 
+  it("reuses the live attachment when the same chat is revisited on one socket", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+    const first = vi.fn();
+    const unsubscribe = client.onChat("revisit-chat", first);
+    socket.fakeMessage({
+      event: "attached",
+      chat_id: "revisit-chat",
+      stop_target: null,
+      recovery_state: { status: "failed", recovery_id: "r1" },
+    });
+    expect(socket.sent).toHaveLength(1);
+
+    // A -> away -> A on the same socket: no duplicate attach or stale replay.
+    unsubscribe();
+    const warm = vi.fn();
+    client.onChat("revisit-chat", warm);
+    expect(socket.sent).toHaveLength(1);
+    expect(warm).not.toHaveBeenCalled();
+
+    socket.fakeMessage({ event: "delta", chat_id: "revisit-chat", text: "live" });
+    expect(warm).toHaveBeenCalledTimes(1);
+  });
+
+  it("performs a fresh attach after an observed source replacement", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+    const unsubscribe = client.onChat("replaced-chat", vi.fn());
+    socket.fakeMessage({ event: "attached", chat_id: "replaced-chat", stop_target: null });
+    expect(socket.sent).toHaveLength(1);
+
+    client.invalidateAttachment("replaced-chat");
+    unsubscribe();
+    client.onChat("replaced-chat", vi.fn());
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "attach", chat_id: "replaced-chat" },
+      { type: "attach", chat_id: "replaced-chat" },
+    ]);
+  });
+
+  it("performs a fresh attach while an input attempt is still unproven", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    const socket = lastSocket();
+    socket.fakeOpen();
+    const unsubscribe = client.onChat("proof-chat", vi.fn());
+    socket.fakeMessage({
+      event: "attached",
+      chat_id: "proof-chat",
+      stop_target: null,
+      input_attempt_source: {
+        version: 1,
+        source: {
+          store_identity: "store",
+          session_key: "websocket:proof-chat",
+          incarnation: "inc",
+          generation: 1,
+        },
+        source_token: "token",
+        principal: "local",
+      },
+    });
+    client.sendMessage("proof-chat", "uncertain input", undefined, { turnId: "turn-proof" });
+    expect(client.hasUnsettledRun("proof-chat")).toBe(true);
+
+    unsubscribe();
+    client.onChat("proof-chat", vi.fn());
+    expect(socket.sent.filter((frame) => (
+      (JSON.parse(frame) as { type?: string }).type === "attach"
+    ))).toHaveLength(2);
+  });
+
+  it("performs a fresh attach after a reconnect gap", async () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: true,
+      maxBackoffMs: 10,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    const unsubscribe = client.onChat("gap-chat", vi.fn());
+    lastSocket().fakeMessage({ event: "attached", chat_id: "gap-chat", stop_target: null });
+    expect(lastSocket().sent).toHaveLength(1);
+
+    unsubscribe();
+    lastSocket().close();
+    await vi.advanceTimersByTimeAsync(20);
+    const reconnected = lastSocket();
+    reconnected.fakeOpen();
+    client.onChat("gap-chat", vi.fn());
+    expect(reconnected.sent.filter((frame) => (
+      (JSON.parse(frame) as { type?: string }).type === "attach"
+    ))).toHaveLength(2);
+  });
+
   it("forwards owner admission receipts to the matching chat subscriber", () => {
     const client = new NanobotClient({
       url: "ws://test",

@@ -1123,6 +1123,14 @@ export function useSessionHistory(key: string | null): {
           && sourceOriginReplaced(currentBeforeCommit.sourceOrigin, incomingOrigin)
         );
         if (lifetimeReplaced) {
+          // A replaced source needs a fresh attach, not the warm revisit path.
+          const replacedKey = incomingOrigin?.session_key ?? key;
+          const replacedChatId = replacedKey.startsWith("websocket:")
+            ? replacedKey.slice("websocket:".length)
+            : replacedKey;
+          client.invalidateAttachment?.(replacedChatId);
+        }
+        if (lifetimeReplaced) {
           olderRequestAbortRef.current?.abort();
           olderRequestAbortRef.current = null;
           loadingOlderRef.current = false;

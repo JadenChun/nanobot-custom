@@ -386,6 +386,42 @@ or legacy-adoption change was made at this checkpoint.
     `ruff check nanobot/` -> `All checks passed!`; `git diff --check` clean;
     `pytest tests/session/ tests/security/test_workspace_access_recovery.py tests/webui/test_transcript_index.py tests/webui/test_managed_display_origin.py tests/webui/test_child_thread_route.py tests/webui/test_permission_v2_api.py -q` -> **2,115 passed** (including all 11 new tests in `tests/session/test_next_turn_preferences.py`).
 
+### Boundary 1 follow-up: warm revisit coalescing and bounded settled startup scan
+
+- **Client attach reuse (same live socket):**
+  - `NanobotClient.attach` now reuses an existing live subscription for
+    `(socket, chat)` when the socket is still open and the source incarnation is
+    unchanged. A -> B -> A on one connection no longer sends a duplicate full
+    attach or replays the previous recovery/Stop projection.
+  - A fresh attach is still forced for: a socket reconnect (attached map is
+    cleared on close), an observed source replacement via
+    `invalidateAttachment` (wired from `useSessions` when a lifetime change is
+    detected), an unsettled run (`hasUnsettledRun`), or unsettled input-attempt
+    proof. Notification subscriptions and per-chat listeners are untouched, so
+    live delivery for active or followed chats continues.
+- **Bounded settled startup scan:**
+  - `RecoveryCoordinator.scan` now classifies each candidate from
+    `SessionManager.read_startup_header_metadata`, which reads only the intact
+    header of the default JSONL store and never a canonical source body.
+    Unresolved sessions still go through `get_or_create` +
+    `load_source_snapshot`, preserving the owner-fenced journal/checkpoint path.
+  - `JsonlSessionStore.read_bounded_header_metadata` implements the bounded
+    header read; a non-default store keeps its previous read path so unknown
+    backends are never guessed.
+  - `tests/session/test_recovery_startup_scan.py` proves a settled canonical
+    session loads no body at startup and that a journal-marked session still
+    performs full owner-validated recovery. No startup admission fence was
+    weakened and new input still cannot race past recovery.
+- **Verification:**
+  - WebUI: `bun run lint` (`--max-warnings 0`) pass; `bun run build` pass;
+    `bun run test -- --maxWorkers=4 --minWorkers=1` -> **113 test files, 1,832
+    tests passed** (including new client warm-revisit/fresh-attach cases and the
+    stream revisit test).
+  - Python: `ruff check nanobot/` -> `All checks passed!`;
+    `basedpyright` + `scripts/check_type_regressions.py` ->
+    `PASS_NO_NEW_DIAGNOSTICS` (`764 -> 764`, `introduced: 0`);
+    `pytest` on the recovery/follow-up/checked-read suites -> **89 passed**.
+
 ## Remaining implementation and acceptance
 
 | Boundary | Work and exit check |

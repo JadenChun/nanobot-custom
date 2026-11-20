@@ -2559,6 +2559,35 @@ class JsonlSessionStore:
         with self.locked_session_files():
             return self._read_metadata_unlocked(key)
 
+    def read_bounded_header_metadata(self, key: str) -> SessionMetadataPayload | None:
+        """Read only the verified-or-intact header, never a canonical source body.
+
+        Startup classification needs the header metadata alone: the follow-up
+        journal and the WebUI recovery markers live there. Settled canonical
+        sessions therefore cost one bounded header read instead of a full
+        source validation. Callers that decide a session is unresolved must
+        still load the owner-validated snapshot before any recovery write.
+        """
+        with self.locked_session_files():
+            path = self.get_session_path(key)
+            if not path.exists():
+                return None
+            header = self._format_header(path)
+            metadata_value = cast(object, header.get("metadata", {}))
+            metadata = (
+                dict(cast(dict[str, Any], metadata_value))
+                if isinstance(metadata_value, dict) else {}
+            )
+            key_value = cast(object, header.get("key"))
+            created_at_value = cast(object, header.get("created_at"))
+            updated_at_value = cast(object, header.get("updated_at"))
+            return {
+                "key": key_value if isinstance(key_value, str) and key_value else key,
+                "created_at": created_at_value if isinstance(created_at_value, str) else None,
+                "updated_at": updated_at_value if isinstance(updated_at_value, str) else None,
+                "metadata": metadata,
+            }
+
     def read_canonical_snapshot(self, key: str) -> "SourceSnapshot | None":
         """Classify an unmanaged file by its header, then validate the source once."""
         with self.locked_session_files():
@@ -3695,6 +3724,26 @@ class SessionManager:
     def read_raw_session_metadata(self, key: str) -> dict[str, Any] | None:
         """Read persisted metadata without session-mode admission."""
         return cast(dict[str, Any] | None, self._store.read_metadata(key))
+
+    def read_startup_header_metadata(self, key: str) -> dict[str, Any] | None:
+        """Bounded metadata classification for startup; never loads a canonical body.
+
+        Only the default JSONL store exposes an intact header read. Any other
+        store keeps the previous behavior so an unknown backend is never
+        classified from a guessed format.
+        """
+        if self._mode_resolver is not None and self._mode_resolver.resolve_for_metadata(key).state != "active":
+            return None
+        if self._store is not self._jsonl_store:
+            return cast(dict[str, Any] | None, self._store.read_metadata(key))
+        try:
+            return cast(
+                dict[str, Any] | None,
+                self._jsonl_store.read_bounded_header_metadata(key),
+            )
+        except Exception:
+            # An unreadable header is not evidence of a settled session.
+            return None
 
     def update_session_metadata(
         self,
