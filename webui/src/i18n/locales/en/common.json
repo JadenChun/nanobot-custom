@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "Forked from history",
     "generatedAssets": {
       "open": "Open generated assets",
+      "close": "Close generated assets",
       "title": "Generated assets",
       "refresh": "Refresh generated assets",
       "view": "Asset view",

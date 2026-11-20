@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "기록에서 분기됨",
     "generatedAssets": {
       "open": "생성된 에셋 열기",
+      "close": "생성된 에셋 닫기",
       "title": "생성된 에셋",
       "refresh": "생성된 에셋 새로고침",
       "view": "에셋 보기",

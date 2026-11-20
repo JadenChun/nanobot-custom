@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "Bifurqué depuis l'historique",
     "generatedAssets": {
       "open": "Ouvrir les ressources générées",
+      "close": "Fermer les ressources générées",
       "title": "Ressources générées",
       "refresh": "Actualiser les ressources générées",
       "view": "Vue des ressources",

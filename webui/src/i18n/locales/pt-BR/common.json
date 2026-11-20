@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "Bifurcado a partir do histórico",
     "generatedAssets": {
       "open": "Abrir recursos gerados",
+      "close": "Fechar recursos gerados",
       "title": "Recursos gerados",
       "refresh": "Atualizar recursos gerados",
       "view": "Visualização de recursos",

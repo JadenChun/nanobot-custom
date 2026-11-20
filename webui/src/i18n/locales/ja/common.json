@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "履歴から分岐",
     "generatedAssets": {
       "open": "生成されたアセットを開く",
+      "close": "生成されたアセットを閉じる",
       "title": "生成されたアセット",
       "refresh": "生成されたアセットを更新",
       "view": "アセット表示",

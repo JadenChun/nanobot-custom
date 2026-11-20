@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "Tách nhánh từ lịch sử",
     "generatedAssets": {
       "open": "Mở nội dung đã tạo",
+      "close": "Đóng nội dung đã tạo",
       "title": "Nội dung đã tạo",
       "refresh": "Làm mới nội dung đã tạo",
       "view": "Chế độ xem nội dung",

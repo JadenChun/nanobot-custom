@@ -7815,4 +7815,252 @@ describe("ThreadShell", () => {
     // rather than reverting to turn 15's 10% or disappearing.
     expect(screen.getByRole("button", { name: "Context 40%. Open context usage" })).toBeInTheDocument();
   });
+
+  it("docks generated assets in the inspector from the header button", async () => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Aassets-dock/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "user", content: "paint a lighthouse" },
+            { role: "assistant", content: "Here are the candidates." },
+          ])));
+        }
+        if (url.includes("/generated-assets?")) {
+          return Promise.resolve({
+            ok: true,
+            headers: new Headers({ "content-type": "application/json" }),
+            json: async () => ({
+              schemaVersion: 1,
+              sessionKey: "websocket:assets-dock",
+              total: 1,
+              groups: [{
+                id: "turn-1|call-1",
+                turnId: "turn-1",
+                toolCallId: "call-1",
+                toolName: "mcp_comfy_generate_image",
+                sequence: 1,
+                startedAt: 1_793_438_338_000,
+                arguments: { prompt: "lighthouse at dusk" },
+                artifacts: [{
+                  id: "a1",
+                  kind: "image",
+                  mime: "image/png",
+                  name: "a1.png",
+                  url: "/api/media/sig/a1",
+                  bytes: 10,
+                }],
+              }],
+            }),
+          } as Response);
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("assets-dock")}
+          title="Assets dock"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      await screen.findByText(replyText("Here are the candidates."));
+      const shell = container.querySelector("section") as HTMLElement;
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1_200 });
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      expect(observer).toBeDefined();
+      act(() => {
+        observer!.callback([], observer as unknown as ResizeObserver);
+      });
+
+      const assetsButton = screen.getByRole("button", { name: "Open generated assets" });
+      expect(assetsButton).toHaveAttribute("aria-pressed", "false");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+      fireEvent.click(assetsButton);
+
+      // Docked pane: a tab, not a dialog, and the thumbnails load in the pane.
+      expect(await screen.findByRole("tab", { name: "Generated assets" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Open a1.png" })).toBeInTheDocument();
+      expect(assetsButton).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(assetsButton);
+
+      await waitFor(() => {
+        expect(screen.queryByRole("tab", { name: "Generated assets" })).not.toBeInTheDocument();
+      });
+      expect(assetsButton).toHaveAttribute("aria-pressed", "false");
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
+  it("keeps the assets and file tabs open side by side in the inspector", async () => {
+    await preloadMarkdownText();
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Aassets-tabs/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "assistant", content: "Open `files/stream.txt`" },
+          ])));
+        }
+        if (url.includes("/file-preview?") && url.includes("probe=1")) {
+          return Promise.resolve(httpJson({ available: true }));
+        }
+        if (url.includes("/file-preview?")) {
+          return Promise.resolve(httpJson({
+            path: "/project/files/stream.txt",
+            display_path: "files/stream.txt",
+            project_path: "/project",
+            language: "text",
+            content: "stream-marker\n",
+            size: 14,
+            truncated: false,
+          }));
+        }
+        if (url.includes("/generated-assets?")) {
+          return Promise.resolve({
+            ok: true,
+            headers: new Headers({ "content-type": "application/json" }),
+            json: async () => ({
+              schemaVersion: 1,
+              sessionKey: "websocket:assets-tabs",
+              total: 1,
+              groups: [{
+                id: "turn-1|call-1",
+                turnId: "turn-1",
+                toolCallId: "call-1",
+                toolName: "mcp_comfy_generate_image",
+                sequence: 1,
+                startedAt: 1_793_438_338_000,
+                arguments: { prompt: "harbour at dawn" },
+                artifacts: [{
+                  id: "tab-a1",
+                  kind: "image",
+                  mime: "image/png",
+                  name: "tab-a1.png",
+                  url: "/api/media/sig/tab-a1",
+                  bytes: 10,
+                }],
+              }],
+            }),
+          } as Response);
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("assets-tabs")}
+          title="Assets tabs"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      const fileReference = await screen.findByTestId("inline-file-path");
+      await waitFor(() => expect(fileReference).toHaveAttribute("role", "button"));
+      const shell = container.querySelector("section") as HTMLElement;
+      Object.defineProperty(shell, "clientWidth", { configurable: true, value: 1_200 });
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      act(() => {
+        observer!.callback([], observer as unknown as ResizeObserver);
+      });
+
+      fireEvent.click(fileReference);
+      expect(await screen.findByTestId("file-preview-panel")).toHaveTextContent("stream-marker");
+
+      fireEvent.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+      // Both tabs stay mounted; only the selected one is visible.
+      const assetsTab = screen.getByRole("tab", { name: "Generated assets" });
+      const fileTab = screen.getByRole("tab", { name: "stream.txt" });
+      expect(assetsTab).toHaveAttribute("aria-selected", "true");
+      expect(fileTab).toHaveAttribute("aria-selected", "false");
+      expect(await screen.findByTestId("generated-assets-flat")).toBeInTheDocument();
+
+      fireEvent.click(fileTab);
+
+      expect(screen.getByRole("tab", { name: "Generated assets" })).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
+      expect(screen.getByTestId("file-preview-panel")).toHaveTextContent("stream-marker");
+      expect(screen.queryByTestId("generated-assets-flat")).not.toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
+
+  it("shows the prompt navigator only where the prompt rail is hidden", async () => {
+    const resizeObserver = stubThreadResizeObserver();
+    const client = makeClient();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("websocket%3Anav-width/webui-thread")) {
+          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+            { role: "user", content: "first question" },
+            { role: "assistant", content: "first answer" },
+          ])));
+        }
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }),
+    );
+
+    try {
+      const { container } = render(wrap(
+        client,
+        <ThreadShell
+          session={session("nav-width")}
+          title="Nav width"
+          onToggleSidebar={() => {}}
+        />,
+      ));
+
+      await screen.findByText(replyText("first answer"));
+      const shell = container.querySelector("section") as HTMLElement;
+      const observer = resizeObserver.observers.find((entry) => entry.elements.includes(shell));
+      const resize = (width: number) => {
+        Object.defineProperty(shell, "clientWidth", { configurable: true, value: width });
+        act(() => {
+          observer!.callback([], observer as unknown as ResizeObserver);
+        });
+      };
+
+      // Wide desktop shows the left rail, so the header duplicate is hidden.
+      resize(1_200);
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Open prompt navigator" }))
+          .not.toBeInTheDocument();
+      });
+      expect(screen.getByRole("button", { name: "Open generated assets" })).toBeInTheDocument();
+
+      // Narrow and mobile widths hide the rail, so the header navigator returns.
+      resize(700);
+      expect(await screen.findByRole("button", { name: "Open prompt navigator" }))
+        .toBeInTheDocument();
+    } finally {
+      resizeObserver.restore();
+    }
+  });
 });

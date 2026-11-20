@@ -758,15 +758,14 @@ describe("App layout", () => {
     const heroTemporaryToggle = within(heroHeader).getByRole("button", {
       name: "Temporary chat",
     });
-    const themeToggle = within(heroHeader).getByRole("button", {
+    // Theme switching moved to Settings → Appearance; the chat header omits it.
+    expect(screen.queryByRole("button", {
       name: "Toggle theme from header",
-    });
+    })).not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("button", { name: "Temporary chat" })).not.toBeInTheDocument();
     expect(within(screen.getByTestId("thread-composer-motion")).queryByRole("button", {
       name: "Temporary chat",
     })).not.toBeInTheDocument();
-    expect(heroTemporaryToggle.compareDocumentPosition(themeToggle)
-      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     const user = userEvent.setup();
     await user.hover(heroTemporaryToggle);
@@ -3521,9 +3520,6 @@ describe("App layout", () => {
 
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole("button", { name: "Toggle theme from header" }));
-    expect(toggleThemeSpy).toHaveBeenCalledTimes(1);
-
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     const sidebarAside = container.querySelector("aside.lg\\:block") as HTMLElement;
     await waitFor(() => expect(sidebarAside.style.width).toBe("56px"));
@@ -3543,7 +3539,7 @@ describe("App layout", () => {
     expect(createChatSpy).not.toHaveBeenCalled();
     expect(screen.getByText(HERO_GREETING_PATTERN)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start a new topic" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Toggle theme from header" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Toggle theme from header" })).not.toBeInTheDocument();
     expect(within(sidebar).getByRole("button", { name: "Settings" })).toBeInTheDocument();
 
     expect(within(sidebar).getByText("Existing chat")).toBeInTheDocument();

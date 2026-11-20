@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "Cabang dari riwayat",
     "generatedAssets": {
       "open": "Buka aset yang dihasilkan",
+      "close": "Tutup aset yang dihasilkan",
       "title": "Aset yang dihasilkan",
       "refresh": "Segarkan aset yang dihasilkan",
       "view": "Tampilan aset",

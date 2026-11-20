@@ -41,7 +41,9 @@ export function ThreadHeader({
   onToggleTheme,
   hideSidebarToggleForHostChrome = false,
   hideSidebarToggle = false,
-  hideThemeButton = false,
+  // Theme switching lives in Settings → Appearance. The chat header no longer
+  // offers it; callers can still opt back in for other surfaces.
+  hideThemeButton = true,
   hideTitle = false,
   actions,
   minimal = false,

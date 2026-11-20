@@ -1428,6 +1428,7 @@
     "forkedFromHistory": "從歷史訊息建立分支",
     "generatedAssets": {
       "open": "開啟生成的素材",
+      "close": "關閉生成的素材",
       "title": "生成的素材",
       "refresh": "重新整理生成的素材",
       "view": "素材檢視",

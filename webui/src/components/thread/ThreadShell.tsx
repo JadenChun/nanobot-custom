@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Bot, FileText } from "lucide-react";
+import { Bot, FileText, Images } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
@@ -21,7 +21,8 @@ import {
   type FolderAccessResolveIntent,
 } from "@/components/thread/FolderAccessRequestCard";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
-import { GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
+import { GeneratedAssetsPanel } from "@/components/thread/GeneratedAssetsSheet";
+import { Button } from "@/components/ui/button";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
@@ -101,9 +102,17 @@ import type {
   WorkspacesPayload,
 } from "@/lib/types";
 import { projectWebuiThreadMessages } from "@/lib/thread-display-compat";
+import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
 type MessageShape = Pick<UIMessage, "role" | "kind" | "content" | "isStreaming" | "turnId">;
+
+/**
+ * Matches the `@container thread-viewport (max-width: 59rem)` rule that hides
+ * the left prompt rail. Below this width the rail is hidden, so the header must
+ * offer the prompt navigator instead.
+ */
+const PROMPT_RAIL_MIN_WIDTH = 944;
 
 interface ChildHistoryInspection {
   parentKey: string;
@@ -1102,7 +1111,7 @@ export function ThreadShell({
   onToggleTheme = () => {},
   hideSidebarToggleForHostChrome = false,
   hideSidebarToggle = false,
-  hideThemeButton = false,
+  hideThemeButton = true,
   hideHeaderTitle = false,
   inlineHandle = false,
   hideHeader = false,
@@ -1447,6 +1456,7 @@ export function ThreadShell({
   const [filePreview, setFilePreview] = useState<{ parentKey: string; path: string } | null>(null);
   const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
+  const [assetsInspectorOpen, setAssetsInspectorOpen] = useState(false);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
   const draftNamespace = useMemo(() => draftNamespaceFor(token), [token]);
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
@@ -1770,9 +1780,20 @@ export function ThreadShell({
   const activeChildHistoryInspection = childHistoryInspection?.parentKey === historyKey
     ? childHistoryInspection
     : null;
+  const assetsInspectorAvailable = Boolean(historyKey) && !temporary && assetsInspectorOpen;
+  // Prefer the tab the user selected when it is still open. Otherwise fall back
+  // to whatever remains open, in the same order the tabs are rendered.
   const inspectorTab = selectedInspector === "file" && filePreviewPath
     ? "file"
-    : activeChildHistoryInspection ? "subagents" : filePreviewPath ? "file" : null;
+    : selectedInspector === "assets" && assetsInspectorAvailable
+      ? "assets"
+      : selectedInspector === "subagents" && activeChildHistoryInspection
+        ? "subagents"
+        : filePreviewPath
+          ? "file"
+          : assetsInspectorAvailable
+            ? "assets"
+            : activeChildHistoryInspection ? "subagents" : null;
   const inspectorDocked = shellWidth >= MIN_INSPECTOR_DOCK_WIDTH;
   const inspectorVisible = inspectorDocked || composerActive;
   const inspectorModal = inspectorVisible && inspectorTab !== null && !inspectorDocked;
@@ -3276,6 +3297,12 @@ export function ThreadShell({
     filePreviewEditKeysRef.current = new Set();
   }, [filePreviewPath]);
 
+  // The assets tab only exists inside a saved session. Drop the open flag when
+  // the shell moves to a new or temporary chat so it cannot reappear later.
+  useEffect(() => {
+    if (!historyKey || temporary) setAssetsInspectorOpen(false);
+  }, [historyKey, temporary]);
+
   useEffect(() => {
     if (!filePreviewPath) return;
     const normalize = (value: string) => value.replace(/\\/g, "/");
@@ -3300,10 +3327,24 @@ export function ThreadShell({
   const handleCloseFilePreview = useCallback(() => {
     setFilePreview(null);
   }, []);
+  const handleCloseAssets = useCallback(() => {
+    setAssetsInspectorOpen(false);
+  }, []);
   const handleCloseInspectorDialog = useCallback(() => {
     handleCloseChildHistory();
     handleCloseFilePreview();
-  }, [handleCloseChildHistory, handleCloseFilePreview]);
+    handleCloseAssets();
+  }, [handleCloseAssets, handleCloseChildHistory, handleCloseFilePreview]);
+
+  const handleToggleAssetsInspector = useCallback(() => {
+    if (!historyKey || temporary) return;
+    if (assetsInspectorOpen && selectedInspector === "assets") {
+      setAssetsInspectorOpen(false);
+      return;
+    }
+    setSelectedInspector("assets");
+    setAssetsInspectorOpen(true);
+  }, [assetsInspectorOpen, historyKey, selectedInspector, temporary]);
 
   const handleForkFromMessage = useCallback(
     async (beforeUserIndex: number) => {
@@ -3628,16 +3669,27 @@ export function ThreadShell({
     </div>
   );
   const generatedAssetsAction = historyKey && !temporary ? (
-    <GeneratedAssetsSheet
-      sessionKey={historyKey}
-      token={token}
-      refreshKey={turnActive ? "running" : "idle"}
-    />
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={t("thread.generatedAssets.open")}
+      aria-pressed={assetsInspectorAvailable && inspectorTab === "assets"}
+      onClick={handleToggleAssetsInspector}
+      className={cn(
+        "host-no-drag h-8 w-8 shrink-0 rounded-full text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
+        assetsInspectorAvailable && inspectorTab === "assets" && "bg-accent/45 text-foreground",
+      )}
+    >
+      <Images className="h-4 w-4" aria-hidden />
+    </Button>
   ) : undefined;
   const sessionInfoAction = historyKey ? (
     <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
   ) : undefined;
-  const promptNavigatorAction = historyKey ? (
+  // `shellWidth` starts at 0 before the resize observer measures the shell.
+  // Both cases keep the navigator, which matches the hidden left rail.
+  const promptNavigatorAction = historyKey && shellWidth < PROMPT_RAIL_MIN_WIDTH ? (
     <PromptNavigator
       messages={viewportMessages}
       onJumpToPrompt={(promptId) => viewportRef.current?.jumpToUserPrompt(promptId)}
@@ -3696,6 +3748,26 @@ export function ThreadShell({
           visible={inspectorVisible && inspectorTab === "file"}
           active={composerActive && inspectorTab === "file"}
           onClose={inspectorDocked ? handleCloseFilePreview : handleCloseInspectorDialog}
+        />
+      ),
+    });
+  }
+  if (assetsInspectorAvailable && historyKey) {
+    inspectorTabs.push({
+      id: "assets",
+      icon: Images,
+      label: t("thread.generatedAssets.title"),
+      closeLabel: t("thread.generatedAssets.close", { defaultValue: "Close generated assets" }),
+      content: (
+        <GeneratedAssetsPanel
+          key={historyKey}
+          sessionKey={historyKey}
+          token={token}
+          refreshKey={turnActive ? "running" : "idle"}
+          modal={!inspectorDocked}
+          visible={inspectorVisible && inspectorTab === "assets"}
+          active={composerActive && inspectorTab === "assets"}
+          onClose={inspectorDocked ? handleCloseAssets : handleCloseInspectorDialog}
         />
       ),
     });
@@ -3812,6 +3884,7 @@ export function ThreadShell({
         onSelect={setSelectedInspector}
         onClose={(id) => {
           if (id === "file") handleCloseFilePreview();
+          else if (id === "assets") handleCloseAssets();
           else handleCloseChildHistory();
         }}
       />
