@@ -25,14 +25,18 @@ interface InFlightSetting {
 export class NextTurnSettingsTracker {
   private sequence = 0;
   private inFlight = new Map<string, Map<NextTurnSettingKind, InFlightSetting>>();
+  private latestSequence = new Map<string, Map<NextTurnSettingKind, number>>();
   private incarnations = new Map<string, string | null>();
 
   /** Bind the tracker to a chat lifetime; a replacement invalidates waiters. */
   bindIncarnation(chatId: string, incarnation: string | null): void {
     const previous = this.incarnations.get(chatId);
     if (previous === incarnation) return;
+    if (incarnation === null) return;
     this.incarnations.set(chatId, incarnation);
-    if (previous !== undefined) this.clear(chatId);
+    if (previous !== undefined && previous !== null && previous !== incarnation) {
+      this.clear(chatId);
+    }
   }
 
   /** Start one setting operation and return its local sequence number. */
@@ -47,6 +51,12 @@ export class NextTurnSettingsTracker {
       byKind = new Map();
       this.inFlight.set(chatId, byKind);
     }
+    let latestByKind = this.latestSequence.get(chatId);
+    if (!latestByKind) {
+      latestByKind = new Map();
+      this.latestSequence.set(chatId, latestByKind);
+    }
+    latestByKind.set(kind, sequence);
     const entry: InFlightSetting = { sequence, promise: operation };
     byKind.set(kind, entry);
     const settle = () => {
@@ -61,13 +71,17 @@ export class NextTurnSettingsTracker {
     return sequence;
   }
 
-  /** True while this exact choice is still the newest one for its kind. */
+  /** True while this exact choice is still the newest one for its kind (even after settling). */
   isCurrent(chatId: string, kind: NextTurnSettingKind, sequence: number): boolean {
-    return this.inFlight.get(chatId)?.get(kind)?.sequence === sequence;
+    return this.latestSequence.get(chatId)?.get(kind) === sequence;
   }
 
   hasPending(chatId: string): boolean {
     return (this.inFlight.get(chatId)?.size ?? 0) > 0;
+  }
+
+  pendingKinds(chatId: string): Set<NextTurnSettingKind> {
+    return new Set(this.inFlight.get(chatId)?.keys() ?? []);
   }
 
   /**
@@ -85,5 +99,6 @@ export class NextTurnSettingsTracker {
 
   clear(chatId: string): void {
     this.inFlight.delete(chatId);
+    this.latestSequence.delete(chatId);
   }
 }

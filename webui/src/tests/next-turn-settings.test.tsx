@@ -251,14 +251,14 @@ function wrap(client: ReturnType<typeof makeClient>, children: ReactNode) {
   );
 }
 
-function stubThreadFetch() {
+function stubThreadFetch(chatId = "next-turn-chat") {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), "https://example.test");
     if (!url.pathname.endsWith("/webui-thread")) return new Response(null, { status: 404 });
     if (url.searchParams.get("view") === "controls") {
       return Response.json({
         view: "controls",
-        sessionKey: "websocket:next-turn-chat",
+        sessionKey: `websocket:${chatId}`,
         schemaVersion: 3,
         stop_target: null,
         next_workspace_scope: null,
@@ -267,7 +267,7 @@ function stubThreadFetch() {
     }
     return Response.json({
       view: "history",
-      sessionKey: "websocket:next-turn-chat",
+      sessionKey: `websocket:${chatId}`,
       ...transcript(),
       active_turn_id: null,
       has_pending_tool_calls: false,
@@ -745,6 +745,94 @@ describe("ThreadShell next-turn container lock", () => {
     expect(onSend).not.toHaveBeenCalled();
     // The exact row is preserved and is still shown for a retry.
     expect(screen.getByText("queued under beta")).toBeInTheDocument();
+  });
+
+  it("keeps isCurrent accurate after settlement and clears tracker only on incarnation replacement", async () => {
+    const tracker = new NextTurnSettingsTracker();
+    let resolveFirst!: () => void;
+    let resolveSecond!: () => void;
+    const first = new Promise<void>((resolve) => { resolveFirst = resolve; });
+    const second = new Promise<void>((resolve) => { resolveSecond = resolve; });
+
+    const seq1 = tracker.begin("chat-1", "workspace", first);
+    const seq2 = tracker.begin("chat-1", "workspace", second);
+    expect(tracker.isCurrent("chat-1", "workspace", seq1)).toBe(false);
+    expect(tracker.isCurrent("chat-1", "workspace", seq2)).toBe(true);
+
+    // Initial incarnation hydration (null -> inc-1:0) must not drop in-flight waiters.
+    tracker.bindIncarnation("chat-1", "inc-1:0");
+    expect(tracker.hasPending("chat-1")).toBe(true);
+
+    resolveFirst();
+    await Promise.resolve();
+    // Choice #2 is still in flight, so workspace remains pending.
+    expect(tracker.pendingKinds("chat-1").has("workspace")).toBe(true);
+
+    resolveSecond();
+    await tracker.pending("chat-1");
+    expect(tracker.hasPending("chat-1")).toBe(false);
+    expect(tracker.isCurrent("chat-1", "workspace", seq2)).toBe(true);
+    expect(tracker.isCurrent("chat-1", "workspace", seq1)).toBe(false);
+
+    // Real incarnation replacement invalidates prior sequence tracking.
+    tracker.bindIncarnation("chat-1", "inc-1:1");
+    expect(tracker.isCurrent("chat-1", "workspace", seq2)).toBe(false);
+  });
+
+  it("fires Steer immediately without waiting on a held next-turn folder acknowledgement", async () => {
+    const user = userEvent.setup();
+    const client = makeClient();
+    stubThreadFetch("steer-immediate");
+    const workspaces = workspacesFixture();
+    client.setNextTurnWorkspaceScope.mockReturnValue(new Promise(() => {}));
+
+    render(wrap(client, <ThreadShell
+      session={session("steer-immediate")}
+      title="Steer immediate"
+      onToggleSidebar={() => {}}
+      workspaceScope={FOLDER_A}
+      workspaceDefaultScope={HOME}
+      workspaceControls={workspaces.controls}
+      workspaces={workspaces}
+      onWorkspaceScopeChange={vi.fn()}
+    />));
+
+    await screen.findByLabelText("Message input");
+    act(() => {
+      client._emitChat("steer-immediate", {
+        event: "goal_status",
+        chat_id: "steer-immediate",
+        status: "running",
+        started_at: 1_700_000_000,
+        turn_id: "turn-a",
+      });
+    });
+    await screen.findByRole("button", { name: "Stop response" });
+
+    // Pick folder B while turn A is running; its ack stays held.
+    await user.click(screen.getByRole("button", { name: "Working in: alpha" }));
+    fireEvent.change(await screen.findByLabelText("Paste path"), {
+      target: { value: FOLDER_B.project_path },
+    });
+    await user.click(screen.getByRole("button", { name: "Use folder" }));
+    await waitFor(() => expect(client.setNextTurnWorkspaceScope).toHaveBeenCalledTimes(1));
+
+    // Queue a prompt and click Steer: must send immediately without awaiting beta's ack.
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "steer turn A now" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "Steer" }));
+
+    await waitFor(() => expect(client.sendMessage).toHaveBeenCalledWith(
+      "steer-immediate",
+      "steer turn A now",
+      undefined,
+      expect.objectContaining({
+        requestIntent: "steer",
+        startsNewRun: false,
+        targetTurnId: "turn-a",
+      }),
+    ));
   });
 
 });

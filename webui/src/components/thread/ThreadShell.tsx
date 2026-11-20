@@ -1226,31 +1226,30 @@ export function ThreadShell({
     ownerChatId: string,
     kind: NextTurnSettingKind,
     operation: Promise<unknown>,
-  ) => {
-    nextTurnSettings.begin(ownerChatId, kind, operation);
-    setNextTurnPendingKinds((current) => {
-      const next = new Set(current);
-      next.add(kind);
-      return next;
-    });
+  ): number => {
+    const seq = nextTurnSettings.begin(ownerChatId, kind, operation);
+    if (nextTurnChatIdRef.current === ownerChatId) {
+      setNextTurnPendingKinds(nextTurnSettings.pendingKinds(ownerChatId));
+    }
     const settle = () => {
-      setNextTurnPendingKinds((current) => {
-        if (!current.has(kind)) return current;
-        const next = new Set(current);
-        next.delete(kind);
-        return next;
-      });
+      if (nextTurnChatIdRef.current !== ownerChatId) return;
+      setNextTurnPendingKinds(nextTurnSettings.pendingKinds(ownerChatId));
     };
     void operation.then(settle, settle);
+    return seq;
   }, [nextTurnSettings]);
   useEffect(() => {
     if (nextTurnChatIdRef.current === chatId) return;
     nextTurnChatIdRef.current = chatId;
-    nextTurnSettings.clear(nextTurnChatIdRef.current ?? "");
     setNextTurnScopeOverride(null);
     setNextTurnSettingsError(null);
-    setNextTurnPendingKinds((current) => (current.size === 0 ? current : new Set()));
+    setNextTurnPendingKinds(chatId ? nextTurnSettings.pendingKinds(chatId) : new Set());
   }, [chatId, nextTurnSettings]);
+  useEffect(() => {
+    if (!chatId) return;
+    nextTurnSettings.bindIncarnation(chatId, sessionIncarnation);
+    setNextTurnPendingKinds(nextTurnSettings.pendingKinds(chatId));
+  }, [chatId, nextTurnSettings, sessionIncarnation]);
   useEffect(() => {
     if (!liveNextWorkspaceScope) return;
     setNextTurnScopeOverride((current) => (
@@ -2141,16 +2140,22 @@ export function ThreadShell({
     setReasoningUpdate((current) => current?.chatId === chatId ? null : current);
     setNextTurnSettingsError(null);
     if (!chatId) return;
-    const chat = chatId;
-    const operation = client.sendSystemCommand(chat, `/model ${name}`).then(() => undefined);
-    trackNextTurnSetting(chat, "model", operation);
+    const ownerChatId = chatId;
+    const operation = client.sendSystemCommand(ownerChatId, `/model ${name}`).then(() => undefined);
+    const seq = trackNextTurnSetting(ownerChatId, "model", operation);
     void operation.catch((error: unknown) => {
+      if (
+        nextTurnChatIdRef.current !== ownerChatId
+        || !nextTurnSettings.isCurrent(ownerChatId, "model", seq)
+      ) {
+        return;
+      }
       setLocalModelPreset(null);
       setNextTurnSettingsError(
         error instanceof Error ? error.message : "model_preset_rejected",
       );
     });
-  }, [chatId, client, trackNextTurnSetting]);
+  }, [chatId, client, nextTurnSettings, trackNextTurnSetting]);
   const reasoningPreset = modelPresetForBadge(settings, activeModelPreset);
   const reasoningOptions = reasoningPreset?.reasoning_effort_values?.filter(Boolean) ?? [];
   const selectedReasoning = localReasoning?.chatId === chatId && localReasoning.preset === activeModelPreset
@@ -2179,17 +2184,31 @@ export function ThreadShell({
       setLocalReasoning(selection);
       return;
     }
-    const update = { chatId, pending: true };
+    const ownerChatId = chatId;
+    const update = { chatId: ownerChatId, pending: true };
     setReasoningUpdate(update);
-    const operation = client
-      .sendSystemCommand(chatId, modelReasoningCommand(activeModelPreset, effort))
-      .then(() => {
-        setLocalReasoning(selection);
-        setReasoningUpdate((current) => current === update ? null : current);
-      });
-    trackNextTurnSetting(chatId, "reasoning", operation);
-    void operation.catch(() => {
-      setReasoningUpdate((current) => current === update ? { chatId, pending: false } : current);
+    const rawOperation = client.sendSystemCommand(
+      ownerChatId,
+      modelReasoningCommand(activeModelPreset, effort),
+    );
+    const seq = trackNextTurnSetting(ownerChatId, "reasoning", rawOperation);
+    void rawOperation.then(() => {
+      if (
+        nextTurnChatIdRef.current !== ownerChatId
+        || !nextTurnSettings.isCurrent(ownerChatId, "reasoning", seq)
+      ) {
+        return;
+      }
+      setLocalReasoning(selection);
+      setReasoningUpdate((current) => current === update ? null : current);
+    }).catch(() => {
+      if (
+        nextTurnChatIdRef.current !== ownerChatId
+        || !nextTurnSettings.isCurrent(ownerChatId, "reasoning", seq)
+      ) {
+        return;
+      }
+      setReasoningUpdate((current) => current === update ? { chatId: ownerChatId, pending: false } : current);
     });
   };
   const modelPresetOptions = useMemo(
@@ -3055,7 +3074,15 @@ export function ThreadShell({
         }
         return submitted;
       };
-      const outcome = chatId ? submitWithNextTurnSettings(chatId, submit) : submit();
+      const isStopCommand = content.trim() === "/stop" && !(images && images.length > 0);
+      const waitForNextTurnSettings = (
+        Boolean(chatId)
+        && options?.continueActiveTurn !== true
+        && !isStopCommand
+      );
+      const outcome = waitForNextTurnSettings && chatId
+        ? submitWithNextTurnSettings(chatId, submit)
+        : submit();
       if (outcome instanceof Promise) {
         return outcome.then((submitted) => {
           const settled = settleSubmitted(submitted);
@@ -3084,24 +3111,32 @@ export function ThreadShell({
       // Steer target, or the active scope projection.
       setNextTurnScopeOverride(scope);
       setNextTurnSettingsError(null);
-      const operation = client
-        .setNextTurnWorkspaceScope(ownerChatId, scope)
+      const rawOperation = client.setNextTurnWorkspaceScope(ownerChatId, scope);
+      const seq = trackNextTurnSetting(ownerChatId, "workspace", rawOperation);
+      void rawOperation
         .then((ack) => {
+          if (
+            nextTurnChatIdRef.current !== ownerChatId
+            || !nextTurnSettings.isCurrent(ownerChatId, "workspace", seq)
+          ) {
+            return;
+          }
           if (ack.next_workspace_scope) {
             setNextTurnScopeOverride(ack.next_workspace_scope);
           }
         })
         .catch((error: unknown) => {
+          if (
+            nextTurnChatIdRef.current !== ownerChatId
+            || !nextTurnSettings.isCurrent(ownerChatId, "workspace", seq)
+          ) {
+            return;
+          }
           const reason = error instanceof Error ? error.message : "workspace_scope_rejected";
           // Restore the confirmed display; the draft and queue are untouched.
           setNextTurnScopeOverride(null);
           setNextTurnSettingsError(reason);
-          throw error;
         });
-      trackNextTurnSetting(ownerChatId, "workspace", operation);
-      void operation.catch(() => {
-        // The tracker and rejection already surfaced this refusal.
-      });
       return;
     }
     if (workspaceAccessRequest && chatId) {
@@ -3115,7 +3150,7 @@ export function ThreadShell({
       markWorkspaceAccessRequestStale();
     }
     onWorkspaceScopeChange?.(scope);
-  }, [chatId, client, markWorkspaceAccessRequestStale, onWorkspaceScopeChange,
+  }, [chatId, client, markWorkspaceAccessRequestStale, nextTurnSettings, onWorkspaceScopeChange,
     pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, temporary, trackNextTurnSetting,
     turnActive, workspaceAccessRequest]);
 
