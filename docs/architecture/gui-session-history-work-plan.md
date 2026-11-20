@@ -1,0 +1,335 @@
+# Kohaku chat page: implementation work plan
+
+**2026-11-20 · `codex/chat-page-work-plan`** · Based on
+`a895ac9ba7840c9012570c3706bef6b55a671a43` from
+`origin/codex/staging-audit-implementation`.
+The [design and release checks](gui-session-history-design.md) remain the authority.
+This branch does not include the separate macOS terminal changes.
+
+## Resume from this branch
+
+This is a **handoff checkpoint**, not a merge or install candidate. On another
+device, fetch and check out `origin/codex/chat-page-work-plan` (or fast-forward
+its local tracking branch). Keep this branch separate from staging.
+
+- **Start at G2, not the GUI rail.** Finish the writer audit below, then
+  prove one committed range/index projection at the existing display commit
+  boundary. Compare the authenticated latest read on real short and long
+  unsegmented and rotated histories, with and without an index. A missing
+  proof or oversized recent record is not an empty chat. Only after that,
+  wire bounded history and exact prompt windows into the gateway and renderer.
+- **Reconcile the mobile registry before qualifying prompt navigation.**
+  `origin/codex/staging-audit-implementation` advanced to `17f1b6cfc` with
+  `/turns` admission on the mobile bridge. That commit is not in this
+  checkpoint; review it against the new prompt-index contract before
+  integration. The split history and controls routes are already covered
+  by the paired transport's existing `chat.read` checks.
+- **Reproduce on the new device.** Use the repo's strict dependency setup
+  in [CONTRIBUTING.md](../../CONTRIBUTING.md), then run:
+
+  ```sh
+  uv run --no-sync pytest tests/session/test_saved_source_browse.py \
+    tests/webui/test_managed_display_origin.py tests/webui/test_session_turn_index.py \
+    tests/webui/test_input_attempt_readback.py tests/webui/test_permission_v2_api.py \
+    --basetemp="$(mktemp -d /tmp/khp.XXXXXX)"
+  (cd webui && bun install --frozen-lockfile && bun run test --maxWorkers=4 --minWorkers=1)
+  (cd mobile/native-network && go test ./internal/broker)
+  ```
+
+  The tests and summarized evidence are in Git. The development Mac's
+  dependency copy, raw logs, and disposable probes below are local-only;
+  they are not prerequisites to resuming work.
+
+## Current checkpoint: split reads and composer action ownership
+
+**Partial implementation; not ready to merge or install as the completed
+refactor.** The managed source owner has a browse-only metadata read, and
+new managed turns can bind display records to their producing source. Neither
+is wired into the history page yet: its reader still needs a committed
+coverage witness. In the running-gateway and renderer paths, a saved
+page no longer requires the permission, folder request, or Stop projection.
+On the original source, an injected permission-projection failure returned
+HTTP 503 on desktop and 502 on the mobile adapter instead of the two saved
+rows. The candidate serves those rows even when the permission reader fails
+or the Stop reader would fail if invoked. The same endpoint refuses a
+deleted managed session even if its display transcript remains on disk.
+
+- `GET /api/sessions/{key}/webui-thread?view=history` validates the read
+  principal, session source or existing legacy read path, and child lineage
+  before replaying saved rows. Persisted workspace context resolves relative
+  media paths but does not restore Full access; the existing media policy
+  still authorizes each signed path. The response does not project
+  permissions, folder requests, or Stop. The existing turn-tail hints and
+  committed completion IDs remain for fenced reconciliation; they do not
+  authorize execution or prove admission. The unqualified combined response
+  remains for the TUI and existing callers.
+- `?view=controls` uses the same operation and existing live owners, without
+  replaying the display transcript. The GUI publishes the history window
+  without awaiting it, uses it for explicit permission/folder-request
+  readback and Stop refresh, and keeps the existing socket live events.
+  Missing controls do not provide a legacy Stop fallback on the split path.
+  A transport failure on refresh leaves the same client's settled rows visible.
+  An authenticated read refusal clears the rows and cache. An in-flight prompt
+  index request cannot restore labels after a switch or refusal. Both views
+  pass through the existing mobile operation and its `chat.read` admission and
+  delivery checks.
+- Simultaneous renderer listeners now share their first socket attach for a
+  chat. A canonical attach reuses its validated source for descriptive
+  handshake metadata instead of loading it separately. Tests cover ordinary
+  attach and exact input-attempt proof: each has one source read and one
+  remaining metadata read for the live hydrator, not two metadata reads.
+  Reconnect, explicit proof, Stop projection, and mobile delivery checks
+  remain in place. Revisits can still reattach.
+- The selected chat's editor can accept a draft before the sidebar and live
+  controls settle. Submission and Stop have separate guards. The shared model
+  catalog comes from the app, not a second chat-page fetch. A send that never
+  hands an attempt to the transport leaves the draft intact. Editing or
+  sending one queue row preserves the other rows and a separate draft.
+  Empty Enter no longer steers;
+  the deliberate Steer action requires the exact active turn. Queue drain
+  requires a live natural completion, not an idle snapshot, Stop, or replay.
+  Late camera and dictation results cannot enter a different selected draft.
+  These are action/ownership fixes, not end-to-end draft restore or next-turn
+  settings.
+- Page and turn-index reads now use structural transcript events, including
+  across real segment rotation. A reply that says `turn_end` no longer changes
+  the turn count or page boundaries. No storage format, writer, or startup
+  ordering changed.
+
+### G2 preflight: why the latest window is not bounded yet
+
+An isolated managed gateway with current, pre-index history returned four
+visible rows for every fixture. Counts are for the authenticated
+`view=history&limit=4&direction=latest` request, not elapsed times.
+
+| Fixture | Settled turns | Canonical events loaded | Display records decoded | Segment entries decoded across manifest reads |
+| --- | ---: | ---: | ---: | ---: |
+| Single active file | 24 | 48 | 72 | 0 |
+| Single active file | 240 | 480 | 720 | 0 |
+| Rotated (5 segments) | 24 | 48 | 12 | 10 |
+| Rotated (59 segments) | 240 | 480 | 12 | 118 |
+
+The managed resolver also read the full canonical file twice before the
+snapshot load. Rotation bounds display decoding in this fixture, not
+canonical validation or manifest work. A title-only edit replaced the
+canonical file and shifted the first event offset by 46 bytes while leaving
+the source incarnation, generation, and event IDs unchanged. Public prompt
+locators must therefore outlive ordinary appends and metadata edits; physical
+ranges must be checked against the exact published file/segment version.
+
+**G2 remains open.** Prove a bounded browse-authority read at the existing
+session owner and a committed, rebuildable range/index projection before
+changing the page contract. Do not treat a transcript, directory entry, or
+unverified first line as read authority. G2 also needs a safe bounded tail
+path for pre-index chats and interrupted-publication/replacement tests. The
+existing scan is not accepted as a first-open solution merely because the
+controls are independent.
+
+### G2 checkpoint: shared read guard and bounded-tail probe
+
+The desktop prompt-summary route used only the API principal and display
+file. In a managed gateway it returned labels for an absent session, a
+deleted session, a non-WebUI source, and an active record whose source file
+was missing. It now uses the existing saved-thread source check before
+reading labels. The summary read stays off-thread and uses the existing
+sessions-file lock across that check and the display read. Valid summaries
+still work without consulting live permission or Stop state. The legacy
+combined thread response and the mobile operation registry are unchanged.
+This fixes the missing check; it does not make the check bounded.
+
+An isolated probe reused evidence from a **prior full validation** of each
+exact canonical file. It rechecked the managed namespace, mode record,
+journal, and private file identity. With that evidence available, it read no
+canonical body on the browse. Across both 24- and 240-turn fixtures, the
+no-index display tail read **2,048 bytes and decoded seven records** to
+reproduce four visible rows. The rotated fixture used at most **576 bytes**
+of the current v3 manifest to find the active file; it did not derive totals
+or read segment entries. Faults immediately before and after real manifest
+publication selected the old and new active file respectively, without
+repairing the files. An oversized recent record produced an explicit
+unavailable result, not an empty page. A metadata-only source replacement
+rejected the old file proof while preserving logical origin.
+
+### G2 checkpoint: managed browse source proof
+
+The [session owner](../../nanobot/session/session_mode.py) now reads detached
+history metadata from proof of the exact private source file. The existing
+acquisition inventory stamps that proof when it fully validates the registered
+source. Both existing atomic source writers stamp the file they installed,
+not the file that happens to be at its path later; they return the stamp
+only after directory sync, and the owner publishes it after media custody
+settles. No extra source scan, persistent field, or write path was added.
+
+The browse read rechecks the pinned namespace, mode record, journal
+(including unfinished reset/delete), absence of a canonical sidecar, and the
+current private file version. A missing or changed proof is unavailable,
+not an ordinary mode-cache hit or a reason to trust the current header.
+Execution and recovery retain full validation. On 24- and 240-prompt
+fixtures, first browse after acquisition and immediately after a metadata
+rewrite reads **zero canonical body bytes**. The inode changes on metadata
+rewrite without changing the logical origin; reset and delete/recreation
+change the origin. The mode check still enumerates the bounded live journal
+set. This is source-owner evidence, not a first-open gateway or startup
+latency claim.
+
+**Why the browse proof is not enough.** In the prior gateway probe a
+deleted session with a retained display file returned 404,
+but recreating that key returned the four **old** rows, even with a freshly
+validated canonical source. A valid filename, current source, or byte range
+cannot authorize those rows. Ingress can also write a user display row
+before the first canonical admission, and a delayed output can arrive after
+replacement. Use the originating turn's lifetime at publication, not the
+current key lookup at delivery time. Verify the first-admission, fork, and
+reset/recovery cases before adopting any unbound prefix. The existing ingress
+source token can identify an already-bound turn; it is not proof that every
+writer used that lifetime or that any display row was admitted.
+
+### G2 checkpoint: managed display publication
+
+- An ordinary managed WebUI input now archives from the existing canonical
+  admission receipt, with the exact committed prompt event ID. A canonical
+  append failure leaves no user display row. The normal answer and completion
+  carry the admitted turn's origin; a delayed receipt or answer cannot append
+  to the display history of a reset or recreated chat. A title rewrite does
+  not invalidate the origin, and a qualified read after reopening the source
+  still excludes retained rows from its previous lifetime.
+- The real stream path closes and archives the previous answer segment
+  before publishing a committed Steer receipt. The runner still consumes
+  guidance at the same canonical boundary. A failed guidance display write
+  marks the active turn's completion incomplete, not a new turn for the
+  guidance request.
+- Managed forks use the committed fork as fallback when the parent's display
+  prefix is unbound, cannot match prompt positions, or has a marked or
+  interrupted display tail. Proven parent display rows and the fork marker
+  are published under the fork's own origin. A fork no longer loses a
+  committed answer just because the matching prompt had already been archived.
+
+**G2 still open.** These checks prove provenance for selected writers, not
+complete display coverage, legacy compatibility, or a bounded history read.
+The existing history and prompt-summary endpoints still use the compatibility
+reader; the retained-file read after key recreation is not resolved by
+stamping new rows alone. Audit the remaining publishers (including inline
+commands, delegated activity, and recovery), then publish coverage in the
+one rebuildable index at the existing commit boundary. Do not add a second
+content writer or adopt an unbound display file after reset/recreation. The
+probe's manifest suffix check is not a production commit witness. Prove a
+bounded pre-index latest read and exact older/newer/around windows; a bounded
+tail alone cannot infer global counts or direct prompt locations.
+
+The next writer audit has three known gaps. [Inline commands and shell
+input](../../nanobot/webui/inbound_commands.py) can still archive at ingress.
+[Cross-session input](../../nanobot/session/webui_turns.py) archives on
+`UserInputAccepted`, which the [agent loop](../../nanobot/agent/loop.py)
+publishes before it dispatches or queues the input, not after a canonical
+append. [Delegated activity](../../nanobot/webui/outbound_projection.py)
+already has a typed root lifetime but is archived without passing a display
+origin to the recorder. Classify those records and interrupted/recovery
+output before using a covered range as a complete view. No reader, index,
+or legacy-adoption change was made at this checkpoint.
+
+## Remaining implementation and acceptance
+
+| Boundary | Work and exit check |
+| --- | --- |
+| **1 · Attach and readiness follow-up** | Session projection, gateway and client transport. Coalesce revisits on the same live socket/source without replaying stale recovery or Stop state, losing notification subscriptions, or skipping exact input-attempt proof. Separately qualify genuine cold startup: MCP connection and recovery precede channel startup in [gateway_runtime.py](../../nanobot/cli/gateway_runtime.py). Split readiness only if cold-start evidence warrants it. |
+| **2 · Storage windows and prompt summaries** | Storage and gateway readers, after **G2**. Use real segmented and pre-index fixtures to bind ranges to committed generations. Prove bounded latest, older, newer, and exact-around reads and a bounded pre-index first open; reject obsolete ranges after replacement. Keep the writer unchanged. |
+| **3 · Viewport and prompt rail** | History hook, viewport and mobile navigator, after 2. Prove unloaded prompt selection reaches the exact mounted row, both paging directions work without gaps, and navigation/reconnect cannot replace a newer selection or steal the reader's anchor. |
+| **4 · Composer and next-turn settings** | Finish draft restoration on switch and relaunch, focus/caret, first-send payload handoff, and usage independent of the selected window. Keep edits to shared shell files in sequence with 3. Before changing settings, settle **G3**: bounded metadata readback/commit at the existing owner, instant selection, and exact new-turn admission without changing the active scope or granting authority on timeout. The active-workspace lock remains until that boundary is proven. |
+| **5 · Transcript consolidation** | Storage and display projection after 1–4. Finish **G4** before changing a writer: prove field parity, media custody, lifecycle/restart and reversible read compatibility. No bulk migration. |
+| **6 · Bundled apps** | Compare first open, prompt navigation and composer in Kohaku and Codex Desktop on macOS; smoke Linux and one paired Android device. Repeat affected checks after writer cutover. |
+
+### G4 inventory started; not cutover evidence
+
+| Required fact | Current owner/evidence to compare |
+| --- | --- |
+| Prompt, answer, turn identity and admission | Canonical [source turn writer](../../nanobot/session/turn_writer.py) and row replay in [WebUI transcript](../../nanobot/webui/transcript.py). A display row is not proof of admission. |
+| Permitted reasoning, bounded trace/file edits, compaction and usage | Replay has display-specific shaping and segmentation. Compare produced rows with durable canonical events plus distinct display facts; do not assume canonical replay alone preserves them. |
+| Fork/parent/child lineage, unfinished tails, retention and media | Match canonical source generations and recovery evidence to fork and incomplete markers, authorized asset references and cleanup in the existing owners. Test reset, deletion, restart, interruption, and older-history rollback before dropping any write. |
+
+## Reproduction and checks
+
+Use the frozen dependency copy and logs under
+`/private/tmp/kohaku-chat-g1.bjyRBp` on the development Mac. The baseline and
+candidate strict reports used the same interpreter, checker, dependency hashes
+and checker config, with imports from this checkout.
+
+- Gateway follow-up: **299 passed** across thread, session projection, input
+  attempt, Stop, permission, child lineage, media, remote operation, and
+  WebSocket route/reconnect tests (`continue-focused-gateway.log`). Use a
+  short pytest base such as `--basetemp="$(mktemp -d /tmp/khp.XXXXXX)"` on
+  macOS. The broader pre-follow-up run was **1,474 passed, 1 failed**. The
+  child-approval Stop timing assertion also failed with the same pending Stop
+  response on a clean export of `a895ac9ba`. It remains a disclosed
+  validation failure, not a waived check.
+- Renderer: **1,785 passed in 110 suites** with
+  `bun run test --maxWorkers=4 --minWorkers=1` (`continue-webui-full.log`).
+  The ThreadShell check paints saved rows before the sidebar, withholds
+  controls, keeps Stop disabled when controls are unavailable, preserves the
+  rows through transport failure, and withdraws them on explicit refusal.
+- Native broker: `go test ./internal/broker` in `mobile/native-network`
+  passed. This is not a paired-device smoke test.
+- Static: unchanged full BasedPyright **0 → 0** diagnostics across 549 files,
+  with frozen environment and source manifests in `resume-after` and
+  `continue-after`. `scripts/check_type_regressions.py` reported zero new
+  signatures. Ruff, `bun run build`, `bun run lint`, and
+  `git diff --check` passed.
+- The measured G2 fixture and raw counts are in `continue_g2_probe.py` and
+  `continue-g2-preflight.json`. Run the probe against the checkout with
+  `PYTHONPATH="$PWD"` and the same interpreter; it uses disposable histories.
+- Prompt-summary guard: four expected refusals returned 200 before the fix
+  (`g2-index-authority-red.log`); **251 focused gateway tests** passed on the
+  candidate (`g2-turn-index-focused.log`). Full strict passed **0 → 0** across
+  549 files, with the same dependency and environment hashes as
+  `continue-after`; the comparator added no signatures. Ruff and
+  `git diff --check` passed. The isolated bounded-tail and lifetime probes
+  are in `g2_browse_storage_probe.py` and `g2-browse-storage-proof.json`;
+  their results are not production latency or release evidence.
+- Managed browse proof: **45 focused tests** passed, including real
+  reacquisition, both writers, unchanged file identity across an unfinished
+  reset, and fail-closed replacement. An intermediate candidate incorrectly
+  accepted a same-size edit during directory sync and a UTF-8 header above
+  the existing read limit; both regressions now pass
+  (`g2-source-receipt-red.log`, `g2-source-proof-focused.log`).
+  **2,292 passed** across session, media custody, and affected gateway routes
+  (`g2-source-proof-owning.log`). The wider run had **2,316 passed, 1 failed**.
+  The same unrelated-source
+  cron recovery assertion failed on a clean export of `a895ac9ba`
+  (`g2-source-proof-integrated.log`, `g2-source-proof-cron-baseline.log`).
+  Unchanged full strict passed **0 → 0** across 549 files against
+  `g2-turn-index-after`, with identical checker config, command, environment
+  and dependency hashes. The diagnostic comparator, Ruff, and
+  `git diff --check` passed.
+
+- Managed display publication: the original gateway probes reproduced the
+  premature prompt and delayed output (`g2-display-origin-red.log`). The
+  actual channel send path also reproduced reversed Steer/reply order and
+  an answer lost from a fork after either a display write failure or
+  interrupted delivery (`g2-display-finish-real-fork-red.log`). On the
+  candidate, **137 focused tests passed**, including real streamed delivery,
+  failed guidance publication, canonical append failure, reset/recreation,
+  reopening the source, and managed forks (`g2-display-finish-final-focused.log`).
+  The broader gateway/session/runner run was **3,612 passed, 2 failed**.
+  Both failures reproduce at `a895ac9ba`: the sibling-approval Stop check
+  receives pending instead of stopped, and a source-engine policy fixture
+  expects approval where the shell deny filter rejects first
+  (`g2-display-finish-integrated.log`, `g2-display-finish-baseline.log`).
+  They remain validation failures, not waived checks. Full strict checking
+  passed **0 → 0** across 549 files; `g2-display-finish-before` and
+  `g2-display-finish-final` retain the source hashes and identical dependency,
+  environment, checker config and command manifests. The diagnostic
+  comparator, Ruff, and `git diff --check` passed.
+
+- Handoff: independently checked the source proof (**150** tests), split
+  routes and attach (**231**), and managed display writes (**114**) at
+  their respective commit snapshots. The combined focused Python run on
+  the final source tree was **481 passed**. WebUI: **1,785 passed** across
+  110 suites, build and lint passed. The native broker suite passed.
+  Full strict on the same source and frozen dependencies reported **0
+  diagnostics** across 549 files. `ruff check nanobot/` and
+  `git diff --check` passed. An extra Ruff run over the whole test tree
+  was not clean (including fixture re-exports); that is not the repository's
+  application lint check. The previously disclosed broad-run failures and
+  bundled-app checks above remain open.
+
+No full local Python suite, native app parity, or release qualification is
+claimed.
