@@ -1221,7 +1221,6 @@
       "placeholderThread": "Nhập tin nhắn…",
       "placeholderHero": "Bạn đang nghĩ gì?",
       "placeholderOpening": "Đang mở chủ đề mới…",
-      "placeholderStreaming": "Mô hình đang trả lời…",
       "queueGuidance": "Thêm vào hàng đợi",
       "queuePersistenceError": "Không thể lưu an toàn tin nhắn trong hàng đợi. Hãy thử lại trước khi gửi.",
       "inputAria": "Ô nhập tin nhắn",
@@ -1457,7 +1456,8 @@
       "search": "Tìm lời nhắc",
       "noResults": "Không có lời nhắc phù hợp.",
       "jumpTo": "Nhảy tới lời nhắc: {{label}}",
-      "railAria": "Điều hướng lời nhắc của người dùng"
+      "railAria": "Điều hướng lời nhắc của người dùng",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
@@ -1512,7 +1512,7 @@
     "activityThought": "Đã suy nghĩ",
     "activityThoughtFor": "Đã suy nghĩ trong {{duration}}",
     "activityGroup": "Hoạt động",
-    "activityWorkingFor": "Đang xử lý trong {{duration}}",
+    "activityWorking": "Đang xử lý",
     "activityWorked": "Đã xử lý",
     "activityWorkedFor": "Đã xử lý trong {{duration}}",
     "retryConnection": "Kết nối thất bại",

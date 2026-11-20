@@ -1221,7 +1221,6 @@
       "placeholderThread": "Saisissez votre message…",
       "placeholderHero": "Qu’avez-vous en tête ?",
       "placeholderOpening": "Ouverture d’un nouveau sujet…",
-      "placeholderStreaming": "Le modèle est en train de répondre…",
       "queueGuidance": "Ajouter à la file",
       "queuePersistenceError": "Impossible d’enregistrer les messages en attente en toute sécurité. Réessayez avant l’envoi.",
       "inputAria": "Champ de message",
@@ -1457,7 +1456,8 @@
       "search": "Rechercher des instructions",
       "noResults": "Aucune instruction correspondante.",
       "jumpTo": "Aller à l’instruction : {{label}}",
-      "railAria": "Navigation dans les instructions utilisateur"
+      "railAria": "Navigation dans les instructions utilisateur",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
@@ -1512,7 +1512,7 @@
     "activityThought": "Réflexion terminée",
     "activityThoughtFor": "Réflexion terminée en {{duration}}",
     "activityGroup": "Activité",
-    "activityWorkingFor": "Travail en cours depuis {{duration}}",
+    "activityWorking": "Traitement en cours",
     "activityWorked": "Travail terminé",
     "activityWorkedFor": "Travail terminé en {{duration}}",
     "retryConnection": "Échec de la connexion",

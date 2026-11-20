@@ -1221,7 +1221,6 @@
       "placeholderThread": "Type your message…",
       "placeholderHero": "Ask anything...",
       "placeholderOpening": "Opening a new topic…",
-      "placeholderStreaming": "Model is responding…",
       "queueGuidance": "Add to queue",
       "queuePersistenceError": "Queued messages could not be saved safely. Try again before sending.",
       "inputAria": "Message input",
@@ -1457,7 +1456,8 @@
       "search": "Search prompts",
       "noResults": "No matching prompts.",
       "jumpTo": "Jump to prompt: {{label}}",
-      "railAria": "User prompt navigation"
+      "railAria": "User prompt navigation",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
@@ -1485,7 +1485,7 @@
     "activityThought": "Thought",
     "activityThoughtFor": "Thought for {{duration}}",
     "activityGroup": "Activity",
-    "activityWorkingFor": "Working for {{duration}}",
+    "activityWorking": "Working",
     "activityWorked": "Worked",
     "activityWorkedFor": "Worked for {{duration}}",
     "retryConnection": "Connection failed",

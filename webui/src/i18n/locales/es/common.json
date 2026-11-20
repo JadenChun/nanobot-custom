@@ -1221,7 +1221,6 @@
       "placeholderThread": "Escribe tu mensaje…",
       "placeholderHero": "¿Qué tienes en mente?",
       "placeholderOpening": "Abriendo un nuevo tema…",
-      "placeholderStreaming": "El modelo está respondiendo…",
       "queueGuidance": "Añadir a la cola",
       "queuePersistenceError": "No se pudieron guardar de forma segura los mensajes en cola. Inténtalo de nuevo antes de enviar.",
       "inputAria": "Entrada de mensaje",
@@ -1457,7 +1456,8 @@
       "search": "Buscar instrucciones",
       "noResults": "No hay instrucciones coincidentes.",
       "jumpTo": "Ir a la instrucción: {{label}}",
-      "railAria": "Navegación por instrucciones del usuario"
+      "railAria": "Navegación por instrucciones del usuario",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
@@ -1512,7 +1512,7 @@
     "activityThought": "Pensamiento completado",
     "activityThoughtFor": "Pensó durante {{duration}}",
     "activityGroup": "Actividad",
-    "activityWorkingFor": "Trabajando durante {{duration}}",
+    "activityWorking": "Trabajando",
     "activityWorked": "Trabajo completado",
     "activityWorkedFor": "Trabajó durante {{duration}}",
     "retryConnection": "Error de conexión",

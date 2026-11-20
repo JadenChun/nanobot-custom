@@ -1221,7 +1221,6 @@
       "placeholderThread": "输入消息…",
       "placeholderHero": "问任何问题...",
       "placeholderOpening": "正在打开新话题…",
-      "placeholderStreaming": "模型正在回复…",
       "queueGuidance": "加入队列",
       "queuePersistenceError": "无法安全保存队列消息。请在发送前重试。",
       "inputAria": "消息输入框",
@@ -1457,7 +1456,8 @@
       "search": "搜索提示词",
       "noResults": "没有匹配的提示词。",
       "jumpTo": "跳转到提示词：{{label}}",
-      "railAria": "用户提示词导航"
+      "railAria": "用户提示词导航",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
@@ -1485,7 +1485,7 @@
     "activityThought": "已思考",
     "activityThoughtFor": "思考了 {{duration}}",
     "activityGroup": "活动",
-    "activityWorkingFor": "处理中 {{duration}}",
+    "activityWorking": "处理中",
     "activityWorked": "已处理",
     "activityWorkedFor": "处理了 {{duration}}",
     "retryConnection": "连接失败",

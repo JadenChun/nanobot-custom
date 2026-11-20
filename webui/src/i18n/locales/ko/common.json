@@ -1221,7 +1221,6 @@
       "placeholderThread": "메시지를 입력하세요…",
       "placeholderHero": "무슨 생각을 하고 있나요?",
       "placeholderOpening": "새 주제를 여는 중…",
-      "placeholderStreaming": "모델이 응답 중입니다…",
       "queueGuidance": "대기열에 추가",
       "queuePersistenceError": "대기 메시지를 안전하게 저장하지 못했습니다. 보내기 전에 다시 시도해 주세요.",
       "inputAria": "메시지 입력",
@@ -1457,7 +1456,8 @@
       "search": "프롬프트 검색",
       "noResults": "일치하는 프롬프트가 없습니다.",
       "jumpTo": "프롬프트로 이동: {{label}}",
-      "railAria": "사용자 프롬프트 탐색"
+      "railAria": "사용자 프롬프트 탐색",
+      "sessionRailAria": "Session turn navigation"
     }
   },
   "message": {
@@ -1512,7 +1512,7 @@
     "activityThought": "생각함",
     "activityThoughtFor": "{{duration}} 동안 생각함",
     "activityGroup": "활동",
-    "activityWorkingFor": "{{duration}} 동안 작업 중",
+    "activityWorking": "작업 중",
     "activityWorked": "작업함",
     "activityWorkedFor": "{{duration}} 동안 작업함",
     "retryConnection": "연결 실패",
