@@ -1254,9 +1254,10 @@ export function ThreadComposer({
     && !!onWorkspaceScopeChange;
   const showWorkspacePicker = projectPickerAvailable && !workspaceControlsHidden;
 
-  const resolvedPlaceholder = isStreaming
-    ? t("thread.composer.placeholderStreaming")
-    : placeholder ?? t("thread.composer.placeholderThread");
+  // The transcript's activity fold owns the "still working" signal. The
+  // composer keeps its normal placeholder and shows the stop control instead,
+  // so one state is never announced twice.
+  const resolvedPlaceholder = placeholder ?? t("thread.composer.placeholderThread");
 
   const maxAttachments = ingressLimits?.attachments.max_count
     ?? MAX_ATTACHMENTS_PER_MESSAGE;

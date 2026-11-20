@@ -34,29 +34,29 @@ describe("ThreadMessages", () => {
     const { rerender } = render(
       <ThreadMessages messages={messages.slice(0, 2)} isStreaming activeTurnId={turnId} />,
     );
-    expect(screen.getByRole("status", { name: "Working for 7s" })).toBeInTheDocument();
+    // Before the first activity row the pending fold already says "Working", so
+    // the request never looks idle while it is processing.
+    expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
 
     act(() => { vi.advanceTimersByTime(10_000); });
     rerender(<ThreadMessages messages={messages.slice(0, 3)} isStreaming activeTurnId={turnId} />);
-    expect(screen.getByRole("button", { name: "Working for 17s" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Working" })).toHaveAttribute("aria-expanded", "true");
 
     act(() => { vi.advanceTimersByTime(20_000); });
     rerender(<ThreadMessages messages={messages} isStreaming activeTurnId={turnId} />);
-    const earlier = screen.getByRole("button", { name: "Activity" });
-    const live = screen.getByRole("button", { name: "Working for 37s" });
-    expect(screen.getAllByText(/^(?:Working|Worked) for /)).toHaveLength(1);
+    const live = screen.getByRole("button", { name: "Working" });
+    expect(screen.getAllByRole("button", { name: "Working" })).toHaveLength(1);
+    // One work group per turn, placed before that turn's answers, so the turn
+    // never reads as work/reply/work/reply. The live fold is that group.
     const order = [
-      screen.getByText("Inspect the clip"), screen.getByText("Planning"), earlier,
-      screen.getByText("Checking"), live, screen.getByText("Writing"),
+      screen.getByText("Inspect the clip"), screen.getByText("Planning"),
+      live, screen.getByText("Checking"), screen.getByText("Writing"),
     ];
     for (let index = 1; index < order.length; index += 1) {
       expect(order[index - 1].compareDocumentPosition(order[index]) & Node.DOCUMENT_POSITION_FOLLOWING)
         .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     }
-    if (earlier.getAttribute("aria-expanded") === "false") fireEvent.click(earlier);
-    expect(earlier).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Searched stage handoff")).toBeVisible();
-    expect(live).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("frame.png", { exact: false })).toBeVisible();
 
     rerender(<ThreadMessages messages={[
@@ -64,8 +64,7 @@ describe("ThreadMessages", () => {
       { ...messages[5], content: "Done", latencyMs: 42_000, createdAt: startedAt + 42_000 },
     ]} />);
     expect(screen.getByRole("button", { name: "Worked for 42s" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
-    expect(screen.getAllByText(/^(?:Working|Worked) for /)).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Working" })).toBeNull();
   });
 
   it("shows one historical duration for each completed run", () => {
@@ -85,7 +84,7 @@ describe("ThreadMessages", () => {
   });
 
   it.each([0, -13_000, -14_000, -15_000, 15_000])(
-    "keeps the optimistic timer through acknowledgement and output with %i ms server clock skew",
+    "keeps one live Working state through acknowledgement and output with %i ms server clock skew",
     (clockSkewMs) => {
       vi.useFakeTimers();
       const now = new Date("2026-08-13T10:00:05.000Z").getTime();
@@ -107,7 +106,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("status", { name: "Working for 0s" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
 
       rerender(
         <ThreadMessages
@@ -117,7 +116,7 @@ describe("ThreadMessages", () => {
           runStartedAt={(now + clockSkewMs) / 1000}
         />,
       );
-      expect(screen.getByRole("status", { name: "Working for 0s" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
       act(() => { vi.advanceTimersByTime(1000); });
 
       rerender(
@@ -141,7 +140,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Working for 1s" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
     },
   );
 
@@ -166,7 +165,7 @@ describe("ThreadMessages", () => {
         runStartedAt={(now - 43_000) / 1000}
       />,
     );
-    expect(screen.getByRole("status", { name: "Working for 30s" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
   });
 
   it("opens child history from its canonical row and marks disconnected state unavailable", () => {
@@ -555,24 +554,22 @@ describe("ThreadMessages", () => {
         : unit.message.id
     ))).toEqual([
       "user",
-      "activity:reasoning-before,ok-reasoning",
+      "activity:reasoning-before,ok-reasoning,first-tool,second-tool,final-reasoning",
       "ok",
-      "activity:first-tool,second-tool,final-reasoning",
       "final",
     ]);
-    expect(units.map((unit) => unit.sourceMessageCount)).toEqual([1, 1, 1, 3, 1]);
+    expect(units.map((unit) => unit.sourceMessageCount)).toEqual([1, 4, 1, 1]);
 
     render(<ThreadMessages messages={messages} isStreaming={false} />);
 
     const activityShells = screen.getAllByRole("button", { name: /^(?:Activity|Worked)/ });
     const ok = screen.getByText("ok");
     const final = screen.getByText("finished");
-    expect(activityShells).toHaveLength(2);
+    // One work group per turn, before the turn's answers, never interleaved.
+    expect(activityShells).toHaveLength(1);
     expect(activityShells[0].compareDocumentPosition(ok) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
-    expect(ok.compareDocumentPosition(activityShells[1]) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy();
-    expect(activityShells[1].compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(activityShells[0].compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
   });
 
@@ -966,7 +963,7 @@ describe("ThreadMessages", () => {
     expect(screen.queryByLabelText(/edited foo\.txt/i)).not.toBeInTheDocument();
   });
 
-  it("times live activity from the user turn start", () => {
+  it("anchors live activity to the user turn start", () => {
     vi.useFakeTimers();
     const startedAt = 1_700_000_000_000;
     vi.setSystemTime(startedAt + 230_000);
@@ -1001,11 +998,10 @@ describe("ThreadMessages", () => {
 
     render(<ThreadMessages messages={messages} isStreaming />);
 
-    expect(screen.getByText("Working for 3m 50s")).toBeInTheDocument();
-    expect(screen.queryByText("Working for 10s")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
   });
 
-  it("keeps the original clock when a restored run gets guidance and more activity", () => {
+  it("keeps the original turn start after guidance and more activity", () => {
     vi.useFakeTimers();
     const startedAt = 1_700_000_000_000;
     vi.setSystemTime(startedAt + 300_000);
@@ -1065,13 +1061,13 @@ describe("ThreadMessages", () => {
         runStartedAt={startedAt / 1000} />
     );
     const { rerender } = render(renderRun(messages.slice(0, 3)));
-    expect(screen.getByRole("button", { name: "Working for 5m" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
 
     act(() => { vi.advanceTimersByTime(20_000); });
     rerender(renderRun(messages));
-    expect(screen.getByRole("button", { name: "Working for 5m 20s" })).toBeInTheDocument();
-    expect(screen.getAllByText(/^(?:Working|Worked) for /)).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+    // Guidance and later work stay in the same live fold; the state is named
+    // once, so the transcript cannot show two progress claims at the same time.
+    expect(screen.getAllByRole("button", { name: "Working" })).toHaveLength(1);
   });
 
   it("folds final answer reasoning into the preceding activity timeline", () => {

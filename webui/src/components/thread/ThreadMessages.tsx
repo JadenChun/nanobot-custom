@@ -427,6 +427,9 @@ function currentActivityClusterIndices(
 ): Set<number> {
   const indices = new Set<number>();
   if (activeTurnId) {
+    // The active turn owns exactly one activity fold, so that fold keeps the
+    // live label and stays open while the request is processing. Nothing below
+    // the transcript repeats the same state.
     for (let i = units.length - 1; i >= 0; i -= 1) {
       const unit = units[i];
       if (

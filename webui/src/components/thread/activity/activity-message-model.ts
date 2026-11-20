@@ -68,6 +68,11 @@ function mergeTraceMessages(previous: UIMessage, incoming: UIMessage): UIMessage
     : mergeUniqueToolTraceLines(messageTraces(previous), messageTraces(incoming)).traces;
   const fileEdits = [...(previous.fileEdits ?? []), ...(incoming.fileEdits ?? [])];
   const media = uniqueMedia([...(previous.media ?? []), ...(incoming.media ?? [])]);
+  const traceRepeatCounts = countRepeatedTraces(
+    messageTraces(previous),
+    messageTraces(incoming),
+    previous.traceRepeatCounts,
+  );
 
   return {
     ...previous,
@@ -76,10 +81,39 @@ function mergeTraceMessages(previous: UIMessage, incoming: UIMessage): UIMessage
     ...(toolEvents.length ? { toolEvents } : { toolEvents: undefined }),
     ...(fileEdits.length ? { fileEdits } : { fileEdits: undefined }),
     ...(media.length ? { media } : { media: undefined }),
+    ...(Object.keys(traceRepeatCounts).length
+      ? { traceRepeatCounts }
+      : { traceRepeatCounts: undefined }),
     isStreaming: incoming.isStreaming,
     turnPhase: incoming.turnPhase ?? previous.turnPhase,
     turnSeq: incoming.turnSeq ?? previous.turnSeq,
   };
+}
+
+/**
+ * Count how often one trace line recurs inside a fold.
+ *
+ * A deduplicated trace list hides that the agent ran the same call five times.
+ * The count is kept beside the list so the row can say so, which is the only
+ * signal that distinguishes "one long command" from "a repeated no-op".
+ */
+function countRepeatedTraces(
+  previousTraces: string[],
+  incomingTraces: string[],
+  previousCounts: Record<string, number> | undefined,
+): Record<string, number> {
+  const counts: Record<string, number> = { ...(previousCounts ?? {}) };
+  // Seed from the previous fold when it was not counted yet, so the first
+  // repeat of an already-visible line still surfaces.
+  for (const line of previousTraces) {
+    const key = canonicalToolTrace(line);
+    counts[key] = Math.max(counts[key] ?? 0, 1);
+  }
+  for (const line of incomingTraces) {
+    const key = canonicalToolTrace(line);
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function messageTraces(message: UIMessage): string[] {

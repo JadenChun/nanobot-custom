@@ -246,10 +246,10 @@ export function AgentActivityCluster({
     ? 0
     : Math.max(0, Math.ceil(retryStatus.next_retry_at - now / 1000));
   const elapsedLabel = isTurnStreaming
-    ? t("message.activityWorkingFor", {
-        duration: activityDuration,
-        defaultValue: "Working for {{duration}}",
-      })
+    // Live work names the state only. A ticking duration beside a live answer
+    // reads as a second progress claim, and the reference chat UIs say
+    // "Working" while the request is in flight.
+    ? t("message.activityWorking", { defaultValue: "Working" })
     : durationMs <= 0
       ? t("message.activityWorked", { defaultValue: "Worked" })
       : t("message.activityWorkedFor", {
@@ -342,12 +342,13 @@ export function AgentActivityCluster({
 
   useEffect(() => cancelActivityScrollFrame, [cancelActivityScrollFrame]);
 
+  // Only a retry countdown needs a live clock; the working label is static.
   useEffect(() => {
-    if (!isTurnStreaming || !pageVisible) return undefined;
+    if (retryStatus?.state !== "waiting" || !isTurnStreaming || !pageVisible) return undefined;
     setNow(Date.now());
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
-  }, [isTurnStreaming, pageVisible]);
+  }, [isTurnStreaming, pageVisible, retryStatus?.state]);
 
   useEffect(() => {
     const wasStreaming = wasTurnStreamingRef.current;

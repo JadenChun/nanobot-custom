@@ -176,8 +176,8 @@ describe("admission refused for session recovery", () => {
     expect(screen.getByText(content)).toBeVisible();
     expect(screen.queryByText("Sending")).not.toBeInTheDocument();
     expect(screen.queryByText("Working")).not.toBeInTheDocument();
-    expect(screen.queryByRole("status", { name: /^Working for / })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Working for / })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Working" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Working" })).not.toBeInTheDocument();
     if (negotiated) {
       expect(client.hasUnknownMessageSend(chatId)).toBe(true);
       await act(async () => {
@@ -208,10 +208,10 @@ describe("admission refused for session recovery", () => {
       socket.fakeMessage({ event: "goal_status", chat_id: chatId, turn_id: newer.turn_id,
         status: "running", started_at: Date.now() / 1000 });
     });
-    expect(await screen.findByRole("status", { name: /^Working for / })).toBeVisible();
+    expect(await screen.findByRole("status", { name: "Working" })).toBeVisible();
     act(() => socket.fakeMessage({ event: "error", chat_id: chatId, turn_id: "turn-old",
       detail: "not_admitted", reason: "session_recovery_required" }));
-    expect(screen.getByRole("status", { name: /^Working for / })).toBeVisible();
+    expect(screen.getByRole("status", { name: "Working" })).toBeVisible();
   });
 });
 
