@@ -437,7 +437,7 @@ or legacy-adoption change was made at this checkpoint.
 | **3 · Viewport and prompt rail** | History hook, viewport and mobile navigator, after 2. Prove unloaded prompt selection reaches the exact mounted row, both paging directions work without gaps, and navigation/reconnect cannot replace a newer selection or steal the reader's anchor. |
 | **4 · Composer and next-turn settings** | Finish draft restoration on switch and relaunch, focus/caret, first-send payload handoff, and usage independent of the selected window. Keep edits to shared shell files in sequence with 3. Before changing settings, settle **G3**: bounded metadata readback/commit at the existing owner, instant selection, and exact new-turn admission without changing the active scope or granting authority on timeout. The active-workspace lock remains until that boundary is proven. |
 | **5 · Transcript consolidation** | Storage and display projection after 1–4. **G4** is now passed: see the field matrix, consumer inventory, rollback proof, and verdict above. Retire the duplicate full write and keep every distinct display fact. No bulk migration. |
-| **6 · Bundled apps** | Compare first open, prompt navigation and composer in Kohaku and Codex Desktop on macOS; smoke Linux and one paired Android device. Repeat affected checks after writer cutover. |
+| **6 · Bundled apps** | Compare first open, prompt navigation and composer in Kohaku and Codex Desktop on macOS; smoke Linux and one paired Android device. Repeat affected checks after writer cutover. **Linux-executable qualification is complete** (see the Package 6 ledger). macOS, Android, and Go checks remain. |
 
 ### Phase C Gate G4: display parity and rollback audit
 
@@ -556,6 +556,143 @@ git diff --check
 Result: **79 passed**; Ruff `All checks passed!`; type regression check
 `PASS_NO_NEW_DIAGNOSTICS` (`introduced: 0`); `git diff --check` clean. No
 production code changed.
+
+### Package 5: blocked pending a bounded canonical conversation-text reader
+
+**Status: SKIPPED. Documented blocker; no writer cutover attempted; no production
+code changed.** This is the "cleanly skipped with documented G4 blockers" path.
+
+G4 cleared the *display-fact* question. During Package 5 design I found a
+separate, hard architectural blocker against Package 5's own bounded-read
+requirement. Recording it here rather than shipping a cutover that would
+silently break the read contract.
+
+**What Package 5 must do.** Retire the duplicate full-history display write for
+the new format. The canonical
+[source turn writer](../../nanobot/session/turn_writer.py) then becomes the only
+durable store of prompt and answer text. The display store keeps only distinct
+display facts. Where a settled history window renders prompt and answer text, the
+saved-history reader must resolve that text from the canonical source.
+
+**The blocker.** There is no bounded canonical conversation-text reader. Every
+canonical read path loads and validates the whole file body:
+
+- `SourceSessionStore.load_source_snapshot` and
+  `JsonlSessionStore.read_canonical_snapshot` both call
+  [`_read_unlocked`](../../nanobot/session/source_store.py), which decodes and
+  validates every line, then runs `_validate_source_records` over the whole
+  event list.
+- `SourceSessionStore` exposes no event-offset, byte-range, or tail reader.
+  `dir(SourceSessionStore)` has no `range`/`offset`/`tail` method. The only
+  bounded canonical reads are `read_bounded_header_metadata` and
+  `read_saved_source_metadata`, and both return header or browse facts only, not
+  prompt or answer text.
+- Every canonical append rewrites the whole file through
+  `SourceSessionStore._write` -> `JsonlSessionStore.persist_source_records` ->
+  `_write_text_atomic` (`os.replace`). A four-append fixture produced four
+  distinct inodes and monotonically larger files. There is therefore no stable
+  per-event byte offset to index; `SavedSourceProof.body_offset` only records the
+  header boundary.
+
+**Why that blocks the cutover.** Package 5 requirement #2 and design §6/§103
+require `GET /api/sessions/{key}/webui-thread?view=history` and `/turns` to stay
+bounded: **0 full canonical body loads for settled indexed reads, seekable range
+reads only**. If prompt and answer text leave the display store, then every
+settled history read must load and validate the whole canonical body to render
+that text. That directly violates the bounded-read invariant. It would also
+reintroduce the exact cost the index was built to remove: the
+[G2 preflight](gui-session-history-work-plan.md) measured 480 canonical events
+loaded for a 240-turn chat.
+
+**Why not fix it in this pass.** A bounded canonical text reader needs a durable
+per-event offset map that survives whole-file replacement, transactional
+publication bound to `(store_identity, incarnation, generation)`, and stale-offset
+rejection after every atomic replace. That is a core canonical-storage change
+across `source_store.py`, `manager.py`, and `source.py`. It cannot be proven
+restart/crash-safe in the remaining window, and it must not be attempted
+half-way. The current display store already carries this text bounded and
+origin-bound, which is the safe state.
+
+**Unblock conditions for the next Package 5 pass.**
+1. Land a bounded canonical event reader: a committed per-event location map
+   bound to the installed `PrivateFileVersion`, invalidated on every whole-file
+   replace, with transactional publication and stale-offset rejection.
+2. Prove, on 24- and 240-turn fixtures with and without segments, that a settled
+   `latest`/`before`/`after`/`around` window and `/turns` load **0** canonical
+   bodies and read only selected ranges.
+3. Re-run the G4 parity suite against the new reader. Keep every distinct display
+   fact in the matrix. Then cut over new writes only.
+
+Until then the duplicate display text write stays, and the readable-history
+contract stays bounded and correct.
+
+### Package 6: Linux-executable qualification
+
+**Status: Linux-runnable qualification complete. Hardware-only checks remain
+external.** No production code changed; this stage adds one Python suite, one
+WebUI suite, and this ledger.
+
+#### What ran and passed
+
+| Check | Command | Result |
+| --- | --- | --- |
+| New Python qualification | `.venv/bin/pytest tests/webui/test_package6_qualification.py -q` | **6 passed** |
+| New WebUI qualification | `bun run test -- src/tests/package6-qualification.test.tsx` | **5 passed** |
+| Broad Python suites | `.venv/bin/pytest tests/webui/ tests/session/ tests/security/test_workspace_access_recovery.py tests/remote/ -q` | **3,076 passed, 1 failed** (pre-existing, see below) |
+| Python lint | `.venv/bin/ruff check nanobot/ tests/webui/test_package6_qualification.py` | `All checks passed!` |
+| Type regression | `basedpyright` + `scripts/check_type_regressions.py` | `PASS_NO_NEW_DIAGNOSTICS`, `764 -> 764`, `introduced: 0` |
+| WebUI lint | `bun run lint` (`--max-warnings 0`) | pass |
+| WebUI build | `bun run build` | pass (`✓ built in 5.08s`) |
+| WebUI tests | `bun run test -- --maxWorkers=4 --minWorkers=1` | **113 files, 1,838 tests passed** |
+| Whitespace | `git diff --check` | clean |
+
+The broad Python run's one failure is
+`tests/webui/test_child_approval_ingress.py::test_streaming_sibling_controls_do_not_touch_parent_and_stop_remains_responsive`.
+It fails identically on a pristine `HEAD` checkout in a separate worktree, and it
+matches the failure this plan already discloses below. It is not caused by this
+stage.
+
+#### Python qualification coverage (`tests/webui/test_package6_qualification.py`)
+
+1. **Large-history bounded reads.** Over 220 turns, with and without real
+   rotation (≥20 segments), `latest`/`before`/`after`/`around` and `/turns`
+   decode ≤66 records, read ≤2 index pages, decode 0 manifest entries, and load
+   **0 canonical bodies**. The HTTP route pages backward to prompt 0 with no gap
+   or duplicate and still loads 0 canonical bodies.
+2. **Cold-start settled recovery.** Three settled 40-turn chats plus one
+   journal-marked session: `RecoveryCoordinator.scan` loads no canonical body for
+   the settled chats and fully recovers the unsettled one.
+3. **End-to-end durability drill.** Multi-turn write → real rotation →
+   interrupted rotation recovery (intent file on disk) → index delete and
+   rebuild → restart. Rows, prompt ids, pagination cursors, and totals are
+   identical, and deletion clears every artifact.
+4. **Active/next-turn isolation.** Turn A keeps folder A; the next-turn choice
+   holds folder B; a header write during A's completion cannot overwrite B; a new
+   turn consumes exactly B; reset bumps generation and orphans the choice.
+
+#### WebUI qualification coverage (`webui/src/tests/package6-qualification.test.tsx`)
+
+1. First paint of saved history plus a visible prompt rail on a short latest
+   window of a long chat.
+2. Jump to an unloaded Steer prompt, mount and highlight the exact row, forward
+   paging without stealing the reader's position, and Go to latest.
+3. Draft preservation across A → B → A, a simulated relaunch, and incarnation
+   invalidation.
+4. Next-folder picker enabled during a run, the held acknowledgement path, and
+   no history fetch or model run from a folder change.
+
+#### Remaining external-environment checklist
+
+These cannot run on this Linux host and are explicitly outstanding:
+
+1. **macOS Codex Desktop visual/native comparison.** First open, true cold
+   launch, editor ordering, control placement and focus, keyboard/IME behavior,
+   and pending/error feedback, compared side by side with the bundled app.
+2. **Paired Android device smoke.** The shared chat path and equivalent touch
+   behavior on one paired device.
+3. **Go mobile broker.** `mobile/native-network/internal/broker/policy.go`
+   allowlist for `after`/`around`/`prompt_id`, plus reconciliation of
+   `17f1b6cf` (`/turns` mobile registry). `go` is not installed on this host.
 
 ## Reproduction and checks
 
