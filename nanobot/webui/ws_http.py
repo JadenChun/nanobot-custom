@@ -1443,6 +1443,10 @@ class GatewayHTTPHandler:
         if m:
             return await self._handle_session_context_get(request, m.group(1))
 
+        m = re.match(r"^/api/sessions/([^/]+)/turns$", got)
+        if m:
+            return await self._handle_session_turns_get(request, m.group(1))
+
         m = re.match(r"^/api/sessions/([^/]+)/file-preview$", got)
         if m:
             return self._handle_file_preview(connection, request, m.group(1))
@@ -1499,6 +1503,43 @@ class GatewayHTTPHandler:
         if session is None:
             return _http_error(404, "session not found")
         return _http_json_response(session_context_payload(session))
+
+    async def _handle_session_turns_get(self, request: WsRequest, key: str) -> Response:
+        """Summarise every turn in a session for a whole-history navigator."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None:
+            return _http_error(400, "invalid session key")
+        if not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        query = _parse_query(request.path)
+        if set(query) - {"limit", "before"} or any(
+            len(values) != 1 for values in query.values()
+        ):
+            return _http_error(400, "invalid turn index query")
+        limit_value = _query_first(query, "limit")
+        limit: int | None = None
+        if limit_value is not None:
+            try:
+                limit = int(limit_value)
+            except ValueError:
+                return _http_error(400, "invalid limit")
+            if limit <= 0:
+                return _http_error(400, "invalid limit")
+        before = _query_first(query, "before")
+
+        from nanobot.webui.transcript import session_turn_index
+
+        payload = await asyncio.to_thread(
+            session_turn_index,
+            decoded_key,
+            limit=limit,
+            before=before,
+        )
+        if payload is None:
+            return _http_error(404, "session not found")
+        return _http_json_response(payload)
 
     async def _handle_sessions_list(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
