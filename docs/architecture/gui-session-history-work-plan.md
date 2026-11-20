@@ -227,6 +227,165 @@ origin to the recorder. Classify those records and interrupted/recovery
 output before using a covered range as a complete view. No reader, index,
 or legacy-adoption change was made at this checkpoint.
 
+### G2 closure & Package 2 gateway checkpoint
+
+- **Writer audit closed:**
+  - Managed WebUI ingress ([inbound_commands.py](../../nanobot/webui/inbound_commands.py))
+    no longer archives `!shell` or `/command` rows at ingress. Idle managed
+    commands commit through `_dispatch_source_command` in
+    [loop.py](../../nanobot/agent/loop.py), passing canonical `source_event_id`
+    into `input_committed` (preserving `!cmd` display text in
+    `CommittedUserInput`) and carrying `WEBUI_DISPLAY_SOURCE_KEY` on the
+    assistant reply and `turn_end`. `/new` and busy inline commands stay
+    live-only and no longer append unbound rows.
+  - Managed cross-session inputs no longer archive on `UserInputAccepted`
+    ([webui_turns.py](../../nanobot/session/webui_turns.py)). Both new-turn
+    commits (`TurnDelivery.input_committed`) and mid-turn injections
+    (`_publish_injection_committed`, ordered after open stream segments) now
+    archive after canonical append via `UserInputEvent.input` with
+    `_webui_source_origin` and `_webui_source_prompt_id`, and `turn_end`
+    preserves `WEBUI_DISPLAY_SOURCE_KEY`.
+  - Delegated activity ([loop.py](../../nanobot/agent/loop.py),
+    [outbound_projection.py](../../nanobot/webui/outbound_projection.py)) now
+    binds archival to the typed root lifetime (`root_source` / root fields on
+    `DelegatedChildEvent`) and drops delayed updates after root reset/delete.
+  - `WebUITranscriptRecorder.append` ([transcript.py](../../nanobot/webui/transcript.py))
+    now refuses to write unbound rows for non-legacy sessions under managed
+    authority; `TurnDeliveryFactory.unrouted` also binds `admitted_source` on
+    early failures.
+- **Committed range/index projection & bounded pre-index tail:**
+  - Added [transcript_index.py](../../nanobot/webui/transcript_index.py):
+    rebuildable `head.json` + 64-turn paged directory (`pages/NNNNNN.json`)
+    bound to exact `(origin, active_file, st_ino, st_dev, active_covered_bytes,
+    manifest stat)`. Maintained O(1) at append, O(active_file) at rotation,
+    O(delta) on interrupted-index catchup, and deleted on transcript deletion.
+  - Serves `latest`, `before`, `after`, and exact `around(prompt_locator)`
+    windows via coalesced byte-range reads with line-boundary and origin
+    verification, plus O(log P) `read_prompt_summary_range` without opening
+    JSONL chunks. Pre-index histories use `read_preindex_latest_tail` (bounded
+    reverse tail read, returning explicit `oversized_tail` instead of empty
+    when a recent record exceeds the tail budget, and rejecting retained
+    prior-lifetime rows after reset/recreation).
+- **Gateway & edge wiring (Package 2 server side):**
+  - `GET /api/sessions/{key}/webui-thread?view=history` and
+    `GET /api/sessions/{key}/turns` ([ws_http.py](../../nanobot/webui/ws_http.py),
+    [workspaces.py](../../nanobot/webui/workspaces.py)) now use
+    `read_saved_source_metadata` (0 canonical body loads) and the bounded index,
+    supporting `direction=latest|before|after|around`, `after`, `around`, and
+    `prompt_id`, returning HTTP 409 on stale cursors/locators and per-prompt
+    `prompts` summaries alongside backwards-compatible `turns`.
+  - [edge.py](../../nanobot/remote/edge.py) admits `after`, `around`, and
+    `prompt_id` on the existing `chat.read` thread route. Go native broker
+    allowlist (`mobile/native-network/internal/broker/policy.go`) and
+    reconciliation of `17f1b6cf` (`/turns` mobile registry) remain open until
+    tested with Go.
+
+### Package 3 checkpoint: viewport, prompt rail, navigator, and reconnect
+
+- **Exact prompt identity & wire contract:**
+  - [transcript.py](../../nanobot/webui/transcript.py) now emits `promptId` on
+    replayed user `UIMessage` rows matching `transcript_index._prompt_id_for_record`
+    (canonical `_webui_source_prompt_id` or `legacy:{turn_ordinal}:{record_index}`),
+    and validates `promptId` in retained display threads.
+  - [types.ts](../../webui/src/lib/types.ts), [api.ts](../../webui/src/lib/api.ts),
+    and [session-page-cache.ts](../../webui/src/lib/session-page-cache.ts)
+    now carry `promptId`, `SessionPromptSummary`, `PendingPromptReveal`,
+    `after_cursor`/`has_more_after`/`total_prompt_count`/`coverage`/`target_prompt_id`,
+    forward `direction=before|after|around`, `after`, `around`, and `prompt_id`,
+    and surface HTTP `409` (`stale_history_cursor`) and `404` (`prompt_not_found`)
+    explicitly while preserving `null` for plain missing-session 404s.
+- **History hook (`useSessionHistory`) & live-tail isolation:**
+  - [useSessions.ts](../../webui/src/hooks/useSessions.ts) fixes the prior bug
+    that always returned `turnIndex: []` and `totalTurnCount: 0`, switches
+    `loadTurnIndex` to a single bounded page (`limit=100`) with on-demand
+    `loadMorePromptIndex`, adds `loadNewer` (`direction=after`) with boundary
+    deduplication, adds `revealPrompt` (`direction=around`) keeping the old view
+    intact while fetching and cancelling superseded reveals, adds `goToLatest`,
+    and isolates background refreshes while reading an older window
+    (`hasMoreAfter === true`): same-lifetime updates set `tailActivityPending`
+    without stealing scroll, while source incarnation/generation replacement
+    invalidates stale windows, cursors, and prompt summaries.
+- **Prompt rail, navigator drawer, and viewport:**
+  - [PromptRail.tsx](../../webui/src/components/thread/PromptRail.tsx),
+    [PromptNavigator.tsx](../../webui/src/components/thread/PromptNavigator.tsx),
+    [promptNavigation.ts](../../webui/src/components/thread/promptNavigation.ts),
+    [ThreadMessages.tsx](../../webui/src/components/thread/ThreadMessages.tsx),
+    [ThreadViewport.tsx](../../webui/src/components/thread/ThreadViewport.tsx),
+    and [ThreadShell.tsx](../../webui/src/components/thread/ThreadShell.tsx)
+    keep the rail visible on short latest windows of long chats, key unloaded
+    markers by stable prompt identity, bucket dense ranges (`>= 30`) into
+    bounded DOM markers while exposing every individual prompt (and on-demand
+    older summary loading) in `PromptNavigator`, execute fetch → mount → scroll
+    + temporary highlight (`data-prompt-highlighted="true"`) to the exact
+    `data-prompt-key` row (including multiple user prompts inside one Steer
+    turn), surface non-destructive reveal error banners with Retry / Go to
+    latest, trigger forward paging near the bottom of older windows, and keep
+    live streaming isolated at the tail until the reader returns via Go to
+    latest or sends a new message.
+- **Verification:**
+  - Python: `basedpyright --outputjson` + `scripts/check_type_regressions.py`
+    -> `PASS_NO_NEW_DIAGNOSTICS` (`764 -> 764`, `introduced: 0`);
+    `ruff check nanobot/` -> `All checks passed!`; `git diff --check` clean;
+    `pytest tests/webui/test_transcript_index.py` -> **12 passed**.
+  - WebUI: `bun run lint` (`eslint --max-warnings 0`) -> pass;
+    `bun run build` (`tsc -p tsconfig.build.json && vite build`) -> pass;
+    `bun run test -- --maxWorkers=4 --minWorkers=1` -> **110 test files passed,
+    1,792 tests passed**, including the new integrated `ThreadShell` reveal +
+    live-tail isolation test.
+
+### Package 4A (Composer drafts/focus/usage) & Gate G3 (Backend bounded settings + next-turn split) checkpoint
+
+- **Package 4A — Composer drafts, focus/caret, first-send handoff, and window-independent context usage:**
+  - Added [composer-drafts.ts](../../webui/src/lib/composer-drafts.ts) and
+    [context-usage-retention.ts](../../webui/src/lib/context-usage-retention.ts),
+    wired through [ThreadComposer.tsx](../../webui/src/components/thread/ThreadComposer.tsx),
+    [ThreadShell.tsx](../../webui/src/components/thread/ThreadShell.tsx),
+    [useSessions.ts](../../webui/src/hooks/useSessions.ts), and
+    [App.tsx](../../webui/src/App.tsx).
+  - Preserves chat-scoped drafts (`text`, quotes, mentions, ready attachments,
+    caret/selection, focus) synchronously across switches (`A -> B -> A`) and
+    persists bounded device-local saved-chat drafts across relaunch (keyed by
+    hashed auth namespace + session key + `incarnation:generation`, keeping
+    temporary and new-chat drafts ephemeral, showing an explicit reattach notice
+    for unrecoverable relaunch attachments, and invalidating on delete, `/new`
+    generation bump, incarnation replacement, or revoked read access).
+  - Preserves caret/focus on switch without stealing focus during background
+    updates or popping touch keyboards, binds first-send handoff strictly to the
+    created chat, and retains the latest qualified tail context usage while
+    viewing an older history window (`hasMoreAfter === true`).
+- **Gate G3 & Backend Next-Turn Preferences:**
+  - Added [next_turn_preferences.py](../../nanobot/session/next_turn_preferences.py)
+    storing detached, origin-bound `(store_identity, incarnation, generation)`
+    next-turn choices (`workspace_scope`, `model_preset`, `reasoning_effort`,
+    `permission_mode`) under `.session-prefs/` with atomic write + fsync, plus
+    header-only atomic replacement (`replace_header_atomic`) in
+    [manager.py](../../nanobot/session/manager.py) and
+    [source_store.py](../../nanobot/session/source_store.py) so routine settings
+    reads and writes are O(1) bounded independently of settled canonical history.
+  - Separated next-turn preferences from the admitted active turn scope across
+    [loop.py](../../nanobot/agent/loop.py),
+    [workspaces.py](../../nanobot/webui/workspaces.py),
+    [workspace_focus.py](../../nanobot/session/workspace_focus.py),
+    [workspace_access_recovery.py](../../nanobot/session/workspace_access_recovery.py),
+    [session_projection.py](../../nanobot/webui/session_projection.py), and
+    [ws_http.py](../../nanobot/webui/ws_http.py): selecting folder/model B
+    during run A leaves A's scope, Steer, Stop, recovery request, and `Once`
+    grants intact; A's completion never overwrites B; next-turn admission
+    retires `Once` grants, validates B without fallback to A, and promotes
+    authorized B into confirmed session metadata.
+  - Note: Package 4B frontend UI wiring (lifting the active-turn folder-picker
+    lock and displaying/ordering next-turn choices in `ThreadComposer`/
+    `WorkspaceControls`) is now unblocked and ready next.
+- **Verification:**
+  - WebUI: `bun run lint` (`--max-warnings 0`) -> pass; `bun run build` -> pass;
+    `bun run test -- --maxWorkers=4 --minWorkers=1` -> **112 test files passed,
+    1,813 tests passed** (including new `thread-composer-drafts.test.tsx` and
+    `context-usage-retention.test.ts`).
+  - Python: `basedpyright --outputjson` + `scripts/check_type_regressions.py`
+    -> `PASS_NO_NEW_DIAGNOSTICS` (`764 -> 764`, `introduced: 0`);
+    `ruff check nanobot/` -> `All checks passed!`; `git diff --check` clean;
+    `pytest tests/session/ tests/security/test_workspace_access_recovery.py tests/webui/test_transcript_index.py tests/webui/test_managed_display_origin.py tests/webui/test_child_thread_route.py tests/webui/test_permission_v2_api.py -q` -> **2,115 passed** (including all 11 new tests in `tests/session/test_next_turn_preferences.py`).
+
 ## Remaining implementation and acceptance
 
 | Boundary | Work and exit check |

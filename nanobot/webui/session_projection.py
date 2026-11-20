@@ -9,7 +9,10 @@ from loguru import logger as default_logger
 
 from nanobot.providers.base import LLMUsage
 from nanobot.session.goal_state import goal_state_ws_blob
-from nanobot.session.model_selection import model_preset_from_metadata
+from nanobot.session.model_selection import (
+    model_preset_from_metadata,
+    reasoning_effort_from_metadata,
+)
 from nanobot.session.recovery import recovery_state_from_metadata
 from nanobot.session.webui_turns import (
     websocket_turn_id,
@@ -68,6 +71,22 @@ class WebUISessionProjection:
         if metadata is None:
             return fields
 
+        effort = reasoning_effort_from_metadata(metadata)
+        if effort is not None:
+            fields["reasoning_effort"] = effort
+        read_prefs = getattr(self._sessions, "read_next_turn_preferences", None)
+        if callable(read_prefs):
+            from nanobot.session.next_turn_preferences import NextTurnPreferences
+
+            prefs = read_prefs(session_key)
+            if isinstance(prefs, NextTurnPreferences) and prefs.values:
+                if "model_preset" in prefs.values:
+                    fields["next_model_preset"] = prefs.get("model_preset")
+                if "reasoning_effort" in prefs.values:
+                    fields["next_reasoning_effort"] = prefs.get("reasoning_effort")
+                if "workspace_scope" in prefs.values:
+                    fields["next_workspace_scope"] = prefs.get("workspace_scope")
+                fields["next_turn_revision"] = prefs.revision
         recovery_state = recovery_state_from_metadata(metadata)
         if recovery_state is not None:
             fields["recovery_state"] = recovery_state

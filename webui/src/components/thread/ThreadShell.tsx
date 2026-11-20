@@ -25,6 +25,14 @@ import { GeneratedAssetsSheet } from "@/components/thread/GeneratedAssetsSheet";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
 import { SessionInfoPopover } from "@/components/thread/SessionInfoPopover";
+import { resolveRetainedContextUsage } from "@/lib/context-usage-retention";
+import {
+  clearComposerDraftsForSession,
+  draftNamespaceFor,
+  handoffComposerDraft,
+  loadComposerDraft,
+  NEW_CHAT_DRAFT_KEY,
+} from "@/lib/composer-drafts";
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import type {
   ComposerContextUsage,
@@ -40,7 +48,7 @@ import {
   type ThreadViewportState,
 } from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
-import { useSessionHistory } from "@/hooks/useSessions";
+import { useSessionHistory, type RevealPromptTarget } from "@/hooks/useSessions";
 import {
   ApiError,
   fetchFilePreviewAvailability,
@@ -1143,9 +1151,14 @@ export function ThreadShell({
     loading,
     error: historyError,
     historyAccessDenied,
+    sessionIncarnation,
     loadingOlder,
+    loadingNewer,
     loadOlder,
+    loadNewer,
     hasMoreBefore,
+    hasMoreAfter,
+    tailActivityPending,
     userMessageOffset,
     hasPendingToolCalls,
     completedTurnIds,
@@ -1176,10 +1189,21 @@ export function ThreadShell({
     version: historyVersion,
     forkBoundaryMessageCount,
     turnIndex: sessionTurns,
+    promptIndex: sessionPrompts,
     totalTurnCount: sessionTurnTotal,
+    totalPromptCount: sessionPromptTotal,
+    promptIndexHasMoreBefore,
+    loadingPromptIndex,
     loadTurnIndex,
+    loadMorePromptIndex,
+    revealPrompt,
+    pendingReveal,
+    clearPendingReveal,
+    goToLatest,
     loadTurnAt,
   } = useSessionHistory(historyKey);
+  const viewingHistoricalWindow = historyKey !== null && hasMoreAfter;
+  const effectivePromptTotal = Math.max(sessionPromptTotal, sessionTurnTotal);
   const refreshStopState = separateControls ? refreshLiveControls : refreshHistory;
   const [appliedHistoryVersion, setAppliedHistoryVersion] = useState(0);
   const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
@@ -1359,6 +1383,7 @@ export function ThreadShell({
   const filePreviewPath = filePreview?.parentKey === historyKey ? filePreview.path : null;
   const [filePreviewRefreshKey, setFilePreviewRefreshKey] = useState(0);
   const filePreviewEditKeysRef = useRef<Set<string>>(new Set());
+  const draftNamespace = useMemo(() => draftNamespaceFor(token), [token]);
   const [quotedContext, setQuotedContext] = useState<string | null>(null);
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const shellRef = useRef<HTMLElement | null>(null);
@@ -1506,12 +1531,19 @@ export function ThreadShell({
   }, [chatId, messages]);
 
   useEffect(() => {
+    // Revoked read access invalidates device-local drafts for this session.
+    if (historyAccessDenied && historyKey) {
+      clearComposerDraftsForSession(draftNamespace, historyKey);
+    }
+  }, [draftNamespace, historyAccessDenied, historyKey]);
+
+  useEffect(() => {
     if (chatId && historyKey) sessionKeyByChatIdRef.current.set(chatId, historyKey);
   }, [chatId, historyKey]);
 
   useEffect(() => {
     setFilePreview(null);
-    setQuotedContext(null);
+    // The composer owns quote save/restore per chat; it resets or restores it.
     setSubmittedViewportTurnId(null);
   }, [historyKey]);
 
@@ -1640,10 +1672,22 @@ export function ThreadShell({
     historyKey,
     token,
   ]);
-  const composerContextUsage = useMemo(
-    () => latestComposerContextUsage(displayMessages),
-    [displayMessages],
-  );
+  // The meter follows the latest qualified completion observation, not the
+  // history window being viewed. While an older page is shown the window cannot
+  // see the tail, so keep the last tail-derived value (null if none yet).
+  const retainedContextUsageRef = useRef<{
+    key: string | null;
+    usage: ComposerContextUsage | null;
+  }>({ key: null, usage: null });
+  const composerContextUsage = useMemo(() => {
+    const resolved = resolveRetainedContextUsage(retainedContextUsageRef.current, {
+      key: historyKey,
+      viewingHistoricalWindow,
+      computeFresh: () => latestComposerContextUsage(displayMessages),
+    });
+    retainedContextUsageRef.current = resolved.retained;
+    return resolved.usage;
+  }, [displayMessages, historyKey, viewingHistoricalWindow]);
   const composerRoundUsage = useMemo(
     () => recentComposerRoundUsage(displayMessages),
     [displayMessages],
@@ -1966,9 +2010,15 @@ export function ThreadShell({
     if (!showingOpeningPage) return [];
     return projectWebuiThreadMessages(historical);
   }, [historical, showingOpeningPage]);
+  const historicalWindowMessages = useMemo(() => {
+    if (!viewingHistoricalWindow) return [];
+    return projectWebuiThreadMessages(historical);
+  }, [historical, viewingHistoricalWindow]);
   const viewportMessages = historyAccessDenied
     ? []
-    : showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
+    : viewingHistoricalWindow
+      ? historicalWindowMessages
+      : showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
   const conversationLoading = (openingConversation || historyIsPending) && viewportMessages.length === 0;
   const showHeroComposer = viewportMessages.length === 0 && !conversationLoading;
   const composerVariant = showHeroComposer ? emptyComposerVariant : "thread";
@@ -2166,6 +2216,9 @@ export function ThreadShell({
       setMessages([]);
       return;
     }
+    // Keep detached historical windows isolated from the live stream owner so
+    // an active run at the tail never splices into or overwrites an older page.
+    if (viewingHistoricalWindow) return;
     const cached = messageCacheRef.current.get(chatId);
     const pendingCanonicalHydrate = pendingCanonicalHydrateRef.current.get(chatId);
     const hasNewCanonicalHistory = (
@@ -2313,6 +2366,7 @@ export function ThreadShell({
     historyActivitySnapshotAvailable,
     hasPendingToolCalls,
     historyKey,
+    viewingHistoricalWindow,
   ]);
 
   useEffect(() => {
@@ -2775,6 +2829,11 @@ export function ThreadShell({
     async (content: string, images?: SendAttachment[], options?: SendOptions) => {
       if (booting) return false;
       setBooting(true);
+      const snapshot = loadComposerDraft({
+        namespace: draftNamespace,
+        key: NEW_CHAT_DRAFT_KEY,
+        persist: false,
+      });
       pendingFirstRef.current = { content, images, options };
       setPendingFirstTargetChatId(null);
       const newId = await onCreateChat?.(workspaceScope, content, localModelPreset);
@@ -2790,6 +2849,7 @@ export function ThreadShell({
           setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
         } catch {
           setReasoningUpdate({ chatId: newId, pending: false });
+          handoffComposerDraft(draftNamespace, `websocket:${newId}`, snapshot, content);
           setPendingFullDraft({ chatId: newId, text: content });
           pendingFirstRef.current = null;
           setBooting(false);
@@ -2801,13 +2861,18 @@ export function ThreadShell({
       setPendingFirstTargetChatId(newId);
       return true;
     },
-    [activeModelPreset, booting, client, localModelPreset, onCreateChat, reasoningEffort, workspaceScope],
+    [activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, reasoningEffort, workspaceScope],
   );
 
   const handleDraftFullAccess = useCallback(async (draft: string) => {
     if (preparingFull || booting) return;
     setPreparingFull(true);
     setFullSetupError(null);
+    const snapshot = loadComposerDraft({
+      namespace: draftNamespace,
+      key: NEW_CHAT_DRAFT_KEY,
+      persist: false,
+    });
     const draftToTransfer = draft.trim() ? draft : null;
     try {
       const newId = await onCreateChat?.(workspaceScope, draft, localModelPreset, {
@@ -2822,6 +2887,7 @@ export function ThreadShell({
           await client.sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort));
           setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
         }
+        handoffComposerDraft(draftNamespace, `websocket:${newId}`, snapshot, draftToTransfer);
         setPendingFullDraft(draftToTransfer ? { chatId: newId, text: draftToTransfer } : null);
       }
     } catch {
@@ -2831,7 +2897,7 @@ export function ThreadShell({
     } finally {
       setPreparingFull(false);
     }
-  }, [activeModelPreset, booting, client, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
+  }, [activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
 
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
@@ -2841,6 +2907,9 @@ export function ThreadShell({
       }
       setFallbackModelName(null);
       const submitted = send(content, images, options);
+      if (submitted && viewingHistoricalWindow) {
+        void goToLatest();
+      }
       if (
         chatId
         && submitted
@@ -2863,8 +2932,8 @@ export function ThreadShell({
       }
       return submitted;
     },
-    [canonicalRunTurnId, chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef,
-      pendingRecoveryResolveRef, send, workspaceAccessRequest],
+    [canonicalRunTurnId, chatId, goToLatest, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef,
+      pendingRecoveryResolveRef, send, viewingHistoricalWindow, workspaceAccessRequest],
   );
 
   const handleAdmissionRejectedPromptRestored = useCallback((turnId: string) => {
@@ -2966,11 +3035,40 @@ export function ThreadShell({
     setFilePreview({ parentKey: historyKey, path });
   }, [historyKey]);
 
-  // The whole-session rail loads its index on first need and jumps by turn.
+  // The whole-session rail loads bounded prompt summaries on demand and
+  // reveals unloaded prompts by identity without clobbering the current view.
   const handleNeedSessionTurns = useCallback(() => {
     if (!historyKey) return;
     void loadTurnIndex();
   }, [historyKey, loadTurnIndex]);
+
+  const handleLoadMorePrompts = useCallback(() => {
+    if (!historyKey) return;
+    void loadMorePromptIndex();
+  }, [historyKey, loadMorePromptIndex]);
+
+  const handleRevealPrompt = useCallback((target: RevealPromptTarget) => {
+    if (!historyKey) return;
+    void revealPrompt(target);
+  }, [historyKey, revealPrompt]);
+
+  const handleRetryReveal = useCallback(() => {
+    if (!historyKey || !pendingReveal) return;
+    void revealPrompt({
+      promptId: pendingReveal.promptId,
+      locator: pendingReveal.locator ?? null,
+      cursor: pendingReveal.cursor ?? null,
+    });
+  }, [historyKey, pendingReveal, revealPrompt]);
+
+  const handleDismissRevealError = useCallback(() => {
+    clearPendingReveal();
+  }, [clearPendingReveal]);
+
+  const handleGoToLatest = useCallback(() => {
+    if (!historyKey) return Promise.resolve(false);
+    return goToLatest();
+  }, [goToLatest, historyKey]);
 
   const handleJumpToTurn = useCallback((cursor: string) => {
     if (!historyKey || !cursor) return;
@@ -3174,84 +3272,6 @@ export function ThreadShell({
             onPickFolder={workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined}
           />
         ) : null}
-        <ThreadComposer
-          onSend={handleThreadSend}
-          onJoinQueuedAttempt={joinQueuedAttempt}
-          onConsumeQueuedAttempt={consumeQueuedAttempt}
-          admissionRejectedTurn={admissionRejectedTurn}
-          onAdmissionRejectedPromptRestored={handleAdmissionRejectedPromptRestored}
-          disabled={historyAccessDenied}
-          newTurnBlocked={!chatId || reasoningPending}
-          steerDisabled={!connectionOpen || !canonicalRunTurnId}
-          inputAriaLabel={composerInputAriaLabel}
-          isStreaming={turnActive}
-          queueCompletionTurnId={queueCompletionTurnId}
-          automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
-          stopAvailable={hasOwnedWork}
-          stopDisabled={historyAccessDenied || !stopCanBeSent || (delegatedChildrenLoading && !stopTarget)}
-          stopPending={stopPending}
-          placeholder={
-            composerVariant === "hero"
-              ? t("thread.composer.placeholderHero")
-              : t("thread.composer.placeholderThread")
-          }
-          modelLabel={modelBadgeLabel}
-          modelDetail={modelBadge.model}
-          modelPreset={activeModelPreset}
-          modelPresets={modelPresetOptions}
-          onModelPresetChange={chatId ? handleModelPresetChange : undefined}
-          modelReasoning={chatId ? modelReasoning : undefined}
-          modelProvider={modelBadge.provider}
-          modelProviderLabel={modelBadge.providerLabel}
-          modelNeedsSetup={modelBadge.needsSetup}
-          fallbackModelName={fallbackModelName}
-          onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
-          onManageModels={
-            isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
-          }
-          contextUsage={composerContextUsage}
-          hasConfiguredModel={hasConfiguredModel}
-          recentRoundUsage={composerRoundUsage}
-          variant={composerVariant}
-          slashCommands={availableSlashCommands}
-          cliApps={cliApps}
-          mcpPresets={mcpPresets}
-          sessions={mentionSessions}
-          skills={skills}
-          onStop={stop}
-          onTranscribeAudio={transcribeAudio}
-          goalState={currentGoalState}
-          workspaceScope={workspaceScope}
-          workspaceControlsHidden={temporary || !chatId}
-          workspaceDefaultScope={workspaceDefaultScope}
-          workspaceControls={workspaceControls}
-          workspaces={workspaces}
-          onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
-          workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
-          workspaceError={workspaceError}
-          onPickWorkspaceFolder={
-            workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
-          }
-          onWorkspaceScopeChange={handleWorkspaceScopeChange}
-          workspacePermissions={workspacePermissions}
-          workspacePermissionsLoading={workspacePermissionsLoading}
-          workspacePermissionsError={workspacePermissionsError}
-          persistentWorkspaceChat={!temporary && !!chatId}
-          onWorkspaceAccessModeChange={handleWorkspaceAccessModeChange}
-          onRetryWorkspaceRestricted={retryWorkspaceRestricted}
-          initialDraft={pendingFullDraft?.chatId === chatId ? pendingFullDraft.text : null}
-          onInitialDraftConsumed={() => setPendingFullDraft((current) => (
-            current?.chatId === chatId ? null : current
-          ))}
-          pendingQueueKey={temporary ? null : chatId}
-          draftKey={historyKey ?? chatId}
-          transcriptionProvider={settingsSnapshot?.transcription?.provider}
-          ingressLimits={ingressLimits}
-          quotedContext={quotedContext}
-          focusRequest={composerFocusSignal}
-          onQuotedContextChange={setQuotedContext}
-        />
         </>
       ) : (
         <>
@@ -3260,68 +3280,136 @@ export function ThreadShell({
             {fullSetupError}
           </p>
         ) : null}
-        <ThreadComposer
-          onSend={handleWelcomeSend}
-          disabled={openingConversation || booting || preparingFull}
-          inputAriaLabel={composerInputAriaLabel}
-          isStreaming={turnActive}
-          automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
-          onDraftFullAccess={
-            temporary || (isMobileRuntimeActive() && !mobileOwnerCapability())
-              ? undefined
-              : handleDraftFullAccess
-          }
-          placeholder={
-            booting || preparingFull
+        </>
+      )}
+      <ThreadComposer
+        onSend={session || historyKey ? handleThreadSend : handleWelcomeSend}
+        onJoinQueuedAttempt={session || historyKey ? joinQueuedAttempt : undefined}
+        onConsumeQueuedAttempt={session || historyKey ? consumeQueuedAttempt : undefined}
+        admissionRejectedTurn={session || historyKey ? admissionRejectedTurn : undefined}
+        onAdmissionRejectedPromptRestored={
+          session || historyKey ? handleAdmissionRejectedPromptRestored : undefined
+        }
+        disabled={
+          session || historyKey
+            ? historyAccessDenied
+            : (openingConversation || booting || preparingFull)
+        }
+        newTurnBlocked={session || historyKey ? (!chatId || reasoningPending) : false}
+        steerDisabled={session || historyKey ? (!connectionOpen || !canonicalRunTurnId) : false}
+        inputAriaLabel={composerInputAriaLabel}
+        isStreaming={turnActive}
+        queueCompletionTurnId={session || historyKey ? queueCompletionTurnId : null}
+        automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
+        stopAvailable={session || historyKey ? hasOwnedWork : false}
+        stopDisabled={
+          session || historyKey
+            ? (historyAccessDenied || !stopCanBeSent || (delegatedChildrenLoading && !stopTarget))
+            : false
+        }
+        stopPending={session || historyKey ? stopPending : false}
+        onDraftFullAccess={
+          session || historyKey || temporary || (isMobileRuntimeActive() && !mobileOwnerCapability())
+            ? undefined
+            : handleDraftFullAccess
+        }
+        placeholder={
+          session || historyKey
+            ? (composerVariant === "hero"
+              ? t("thread.composer.placeholderHero")
+              : t("thread.composer.placeholderThread"))
+            : (booting || preparingFull
               ? t("thread.composer.placeholderOpening")
               : t(openingConversation
                 ? "thread.composer.placeholderThread"
-                : "thread.composer.placeholderHero")
-          }
-          modelLabel={modelBadgeLabel}
-          modelDetail={modelBadge.model}
-          modelPreset={activeModelPreset}
-          modelPresets={modelPresetOptions}
-          onModelPresetChange={handleModelPresetChange}
-          modelReasoning={modelReasoning}
-          modelProvider={modelBadge.provider}
-          modelProviderLabel={modelBadge.providerLabel}
-          modelNeedsSetup={modelBadge.needsSetup}
-          fallbackModelName={fallbackModelName}
-          onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
-          onManageModels={
-            isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
-          }
-          contextUsage={composerContextUsage}
-          hasConfiguredModel={hasConfiguredModel}
-          recentRoundUsage={composerRoundUsage}
-          variant={composerVariant}
-          slashCommands={availableSlashCommands}
-          cliApps={cliApps}
-          mcpPresets={mcpPresets}
-          sessions={mentionSessions}
-          skills={skills}
-          surfaceRef={composerSurfaceRef}
-          onTranscribeAudio={transcribeAudio}
-          goalState={currentGoalState}
-          workspaceScope={workspaceScope}
-          workspaceControlsHidden={temporary || openingConversation}
-          workspaceDefaultScope={workspaceDefaultScope}
-          workspaceControls={workspaceControls}
-          workspaces={workspaces}
-          onRefreshWorkspaces={onRefreshWorkspaces}
-          workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
-          workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
-          workspaceError={workspaceError}
-          onPickWorkspaceFolder={
-            workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
-          }
-          onWorkspaceScopeChange={handleWorkspaceScopeChange}
-          transcriptionProvider={settingsSnapshot?.transcription?.provider}
-          ingressLimits={ingressLimits}
-        />
-        </>
-      )}
+                : "thread.composer.placeholderHero"))
+        }
+        modelLabel={modelBadgeLabel}
+        modelDetail={modelBadge.model}
+        modelPreset={activeModelPreset}
+        modelPresets={modelPresetOptions}
+        onModelPresetChange={
+          session || historyKey
+            ? (chatId ? handleModelPresetChange : undefined)
+            : handleModelPresetChange
+        }
+        modelReasoning={
+          session || historyKey
+            ? (chatId ? modelReasoning : undefined)
+            : modelReasoning
+        }
+        modelProvider={modelBadge.provider}
+        modelProviderLabel={modelBadge.providerLabel}
+        modelNeedsSetup={modelBadge.needsSetup}
+        fallbackModelName={fallbackModelName}
+        onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
+        onManageModels={
+          isMobileRuntimeActive() && !mobileOwnerCapability() ? undefined : onOpenModelSettings
+        }
+        contextUsage={composerContextUsage}
+        hasConfiguredModel={hasConfiguredModel}
+        recentRoundUsage={composerRoundUsage}
+        variant={composerVariant}
+        slashCommands={availableSlashCommands}
+        cliApps={cliApps}
+        mcpPresets={mcpPresets}
+        sessions={mentionSessions}
+        skills={skills}
+        onStop={session || historyKey ? stop : undefined}
+        surfaceRef={session || historyKey ? undefined : composerSurfaceRef}
+        onTranscribeAudio={transcribeAudio}
+        goalState={currentGoalState}
+        workspaceScope={workspaceScope}
+        workspaceControlsHidden={
+          session || historyKey ? (temporary || !chatId) : (temporary || openingConversation)
+        }
+        workspaceDefaultScope={workspaceDefaultScope}
+        workspaceControls={workspaceControls}
+        workspaces={workspaces}
+        onRefreshWorkspaces={onRefreshWorkspaces}
+        workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
+        workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
+        workspaceError={workspaceError}
+        onPickWorkspaceFolder={
+          workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
+        }
+        onWorkspaceScopeChange={handleWorkspaceScopeChange}
+        workspacePermissions={session || historyKey ? workspacePermissions : null}
+        workspacePermissionsLoading={session || historyKey ? workspacePermissionsLoading : false}
+        workspacePermissionsError={session || historyKey ? workspacePermissionsError : false}
+        persistentWorkspaceChat={Boolean((session || historyKey) && !temporary && chatId)}
+        onWorkspaceAccessModeChange={
+          session || historyKey ? handleWorkspaceAccessModeChange : undefined
+        }
+        onRetryWorkspaceRestricted={
+          session || historyKey ? retryWorkspaceRestricted : undefined
+        }
+        initialDraft={
+          (session || historyKey) && pendingFullDraft?.chatId === chatId
+            ? pendingFullDraft.text
+            : null
+        }
+        onInitialDraftConsumed={
+          session || historyKey
+            ? () => {
+                clearComposerDraftsForSession(draftNamespace, NEW_CHAT_DRAFT_KEY);
+                setPendingFullDraft((current) => (
+                  current?.chatId === chatId ? null : current
+                ));
+              }
+            : undefined
+        }
+        pendingQueueKey={(session || historyKey) && !temporary ? chatId : null}
+        draftKey={session || historyKey ? (historyKey ?? chatId) : null}
+        draftNamespace={draftNamespace}
+        draftRevoked={Boolean((session || historyKey) && historyAccessDenied)}
+        draftIncarnation={session || historyKey ? sessionIncarnation : null}
+        transcriptionProvider={settingsSnapshot?.transcription?.provider}
+        ingressLimits={ingressLimits}
+        quotedContext={quotedContext}
+        focusRequest={composerFocusSignal}
+        onQuotedContextChange={setQuotedContext}
+      />
     </>
   );
 
@@ -3350,8 +3438,17 @@ export function ThreadShell({
   ) : undefined;
   const promptNavigatorAction = historyKey ? (
     <PromptNavigator
-      messages={displayMessages}
+      messages={viewportMessages}
       onJumpToPrompt={(promptId) => viewportRef.current?.jumpToUserPrompt(promptId)}
+      sessionPrompts={sessionPrompts}
+      sessionTurns={sessionTurns}
+      totalPromptCount={effectivePromptTotal}
+      hasMoreBefore={hasMoreBefore}
+      hasMorePromptsBefore={promptIndexHasMoreBefore}
+      loadingMorePrompts={loadingPromptIndex}
+      onNeedSessionPrompts={handleNeedSessionTurns}
+      onLoadMorePrompts={handleLoadMorePrompts}
+      onRevealPrompt={handleRevealPrompt}
     />
   ) : undefined;
   const childHistoryOverlay = activeChildHistoryInspection ? (
@@ -3453,17 +3550,17 @@ export function ThreadShell({
             messages={viewportMessages}
             temporary={temporary}
             obscured={inspectorModal}
-            isStreaming={turnActive}
-            runStartedAt={currentRunStartedAt}
-            retryStatus={retryStatus}
+            isStreaming={viewingHistoricalWindow ? false : turnActive}
+            runStartedAt={viewingHistoricalWindow ? null : currentRunStartedAt}
+            retryStatus={viewingHistoricalWindow ? null : retryStatus}
             emptyState={emptyState}
             composer={(
               <div hidden={!composerActive} data-testid={composerActive ? "active-pane-composer" : undefined}>
                 {composer}
               </div>
             )}
-            activeTurnId={viewportTurnId}
-            activeTurnStartedHere={activeTurnStartedHere}
+            activeTurnId={viewingHistoricalWindow ? null : viewportTurnId}
+            activeTurnStartedHere={viewingHistoricalWindow ? false : activeTurnStartedHere}
             conversationKey={historyKey}
             conversationReady={messagesReady}
             conversationLoading={conversationLoading}
@@ -3474,8 +3571,23 @@ export function ThreadShell({
             forkBoundaryMessageCount={forkBoundaryMessageCount}
             hasMoreBefore={hasMoreBefore}
             loadingOlder={loadingOlder}
+            hasMoreAfter={hasMoreAfter}
+            loadingNewer={loadingNewer}
+            tailActivityPending={tailActivityPending || (viewingHistoricalWindow && turnActive)}
             userMessageOffset={userMessageOffset}
             onLoadOlder={loadOlder}
+            onLoadNewer={loadNewer}
+            onGoToLatest={handleGoToLatest}
+            sessionPrompts={sessionPrompts}
+            sessionPromptTotal={effectivePromptTotal}
+            hasMorePromptsBefore={promptIndexHasMoreBefore}
+            loadingMorePrompts={loadingPromptIndex}
+            onLoadMorePrompts={handleLoadMorePrompts}
+            onRevealPrompt={handleRevealPrompt}
+            pendingReveal={pendingReveal}
+            onPendingRevealHandled={clearPendingReveal}
+            onRetryReveal={handleRetryReveal}
+            onDismissRevealError={handleDismissRevealError}
             sessionTurns={sessionTurns}
             sessionTurnTotal={sessionTurnTotal}
             onNeedSessionTurns={handleNeedSessionTurns}

@@ -665,7 +665,7 @@ class LifetimeWriterLease:
             names = os.listdir(descriptor)
             if not namespace_scaffolding:
                 return bool(names)
-            allowed = {".workspace", ".session-files.lock", ".execution-locks"}
+            allowed = {".workspace", ".session-files.lock", ".execution-locks", ".session-prefs"}
             return any(name not in allowed for name in names)
         except OSError:
             raise _mode_error() from None

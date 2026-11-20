@@ -4,6 +4,7 @@ import { useClient } from "@/providers/ClientProvider";
 import i18n from "@/i18n";
 import {
   ApiError,
+  type FetchWebuiThreadOptions,
   deleteSession as apiDeleteSession,
   fetchDelegatedChildren,
   fetchSessionAutomations,
@@ -30,9 +31,13 @@ import type {
   ChatSummary,
   DelegatedChildReference,
   FolderAccessRequest,
+  PendingPromptReveal,
   SessionAutomationJob,
   SessionDeleteResult,
+  SessionPromptSummary,
+  SessionTurnIndexPayload,
   SessionTurnSummary,
+  SourceOrigin,
   UIMessage,
   StopExpectation,
   WorkspacePermissionProjection,
@@ -41,8 +46,9 @@ import type {
 
 const EMPTY_MESSAGES: UIMessage[] = [];
 const EMPTY_TURN_INDEX: SessionTurnSummary[] = [];
+const EMPTY_PROMPT_INDEX: SessionPromptSummary[] = [];
 const INITIAL_HISTORY_PAGE_LIMIT = 40;
-const TURN_INDEX_PAGE_LIMIT = 400;
+const TURN_INDEX_PAGE_LIMIT = 100;
 const OLDER_HISTORY_PAGE_LIMIT = 120;
 const DELEGATED_CHILD_PAGE_LIMIT = 120;
 const CHAT_CREATE_TIMEOUT_MS = 60_000;
@@ -58,6 +64,109 @@ function isAbortError(error: unknown): boolean {
 
 function isHistoryReadRefusal(error: unknown): error is ApiError {
   return error instanceof ApiError && [401, 403, 404, 503].includes(error.status);
+}
+
+function isStaleHistoryCursorError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 409;
+}
+
+function isPromptNotFoundError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 404 && error.message === "prompt_not_found";
+}
+
+function sameSourceOrigin(a: SourceOrigin | null, b: SourceOrigin | null): boolean {
+  if (!a || !b) return false;
+  return (
+    a.session_key === b.session_key
+    && a.store_identity === b.store_identity
+    && a.incarnation === b.incarnation
+    && a.generation === b.generation
+  );
+}
+
+function sourceOriginReplaced(prev: SourceOrigin | null, next: SourceOrigin | null): boolean {
+  return prev !== null && next !== null && !sameSourceOrigin(prev, next);
+}
+
+function normalizePromptIndexEntries(payload: SessionTurnIndexPayload): SessionPromptSummary[] {
+  if (Array.isArray(payload.prompts) && payload.prompts.length > 0) {
+    return payload.prompts;
+  }
+  if (!Array.isArray(payload.turns) || payload.turns.length === 0) return EMPTY_PROMPT_INDEX;
+  return payload.turns.map((turn) => ({
+    prompt_id: `turn:${turn.ordinal}`,
+    turn_ordinal: turn.ordinal,
+    prompt_ordinal: turn.ordinal,
+    label: turn.label,
+    created_at: turn.created_at,
+    locator: "",
+  }));
+}
+
+function mergeUniquePrompts(
+  older: SessionPromptSummary[],
+  existing: SessionPromptSummary[],
+): SessionPromptSummary[] {
+  if (older.length === 0) return existing;
+  if (existing.length === 0) return older;
+  const seen = new Set(existing.map((entry) => entry.prompt_id));
+  const prefix = older.filter((entry) => !seen.has(entry.prompt_id));
+  return prefix.length > 0 ? [...prefix, ...existing] : existing;
+}
+
+function mergeUniqueTurns(
+  older: SessionTurnSummary[],
+  existing: SessionTurnSummary[],
+): SessionTurnSummary[] {
+  if (older.length === 0) return existing;
+  if (existing.length === 0) return older;
+  const seen = new Set(existing.map((entry) => entry.ordinal));
+  const prefix = older.filter((entry) => !seen.has(entry.ordinal));
+  return prefix.length > 0 ? [...prefix, ...existing] : existing;
+}
+
+function dedupePrependMessages(older: UIMessage[], current: UIMessage[]): UIMessage[] {
+  if (older.length === 0) return current;
+  if (current.length === 0) return older;
+  const existingIds = new Set(current.map((message) => message.id));
+  const existingPromptIds = new Set(
+    current
+      .filter((message) => message.role === "user" && typeof message.promptId === "string" && message.promptId)
+      .map((message) => message.promptId as string),
+  );
+  const filtered = older.filter((message) => {
+    if (existingIds.has(message.id)) return false;
+    if (message.role === "user" && message.promptId && existingPromptIds.has(message.promptId)) {
+      return false;
+    }
+    return true;
+  });
+  return filtered.length > 0 ? [...filtered, ...current] : current;
+}
+
+function dedupeAppendMessages(current: UIMessage[], newer: UIMessage[]): UIMessage[] {
+  if (newer.length === 0) return current;
+  if (current.length === 0) return newer;
+  const existingIds = new Set(current.map((message) => message.id));
+  const existingPromptIds = new Set(
+    current
+      .filter((message) => message.role === "user" && typeof message.promptId === "string" && message.promptId)
+      .map((message) => message.promptId as string),
+  );
+  const filtered = newer.filter((message) => {
+    if (existingIds.has(message.id)) return false;
+    if (message.role === "user" && message.promptId && existingPromptIds.has(message.promptId)) {
+      return false;
+    }
+    return true;
+  });
+  return filtered.length > 0 ? [...current, ...filtered] : current;
+}
+
+export interface RevealPromptTarget {
+  promptId: string;
+  locator?: string | null;
+  cursor?: string | null;
 }
 
 export type SessionHistoryContinuity = "initial" | "overlap" | "reset";
@@ -406,13 +515,24 @@ export function useSessionHistory(key: string | null): {
   messages: UIMessage[];
   loading: boolean;
   loadingOlder: boolean;
+  loadingNewer: boolean;
   error: string | null;
   historyAccessDenied: boolean;
+  /** Incarnation of the session whose history is loaded, when known. */
+  sessionIncarnation: string | null;
   refresh: () => void;
   refreshLiveControls: () => void;
   separateControls: boolean;
   loadOlder: () => Promise<void>;
+  loadNewer: () => Promise<void>;
   hasMoreBefore: boolean;
+  hasMoreAfter: boolean;
+  /** True when the rendered window includes the current committed tail. */
+  isAtTail: boolean;
+  /** True when live or refresh activity arrived while reading an older window. */
+  tailActivityPending: boolean;
+  /** Index coverage reported by the gateway ("indexed" | "tail_only" | null). */
+  coverage: string | null;
   userMessageOffset: number;
   version: number;
   forkBoundaryMessageCount: number | null;
@@ -449,24 +569,49 @@ export function useSessionHistory(key: string | null): {
   markWorkspacePermissionsStale: () => void;
   updateWorkspacePermissions: (permissions: WorkspacePermissionProjection | null) => void;
   refreshWorkspacePermissions: () => Promise<WorkspacePermissionProjection | null>;
-  /** Every turn in the session, newest page last; loaded on demand. */
+  /** Bounded turn summaries, newest page last; loaded on demand. */
   turnIndex: SessionTurnSummary[];
+  /** Bounded visible user prompt summaries, newest page last; loaded on demand. */
+  promptIndex: SessionPromptSummary[];
   totalTurnCount: number;
+  totalPromptCount: number;
+  promptIndexHasMoreBefore: boolean;
+  loadingPromptIndex: boolean;
   loadTurnIndex: () => Promise<SessionTurnSummary[]>;
-  /** Replace the window with the page ending at this turn cursor. */
+  loadMorePromptIndex: () => Promise<SessionPromptSummary[]>;
+  /** Reveal an exact prompt by locator or id without wiping the current window on failure. */
+  revealPrompt: (target: RevealPromptTarget) => Promise<boolean>;
+  pendingReveal: PendingPromptReveal | null;
+  clearPendingReveal: (requestId?: number) => void;
+  /** Return cleanly from an older window to the current committed tail. */
+  goToLatest: () => Promise<boolean>;
+  /** Replace the window with the page ending at this turn cursor (legacy compatibility). */
   loadTurnAt: (cursor: string) => Promise<void>;
 } {
   const { client, getToken } = useClient();
   const loadingOlderRef = useRef(false);
+  const loadingNewerRef = useRef(false);
+  const loadingPromptIndexRef = useRef(false);
   const olderRequestAbortRef = useRef<AbortController | null>(null);
+  const newerRequestAbortRef = useRef<AbortController | null>(null);
+  const revealRequestAbortRef = useRef<AbortController | null>(null);
   const turnIndexRequestAbortRef = useRef<AbortController | null>(null);
+  const revealRequestIdRef = useRef(0);
+  const activeKeyRef = useRef<string | null>(key);
+  activeKeyRef.current = key;
   const historyVersionRef = useRef(0);
   const accessRequestReadVersionRef = useRef(0);
   const permissionReadVersionRef = useRef(0);
   const controlsReadVersionRef = useRef(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
   const [turnIndex, setTurnIndex] = useState<SessionTurnSummary[]>([]);
+  const [promptIndex, setPromptIndex] = useState<SessionPromptSummary[]>([]);
+  const [promptIndexBeforeCursor, setPromptIndexBeforeCursor] = useState<string | null>(null);
+  const [promptIndexHasMoreBefore, setPromptIndexHasMoreBefore] = useState(false);
+  const [loadingPromptIndex, setLoadingPromptIndex] = useState(false);
   const [totalTurnCount, setTotalTurnCount] = useState(0);
+  const [totalPromptCount, setTotalPromptCount] = useState(0);
+  const [pendingReveal, setPendingReveal] = useState<PendingPromptReveal | null>(null);
   const refresh = useCallback(() => {
     setRefreshSeq((value) => value + 1);
   }, []);
@@ -476,6 +621,7 @@ export function useSessionHistory(key: string | null): {
     messages: UIMessage[];
     loading: boolean;
     loadingOlder: boolean;
+    loadingNewer: boolean;
     error: string | null;
     historyAccessDenied?: boolean;
     separateControls?: boolean;
@@ -483,7 +629,12 @@ export function useSessionHistory(key: string | null): {
     completedTurnIds: string[];
     forkBoundaryMessageCount: number | null;
     beforeCursor: string | null;
+    afterCursor: string | null;
     hasMoreBefore: boolean;
+    hasMoreAfter: boolean;
+    tailActivityPending: boolean;
+    coverage: string | null;
+    sourceOrigin: SourceOrigin | null;
     userMessageOffset: number;
     version: number;
     continuity: SessionHistoryContinuity;
@@ -507,12 +658,18 @@ export function useSessionHistory(key: string | null): {
     messages: [],
     loading: false,
     loadingOlder: false,
+    loadingNewer: false,
     error: null,
     hasPendingToolCalls: false,
     completedTurnIds: [],
     forkBoundaryMessageCount: null,
     beforeCursor: null,
+    afterCursor: null,
     hasMoreBefore: false,
+    hasMoreAfter: false,
+    tailActivityPending: false,
+    coverage: null,
+    sourceOrigin: null,
     userMessageOffset: 0,
     version: 0,
     continuity: "initial",
@@ -531,6 +688,8 @@ export function useSessionHistory(key: string | null): {
     workspacePermissionsLoading: false,
     workspacePermissionsError: false,
   });
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const readLiveControls = useCallback(async (requestedKey: string, signal?: AbortSignal) => {
     const controlsVersion = ++controlsReadVersionRef.current;
@@ -589,23 +748,46 @@ export function useSessionHistory(key: string | null): {
 
   const denyHistoryRead = useCallback((requestedKey: string, error: string | null) => {
     clearCachedSessionPage(client, requestedKey);
+    olderRequestAbortRef.current?.abort();
+    olderRequestAbortRef.current = null;
+    loadingOlderRef.current = false;
+    newerRequestAbortRef.current?.abort();
+    newerRequestAbortRef.current = null;
+    loadingNewerRef.current = false;
+    revealRequestAbortRef.current?.abort();
+    revealRequestAbortRef.current = null;
+    revealRequestIdRef.current += 1;
     turnIndexRequestAbortRef.current?.abort();
+    turnIndexRequestAbortRef.current = null;
+    loadingPromptIndexRef.current = false;
     const version = ++historyVersionRef.current;
     setTurnIndex(EMPTY_TURN_INDEX);
+    setPromptIndex(EMPTY_PROMPT_INDEX);
+    setPromptIndexBeforeCursor(null);
+    setPromptIndexHasMoreBefore(false);
+    setLoadingPromptIndex(false);
     setTotalTurnCount(0);
+    setTotalPromptCount(0);
+    setPendingReveal(null);
     setState((prev) => prev.client === client && prev.key === requestedKey
       ? {
           ...prev,
           messages: EMPTY_MESSAGES,
           loading: false,
           loadingOlder: false,
+          loadingNewer: false,
           error,
           historyAccessDenied: true,
           hasPendingToolCalls: false,
           completedTurnIds: [],
           forkBoundaryMessageCount: null,
           beforeCursor: null,
+          afterCursor: null,
           hasMoreBefore: false,
+          hasMoreAfter: false,
+          tailActivityPending: false,
+          coverage: null,
+          sourceOrigin: null,
           userMessageOffset: 0,
           version,
           continuity: "reset",
@@ -631,26 +813,63 @@ export function useSessionHistory(key: string | null): {
     olderRequestAbortRef.current?.abort();
     olderRequestAbortRef.current = null;
     loadingOlderRef.current = false;
+    newerRequestAbortRef.current?.abort();
+    newerRequestAbortRef.current = null;
+    loadingNewerRef.current = false;
+    revealRequestAbortRef.current?.abort();
+    revealRequestAbortRef.current = null;
+    turnIndexRequestAbortRef.current?.abort();
+    turnIndexRequestAbortRef.current = null;
+    loadingPromptIndexRef.current = false;
   }, []);
+
+  const prevEffectKeyRef = useRef<string | null>(null);
+  const prevEffectClientRef = useRef<typeof client>(client);
 
   useEffect(() => {
     controlsReadVersionRef.current += 1;
+    const keyChanged = prevEffectKeyRef.current !== key || prevEffectClientRef.current !== client;
+    prevEffectKeyRef.current = key;
+    prevEffectClientRef.current = client;
     if (!key) {
       olderRequestAbortRef.current?.abort();
       olderRequestAbortRef.current = null;
       loadingOlderRef.current = false;
+      newerRequestAbortRef.current?.abort();
+      newerRequestAbortRef.current = null;
+      loadingNewerRef.current = false;
+      revealRequestAbortRef.current?.abort();
+      revealRequestAbortRef.current = null;
+      revealRequestIdRef.current += 1;
+      turnIndexRequestAbortRef.current?.abort();
+      turnIndexRequestAbortRef.current = null;
+      loadingPromptIndexRef.current = false;
+      setTurnIndex(EMPTY_TURN_INDEX);
+      setPromptIndex(EMPTY_PROMPT_INDEX);
+      setPromptIndexBeforeCursor(null);
+      setPromptIndexHasMoreBefore(false);
+      setLoadingPromptIndex(false);
+      setTotalTurnCount(0);
+      setTotalPromptCount(0);
+      setPendingReveal(null);
       setState({
         client,
         key: null,
         messages: [],
         loading: false,
         loadingOlder: false,
+        loadingNewer: false,
         error: null,
         hasPendingToolCalls: false,
         completedTurnIds: [],
         forkBoundaryMessageCount: null,
         beforeCursor: null,
+        afterCursor: null,
         hasMoreBefore: false,
+        hasMoreAfter: false,
+        tailActivityPending: false,
+        coverage: null,
+        sourceOrigin: null,
         userMessageOffset: 0,
         version: 0,
         continuity: "initial",
@@ -675,16 +894,50 @@ export function useSessionHistory(key: string | null): {
     const controller = new AbortController();
     const accessRequestReadVersion = ++accessRequestReadVersionRef.current;
     const permissionReadVersion = ++permissionReadVersionRef.current;
-    olderRequestAbortRef.current?.abort();
-    olderRequestAbortRef.current = null;
-    loadingOlderRef.current = false;
-    setTurnIndex((current) => (current.length === 0 ? current : []));
+    const detachedOlderWindow = (
+      !keyChanged
+      && stateRef.current.client === client
+      && stateRef.current.key === key
+      && stateRef.current.hasMoreAfter
+    );
+    if (keyChanged) {
+      olderRequestAbortRef.current?.abort();
+      olderRequestAbortRef.current = null;
+      loadingOlderRef.current = false;
+      newerRequestAbortRef.current?.abort();
+      newerRequestAbortRef.current = null;
+      loadingNewerRef.current = false;
+      revealRequestAbortRef.current?.abort();
+      revealRequestAbortRef.current = null;
+      revealRequestIdRef.current += 1;
+      turnIndexRequestAbortRef.current?.abort();
+      turnIndexRequestAbortRef.current = null;
+      loadingPromptIndexRef.current = false;
+      setTurnIndex((current) => (current.length === 0 ? current : EMPTY_TURN_INDEX));
+      setPromptIndex((current) => (current.length === 0 ? current : EMPTY_PROMPT_INDEX));
+      setPromptIndexBeforeCursor(null);
+      setPromptIndexHasMoreBefore(false);
+      setLoadingPromptIndex(false);
+      setTotalTurnCount(0);
+      setTotalPromptCount(0);
+      setPendingReveal(null);
+    } else if (!detachedOlderWindow) {
+      olderRequestAbortRef.current?.abort();
+      olderRequestAbortRef.current = null;
+      loadingOlderRef.current = false;
+    }
     // Paint the previously loaded window immediately on a revisit. The network
     // refresh below still runs and replaces it, so this only removes the blank
     // wait; it never decides what the UI believes after the fetch settles.
     const cachedPage = readCachedSessionPage(client, key);
-    if (cachedPage) {
+    if (cachedPage && keyChanged) {
       historyVersionRef.current += 1;
+      if (typeof cachedPage.totalTurnCount === "number") {
+        setTotalTurnCount(cachedPage.totalTurnCount);
+      }
+      if (typeof cachedPage.totalPromptCount === "number") {
+        setTotalPromptCount(cachedPage.totalPromptCount);
+      }
       setState((prev) => prev.client === client && prev.key === key
         ? { ...prev, messages: cachedPage.messages, loading: false }
         : {
@@ -693,12 +946,18 @@ export function useSessionHistory(key: string | null): {
             messages: cachedPage.messages,
             loading: false,
             loadingOlder: false,
+            loadingNewer: false,
             error: null,
             hasPendingToolCalls: false,
             completedTurnIds: cachedPage.completedTurnIds,
             forkBoundaryMessageCount: cachedPage.forkBoundaryMessageCount,
             beforeCursor: cachedPage.beforeCursor,
+            afterCursor: cachedPage.afterCursor ?? null,
             hasMoreBefore: cachedPage.hasMoreBefore,
+            hasMoreAfter: cachedPage.hasMoreAfter === true,
+            tailActivityPending: false,
+            coverage: null,
+            sourceOrigin: null,
             userMessageOffset: cachedPage.userMessageOffset,
             version: cachedPage.version,
             continuity: "initial",
@@ -724,49 +983,60 @@ export function useSessionHistory(key: string | null): {
     }
     // Mark the new key as loading immediately so callers never see stale
     // messages from the previous session during the render right after a switch.
-    setState((prev) => prev.client === client && prev.key === key
-      ? {
-          ...prev,
-          loading: true,
-          loadingOlder: false,
-          error: null,
-          activitySnapshotAvailable: false,
-          delegatedChildrenLoading: true,
-          workspaceAccessRequestLoading: true,
-          workspaceAccessRequestError: false,
-          workspacePermissionsLoading: true,
-          workspacePermissionsError: false,
-        }
-      : {
-          client,
-          key,
-          messages: [],
-          loading: true,
-          loadingOlder: false,
-          error: null,
-          hasPendingToolCalls: false,
-          completedTurnIds: [],
-          forkBoundaryMessageCount: null,
-          beforeCursor: null,
-          hasMoreBefore: false,
-          userMessageOffset: 0,
-          version: 0,
-          continuity: "initial",
-          lineage: 0,
-          activeTurnId: null,
-          activitySnapshotAvailable: false,
-          stopTarget: null,
-          stopTargetSnapshotAvailable: false,
-          delegatedChildren: [],
-          delegatedChildrenLoading: true,
-          delegatedChildrenError: false,
-          workspaceAccessRequest: null,
-          workspaceAccessRequestLoading: true,
-          workspaceAccessRequestError: false,
-          workspacePermissions: null,
-          workspacePermissionsLoading: true,
-          workspacePermissionsError: false,
-        });
+    // When reading an older window on the same key, keep the window mounted
+    // while checking live status and lifetime continuity in the background.
+    if (!detachedOlderWindow) {
+      setState((prev) => prev.client === client && prev.key === key
+        ? {
+            ...prev,
+            loading: true,
+            loadingOlder: false,
+            loadingNewer: false,
+            error: null,
+            activitySnapshotAvailable: false,
+            delegatedChildrenLoading: true,
+            workspaceAccessRequestLoading: true,
+            workspaceAccessRequestError: false,
+            workspacePermissionsLoading: true,
+            workspacePermissionsError: false,
+          }
+        : {
+            client,
+            key,
+            messages: [],
+            loading: true,
+            loadingOlder: false,
+            loadingNewer: false,
+            error: null,
+            hasPendingToolCalls: false,
+            completedTurnIds: [],
+            forkBoundaryMessageCount: null,
+            beforeCursor: null,
+            afterCursor: null,
+            hasMoreBefore: false,
+            hasMoreAfter: false,
+            tailActivityPending: false,
+            coverage: null,
+            sourceOrigin: null,
+            userMessageOffset: 0,
+            version: 0,
+            continuity: "initial",
+            lineage: 0,
+            activeTurnId: null,
+            activitySnapshotAvailable: false,
+            stopTarget: null,
+            stopTargetSnapshotAvailable: false,
+            delegatedChildren: [],
+            delegatedChildrenLoading: true,
+            delegatedChildrenError: false,
+            workspaceAccessRequest: null,
+            workspaceAccessRequestLoading: true,
+            workspaceAccessRequestError: false,
+            workspacePermissions: null,
+            workspacePermissionsLoading: true,
+            workspacePermissionsError: false,
+          });
+    }
     (async () => {
       try {
         const body = await fetchWebuiThread(getToken(), key, {
@@ -783,8 +1053,7 @@ export function useSessionHistory(key: string | null): {
         const persisted = persistedMessagesToUi(body?.messages ?? []);
         const ui = persisted.filter((message) => message.kind !== "delegated_child");
         const userMessageOffset = Math.max(0, body?.page?.user_message_offset ?? 0);
-        historyVersionRef.current += 1;
-        const responseVersion = historyVersionRef.current;
+        const incomingOrigin = parseSourceOrigin(body?.source);
         const completedTurnIds = completedTurnIdsFromThread(body);
         const permissionProjection = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
         const threadStopTargetSnapshotAvailable = body !== null && "stop_target" in body;
@@ -793,13 +1062,117 @@ export function useSessionHistory(key: string | null): {
         const forkBoundary = typeof body?.fork_boundary_message_count === "number"
           ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))
           : null;
+        const nextCoverage = typeof body?.page?.coverage === "string" ? body.page.coverage : null;
         if (typeof body?.page?.total_turn_count === "number") {
           setTotalTurnCount(body.page.total_turn_count);
         }
+        if (typeof body?.page?.total_prompt_count === "number") {
+          setTotalPromptCount(body.page.total_prompt_count);
+        } else if (typeof body?.page?.total_turn_count === "number") {
+          setTotalPromptCount((prev) => (prev > 0 ? prev : body.page?.total_turn_count ?? 0));
+        }
+
+        const currentBeforeCommit = stateRef.current;
+        const lifetimeReplaced = (
+          currentBeforeCommit.client === client
+          && currentBeforeCommit.key === key
+          && sourceOriginReplaced(currentBeforeCommit.sourceOrigin, incomingOrigin)
+        );
+        if (lifetimeReplaced) {
+          olderRequestAbortRef.current?.abort();
+          olderRequestAbortRef.current = null;
+          loadingOlderRef.current = false;
+          newerRequestAbortRef.current?.abort();
+          newerRequestAbortRef.current = null;
+          loadingNewerRef.current = false;
+          revealRequestAbortRef.current?.abort();
+          revealRequestAbortRef.current = null;
+          revealRequestIdRef.current += 1;
+          turnIndexRequestAbortRef.current?.abort();
+          turnIndexRequestAbortRef.current = null;
+          loadingPromptIndexRef.current = false;
+          setTurnIndex(EMPTY_TURN_INDEX);
+          setPromptIndex(EMPTY_PROMPT_INDEX);
+          setPromptIndexBeforeCursor(null);
+          setPromptIndexHasMoreBefore(false);
+          setLoadingPromptIndex(false);
+          setPendingReveal(null);
+        }
+
+        const keepDetachedWindow = (
+          !lifetimeReplaced
+          && currentBeforeCommit.client === client
+          && currentBeforeCommit.key === key
+          && currentBeforeCommit.hasMoreAfter
+        );
+        if (!keepDetachedWindow) {
+          historyVersionRef.current += 1;
+        }
+        const responseVersion = historyVersionRef.current;
+
         setState((prev) => {
-          const merged = prev.key === key
+          const applyRequest = !separateControls && accessRequestReadVersion === accessRequestReadVersionRef.current;
+          const applyPermissions = !separateControls && permissionReadVersion === permissionReadVersionRef.current;
+          const activitySnapshotAvailable = body !== null
+            && (body.sessionKey === undefined || body.sessionKey === key)
+            && (body.source === undefined || body.source === null || body.source.session_key === key)
+            && body.history_kind !== "summary"
+            && body.parent_session_key === undefined
+            && (body.root_key === undefined || body.root_key === key)
+            && (body.active_turn_id === null || typeof body.active_turn_id === "string")
+            && typeof body.has_pending_tool_calls === "boolean";
+          const nextActiveTurnId = typeof body?.active_turn_id === "string"
+            ? body.active_turn_id
+            : null;
+          if (
+            prev.client === client
+            && prev.key === key
+            && prev.hasMoreAfter
+            && !sourceOriginReplaced(prev.sourceOrigin, incomingOrigin)
+          ) {
+            return {
+              ...prev,
+              loading: false,
+              separateControls,
+              hasPendingToolCalls: hasPending,
+              completedTurnIds,
+              tailActivityPending: true,
+              coverage: nextCoverage ?? prev.coverage,
+              sourceOrigin: incomingOrigin ?? prev.sourceOrigin,
+              activeTurnId: nextActiveTurnId,
+              activitySnapshotAvailable,
+              stopTarget: separateControls ? prev.stopTarget : threadStopTarget,
+              stopTargetSnapshotAvailable: separateControls
+                ? prev.stopTargetSnapshotAvailable
+                : threadStopTargetSnapshotAvailable,
+              workspaceAccessRequest: applyRequest
+                ? body?.workspace_access_request ?? null
+                : prev.workspaceAccessRequest,
+              workspaceAccessRequestLoading: applyRequest
+                ? false
+                : prev.workspaceAccessRequestLoading,
+              workspaceAccessRequestError: applyRequest
+                ? false
+                : prev.workspaceAccessRequestError,
+              workspacePermissions: applyPermissions
+                ? mergePermissionProjection(prev.workspacePermissions, permissionProjection)
+                : prev.workspacePermissions,
+              workspacePermissionsLoading: applyPermissions
+                ? false
+                : prev.workspacePermissionsLoading,
+              workspacePermissionsError: applyPermissions
+                ? false
+                : prev.workspacePermissionsError,
+            };
+          }
+          const replaced = prev.key === key && sourceOriginReplaced(prev.sourceOrigin, incomingOrigin);
+          const merged = prev.key === key && !replaced
             ? mergeLatestHistory(prev.messages, ui, prev.lineage === 0)
-            : mergeLatestHistory([], ui, true);
+            : {
+                continuity: (replaced ? "reset" : "initial") as SessionHistoryContinuity,
+                messages: ui,
+                retainedPrefixLength: 0,
+              };
           const retainedPrefix = merged.retainedPrefixLength > 0;
           const retainedForkBoundary = (
             retainedPrefix
@@ -808,14 +1181,13 @@ export function useSessionHistory(key: string | null): {
           )
             ? prev.forkBoundaryMessageCount
             : null;
-          const applyRequest = !separateControls && accessRequestReadVersion === accessRequestReadVersionRef.current;
-          const applyPermissions = !separateControls && permissionReadVersion === permissionReadVersionRef.current;
           return {
             client,
             key,
             messages: merged.messages,
             loading: false,
             loadingOlder: false,
+            loadingNewer: false,
             error: null,
             historyAccessDenied: false,
             separateControls,
@@ -827,9 +1199,14 @@ export function useSessionHistory(key: string | null): {
             beforeCursor: retainedPrefix
               ? prev.beforeCursor
               : body?.page?.before_cursor ?? null,
+            afterCursor: body?.page?.after_cursor ?? null,
             hasMoreBefore: retainedPrefix
               ? prev.hasMoreBefore
               : body?.page?.has_more_before === true,
+            hasMoreAfter: body?.page?.has_more_after === true,
+            tailActivityPending: false,
+            coverage: nextCoverage,
+            sourceOrigin: incomingOrigin,
             userMessageOffset: retainedPrefix
               ? prev.userMessageOffset
               : userMessageOffset,
@@ -838,17 +1215,8 @@ export function useSessionHistory(key: string | null): {
             lineage: merged.continuity === "overlap"
               ? prev.lineage
               : responseVersion,
-            activeTurnId: typeof body?.active_turn_id === "string"
-              ? body.active_turn_id
-              : null,
-            activitySnapshotAvailable: body !== null
-              && (body.sessionKey === undefined || body.sessionKey === key)
-              && (body.source === undefined || body.source === null || body.source.session_key === key)
-              && body.history_kind !== "summary"
-              && body.parent_session_key === undefined
-              && (body.root_key === undefined || body.root_key === key)
-              && (body.active_turn_id === null || typeof body.active_turn_id === "string")
-              && typeof body.has_pending_tool_calls === "boolean",
+            activeTurnId: nextActiveTurnId,
+            activitySnapshotAvailable,
             stopTarget: separateControls && prev.key === key ? prev.stopTarget : threadStopTarget,
             stopTargetSnapshotAvailable: separateControls && prev.key === key
               ? prev.stopTargetSnapshotAvailable
@@ -950,23 +1318,35 @@ export function useSessionHistory(key: string | null): {
     };
   }, [client, denyHistoryRead, getToken, key, readLiveControls, refreshSeq]);
 
-  // Keep the renderer cache in step with the settled window. Writing it here,
-  // rather than mid-fetch, means a scroll-back prefix and any merged overlap are
-  // part of what a revisit paints. Loading and error states are skipped so a
-  // half-built window never becomes the cached view.
+  // Keep the renderer cache in step with the settled tail window. Writing it
+  // here, rather than mid-fetch, means a scroll-back prefix and any merged
+  // overlap are part of what a revisit paints. Detached older windows, loading,
+  // and error states are skipped so a half-built or non-tail window never
+  // becomes the cached revisit view.
   useEffect(() => {
     if (!key || state.client !== client || state.key !== key) return;
-    if (state.loading || state.loadingOlder || state.error || state.historyAccessDenied) return;
+    if (
+      state.loading
+      || state.loadingOlder
+      || state.loadingNewer
+      || state.hasMoreAfter
+      || state.error
+      || state.historyAccessDenied
+    ) return;
     writeCachedSessionPage(client, key, {
       messages: state.messages,
       beforeCursor: state.beforeCursor,
       hasMoreBefore: state.hasMoreBefore,
+      afterCursor: state.afterCursor,
+      hasMoreAfter: state.hasMoreAfter,
       userMessageOffset: state.userMessageOffset,
       completedTurnIds: state.completedTurnIds,
       forkBoundaryMessageCount: state.forkBoundaryMessageCount,
+      totalTurnCount,
+      totalPromptCount,
       version: state.version,
     });
-  }, [client, key, state]);
+  }, [client, key, state, totalPromptCount, totalTurnCount]);
 
   const markWorkspaceAccessRequestStale = useCallback(() => {
     accessRequestReadVersionRef.current += 1;
@@ -1098,6 +1478,7 @@ export function useSessionHistory(key: string | null): {
     try {
       const body = await fetchWebuiThread(getToken(), requestKey, {
         limit: OLDER_HISTORY_PAGE_LIMIT,
+        direction: "before",
         before: beforeCursor,
         signal: controller.signal,
       });
@@ -1116,14 +1497,16 @@ export function useSessionHistory(key: string | null): {
             beforeCursor: null,
           };
         }
-        const older = persistedMessagesToUi(body.messages);
+        const older = persistedMessagesToUi(body.messages)
+          .filter((message) => message.kind !== "delegated_child");
+        const nextMessages = dedupePrependMessages(older, prev.messages);
+        const addedCount = nextMessages.length - prev.messages.length;
         const olderBoundary = typeof body.fork_boundary_message_count === "number"
-          ? Math.max(0, Math.min(body.fork_boundary_message_count, older.length))
+          ? Math.max(0, Math.min(body.fork_boundary_message_count, addedCount))
           : null;
         const shiftedBoundary = prev.forkBoundaryMessageCount === null
           ? null
-          : prev.forkBoundaryMessageCount + older.length;
-        const nextMessages = [...older, ...prev.messages];
+          : prev.forkBoundaryMessageCount + addedCount;
         // An older page cannot change the authoritative latest-turn lifecycle
         // state or masquerade as a completed latest-page refresh.
         return {
@@ -1139,6 +1522,18 @@ export function useSessionHistory(key: string | null): {
       });
     } catch (e) {
       if (controller.signal.aborted || isAbortError(e)) return;
+      if (isStaleHistoryCursorError(e)) {
+        // Explicit stale cursor: leave the current window intact instead of
+        // silently jumping to latest or discarding the user's anchor.
+        setState((prev) => matchesRequest(prev)
+          ? {
+              ...prev,
+              loadingOlder: false,
+              error: e.message || "stale_history_cursor",
+            }
+          : prev);
+        return;
+      }
       if (isHistoryReadRefusal(e)) {
         denyHistoryRead(requestKey, e.message);
         return;
@@ -1166,95 +1561,322 @@ export function useSessionHistory(key: string | null): {
     getToken,
   ]);
 
-  /**
-   * Load the whole-session turn index, newest page last.
-   *
-   * The navigator needs every turn, not just the loaded window, so this pages
-   * the cheap user-row index until the server reports no older page.
-   */
-  const canBrowseTurnIndex = state.client === client && state.key === key && !state.historyAccessDenied;
-  const loadTurnIndex = useCallback(async (): Promise<SessionTurnSummary[]> => {
-    if (!key || !canBrowseTurnIndex) return EMPTY_TURN_INDEX;
-    turnIndexRequestAbortRef.current?.abort();
+  const loadNewer = useCallback(async () => {
+    if (!key || loadingNewerRef.current) return;
+    const requestKey = key;
+    const requestLineage = state.key === requestKey ? state.lineage : 0;
+    const afterCursor = state.key === requestKey ? state.afterCursor : null;
+    if (!afterCursor || !state.hasMoreAfter || requestLineage === 0) return;
+    const matchesRequest = (candidate: typeof state) => (
+      candidate.key === requestKey
+      && candidate.lineage === requestLineage
+      && candidate.afterCursor === afterCursor
+    );
+    loadingNewerRef.current = true;
     const controller = new AbortController();
-    turnIndexRequestAbortRef.current = controller;
+    newerRequestAbortRef.current = controller;
+    setState((prev) => matchesRequest(prev)
+      ? { ...prev, loadingNewer: true, error: null }
+      : prev);
     try {
-      const collected: SessionTurnSummary[] = [];
-      let before: string | null = null;
-      let total = 0;
-      for (let page = 0; page < 20; page += 1) {
-        const payload = await fetchSessionTurns(getToken(), key, {
-          limit: TURN_INDEX_PAGE_LIMIT,
-          before,
-          signal: controller.signal,
-        });
-        // Some transports cannot cancel the underlying read. Its result still
-        // cannot restore labels for a closed or superseded history window.
-        if (controller.signal.aborted) return EMPTY_TURN_INDEX;
-        if (!payload) break;
-        if (payload.sessionKey !== undefined && payload.sessionKey !== key) return EMPTY_TURN_INDEX;
-        total = payload.total_turn_count ?? total;
-        collected.unshift(...(Array.isArray(payload.turns) ? payload.turns : []));
-        if (payload.page?.has_more_before !== true) break;
-        const next = payload.page?.before_cursor ?? null;
-        if (!next || next === before) break;
-        before = next;
-      }
-      setTotalTurnCount(total || collected.length);
-      setTurnIndex(collected);
-      return collected;
-    } catch {
-      // Index availability must not change the settled conversation.
-      return EMPTY_TURN_INDEX;
-    } finally {
-      if (turnIndexRequestAbortRef.current === controller) {
-        turnIndexRequestAbortRef.current = null;
-      }
-    }
-  }, [canBrowseTurnIndex, getToken, key]);
-
-  /**
-   * Replace the rendered window with the page that ends at one turn.
-   *
-   * This is the navigator's jump. It intentionally starts a fresh lineage: the
-   * target window may be far from the current one, so merging the two would
-   * invent continuity that does not exist.
-   */
-  const loadTurnAt = useCallback(async (cursor: string): Promise<void> => {
-    if (!key || !cursor) return;
-    olderRequestAbortRef.current?.abort();
-    const controller = new AbortController();
-    olderRequestAbortRef.current = controller;
-    loadingOlderRef.current = true;
-    setState((prev) => (prev.key === key
-      ? { ...prev, loading: true, error: null }
-      : prev));
-    try {
-      const body = await fetchWebuiThread(getToken(), key, {
-        limit: INITIAL_HISTORY_PAGE_LIMIT,
-        direction: "latest",
-        before: cursor,
+      const body = await fetchWebuiThread(getToken(), requestKey, {
+        limit: OLDER_HISTORY_PAGE_LIMIT,
+        direction: "after",
+        after: afterCursor,
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
       if (body === null) {
-        denyHistoryRead(key, null);
+        denyHistoryRead(requestKey, null);
         return;
+      }
+      const nextHasMoreAfter = body.page?.has_more_after === true;
+      const nextAfterCursor = nextHasMoreAfter ? (body.page?.after_cursor ?? null) : null;
+      if (!nextHasMoreAfter) {
+        historyVersionRef.current += 1;
+      }
+      const tailVersion = historyVersionRef.current;
+      setState((prev) => {
+        if (!matchesRequest(prev)) return prev;
+        const newer = persistedMessagesToUi(body.messages ?? [])
+          .filter((message) => message.kind !== "delegated_child");
+        const nextMessages = dedupeAppendMessages(prev.messages, newer);
+        const reachedTail = !nextHasMoreAfter;
+        return {
+          ...prev,
+          messages: nextMessages,
+          loadingNewer: false,
+          error: null,
+          afterCursor: nextAfterCursor,
+          hasMoreAfter: nextHasMoreAfter,
+          tailActivityPending: reachedTail ? false : prev.tailActivityPending,
+          version: reachedTail ? tailVersion : prev.version,
+          ...(reachedTail ? {
+            hasPendingToolCalls: hasPendingToolCallsFromThread(body, nextMessages),
+            completedTurnIds: Array.from(new Set([
+              ...prev.completedTurnIds,
+              ...completedTurnIdsFromThread(body),
+            ])),
+            activeTurnId: typeof body.active_turn_id === "string"
+              ? body.active_turn_id
+              : prev.activeTurnId,
+          } : {}),
+        };
+      });
+    } catch (e) {
+      if (controller.signal.aborted || isAbortError(e)) return;
+      if (isStaleHistoryCursorError(e)) {
+        setState((prev) => matchesRequest(prev)
+          ? {
+              ...prev,
+              loadingNewer: false,
+              error: e.message || "stale_history_cursor",
+            }
+          : prev);
+        return;
+      }
+      if (isHistoryReadRefusal(e)) {
+        denyHistoryRead(requestKey, e.message);
+        return;
+      }
+      setState((prev) => matchesRequest(prev)
+        ? {
+            ...prev,
+            loadingNewer: false,
+            error: (e as Error).message,
+          }
+        : prev);
+    } finally {
+      if (newerRequestAbortRef.current === controller) {
+        newerRequestAbortRef.current = null;
+        loadingNewerRef.current = false;
+      }
+    }
+  }, [
+    denyHistoryRead,
+    getToken,
+    key,
+    state.afterCursor,
+    state.hasMoreAfter,
+    state.key,
+    state.lineage,
+  ]);
+
+  /**
+   * Fetch one bounded page of prompt/turn summaries.
+   *
+   * Does not eagerly drain the entire session index; older ranges load on
+   * demand via ``loadMorePromptIndex``.
+   */
+  const canBrowseTurnIndex = state.client === client && state.key === key && !state.historyAccessDenied;
+  const fetchPromptIndexPage = useCallback(async (before: string | null): Promise<{
+    turns: SessionTurnSummary[];
+    prompts: SessionPromptSummary[];
+  }> => {
+    if (!key || !canBrowseTurnIndex) {
+      return { turns: EMPTY_TURN_INDEX, prompts: EMPTY_PROMPT_INDEX };
+    }
+    const requestKey = key;
+    if (before === null) {
+      turnIndexRequestAbortRef.current?.abort();
+    } else if (loadingPromptIndexRef.current) {
+      return { turns: EMPTY_TURN_INDEX, prompts: EMPTY_PROMPT_INDEX };
+    }
+    const controller = new AbortController();
+    turnIndexRequestAbortRef.current = controller;
+    loadingPromptIndexRef.current = true;
+    setLoadingPromptIndex(true);
+    try {
+      const payload = await fetchSessionTurns(getToken(), requestKey, {
+        limit: TURN_INDEX_PAGE_LIMIT,
+        before,
+        signal: controller.signal,
+      });
+      // Some transports cannot cancel the underlying read. Its result still
+      // cannot restore labels for a closed or superseded history window.
+      if (controller.signal.aborted || activeKeyRef.current !== requestKey) {
+        return { turns: EMPTY_TURN_INDEX, prompts: EMPTY_PROMPT_INDEX };
+      }
+      if (!payload) {
+        return { turns: EMPTY_TURN_INDEX, prompts: EMPTY_PROMPT_INDEX };
+      }
+      if (payload.sessionKey !== undefined && payload.sessionKey !== requestKey) {
+        return { turns: EMPTY_TURN_INDEX, prompts: EMPTY_PROMPT_INDEX };
+      }
+      const pageTurns = Array.isArray(payload.turns) ? payload.turns : EMPTY_TURN_INDEX;
+      const pagePrompts = normalizePromptIndexEntries(payload);
+      const nextBefore = payload.page?.has_more_before === true
+        ? (payload.page.before_cursor ?? null)
+        : null;
+      const nextHasMore = payload.page?.has_more_before === true && nextBefore !== null && nextBefore !== before;
+      if (typeof payload.total_turn_count === "number") {
+        setTotalTurnCount(payload.total_turn_count);
+      }
+      if (typeof payload.total_prompt_count === "number") {
+        setTotalPromptCount(payload.total_prompt_count);
+      } else if (typeof payload.total_turn_count === "number") {
+        setTotalPromptCount((prev) => Math.max(prev, payload.total_turn_count));
+      }
+      setPromptIndexBeforeCursor(nextBefore);
+      setPromptIndexHasMoreBefore(nextHasMore);
+      if (before === null) {
+        setTurnIndex(pageTurns);
+        setPromptIndex(pagePrompts);
+      } else {
+        setTurnIndex((prev) => mergeUniqueTurns(pageTurns, prev));
+        setPromptIndex((prev) => mergeUniquePrompts(pagePrompts, prev));
+      }
+      return { turns: pageTurns, prompts: pagePrompts };
+    } catch {
+      // Index availability must not change the settled conversation.
+      return { turns: EMPTY_TURN_INDEX, prompts: EMPTY_PROMPT_INDEX };
+    } finally {
+      if (turnIndexRequestAbortRef.current === controller) {
+        turnIndexRequestAbortRef.current = null;
+        loadingPromptIndexRef.current = false;
+        setLoadingPromptIndex(false);
+      }
+    }
+  }, [canBrowseTurnIndex, getToken, key]);
+
+  const loadTurnIndex = useCallback(async (): Promise<SessionTurnSummary[]> => {
+    const result = await fetchPromptIndexPage(null);
+    return result.turns;
+  }, [fetchPromptIndexPage]);
+
+  const loadMorePromptIndex = useCallback(async (): Promise<SessionPromptSummary[]> => {
+    if (!promptIndexHasMoreBefore || !promptIndexBeforeCursor) return EMPTY_PROMPT_INDEX;
+    const result = await fetchPromptIndexPage(promptIndexBeforeCursor);
+    return result.prompts;
+  }, [fetchPromptIndexPage, promptIndexBeforeCursor, promptIndexHasMoreBefore]);
+
+  const clearPendingReveal = useCallback((requestId?: number) => {
+    setPendingReveal((current) => {
+      if (!current) return null;
+      if (requestId !== undefined && current.requestId !== requestId) return current;
+      return null;
+    });
+  }, []);
+
+  /**
+   * Reveal an exact prompt by locator or id without blanking the current view.
+   *
+   * Keeps the old window visible while fetching, ignores superseded reveals,
+   * and leaves the current view intact with an explicit error on failure.
+   */
+  const revealPrompt = useCallback(async (target: RevealPromptTarget): Promise<boolean> => {
+    if (!key || (!target.locator && !target.promptId && !target.cursor)) return false;
+    const requestKey = key;
+    olderRequestAbortRef.current?.abort();
+    olderRequestAbortRef.current = null;
+    loadingOlderRef.current = false;
+    newerRequestAbortRef.current?.abort();
+    newerRequestAbortRef.current = null;
+    loadingNewerRef.current = false;
+    revealRequestAbortRef.current?.abort();
+    const controller = new AbortController();
+    revealRequestAbortRef.current = controller;
+    const requestId = ++revealRequestIdRef.current;
+    setPendingReveal({
+      requestId,
+      promptId: target.promptId,
+      locator: target.locator ?? null,
+      cursor: target.cursor ?? null,
+      status: "loading",
+      errorCode: null,
+      errorMessage: null,
+    });
+    const isCurrentReveal = () => (
+      !controller.signal.aborted
+      && revealRequestIdRef.current === requestId
+      && activeKeyRef.current === requestKey
+    );
+    try {
+      const requestOptions: FetchWebuiThreadOptions = target.locator
+        ? {
+            limit: INITIAL_HISTORY_PAGE_LIMIT,
+            direction: "around",
+            around: target.locator,
+            signal: controller.signal,
+          }
+        : target.cursor
+          ? {
+              limit: INITIAL_HISTORY_PAGE_LIMIT,
+              direction: "latest",
+              before: target.cursor,
+              signal: controller.signal,
+            }
+          : {
+              limit: INITIAL_HISTORY_PAGE_LIMIT,
+              direction: "around",
+              promptId: target.promptId,
+              signal: controller.signal,
+            };
+      const body = await fetchWebuiThread(getToken(), requestKey, requestOptions);
+      if (!isCurrentReveal()) return false;
+      if (body === null) {
+        setPendingReveal({
+          requestId,
+          promptId: target.promptId,
+          locator: target.locator ?? null,
+          cursor: target.cursor ?? null,
+          status: "error",
+          errorCode: "prompt_not_found",
+          errorMessage: "prompt_not_found",
+        });
+        return false;
       }
       const ui = persistedMessagesToUi(body.messages ?? [])
         .filter((message) => message.kind !== "delegated_child");
+      const resolvedPromptId = body.page?.target_prompt_id ?? target.promptId;
+      if (target.locator || !target.cursor) {
+        const foundTarget = ui.some(
+          (message) =>
+            message.role === "user"
+            && (message.promptId === resolvedPromptId || message.id === resolvedPromptId),
+        );
+        if (!foundTarget) {
+          // Never silently land on an adjacent prompt when an exact reveal
+          // did not include the requested target.
+          setPendingReveal({
+            requestId,
+            promptId: target.promptId,
+            locator: target.locator ?? null,
+            cursor: target.cursor ?? null,
+            status: "error",
+            errorCode: "prompt_not_found",
+            errorMessage: "prompt_not_found",
+          });
+          return false;
+        }
+      }
       historyVersionRef.current += 1;
       const responseVersion = historyVersionRef.current;
+      const incomingOrigin = parseSourceOrigin(body.source);
       const pending = hasPendingToolCallsFromThread(body, ui);
-      setState((prev) => (prev.key === key
+      const nextHasMoreAfter = body.page?.has_more_after === true;
+      const nextAfterCursor = nextHasMoreAfter ? (body.page?.after_cursor ?? null) : null;
+      if (typeof body.page?.total_turn_count === "number") {
+        setTotalTurnCount(body.page.total_turn_count);
+      }
+      if (typeof body.page?.total_prompt_count === "number") {
+        setTotalPromptCount(body.page.total_prompt_count);
+      }
+      setState((prev) => (prev.client === client && prev.key === requestKey
         ? {
             ...prev,
             messages: ui,
             loading: false,
             loadingOlder: false,
+            loadingNewer: false,
             error: null,
             beforeCursor: body.page?.before_cursor ?? null,
+            afterCursor: nextAfterCursor,
             hasMoreBefore: body.page?.has_more_before === true,
+            hasMoreAfter: nextHasMoreAfter,
+            tailActivityPending: false,
+            coverage: typeof body.page?.coverage === "string" ? body.page.coverage : prev.coverage,
+            sourceOrigin: incomingOrigin ?? prev.sourceOrigin,
             userMessageOffset: Math.max(0, body.page?.user_message_offset ?? 0),
             version: responseVersion,
             continuity: "initial",
@@ -1269,35 +1891,184 @@ export function useSessionHistory(key: string | null): {
               : null,
           }
         : prev));
+      setPendingReveal({
+        requestId,
+        promptId: resolvedPromptId,
+        locator: target.locator ?? null,
+        cursor: target.cursor ?? null,
+        status: "ready",
+        errorCode: null,
+        errorMessage: null,
+      });
+      return true;
     } catch (e) {
-      if (controller.signal.aborted || isAbortError(e)) return;
-      if (isHistoryReadRefusal(e)) {
-        denyHistoryRead(key, e.message);
-        return;
+      if (!isCurrentReveal() || isAbortError(e)) return false;
+      if (isStaleHistoryCursorError(e)) {
+        setPendingReveal({
+          requestId,
+          promptId: target.promptId,
+          locator: target.locator ?? null,
+          cursor: target.cursor ?? null,
+          status: "error",
+          errorCode: "stale_history_cursor",
+          errorMessage: e.message || "stale_history_cursor",
+        });
+        return false;
       }
-      setState((prev) => (prev.key === key
-        ? { ...prev, loading: false, error: (e as Error).message }
-        : prev));
+      if (isPromptNotFoundError(e)) {
+        setPendingReveal({
+          requestId,
+          promptId: target.promptId,
+          locator: target.locator ?? null,
+          cursor: target.cursor ?? null,
+          status: "error",
+          errorCode: "prompt_not_found",
+          errorMessage: e.message || "prompt_not_found",
+        });
+        return false;
+      }
+      if (isHistoryReadRefusal(e)) {
+        denyHistoryRead(requestKey, e.message);
+        return false;
+      }
+      setPendingReveal({
+        requestId,
+        promptId: target.promptId,
+        locator: target.locator ?? null,
+        cursor: target.cursor ?? null,
+        status: "error",
+        errorCode: "network",
+        errorMessage: (e as Error).message,
+      });
+      return false;
     } finally {
-      if (olderRequestAbortRef.current === controller) {
-        olderRequestAbortRef.current = null;
-        loadingOlderRef.current = false;
+      if (revealRequestAbortRef.current === controller) {
+        revealRequestAbortRef.current = null;
       }
     }
-  }, [denyHistoryRead, getToken, key]);
+  }, [client, denyHistoryRead, getToken, key]);
+
+  /**
+   * Return cleanly to the current committed tail from an older window.
+   */
+  const goToLatest = useCallback(async (): Promise<boolean> => {
+    if (!key) return false;
+    const requestKey = key;
+    olderRequestAbortRef.current?.abort();
+    olderRequestAbortRef.current = null;
+    loadingOlderRef.current = false;
+    newerRequestAbortRef.current?.abort();
+    newerRequestAbortRef.current = null;
+    loadingNewerRef.current = false;
+    revealRequestAbortRef.current?.abort();
+    const controller = new AbortController();
+    revealRequestAbortRef.current = controller;
+    const requestId = ++revealRequestIdRef.current;
+    setPendingReveal(null);
+    try {
+      const body = await fetchWebuiThread(getToken(), requestKey, {
+        limit: INITIAL_HISTORY_PAGE_LIMIT,
+        direction: "latest",
+        signal: controller.signal,
+      });
+      if (
+        controller.signal.aborted
+        || revealRequestIdRef.current !== requestId
+        || activeKeyRef.current !== requestKey
+      ) {
+        return false;
+      }
+      if (body === null) {
+        denyHistoryRead(requestKey, null);
+        return false;
+      }
+      const ui = persistedMessagesToUi(body.messages ?? [])
+        .filter((message) => message.kind !== "delegated_child");
+      historyVersionRef.current += 1;
+      const responseVersion = historyVersionRef.current;
+      const incomingOrigin = parseSourceOrigin(body.source);
+      const pending = hasPendingToolCallsFromThread(body, ui);
+      if (typeof body.page?.total_turn_count === "number") {
+        setTotalTurnCount(body.page.total_turn_count);
+      }
+      if (typeof body.page?.total_prompt_count === "number") {
+        setTotalPromptCount(body.page.total_prompt_count);
+      }
+      setState((prev) => (prev.client === client && prev.key === requestKey
+        ? {
+            ...prev,
+            messages: ui,
+            loading: false,
+            loadingOlder: false,
+            loadingNewer: false,
+            error: null,
+            beforeCursor: body.page?.before_cursor ?? null,
+            afterCursor: null,
+            hasMoreBefore: body.page?.has_more_before === true,
+            hasMoreAfter: false,
+            tailActivityPending: false,
+            coverage: typeof body.page?.coverage === "string" ? body.page.coverage : prev.coverage,
+            sourceOrigin: incomingOrigin ?? prev.sourceOrigin,
+            userMessageOffset: Math.max(0, body.page?.user_message_offset ?? 0),
+            version: responseVersion,
+            continuity: "initial",
+            lineage: responseVersion,
+            hasPendingToolCalls: pending,
+            completedTurnIds: completedTurnIdsFromThread(body),
+            forkBoundaryMessageCount: typeof body.fork_boundary_message_count === "number"
+              ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))
+              : null,
+            activeTurnId: typeof body.active_turn_id === "string"
+              ? body.active_turn_id
+              : null,
+          }
+        : prev));
+      return true;
+    } catch (e) {
+      if (controller.signal.aborted || isAbortError(e)) return false;
+      if (isHistoryReadRefusal(e)) {
+        denyHistoryRead(requestKey, e.message);
+        return false;
+      }
+      setState((prev) => (prev.client === client && prev.key === requestKey
+        ? { ...prev, loading: false, error: (e as Error).message }
+        : prev));
+      return false;
+    } finally {
+      if (revealRequestAbortRef.current === controller) {
+        revealRequestAbortRef.current = null;
+      }
+    }
+  }, [client, denyHistoryRead, getToken, key]);
+
+  /**
+   * Replace the rendered window with the page that ends at one turn cursor.
+   * Retained for legacy cursor callers; modern prompts use ``revealPrompt``.
+   */
+  const loadTurnAt = useCallback(async (cursor: string): Promise<void> => {
+    if (!key || !cursor) return;
+    await revealPrompt({ promptId: "", cursor });
+  }, [key, revealPrompt]);
 
   if (!key) {
     return {
       messages: EMPTY_MESSAGES,
       loading: false,
       loadingOlder: false,
+      loadingNewer: false,
+      sessionIncarnation: null,
       error: null,
       historyAccessDenied: false,
       refresh,
       refreshLiveControls,
       separateControls: false,
       loadOlder,
+      loadNewer,
       hasMoreBefore: false,
+      hasMoreAfter: false,
+      isAtTail: true,
+      tailActivityPending: false,
+      coverage: null,
       userMessageOffset: 0,
       version: 0,
       forkBoundaryMessageCount: null,
@@ -1324,9 +2095,18 @@ export function useSessionHistory(key: string | null): {
       markWorkspacePermissionsStale,
       updateWorkspacePermissions,
       refreshWorkspacePermissions,
-      turnIndex,
-      totalTurnCount,
+      turnIndex: EMPTY_TURN_INDEX,
+      promptIndex: EMPTY_PROMPT_INDEX,
+      totalTurnCount: 0,
+      totalPromptCount: 0,
+      promptIndexHasMoreBefore: false,
+      loadingPromptIndex: false,
       loadTurnIndex,
+      loadMorePromptIndex,
+      revealPrompt,
+      pendingReveal: null,
+      clearPendingReveal,
+      goToLatest,
       loadTurnAt,
     };
   }
@@ -1338,13 +2118,20 @@ export function useSessionHistory(key: string | null): {
       messages: EMPTY_MESSAGES,
       loading: true,
       loadingOlder: false,
+      loadingNewer: false,
+      sessionIncarnation: null,
       error: null,
       historyAccessDenied: false,
       refresh,
       refreshLiveControls,
       separateControls: false,
       loadOlder,
+      loadNewer,
       hasMoreBefore: false,
+      hasMoreAfter: false,
+      isAtTail: true,
+      tailActivityPending: false,
+      coverage: null,
       userMessageOffset: 0,
       version: 0,
       forkBoundaryMessageCount: null,
@@ -1372,8 +2159,17 @@ export function useSessionHistory(key: string | null): {
       updateWorkspacePermissions,
       refreshWorkspacePermissions,
       turnIndex: EMPTY_TURN_INDEX,
+      promptIndex: EMPTY_PROMPT_INDEX,
       totalTurnCount: 0,
+      totalPromptCount: 0,
+      promptIndexHasMoreBefore: false,
+      loadingPromptIndex: false,
       loadTurnIndex,
+      loadMorePromptIndex,
+      revealPrompt,
+      pendingReveal: null,
+      clearPendingReveal,
+      goToLatest,
       loadTurnAt,
     };
   }
@@ -1382,13 +2178,23 @@ export function useSessionHistory(key: string | null): {
     messages: state.messages,
     loading: state.loading,
     loadingOlder: state.loadingOlder,
+    loadingNewer: state.loadingNewer,
     error: state.error,
     historyAccessDenied: state.historyAccessDenied === true,
+    sessionIncarnation:
+      state.key === key && state.sourceOrigin
+        ? `${state.sourceOrigin.incarnation}:${state.sourceOrigin.generation}`
+        : null,
     refresh,
     refreshLiveControls,
     separateControls: state.separateControls === true,
     loadOlder,
+    loadNewer,
     hasMoreBefore: state.hasMoreBefore,
+    hasMoreAfter: state.hasMoreAfter,
+    isAtTail: !state.hasMoreAfter,
+    tailActivityPending: state.tailActivityPending,
+    coverage: state.coverage,
     userMessageOffset: state.userMessageOffset,
     version: state.version,
     forkBoundaryMessageCount: state.forkBoundaryMessageCount,
@@ -1415,9 +2221,18 @@ export function useSessionHistory(key: string | null): {
     markWorkspacePermissionsStale,
     updateWorkspacePermissions,
     refreshWorkspacePermissions,
-      turnIndex: EMPTY_TURN_INDEX,
-      totalTurnCount: 0,
-      loadTurnIndex,
+    turnIndex,
+    promptIndex,
+    totalTurnCount,
+    totalPromptCount,
+    promptIndexHasMoreBefore,
+    loadingPromptIndex,
+    loadTurnIndex,
+    loadMorePromptIndex,
+    revealPrompt,
+    pendingReveal,
+    clearPendingReveal,
+    goToLatest,
     loadTurnAt,
   };
 }

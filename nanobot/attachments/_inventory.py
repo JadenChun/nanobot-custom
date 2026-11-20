@@ -479,6 +479,8 @@ def inventory(custody: MediaCustody, registry: dict[str, object]) -> MediaRefere
                         continue
                     if relative.parts[0] == ".execution-locks" and path.suffix == ".lock":
                         continue
+                    if relative.parts[0] == ".session-prefs" and path.suffix in {".json", ".tmp"}:
+                        continue  # Content-free next-turn choices; no media references.
                     if len(relative.parts) == 1 and path.suffix == ".jsonl":
                         expected_key = JsonlSessionStore.session_key_from_path(path)
                         if expected_key is None:

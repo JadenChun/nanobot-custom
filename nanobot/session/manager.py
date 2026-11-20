@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     from nanobot.session.artifact_operator import CopiedArtifactReadOperations
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.mode_storage import ManagedNamespaceAccess, PrivateFileVersion
+    from nanobot.session.next_turn_preferences import NextTurnPreferences
     from nanobot.session.session_export import CanonicalExportOperations
     from nanobot.session.session_mode import (
         JournalArchiveReceipt,
@@ -1214,17 +1215,15 @@ class JsonlSessionStore:
                 )
         snapshot = prepared.snapshot
         key = snapshot.state.session_key
-        if (
-            version is not None and backend._managed_namespace_access is not None
-            and source.matches_backend(backend) and is_webui_session_key(key)
-        ):
+        if version is not None and source.matches_backend(backend):
             from nanobot.session.mode_storage import MODE_JSON_LIMIT
 
             # The prepared events have passed the source grammar. A header
             # not suitable for a managed read must not mint browse evidence,
             # even if a lower-level caller managed to publish those bytes.
             end = prepared.text.find("\n", 0, MODE_JSON_LIMIT + 1)
-            if end < 0 or len(prepared.text[:end].encode("utf-8")) > MODE_JSON_LIMIT:
+            header_bytes_len = len(prepared.text[:end].encode("utf-8")) if end >= 0 else -1
+            if end < 0 or header_bytes_len > MODE_JSON_LIMIT:
                 backend.forget_saved_source(key)
                 return snapshot
             try:
@@ -1234,8 +1233,90 @@ class JsonlSessionStore:
             except ValueError:
                 backend.forget_saved_source(key)
             else:
-                backend.remember_saved_source(key, SavedSourceProof(version, metadata))
+                backend.remember_saved_source(
+                    key,
+                    SavedSourceProof(
+                        version,
+                        metadata,
+                        header=deepcopy(snapshot.header),
+                        event_count=len(snapshot.events),
+                        body_offset=header_bytes_len + 1,
+                    ),
+                )
         return snapshot
+
+    @classmethod
+    def replace_header_atomic(
+        cls,
+        path: Path,
+        header_bytes: bytes,
+        *,
+        src_fd: int,
+        expected_version: "PrivateFileVersion",
+        body_offset: int,
+        mode: int = 0o600,
+    ) -> "PrivateFileVersion | None":
+        from nanobot.session.mode_storage import installed_file_version, private_file_version
+
+        body_size = expected_version.size - body_offset
+        if body_offset <= 0 or body_size < 0:
+            return None
+        tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        descriptor: int | None = None
+        version: PrivateFileVersion | None = None
+        try:
+            with open(tmp, "xb") as handle:
+                tmp_fd = handle.fileno()
+                os.chmod(tmp, mode)
+                view = memoryview(header_bytes)
+                while view:
+                    view = view[os.write(tmp_fd, view) :]
+                remaining = body_size
+                offset = body_offset
+                while remaining > 0:
+                    try:
+                        copied = os.copy_file_range(
+                            src_fd, tmp_fd, remaining, offset_src=offset,
+                        )
+                    except OSError as exc:
+                        if exc.errno not in {
+                            errno.ENOSYS,
+                            errno.EXDEV,
+                            errno.EINVAL,
+                            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+                        }:
+                            raise
+                        chunk = os.pread(src_fd, min(remaining, 65536), offset)
+                        if not chunk:
+                            raise SessionStorageError() from None
+                        chunk_view = memoryview(chunk)
+                        while chunk_view:
+                            chunk_view = chunk_view[os.write(tmp_fd, chunk_view) :]
+                        copied = len(chunk)
+                    if copied <= 0:
+                        raise SessionStorageError()
+                    offset += copied
+                    remaining -= copied
+                if private_file_version(os.fstat(src_fd)) != expected_version:
+                    raise SessionStorageError()
+                os.fsync(tmp_fd)
+                if path.suffix == ".jsonl" and os.name == "posix":
+                    with suppress(OSError):
+                        version = private_file_version(os.fstat(tmp_fd))
+                        if version is not None:
+                            descriptor = os.dup(tmp_fd)
+            os.replace(tmp, path)
+            installed = (
+                installed_file_version(descriptor, version)
+                if descriptor is not None and version is not None else None
+            )
+            cls._fsync_directory(path.parent)
+            return installed
+        finally:
+            if descriptor is not None:
+                with suppress(OSError):
+                    os.close(descriptor)
+            tmp.unlink(missing_ok=True)
 
     @staticmethod
     def _fsync_directory(path: Path) -> None:
@@ -2333,7 +2414,23 @@ class JsonlSessionStore:
         fsync: bool = False,
     ) -> bool:
         """Advance metadata revision, retaining the authoritative recovery overlay."""
+        from nanobot.session.mode_storage import private_file_version
+
         with self.locked_session_files():
+            path = self.get_session_path(key)
+            proof = self.saved_source_proof(key)
+            if (
+                proof is not None
+                and proof.header is not None
+                and not self.get_runtime_checkpoint_path(key).exists()
+            ):
+                try:
+                    current_version = private_file_version(path.lstat())
+                except FileNotFoundError:
+                    current_version = None
+                if current_version is not None and current_version == proof.version:
+                    self.source.update_metadata(key, updates, removals=tuple(removals))
+                    return True
             session = self._load_unlocked(key, strict=True)
             if session is None:
                 return False
@@ -2471,7 +2568,26 @@ class JsonlSessionStore:
             return self.source.load_source_snapshot(key)
 
     def _read_metadata_unlocked(self, key: str) -> SessionMetadataPayload | None:
+        from nanobot.session.mode_storage import private_file_version
+
         path = self.get_session_path(key)
+        proof = self.saved_source_proof(key)
+        if (
+            proof is not None
+            and proof.header is not None
+            and not self.get_runtime_checkpoint_path(key).exists()
+        ):
+            try:
+                current_version = private_file_version(path.lstat())
+            except FileNotFoundError:
+                return None
+            if current_version is not None and current_version == proof.version:
+                return {
+                    "key": proof.metadata.state.session_key,
+                    "created_at": datetime.fromisoformat(proof.header["created_at"]).isoformat(),
+                    "updated_at": datetime.fromisoformat(proof.header["updated_at"]).isoformat(),
+                    "metadata": deepcopy(proof.header["metadata"]),
+                }
         if not path.exists():
             return None
         self._format_header(path)
@@ -2785,6 +2901,11 @@ class SessionManager:
         if self._mode_resolver is None:
             raise RuntimeError("session namespace is unmanaged")
         return self._mode_resolver.resolve(key)
+
+    def resolve_session_mode_for_metadata(self, key: str) -> "ResolvedSessionMode":
+        if self._mode_resolver is None:
+            raise RuntimeError("session namespace is unmanaged")
+        return self._mode_resolver.resolve_for_metadata(key)
 
     @property
     def has_managed_authority(self) -> bool:
@@ -3187,6 +3308,50 @@ class SessionManager:
                     return None
             return resolver.read_saved_source(key)
 
+    def _persistent_locally(self, key: str) -> bool:
+        """Only the local persistence opt-out matters; never resolve or read a body."""
+        with self._cancellation_privacy_lock:
+            cached = self._cache.get(key) or self._overflow_cache.get(key)
+        return cached is None or cached.policy.persist
+
+    def read_next_turn_preferences(self, key: str) -> "NextTurnPreferences | None":
+        """Bounded read of persisted next-turn choices (no history, no body)."""
+        if self._store is not self._jsonl_store:
+            return None
+        if not self._persistent_locally(key):
+            return None
+        return self._jsonl_store.source.read_next_turn_preferences(key)
+
+    def update_next_turn_preferences(
+        self,
+        key: str,
+        updates: dict[str, Any],
+        *,
+        removals: Collection[str] = (),
+        expected_revision: int | None = None,
+    ) -> "NextTurnPreferences | None":
+        """Record next-turn choices in O(1) without touching settled history.
+
+        Returns ``None`` when the key has no canonical source session (a draft or
+        legacy file); callers then keep their previous behavior. The admitted
+        turn's header metadata, ``SourceState`` and cache are not modified.
+        """
+        if self._store is not self._jsonl_store:
+            return None
+        if not self._persistent_locally(key):
+            return None
+        return self._jsonl_store.source.update_next_turn_preferences(
+            key, updates, removals=tuple(removals), expected_revision=expected_revision,
+        )
+
+    def consume_next_turn_preferences(
+        self, key: str, consumed: dict[str, Any],
+    ) -> "NextTurnPreferences | None":
+        """Retire exactly the admitted choices; a newer choice survives."""
+        if self._store is not self._jsonl_store:
+            return None
+        return self._jsonl_store.source.consume_next_turn_preferences(key, consumed)
+
     def invalidate_workspace_access_request(self, key: str) -> bool:
         """Persist supersession for accepted ordinary input on an active source."""
         if self._store is not self._jsonl_store:
@@ -3412,6 +3577,10 @@ class SessionManager:
             deleted = self._mode_resolver.delete(key)
             if deleted:
                 self.invalidate(key)
+                from nanobot.session.next_turn_preferences import remove_preferences
+
+                with self._jsonl_store.locked_session_files():
+                    remove_preferences(self._jsonl_store, key)
             if self._delete_observer is not None:
                 self._delete_observer(key)
             return deleted
@@ -3519,7 +3688,7 @@ class SessionManager:
 
     def read_session_metadata(self, key: str) -> dict[str, Any] | None:
         """Read session metadata without loading the transcript."""
-        if self._mode_resolver is not None and self._mode_resolver.resolve(key).state != "active":
+        if self._mode_resolver is not None and self._mode_resolver.resolve_for_metadata(key).state != "active":
             return None
         return cast(dict[str, Any] | None, self._store.read_metadata(key))
 
@@ -3622,7 +3791,7 @@ class SessionManager:
         except (TypeError, ValueError, UnicodeError):
             raise ValueError("invalid session metadata") from None
         if self._mode_resolver is not None:
-            resolved = self._mode_resolver.resolve(key)
+            resolved = self._mode_resolver.resolve_for_metadata(key)
             if resolved.state in {"absent", "deleted"}:
                 if not create_if_absent:
                     return False
@@ -3641,7 +3810,11 @@ class SessionManager:
             return updated
         if self._store is self._jsonl_store:
             created = False
-            if create_if_absent and self.read_session_snapshot(key) is None:
+            if (
+                create_if_absent
+                and not self._jsonl_store.get_session_path(key).exists()
+                and self.read_session_snapshot(key) is None
+            ):
                 # Creation commits an empty durable baseline, not the cached
                 # caller's unsaved history. Publish only the metadata below.
                 self._jsonl_store.save(Session(key), fsync=fsync)

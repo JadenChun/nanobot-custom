@@ -27,9 +27,11 @@ from nanobot.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceScope,
     WorkspaceScopeError,
+    bind_workspace_scope,
     build_workspace_scope,
     current_workspace_focus,
     current_workspace_scope,
+    reset_workspace_scope,
 )
 from nanobot.workspace_access_recovery import (
     WorkspaceSandboxPayload,
@@ -385,10 +387,24 @@ class WorkspaceFocusOwner:
     def validate_scope(self, scope: WorkspaceScope) -> None:
         if not self.managed:
             return
+        focus = current_workspace_focus()
+        token = (
+            bind_workspace_scope(
+                focus.scope,
+                permission_owner=focus.permission_owner,
+                task_reference=None,
+                full_reference=focus.full_reference,
+            )
+            if focus is not None and focus.task_reference is not None
+            else None
+        )
         try:
-            self.policy.validate_path(scope.project_path, "read")
+            self.policy.validate_path(scope.project_path, "read", managed=True)
         except PermissionError as exc:
             raise WorkspaceScopeError("folder_access_required", status=403) from exc
+        finally:
+            if token is not None:
+                reset_workspace_scope(token)
 
     async def request_access_from_tool(
         self,

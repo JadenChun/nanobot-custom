@@ -1,17 +1,25 @@
 """The gateway must persist display rows under the source that produced them."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.outbound_events import MessageAdmittedEvent
+from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.outbound_events import DelegatedChildEvent, MessageAdmittedEvent
 from nanobot.bus.runtime_events import TurnCompleted
 from nanobot.channels.manager import ChannelManager
 from nanobot.providers.base import LLMResponse
 from nanobot.session.runtime_authority import DurableSessionAuthority
+from nanobot.session.session_handles import session_handle_for_name
+from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
 from nanobot.session.source_store import SourceSessionStore
 from nanobot.session.webui_turns import WebuiTurnCoordinator
 from nanobot.webui.forking import create_webui_chat_fork
@@ -313,3 +321,411 @@ async def test_fork_recovers_committed_answer_when_display_is_incomplete(
             "First prompt", "Committed answer",
         ]
         assert not any(row.get("transcript_incomplete") for row in fork_rows)
+
+
+class _StubExecTool(Tool):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "exec"
+
+    @property
+    def description(self) -> str:
+        return "stub exec"
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {"command": {"type": "string"}}}
+
+    async def execute(self, command: str = "", **kwargs: object) -> str:
+        self.calls.append(command)
+        return f"ran:{command}"
+
+
+def _session_message_inbound(content: str, *, message_id: str = "msg-1") -> InboundMessage:
+    source = session_handle_for_name("websocket:peer-source", "luma")
+    envelope = {
+        "message_id": message_id,
+        "created_at_ms": 1_700_000_000_000,
+        "expect_reply": False,
+        "source_handle": source.name,
+        "source_session_key": source.session_key,
+        "target_session_key": KEY,
+    }
+    return InboundMessage(
+        channel="system",
+        sender_id="session",
+        chat_id=KEY,
+        content=content,
+        metadata={SESSION_MESSAGE_METADATA_KEY: envelope},
+        session_key_override=KEY,
+        input_role="user",
+    )
+
+
+@pytest.mark.parametrize("kind", ["shell", "slash"])
+@pytest.mark.parametrize("failed", [False, True])
+async def test_managed_shell_and_slash_command_archive_only_after_canonical_commit(
+    engine_config, tmp_path, monkeypatch, kind, failed,
+):
+    async with _gateway(engine_config, tmp_path) as (loop, channel, conn, _):
+        exec_tool = _StubExecTool()
+        loop.tools.unregister("exec")
+        loop.tools.register(exec_tool)
+        envelope = (
+            {**_message_envelope(chat_id=CHAT_ID, content="!printf ok", turn_id="shell-turn"),
+             "user_shell": True}
+            if kind == "shell"
+            else _message_envelope(chat_id=CHAT_ID, content="/help", turn_id="slash-turn")
+        )
+        await channel._dispatch_envelope(conn, "owner", envelope)
+        assert loop.bus.inbound_size == 1
+        assert read_transcript_lines(KEY) == []
+        if failed:
+            def refuse(*args, **kwargs):
+                raise OSError("canonical command append failed")
+
+            monkeypatch.setattr(SourceSessionStore, "append_source_events", refuse)
+        await _dispatch_one(loop, channel)
+        source = loop.sessions.read_saved_source_metadata(KEY)
+        assert source is not None
+        qualified = read_transcript_lines(KEY, expected_source=source.state)
+        all_rows = read_transcript_lines(KEY)
+        assert len(qualified) == len(all_rows)
+        prompts = [row for row in qualified if row.get("event") == "user"]
+        if failed:
+            assert not prompts
+            assert exec_tool.calls == []
+            return
+        expected_text = "!printf ok" if kind == "shell" else "/help"
+        assert [row["text"] for row in prompts] == [expected_text]
+        canonical = loop.sessions.read_existing_canonical_source(KEY)
+        assert canonical is not None
+        committed_user = next(row for row in canonical[1].events if row.get("role") == "user")
+        assert prompts[0]["_webui_source_prompt_id"] == committed_user["_event_id"]
+        if kind == "shell":
+            assert exec_tool.calls == ["printf ok"]
+            assert any(row.get("text") == "ran:printf ok" for row in qualified)
+        else:
+            assert any("nanobot commands" in str(row.get("text", "")) for row in qualified)
+        assert qualified[-1]["event"] == "turn_end"
+
+
+async def test_managed_new_and_busy_inline_commands_do_not_write_unbound_rows(
+    engine_config, tmp_path, monkeypatch,
+):
+    async with _gateway(engine_config, tmp_path, "Initial reply", "Active reply") as (
+        loop, channel, conn, provider,
+    ):
+        await _submit(channel, conn, "Initial prompt")
+        await _dispatch_one(loop, channel)
+        old_source = loop.sessions.read_saved_source_metadata(KEY)
+        assert old_source is not None
+        old_count = len(read_transcript_lines(KEY))
+        assert old_count >= 3
+
+        conn.send.reset_mock()
+        await _submit(channel, conn, "/new", turn_id="reset-turn")
+        await _dispatch_one(loop, channel)
+        new_source = loop.sessions.read_saved_source_metadata(KEY)
+        assert new_source is not None
+        assert not new_source.state.same_origin(old_source.state)
+        assert read_transcript_lines(KEY, expected_source=new_source.state) == []
+        assert len(read_transcript_lines(KEY)) == old_count
+        sent_frames = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+        assert any(
+            frame.get("event") == "message" and frame.get("text") == "New session started."
+            for frame in sent_frames
+        )
+
+        # Now run a live turn and send an inline /help while the turn is active.
+        provider_entered, provider_release = asyncio.Event(), asyncio.Event()
+        turn_completed = asyncio.Event()
+        orig_chat = provider.chat
+
+        async def hold_turn(*args, **kwargs):
+            provider_entered.set()
+            await provider_release.wait()
+            return await orig_chat(*args, **kwargs)
+
+        monkeypatch.setattr(provider, "chat", hold_turn)
+        loop.bus.subscribe(lambda _: turn_completed.set(), TurnCompleted)
+        runner = asyncio.create_task(loop.run())
+        try:
+            await _submit(channel, conn, "Busy prompt", turn_id="busy-turn")
+            await asyncio.wait_for(provider_entered.wait(), timeout=5)
+            conn.send.reset_mock()
+            await channel._dispatch_envelope(conn, "owner", {
+                **_message_envelope(chat_id=CHAT_ID, content="/help", turn_id="inline-help"),
+                "request_intent": "steer",
+                "target_turn_id": "busy-turn",
+            })
+            await asyncio.sleep(0.05)
+            await _drain(loop, channel)
+            sent_frames = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+            assert any(
+                frame.get("event") == "message" and "nanobot commands" in str(frame.get("text", ""))
+                for frame in sent_frames
+            ), sent_frames
+            provider_release.set()
+            await asyncio.wait_for(turn_completed.wait(), timeout=5)
+            await _drain(loop, channel)
+        finally:
+            provider_release.set()
+            runner.cancel()
+            await asyncio.gather(runner, return_exceptions=True)
+
+        active_rows = read_transcript_lines(KEY, expected_source=new_source.state)
+        all_after = read_transcript_lines(KEY)[old_count:]
+        assert len(active_rows) == len(all_after)
+        assert not any(row.get("text") == "/help" for row in all_after)
+        assert not any("nanobot commands" in str(row.get("text", "")) for row in all_after)
+
+
+@pytest.mark.parametrize("failed", [False, True])
+async def test_cross_session_input_archives_only_after_canonical_commit(
+    engine_config, tmp_path, monkeypatch, failed,
+):
+    async with _gateway(engine_config, tmp_path, "Setup reply", "Cross reply") as (
+        loop, channel, conn, _,
+    ):
+        await _submit(channel, conn, "Setup prompt")
+        await _dispatch_one(loop, channel)
+        source = loop.sessions.read_saved_source_metadata(KEY)
+        assert source is not None
+
+        if failed:
+            def refuse(*args, **kwargs):
+                raise OSError("canonical cross-session append failed")
+
+            monkeypatch.setattr(SourceSessionStore, "append_source_events", refuse)
+
+        inbound = _session_message_inbound("Please review")
+        # Trigger UserInputAccepted before canonical dispatch, matching AgentLoop.run().
+        await loop.runtime_event_publisher.user_input_accepted(inbound, KEY)
+        await _drain(loop, channel)
+        assert not any(row.get("text") == "Please review" for row in read_transcript_lines(KEY))
+
+        await loop._dispatch(inbound)
+        await _drain(loop, channel)
+
+        qualified = read_transcript_lines(KEY, expected_source=source.state)
+        all_rows = read_transcript_lines(KEY)
+        assert len(qualified) == len(all_rows)
+        if failed:
+            assert not any(row.get("text") == "Please review" for row in all_rows)
+            return
+
+        prompts = [row for row in qualified if row.get("event") == "user"]
+        assert [row["text"] for row in prompts] == ["Setup prompt", "Please review"]
+        cross_row = prompts[1]
+        assert cross_row["session_message"]["message_id"] == "msg-1"
+        canonical = loop.sessions.read_existing_canonical_source(KEY)
+        assert canonical is not None
+        committed = next(
+            row for row in canonical[1].events
+            if row.get("role") == "user" and row.get("content") == "Please review"
+        )
+        assert cross_row["_webui_source_prompt_id"] == committed["_event_id"]
+        assert any(row.get("text") == "Cross reply" for row in qualified)
+        assert qualified[-1]["event"] == "turn_end"
+
+
+async def test_cross_session_mid_turn_injection_orders_after_stream_with_origin(
+    engine_config, tmp_path, monkeypatch,
+):
+    async with _gateway(engine_config, tmp_path, "Setup reply", "Before inject", "After inject") as (
+        loop, channel, conn, provider,
+    ):
+        await _submit(channel, conn, "Setup prompt")
+        await _dispatch_one(loop, channel)
+        source = loop.sessions.read_saved_source_metadata(KEY)
+        assert source is not None
+
+        entered, release = asyncio.Event(), asyncio.Event()
+        completed = asyncio.Event()
+        orig_chat = provider.chat
+        turn_calls = 0
+
+        async def pause_first(*args, **kwargs):
+            nonlocal turn_calls
+            turn_calls += 1
+            if turn_calls == 1:
+                entered.set()
+                await release.wait()
+            return await orig_chat(*args, **kwargs)
+
+        monkeypatch.setattr(provider, "chat", pause_first)
+        loop.bus.subscribe(lambda _: completed.set(), TurnCompleted)
+        runner = asyncio.create_task(loop.run())
+        try:
+            await _submit(channel, conn, "First prompt", turn_id="live-turn")
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            await loop.bus.publish_inbound(_session_message_inbound("Cross review", message_id="msg-inj"))
+            await asyncio.sleep(0.05)
+            await _drain(loop, channel)
+            assert not any(row.get("text") == "Cross review" for row in read_transcript_lines(KEY))
+
+            release.set()
+            await asyncio.wait_for(completed.wait(), timeout=5)
+            await _drain(loop, channel)
+        finally:
+            release.set()
+            runner.cancel()
+            await asyncio.gather(runner, return_exceptions=True)
+
+        canonical = loop.sessions.read_existing_canonical_source(KEY)
+        assert canonical is not None
+        qualified = read_transcript_lines(KEY, expected_source=canonical[1].state)
+        texts = [
+            row["content"] for row in replay_transcript_to_ui_messages(qualified)
+            if row.get("content")
+        ]
+        assert texts == ["Setup prompt", "Setup reply", "First prompt", "Before inject", "Cross review", "After inject"]
+        injected_row = next(row for row in qualified if row.get("text") == "Cross review")
+        committed = next(row for row in canonical[1].events if row.get("content") == "Cross review")
+        assert injected_row["_webui_source_prompt_id"] == committed["_event_id"]
+        assert injected_row["session_message"]["message_id"] == "msg-inj"
+
+
+async def test_delegated_child_activity_carries_root_origin_and_drops_after_replacement(
+    engine_config, tmp_path,
+):
+    async with _gateway(engine_config, tmp_path, "Root answer") as (loop, channel, conn, _):
+        await _submit(channel, conn, "Root prompt")
+        await _dispatch_one(loop, channel)
+        root = loop.sessions.read_saved_source_metadata(KEY)
+        assert root is not None
+
+        child_stub = SimpleNamespace(
+            parent_key=KEY,
+            root_key=KEY,
+            session_key="delegated:child-1",
+            child_id="child-1",
+            profile="delegated",
+            state="running",
+            outcome=None,
+            runtime_generation=1,
+            task_label="Check source",
+            task_label_truncated=False,
+            result_summary=None,
+            result_summary_truncated=False,
+            attempt_id="run-1",
+            current_run_id="crun-1",
+            parent_source_state=root.state,
+            root_source_state=root.state,
+            source_state=None,
+            run_sequence=1,
+            state_sequence=1,
+            control_epoch=1,
+            holds_capacity=True,
+            live=True,
+            pending_approval_id=None,
+            blocked_run_id=None,
+            background_result=None,
+        )
+        token = bind_request_context(RequestContext(
+            channel="websocket",
+            chat_id=CHAT_ID,
+            session_key=KEY,
+            metadata={"webui_turn_id": "display-turn"},
+        ))
+        try:
+            await loop._publish_delegated_child(child_stub)
+        finally:
+            reset_request_context(token)
+        await _drain(loop, channel)
+
+        qualified = read_transcript_lines(KEY, expected_source=root.state)
+        delegated_rows = [row for row in qualified if row.get("event") == "delegated_child"]
+        assert len(delegated_rows) == 1
+        assert delegated_rows[0]["child_id"] == "child-1"
+
+        # Orphan delegated activity without a root lifetime must not append unbound.
+        await ChannelManager._send_once(channel, OutboundMessage(
+            channel="websocket",
+            chat_id=CHAT_ID,
+            content="",
+            event=DelegatedChildEvent(
+                parent_session_key=KEY,
+                child_session_key="delegated:orphan",
+                child_id="orphan",
+                profile="delegated",
+                state="running",
+                task_label="Orphan",
+            ),
+        ))
+        assert not any(row.get("child_id") == "orphan" for row in read_transcript_lines(KEY))
+
+        # Delayed delegated activity for the old root lifetime must drop after reset.
+        assert loop.sessions.reset_session(KEY) is not None
+        replaced = loop.sessions.read_saved_source_metadata(KEY)
+        assert replaced is not None
+        assert not replaced.state.same_origin(root.state)
+        await ChannelManager._send_once(channel, OutboundMessage(
+            channel="websocket",
+            chat_id=CHAT_ID,
+            content="",
+            event=DelegatedChildEvent(
+                parent_session_key=KEY,
+                child_session_key="delegated:child-late",
+                child_id="child-late",
+                profile="delegated",
+                state="completed",
+                task_label="Late update",
+                root_key=KEY,
+                root_store_identity=root.state.store_identity,
+                root_incarnation=root.state.incarnation,
+                root_generation=root.state.generation,
+            ),
+        ))
+        assert read_transcript_lines(KEY, expected_source=replaced.state) == []
+        assert not any(row.get("child_id") == "child-late" for row in read_transcript_lines(KEY))
+
+
+async def test_managed_fork_preserves_shell_slash_and_cross_session_origin_parity(
+    engine_config, tmp_path,
+):
+    async with _gateway(engine_config, tmp_path, "Normal reply", "Cross reply", "Tail reply") as (
+        loop, channel, conn, _,
+    ):
+        exec_tool = _StubExecTool()
+        loop.tools.unregister("exec")
+        loop.tools.register(exec_tool)
+        await _submit(channel, conn, "Normal prompt", turn_id="t1")
+        await _dispatch_one(loop, channel)
+        await channel._dispatch_envelope(conn, "owner", {
+            **_message_envelope(chat_id=CHAT_ID, content="!echo hi", turn_id="t2"),
+            "user_shell": True,
+        })
+        await _dispatch_one(loop, channel)
+        await _submit(channel, conn, "/help", turn_id="t3")
+        await _dispatch_one(loop, channel)
+        await loop._dispatch(_session_message_inbound("Cross prompt", message_id="msg-fork"))
+        await _drain(loop, channel)
+        await _submit(channel, conn, "Excluded tail", turn_id="t5")
+        await _dispatch_one(loop, channel)
+
+        parent = loop.sessions.read_existing_canonical_source(KEY)
+        assert parent is not None
+        parent_rows = read_transcript_lines(KEY, expected_source=parent[1].state)
+        canonical_user_ids = [
+            row["_event_id"] for row in parent[1].events if row.get("role") == "user"
+        ]
+        display_user_ids = [
+            row.get("_webui_source_prompt_id") for row in parent_rows if row.get("event") == "user"
+        ]
+        assert display_user_ids == canonical_user_ids
+
+        fork = create_webui_chat_fork(loop.sessions, source_chat_id=CHAT_ID, before_user_index=4)
+        assert fork is not None
+        target = loop.sessions.read_saved_source_metadata(fork[1])
+        assert target is not None
+        fork_rows = read_transcript_lines(fork[1], expected_source=target.state)
+        assert [row["text"] for row in fork_rows if row.get("event") == "user"] == [
+            "Normal prompt", "!echo hi", "/help", "Cross prompt",
+        ]
+        assert any(row.get("text") == "ran:echo hi" for row in fork_rows)
+        assert fork_rows[-1]["event"] == "fork_marker"

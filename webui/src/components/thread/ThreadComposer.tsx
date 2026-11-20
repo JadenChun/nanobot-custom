@@ -95,6 +95,17 @@ import {
   type AttachmentKind,
   type RestoredReadyImage,
 } from "@/hooks/useAttachedImages";
+import {
+  clearComposerDraftsForSession,
+  draftIncarnationReplaced,
+  draftScopeId,
+  loadComposerDraft,
+  NEW_CHAT_DRAFT_KEY,
+  saveComposerDraft,
+  updateComposerDraftSelection,
+  type DraftAttachment,
+  type DraftScope,
+} from "@/lib/composer-drafts";
 import { useClipboardAndDrop } from "@/hooks/useClipboardAndDrop";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -283,6 +294,12 @@ interface ThreadComposerProps {
   pendingQueueKey?: string | null;
   /** Can identify an editor on a validated route before it has a send owner. */
   draftKey?: string | null;
+  /** Authenticated gateway/client namespace for device-local drafts. */
+  draftNamespace?: string;
+  /** Session incarnation; a replaced session never inherits an older draft. */
+  draftIncarnation?: string | null;
+  /** Access revoked: discard the draft and never re-save it. */
+  draftRevoked?: boolean;
   transcriptionProvider?: string | null;
   ingressLimits?: WebUIIngressLimits | null;
   quotedContext?: string | null;
@@ -1068,6 +1085,9 @@ export function ThreadComposer({
   onInitialDraftConsumed,
   pendingQueueKey = null,
   draftKey = pendingQueueKey,
+  draftNamespace = "",
+  draftIncarnation = null,
+  draftRevoked = false,
   transcriptionProvider = null,
   ingressLimits = null,
   quotedContext = null,
@@ -1118,7 +1138,16 @@ export function ThreadComposer({
   const queueViewGenerationRef = useRef(0);
   const currentPendingQueueKeyRef = useRef(pendingQueueKey);
   currentPendingQueueKeyRef.current = pendingQueueKey;
-  const previousDraftKeyRef = useRef(draftKey);
+  const previousDraftKeyRef = useRef<string | null | undefined>(undefined);
+  const draftAppliedRef = useRef(false);
+  const draftLiveRef = useRef<{
+    value: string;
+    mentions: SessionMention[];
+    attachments: DraftAttachment[];
+    quote: string | null;
+  }>({ value: "", mentions: [], attachments: [], quote: null });
+  const [reattachNames, setReattachNames] = useState<string[]>([]);
+  const reattachNamesRef = useRef<string[]>([]);
   const handledQueueCompletionRef = useRef(queueCompletionTurnId);
   const voiceShortcutDownRef = useRef(false);
   const voiceErrorFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1345,15 +1374,32 @@ export function ThreadComposer({
     onDrop,
   } = useClipboardAndDrop(addFiles);
 
+  const autoFocusScopeRef = useRef<string | null>(null);
+  const autoFocusKey = `${draftNamespace}\u0000${draftKey ?? NEW_CHAT_DRAFT_KEY}`;
   useEffect(() => {
     if (interactionDisabled || hasTouchPrimaryPointer || (workspaceError && showWorkspacePicker)) {
       return;
     }
+    if (autoFocusScopeRef.current === autoFocusKey) return;
+    autoFocusScopeRef.current = autoFocusKey;
+    const existingDraft = loadComposerDraft({
+      namespace: draftNamespace,
+      key: draftKey ?? NEW_CHAT_DRAFT_KEY,
+      incarnation: draftIncarnation,
+      persist: false,
+    });
+    if (existingDraft && !existingDraft.focused) return;
     const el = textareaRef.current;
     if (!el) return;
-    const id = requestAnimationFrame(() => el.focus());
+    const id = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== document.documentElement && active !== el) {
+        return;
+      }
+      el.focus();
+    });
     return () => cancelAnimationFrame(id);
-  }, [hasTouchPrimaryPointer, interactionDisabled, showWorkspacePicker, workspaceError]);
+  }, [autoFocusKey, draftIncarnation, draftKey, draftNamespace, hasTouchPrimaryPointer, interactionDisabled, showWorkspacePicker, workspaceError]);
 
   useEffect(() => {
     if (!focusRequest || interactionDisabled) return;
@@ -1782,25 +1828,155 @@ export function ThreadComposer({
     });
   }, []);
 
-  // Runs before paint so switching sessions never flashes stale draft text.
+  const draftScope = useMemo<DraftScope>(() => ({
+    namespace: draftNamespace,
+    key: draftKey ?? NEW_CHAT_DRAFT_KEY,
+    incarnation: draftIncarnation,
+    persist: !!draftKey && !!pendingQueueKey,
+  }), [draftIncarnation, draftKey, draftNamespace, pendingQueueKey]);
+  const draftScopeRef = useRef(draftScope);
+  draftScopeRef.current = draftScope;
+  const knownIncarnationRef = useRef<string | null>(null);
+  const draftRevokedRef = useRef(draftRevoked);
+  draftRevokedRef.current = draftRevoked;
+  const draftScopeId_ = draftScopeId(draftScope);
+  const previousDraftScopeRef = useRef<DraftScope | null>(null);
+  draftLiveRef.current = {
+    value,
+    mentions: selectedSessionMentions,
+    attachments: readyImages.map((img) => ({
+      dataUrl: img.dataUrl,
+      name: img.file.name,
+      kind: img.kind,
+    })),
+    quote: normalizedQuotedContext,
+  };
+
+  // Runs before paint so switching sessions never flashes stale draft text:
+  // the leaving chat's draft (with caret/focus) is saved, the entering
+  // chat's draft is restored.
   useLayoutEffect(() => {
-    if (previousDraftKeyRef.current === draftKey) return;
+    const previousScope = previousDraftScopeRef.current;
+    const first = previousScope === null;
+    if (!first && draftScopeId(previousScope) === draftScopeId_) {
+      previousDraftScopeRef.current = draftScope;
+      return;
+    }
+    const el = textareaRef.current;
+    if (previousScope && !draftRevokedRef.current) {
+      const live = draftLiveRef.current;
+      saveComposerDraft(previousScope, {
+        text: live.value,
+        quotedContext: live.quote,
+        mentions: live.mentions,
+        attachments: live.attachments,
+        reattachNames: reattachNamesRef.current,
+        selection: el ? { start: el.selectionStart, end: el.selectionEnd } : null,
+        focused: !!el && document.activeElement === el,
+      });
+    }
+    previousDraftScopeRef.current = draftScope;
     previousDraftKeyRef.current = draftKey;
+    draftAppliedRef.current = true;
+    const draft = loadComposerDraft(draftScope);
+    knownIncarnationRef.current = draftScope.incarnation ?? draft?.incarnation ?? null;
+    if (first && !draft) return;
+    const restored = draft?.text ?? "";
     setQueuedEdit(null);
-    setValue("");
-    setSelectedSessionMentions([]);
+    setValue(restored);
+    setSelectedSessionMentions(normalizeQueuedSessionMentions(draft?.mentions ?? []));
     setInlineError(null);
     setSlashMenuDismissed(false);
     setCliAppMenuDismissed(false);
-    setCursorPosition(0);
+    const caret = draft?.selection
+      ? {
+        start: Math.min(draft.selection.start, restored.length),
+        end: Math.min(draft.selection.end, restored.length),
+      }
+      : { start: restored.length, end: restored.length };
+    setCursorPosition(caret.end);
     clear();
+    if (draft?.attachments.length) restoreReadyImages(draft.attachments);
+    reattachNamesRef.current = draft?.reattachNames ?? [];
+    setReattachNames(reattachNamesRef.current);
+    onQuotedContextChange?.(draft?.quotedContext ?? null);
+    const scopeId = draftScopeId_;
     requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+      const target = textareaRef.current;
+      if (!target || draftScopeId(draftScopeRef.current) !== scopeId) return;
+      target.style.height = "auto";
+      target.style.height = `${Math.min(target.scrollHeight, 260)}px`;
+      if (!draft) return;
+      try { target.setSelectionRange(caret.start, caret.end); } catch { /* detached */ }
+      // Restore focus only where the user left it, and never pop a soft keyboard.
+      if (draft.focused && !hasTouchPrimaryPointer && document.activeElement !== target) {
+        target.focus({ preventScroll: true });
+      }
     });
-  }, [clear, draftKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftScope, draftScopeId_]);
+
+  // A different incarnation of the same session key is a replacement/reset:
+  // the draft and attachment references belong to the old one.
+  useEffect(() => {
+    if (!draftIncarnation) return;
+    const known = knownIncarnationRef.current;
+    const replaced =
+      (!!known && known !== draftIncarnation)
+      || draftIncarnationReplaced(draftScopeRef.current, draftIncarnation);
+    knownIncarnationRef.current = draftIncarnation;
+    if (!replaced) return;
+    clearComposerDraftsForSession(draftScopeRef.current.namespace, draftScopeRef.current.key);
+    reattachNamesRef.current = [];
+    setReattachNames([]);
+    setValue("");
+    setSelectedSessionMentions([]);
+    clear();
+    onQuotedContextChange?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftIncarnation]);
+
+  useEffect(() => {
+    if (!draftRevoked) return;
+    clearComposerDraftsForSession(draftScopeRef.current.namespace, draftScopeRef.current.key);
+    reattachNamesRef.current = [];
+    setReattachNames([]);
+    setValue("");
+    setSelectedSessionMentions([]);
+    clear();
+    onQuotedContextChange?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftRevoked]);
+
+  // Persist the live draft (memory immediately, localStorage when persistent)
+  // for the state that belongs to the active scope. Skip the pass in which a
+  // switch just applied but state still belongs to the previous chat.
+  useEffect(() => {
+    if (draftAppliedRef.current) {
+      draftAppliedRef.current = false;
+      return;
+    }
+    if (draftRevokedRef.current) return;
+    const live = draftLiveRef.current;
+    const el = textareaRef.current;
+    saveComposerDraft(draftScopeRef.current, {
+      text: live.value,
+      quotedContext: live.quote,
+      mentions: live.mentions,
+      attachments: live.attachments,
+      reattachNames,
+      selection: el ? { start: el.selectionStart, end: el.selectionEnd } : null,
+      focused: !!el && document.activeElement === el,
+    });
+  }, [
+    draftIncarnation,
+    draftScopeId_,
+    normalizedQuotedContext,
+    readyImages,
+    reattachNames,
+    selectedSessionMentions,
+    value,
+  ]);
   useLayoutEffect(() => {
     setSendPending(false);
     return () => {
@@ -2372,12 +2548,21 @@ export function ThreadComposer({
     const isSlashSideChannel = isSideChannelLifecycle(slashLifecycle);
     const finalizeActiveTurn =
       slashLifecycle === "finalize_active_turn";
+    const sendDraftScope = draftScopeRef.current;
     const finishSend = () => {
+      // The owner took custody of the full payload: drop the stored draft for
+      // the chat that sent it, even if the editor has since unmounted or moved.
+      saveComposerDraft(sendDraftScope, {
+        text: "", quotedContext: null, mentions: [], attachments: [], reattachNames: [],
+        selection: null, focused: false,
+      });
       if (hasTouchPrimaryPointer) textareaRef.current?.blur();
       // Bubble owns the data URL copy; safe to revoke every staged blob
       // preview here without affecting the rendered message.
       clear();
       clearComposerText(!hasTouchPrimaryPointer);
+      reattachNamesRef.current = [];
+      setReattachNames([]);
       onQuotedContextChange?.(null);
     };
     const result = onSend(
@@ -2397,7 +2582,12 @@ export function ThreadComposer({
       setSendPending(true);
       void result
         .then((accepted) => {
-          if (pendingSendRef.current === attempt && accepted !== false && accepted !== null) finishSend();
+          if (accepted === false || accepted === null) return;
+          saveComposerDraft(sendDraftScope, {
+            text: "", quotedContext: null, mentions: [], attachments: [], reattachNames: [],
+            selection: null, focused: false,
+          });
+          if (pendingSendRef.current === attempt) finishSend();
         })
         .catch((error: unknown) => {
           console.error("Failed to send message", error);
@@ -2889,9 +3079,37 @@ export function ThreadComposer({
             }}
             onInput={onInput}
             onKeyDown={onKeyDown}
-            onKeyUp={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-            onSelect={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-            onClick={(e) => setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
+            onFocus={(e) => {
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                true,
+              );
+            }}
+            onKeyUp={(e) => {
+              setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                document.activeElement === e.currentTarget,
+              );
+            }}
+            onSelect={(e) => {
+              setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                document.activeElement === e.currentTarget,
+              );
+            }}
+            onClick={(e) => {
+              setCursorPosition(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+              updateComposerDraftSelection(
+                draftScopeRef.current,
+                { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd },
+                document.activeElement === e.currentTarget,
+              );
+            }}
             onPaste={onPaste}
             rows={1}
             placeholder={sessionDragPreview ? "" : resolvedPlaceholder}
@@ -2906,6 +3124,30 @@ export function ThreadComposer({
             )}
           />
         </div>
+        {reattachNames.length > 0 ? (
+          <div
+            role="status"
+            data-testid="composer-reattach-notice"
+            className="mx-3 mb-1 flex items-start justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11.5px] font-medium text-amber-700 dark:text-amber-300"
+          >
+            <span>
+              {t("thread.composer.reattachNotice", {
+                names: reattachNames.join(", "),
+                defaultValue: `Attachments were not restored after relaunch. Reattach: ${reattachNames.join(", ")}`,
+              })}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 underline"
+              onClick={() => {
+                reattachNamesRef.current = [];
+                setReattachNames([]);
+              }}
+            >
+              {t("thread.composer.reattachDismiss", { defaultValue: "Dismiss" })}
+            </button>
+          </div>
+        ) : null}
         {inlineError ? (
           <div
             role="alert"

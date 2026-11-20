@@ -74,7 +74,6 @@ from nanobot.session.source_store import (
     select_legacy_source_event_upgrader,
     validate_source_session_bytes,
 )
-from nanobot.webui.session_identity import is_webui_session_key
 
 _upgrade_events = select_legacy_source_event_upgrader()
 
@@ -1061,7 +1060,10 @@ class SessionModeResolver:
         if not self.backend.session_files_locked:
             raise _fail()
         names = self.storage.list_namespace()
-        allowed = {".workspace", ".session-files.lock", ".execution-locks", ".session-mode"}
+        allowed = {
+            ".workspace", ".session-files.lock", ".execution-locks", ".session-mode",
+            ".session-prefs",
+        }
         pairs: dict[str, dict[str, str]] = {}
         for name in names:
             if name in allowed:
@@ -1125,13 +1127,17 @@ class SessionModeResolver:
                     if sidecar is not None:
                         raise _fail()
                     header, events = validate_source_session_bytes(source, expected_key=key)
-                    if version is not None and is_webui_session_key(key):
+                    if version is not None:
+                        end = source.find(b"\n")
                         saved_source = SavedSourceProof(
                             version,
                             self.backend.source.describe_saved_source(
                                 header, event_count=len(events), expected_key=key,
                             ),
                             source_digest,
+                            header=deepcopy(header),
+                            event_count=len(events),
+                            body_offset=(end + 1) if end >= 0 else len(source),
                         )
                 else:
                     session = self.backend.parse_legacy_bytes(source, expected_key=key)
@@ -2488,6 +2494,50 @@ class SessionModeResolver:
             return _digest(self.storage.read(self._record_name(key)))
         except (FileNotFoundError, SessionModeError):
             return None
+
+    @_locked_operation()
+    def resolve_for_metadata(self, key: str) -> ResolvedSessionMode:
+        """Resolve mode using verified file proof when available, avoiding body reads."""
+        self._require_open()
+        registry = self._witnesses()
+        if registry is None:
+            if self.storage.exists(f"{self.backend.storage_key(key)}.jsonl") or self.storage.exists(
+                f"{self.backend.storage_key(key)}.checkpoint.json"
+            ):
+                raise _fail("session namespace requires explicit offline bootstrap")
+            return ResolvedSessionMode("absent", None, None, 0, None, None)
+        self._assert_no_incomplete(key, registry)
+        record: dict[str, object] | None
+        if self.backend.saved_source_proof(key) is not None:
+            try:
+                record = self._validate_record(key, registry, for_browse=True)
+            except SessionModeError as exc:
+                if str(exc) != "saved session source is unverified":
+                    raise
+                record = self._validate_record(key, registry)
+            else:
+                if record is not None and record["state"] == "active" and record["mode"] != "canonical":
+                    record = self._validate_record(key, registry)
+        else:
+            record = self._validate_record(key, registry)
+        if record is None:
+            resolved = ResolvedSessionMode(
+                "absent", None, cast(str, registry["registry_id"]), 0, None, None
+            )
+        else:
+            resolved = ResolvedSessionMode(
+                cast(Literal["active", "deleted", "quarantined"], record["state"]),
+                cast(Mode | None, record["mode"]), cast(str, registry["registry_id"]),
+                cast(int, record["record_revision"]), cast(str, record["incarnation"]),
+                cast(int, record["generation"]),
+            )
+        self._resolution_index[key] = (
+            self._record_digest_for_index(key),
+            self._journal_epoch,
+            cast(str, registry["registry_id"]),
+            resolved,
+        )
+        return resolved
 
     @_locked_operation()
     def read_saved_source(self, key: str) -> SavedSourceMetadata | None:

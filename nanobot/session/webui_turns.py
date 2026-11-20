@@ -53,11 +53,13 @@ from nanobot.session.session_messages import (
     SessionMessageEnvelope,
     session_message_envelope,
 )
+from nanobot.session.source_store import SourceState
 from nanobot.utils.helpers import strip_think, truncate_text
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_DISPLAY_SOURCE_KEY,
     WEBUI_REQUEST_INTENT_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
@@ -840,6 +842,15 @@ class WebuiTurnCoordinator:
             or not is_webui_session_key(session_key)
         ):
             return
+        if self.sessions.has_managed_authority:
+            # Managed canonical sessions archive cross-session input only after
+            # canonical append; absent/deleted sessions must never receive rows.
+            try:
+                resolved = self.sessions.resolve_session_mode(session_key)
+            except Exception:
+                return
+            if resolved.state != "active" or resolved.mode != "legacy":
+                return
         persisted = self.sessions.read_session_metadata(session_key)
         metadata_value: object = persisted.get("metadata") if persisted is not None else None
         metadata = (
@@ -873,8 +884,60 @@ class WebuiTurnCoordinator:
             ),
         ))
 
+    async def _publish_committed_session_message(
+        self,
+        event: UserInputCommitted | InjectionCommitted,
+    ) -> None:
+        """Archive and broadcast a cross-session input only after canonical commit."""
+        if event.input is None:
+            return
+        envelope = session_message_envelope(event.context.metadata)
+        session_key = event.context.session_key
+        source = event.context.metadata.get(WEBUI_DISPLAY_SOURCE_KEY)
+        if (
+            event.context.channel != "system"
+            or envelope is None
+            or envelope["target_session_key"] != session_key
+            or not is_webui_session_key(session_key)
+            or not isinstance(source, SourceState)
+            or source.session_key != session_key
+        ):
+            return
+        if self.sessions.has_managed_authority:
+            saved = self.sessions.read_saved_source_metadata(session_key)
+            if saved is None or not saved.webui or not saved.state.same_origin(source):
+                return
+        else:
+            persisted = self.sessions.read_session_metadata(session_key)
+            metadata_value: object = persisted.get("metadata") if persisted is not None else None
+            if (
+                not isinstance(metadata_value, dict)
+                or cast(dict[str, Any], metadata_value).get(WEBUI_SESSION_METADATA_KEY) is not True
+            ):
+                return
+        public_metadata = _session_message_public_metadata(envelope)
+        outbound_metadata: dict[str, Any] = {WEBUI_DISPLAY_SOURCE_KEY: source}
+        owner = event.context.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
+        if isinstance(owner, str) and owner:
+            outbound_metadata[WEBSOCKET_TURN_OWNER_METADATA_KEY] = owner
+            outbound_metadata[WEBUI_SESSION_METADATA_KEY] = True
+        await self.bus.publish_outbound(outbound_message_for_event(
+            channel="websocket",
+            chat_id=session_key.split(":", 1)[1],
+            event=UserInputEvent(
+                content=event.input.content,
+                created_at_ms=envelope["created_at_ms"],
+                provenance={"session_message": public_metadata},
+                input=event.input,
+            ),
+            metadata=outbound_metadata,
+        ))
+
     async def _handle_injection_committed(self, event: InjectionCommitted) -> None:
         """Publish the owner receipt for guidance committed into a running turn."""
+        if event.context.channel == "system":
+            await self._publish_committed_session_message(event)
+            return
         if not self._is_websocket_event(event.context):
             return
         metadata = event.context.metadata
@@ -907,6 +970,9 @@ class WebuiTurnCoordinator:
 
     async def _handle_user_input_committed(self, event: UserInputCommitted) -> None:
         """Publish an admission receipt only after a named browser input was appended."""
+        if event.context.channel == "system":
+            await self._publish_committed_session_message(event)
+            return
         if not self._is_websocket_event(event.context):
             return
         raw_turn_id = event.context.metadata.get(WEBUI_TURN_METADATA_KEY)

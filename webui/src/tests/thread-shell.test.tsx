@@ -1465,7 +1465,7 @@ describe("ThreadShell", () => {
       title="Inspection parent"
       onToggleSidebar={() => {}}
     />));
-    expect(await screen.findByText("Parent answer")).toBeInTheDocument();
+    expect(await screen.findByText(replyText("Parent answer"))).toBeInTheDocument();
     const composer = screen.getByRole("textbox", { name: "Message input" });
     fireEvent.change(composer, { target: { value: "Keep this parent draft" } });
     const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
@@ -7510,4 +7510,309 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
   });
 
+  it("reveals an unloaded multi-prompt Steer target end-to-end and isolates live streaming while away from tail", async () => {
+    const client = makeClient();
+    const chatId = "long-reveal-chat";
+    const key = `websocket:${chatId}`;
+    const origin = {
+      store_identity: "store-long",
+      session_key: key,
+      incarnation: "inc-long",
+      generation: 0,
+    };
+    const latestMessages: UIMessage[] = [
+      { id: "u-119", promptId: "evt-u-119", role: "user", content: "Prompt 119", createdAt: 119_000, turnOrdinal: 119 },
+      { id: "a-119", role: "assistant", content: "Reply 119", createdAt: 119_500 },
+    ];
+    const aroundSteer15Messages: UIMessage[] = [
+      { id: "u-15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15_000, turnOrdinal: 15 },
+      { id: "a-15a", role: "assistant", content: "Reply before steer mentioning turn_end", createdAt: 15_200 },
+      { id: "u-steer-15", promptId: "evt-steer-15", role: "user", content: "Steer 15 exact target", createdAt: 15_400, turnOrdinal: 15 },
+      { id: "a-15b", role: "assistant", content: "Reply after steer 15", createdAt: 15_600 },
+    ];
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("view") === "controls") {
+        return Promise.resolve(httpJson({
+          sessionKey: key,
+          stop_target: null,
+          workspace_access_request: null,
+          workspace_permissions: null,
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("direction") === "around") {
+        const around = url.searchParams.get("around");
+        if (around === "loc-steer-15") {
+          return Promise.resolve(httpJson({
+            schemaVersion: 3,
+            view: "history",
+            sessionKey: key,
+            source: origin,
+            messages: aroundSteer15Messages,
+            page: {
+              before_cursor: "b-14",
+              after_cursor: "a-16",
+              has_more_before: true,
+              has_more_after: true,
+              total_turn_count: 120,
+              total_prompt_count: 121,
+              target_prompt_id: "evt-steer-15",
+              coverage: "indexed",
+            },
+          }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ error: "stale_history_cursor" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: latestMessages,
+          page: {
+            before_cursor: "b-118",
+            after_cursor: null,
+            has_more_before: true,
+            has_more_after: false,
+            total_turn_count: 120,
+            total_prompt_count: 121,
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/turns")) {
+        const before = url.searchParams.get("before");
+        if (before === "idx-page-1") {
+          return Promise.resolve(httpJson({
+            schemaVersion: 3,
+            sessionKey: key,
+            turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15_000, cursor: "c-15" }],
+            prompts: [
+              {
+                prompt_id: "evt-u-15",
+                turn_ordinal: 15,
+                prompt_ordinal: 15,
+                label: "Prompt 15",
+                created_at: 15_000,
+                locator: "loc-u-15",
+              },
+              {
+                prompt_id: "evt-steer-15",
+                turn_ordinal: 15,
+                prompt_ordinal: 16,
+                label: "Steer 15 exact target",
+                created_at: 15_400,
+                locator: "loc-steer-15",
+              },
+            ],
+            total_turn_count: 120,
+            total_prompt_count: 121,
+            page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 2 },
+          }));
+        }
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          sessionKey: key,
+          turns: [{ ordinal: 119, label: "Prompt 119", created_at: 119_000, cursor: "c-119" }],
+          prompts: [
+            {
+              prompt_id: "evt-u-119",
+              turn_ordinal: 119,
+              prompt_ordinal: 120,
+              label: "Prompt 119",
+              created_at: 119_000,
+              locator: "loc-u-119",
+            },
+          ],
+          total_turn_count: 120,
+          total_prompt_count: 121,
+          page: { before_cursor: "idx-page-1", has_more_before: true, loaded_prompt_count: 1 },
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+
+    const { container } = render(wrap(
+      client,
+      <ThreadShell
+        session={session(chatId)}
+        title="Long chat"
+        onToggleSidebar={() => {}}
+      />,
+    ));
+
+    // 1. Latest window paints first.
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+
+    // 2. Open navigator, load older summary range, select Steer 15 (not loaded or mounted).
+    fireEvent.click(screen.getByRole("button", { name: "Open prompt navigator" }));
+    const loadOlderSummary = await screen.findByTestId("prompt-navigator-load-older");
+    fireEvent.click(loadOlderSummary);
+    const steerChoice = await screen.findByRole("button", {
+      name: "Jump to prompt: Steer 15 exact target",
+    });
+    fireEvent.click(steerChoice);
+
+    // 3. Real fetch -> mount -> scroll + highlight lands on the exact Steer prompt.
+    expect(await screen.findByText("Steer 15 exact target")).toBeInTheDocument();
+    await waitFor(() => {
+      const targetEl = container.querySelector<HTMLElement>('[data-prompt-key="evt-steer-15"]');
+      expect(targetEl).toBeTruthy();
+      expect(targetEl?.dataset.promptHighlighted).toBe("true");
+    });
+
+    // 4. Live streaming at the tail must not splice into turn 15's window.
+    act(() => {
+      client._emitChat(chatId, {
+        event: "goal_status",
+        chat_id: chatId,
+        status: "running",
+        started_at: 1_700_000_500,
+        turn_id: "live-tail-turn",
+      });
+      client._emitChat(chatId, {
+        event: "delta",
+        chat_id: chatId,
+        turn_id: "live-tail-turn",
+        text: "Streaming tail token should not appear in turn 15",
+      });
+    });
+    expect(screen.getByText("Steer 15 exact target")).toBeInTheDocument();
+    expect(screen.queryByText(/Streaming tail token/)).not.toBeInTheDocument();
+
+    // 5. Go to latest shows live activity and restores the real tail on click.
+    const latestButton = screen.getByRole("button", { name: "Go to latest" });
+    expect(latestButton).toHaveAttribute("data-tail-activity", "true");
+    fireEvent.click(latestButton);
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+  });
+
+
+  it("retains latest qualified context usage while viewing an older history window", async () => {
+    const client = makeClient();
+    const chatId = "context-window-independent";
+    const key = `websocket:${chatId}`;
+    const origin = {
+      store_identity: "store-ctx",
+      session_key: key,
+      incarnation: "inc-ctx",
+      generation: 0,
+    };
+    const latestMessages: UIMessage[] = [
+      { id: "u-119", turnId: "t-119", promptId: "evt-u-119", role: "user", content: "Prompt 119", createdAt: 119_000, turnOrdinal: 119 },
+      {
+        id: "a-119",
+        turnId: "t-119",
+        role: "assistant",
+        content: "Reply 119",
+        createdAt: 119_500,
+        contextUsage: { contextTokens: 40_000, contextWindowTokens: 100_000, completionTurnSeq: 2 },
+      },
+    ];
+    const olderWindowMessages: UIMessage[] = [
+      { id: "u-15", turnId: "t-15", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15_000, turnOrdinal: 15 },
+      {
+        id: "a-15",
+        turnId: "t-15",
+        role: "assistant",
+        content: "Reply 15",
+        createdAt: 15_200,
+        contextUsage: { contextTokens: 10_000, contextWindowTokens: 100_000, completionTurnSeq: 2 },
+      },
+    ];
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("view") === "controls") {
+        return Promise.resolve(httpJson({
+          sessionKey: key,
+          stop_target: null,
+          workspace_access_request: null,
+          workspace_permissions: null,
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread") && url.searchParams.get("direction") === "around") {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: olderWindowMessages,
+          page: {
+            before_cursor: "b-14",
+            after_cursor: "a-16",
+            has_more_before: true,
+            has_more_after: true,
+            total_turn_count: 120,
+            total_prompt_count: 120,
+            target_prompt_id: "evt-u-15",
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          view: "history",
+          sessionKey: key,
+          source: origin,
+          messages: latestMessages,
+          page: {
+            before_cursor: "b-118",
+            after_cursor: null,
+            has_more_before: true,
+            has_more_after: false,
+            total_turn_count: 120,
+            total_prompt_count: 120,
+            coverage: "indexed",
+          },
+        }));
+      }
+      if (url.pathname.endsWith("/turns")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          sessionKey: key,
+          turns: [{ ordinal: 15, label: "Prompt 15", created_at: 15_000, cursor: "c-15" }],
+          prompts: [{
+            prompt_id: "evt-u-15",
+            turn_ordinal: 15,
+            prompt_ordinal: 15,
+            label: "Prompt 15",
+            created_at: 15_000,
+            locator: "loc-u-15",
+          }],
+          total_turn_count: 120,
+          total_prompt_count: 120,
+          page: { before_cursor: null, has_more_before: false, loaded_prompt_count: 1 },
+        }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session(chatId)}
+        title="Context usage chat"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={modelSettings("test-model", "deepseek")}
+      />,
+    ));
+
+    expect(await screen.findByText("Prompt 119")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Context 40%. Open context usage" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open prompt navigator" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Jump to prompt: Prompt 15" }));
+
+    expect(await screen.findByText("Prompt 15")).toBeInTheDocument();
+    // While viewing turn 15 (hasMoreAfter === true), the meter must keep the tail's 40%
+    // rather than reverting to turn 15's 10% or disappearing.
+    expect(screen.getByRole("button", { name: "Context 40%. Open context usage" })).toBeInTheDocument();
+  });
 });

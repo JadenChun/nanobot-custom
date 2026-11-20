@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { clearComposerDraftsForSession } from "@/lib/composer-drafts";
 import { Eye, EyeOff, Moon, ShieldCheck, Sun, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
@@ -2082,6 +2083,9 @@ function Shell({
           });
           return;
         }
+      }
+      for (const item of items) {
+        clearComposerDraftsForSession(null, item.key, { deleted: true });
       }
       setPendingDelete(null);
       if (deletingActive) {

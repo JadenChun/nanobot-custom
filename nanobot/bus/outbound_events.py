@@ -155,6 +155,7 @@ class UserInputEvent(AgentEvent):
     content: str
     created_at_ms: int
     provenance: dict[str, Any]
+    input: CommittedUserInput | None = None
 
 
 @dataclass(frozen=True)

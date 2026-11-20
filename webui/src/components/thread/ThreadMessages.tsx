@@ -34,6 +34,8 @@ interface ThreadMessagesProps {
   onQuoteSelection?: (text: string) => void;
   onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
   delegatedStatusAvailable?: boolean;
+  /** Prompt id (stable ``promptId`` or row ``id``) currently highlighted after a reveal. */
+  highlightedPromptId?: string | null;
 }
 
 export type DisplayUnit = TurnUnit;
@@ -87,6 +89,7 @@ export function ThreadMessages({
   onQuoteSelection,
   onOpenChildHistory,
   delegatedStatusAvailable = true,
+  highlightedPromptId = null,
 }: ThreadMessagesProps) {
   const { t } = useTranslation();
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -164,6 +167,19 @@ export function ThreadMessages({
           unit.type === "message" && unit.message.role === "user"
             ? unit.message.id
             : undefined;
+        const userPromptKey =
+          unit.type === "message" && unit.message.role === "user"
+            ? (unit.message.promptId ?? unit.message.id)
+            : undefined;
+        const isPromptHighlighted = Boolean(
+          highlightedPromptId
+          && unit.type === "message"
+          && unit.message.role === "user"
+          && (
+            unit.message.id === highlightedPromptId
+            || unit.message.promptId === highlightedPromptId
+          ),
+        );
         const forkIndex =
           unit.type === "message" && unit.message.role === "assistant" && forkFlags[index]
             ? nextUserIndex
@@ -181,6 +197,8 @@ export function ThreadMessages({
             unit={unit}
             marginTop={marginTop}
             userPromptId={userPromptId}
+            userPromptKey={userPromptKey}
+            isPromptHighlighted={isPromptHighlighted}
             revealOnHistoryEntry={
               unit.type === "message" && unit.message.id === revealMessageId
             }
@@ -234,6 +252,8 @@ interface ThreadDisplayUnitProps {
   unit: DisplayUnit;
   marginTop: string;
   userPromptId?: string;
+  userPromptKey?: string;
+  isPromptHighlighted?: boolean;
   revealOnHistoryEntry: boolean;
   hasBodyBelow: boolean;
   isTurnStreaming: boolean;
@@ -257,6 +277,8 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   unit,
   marginTop,
   userPromptId,
+  userPromptKey,
+  isPromptHighlighted = false,
   revealOnHistoryEntry,
   hasBodyBelow,
   isTurnStreaming,
@@ -280,9 +302,15 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   return (
     <>
       <div
-        className={marginTop}
+        className={
+          isPromptHighlighted
+            ? `${marginTop} rounded-2xl ring-2 ring-primary/40 bg-primary/5 transition-colors duration-500`.trim()
+            : marginTop
+        }
         data-thread-display-unit={unitKey}
         data-user-prompt-id={userPromptId}
+        data-prompt-key={userPromptKey}
+        data-prompt-highlighted={isPromptHighlighted ? "true" : undefined}
       >
         {unit.type === "activity" ? (
           <AgentActivityCluster
@@ -328,6 +356,8 @@ function threadDisplayUnitPropsEqual(
     displayUnitsEqual(previous.unit, next.unit)
     && previous.marginTop === next.marginTop
     && previous.userPromptId === next.userPromptId
+    && previous.userPromptKey === next.userPromptKey
+    && previous.isPromptHighlighted === next.isPromptHighlighted
     && previous.revealOnHistoryEntry === next.revealOnHistoryEntry
     && previous.hasBodyBelow === next.hasBodyBelow
     && previous.isTurnStreaming === next.isTurnStreaming

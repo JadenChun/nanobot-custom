@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { beforeAll, beforeEach } from "vitest";
 
 import i18n, { initializeI18n, loadAllLocaleResources } from "@/i18n";
+import { resetComposerDraftsForTests } from "@/lib/composer-drafts";
 import { resetSessionPageCache } from "@/lib/session-page-cache";
 
 function createTestStorage(): Storage {
@@ -67,4 +68,5 @@ beforeEach(async () => {
   // The renderer page cache is module-level state. Reset it per test so a
   // cached window from one case cannot paint into another.
   resetSessionPageCache();
+  resetComposerDraftsForTests();
 });

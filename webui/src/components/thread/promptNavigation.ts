@@ -3,6 +3,8 @@ import type { UIMessage } from "@/lib/types";
 export interface PromptAnchor {
   answerPreview: string;
   id: string;
+  /** Stable server-assigned prompt identity when available. */
+  promptId?: string;
   label: string;
   preview: string;
   createdAt: number;
@@ -15,9 +17,11 @@ export function userPromptAnchors(messages: UIMessage[]): PromptAnchor[] {
   let index = 0;
   return messages.flatMap((message, messageIndex) => {
     if (message.role !== "user") return [];
+    if (message.deliveryStatus === "failed") return [];
     const anchor: PromptAnchor = {
       answerPreview: nextAssistantPreview(messages, messageIndex),
       id: message.id,
+      ...(message.promptId ? { promptId: message.promptId } : {}),
       label: promptLabel(message.content, index),
       preview: promptPreview(message.content, index),
       createdAt: message.createdAt,
@@ -65,7 +69,9 @@ function truncatePreview(text: string, maxLength: number): string {
 export function findPromptElement(scrollEl: HTMLElement, promptId: string): HTMLElement | null {
   const candidates = scrollEl.querySelectorAll<HTMLElement>("[data-user-prompt-id]");
   return Array.from(candidates).find(
-    (candidate) => candidate.dataset.userPromptId === promptId,
+    (candidate) =>
+      candidate.dataset.userPromptId === promptId
+      || candidate.dataset.promptKey === promptId,
   ) ?? null;
 }
 

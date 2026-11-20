@@ -166,6 +166,7 @@ from nanobot.security.desktop_permissions import (
 )
 from nanobot.security.network import bind_network_policy_for_cidrs
 from nanobot.security.workspace_access import (
+    WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceScopeError,
     WorkspaceScopeResolver,
     bind_workspace_scope,
@@ -219,6 +220,7 @@ from nanobot.session.recovery import (
     restore_pending_interruption,
     restore_runtime_checkpoint,
 )
+from nanobot.session.session_messages import session_message_envelope
 from nanobot.session.source import validate_execution_links
 from nanobot.session.source_projection import RuntimeNode, SourceNode, source_nodes
 from nanobot.session.source_request import SourceTranscript
@@ -271,6 +273,7 @@ if TYPE_CHECKING:
     from nanobot.session.artifact_grants import CanonicalChildArtifactInput
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.manager import JsonlSessionStore
+    from nanobot.session.next_turn_preferences import NextTurnPreferences
     from nanobot.session.source_store import SourceSnapshot
     from nanobot.session.workspace_focus import WorkspaceFocusOwner
     from nanobot.triggers.local_store import LocalTriggerStore
@@ -1276,6 +1279,39 @@ class AgentLoop:
             return replace(runtime, generation=replace(runtime.generation, reasoning_effort=effort))
         return runtime
 
+    def _has_active_turn_for_session(self, session_key: str) -> bool:
+        """Return whether an admitted turn is actively executing for *session_key*."""
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        current_owns_root = (
+            current is not None
+            and (binding := self._active_root_bindings.get(current)) is not None
+            and binding.session_key == session_key
+        )
+        if any(
+            binding.session_key == session_key and task is not current and not task.done()
+            for task, binding in self._active_root_bindings.items()
+        ):
+            return True
+        chat_id = webui_chat_id(session_key)
+        if chat_id is not None:
+            from nanobot.session.webui_turns import websocket_turn_wall_started_at
+
+            if websocket_turn_wall_started_at(chat_id) is not None:
+                return True
+        if not current_owns_root:
+            backend = self.sessions.source_backend(session_key)
+            if backend is not None:
+                try:
+                    header_state = backend.source.read_source_header_state(session_key)
+                    if header_state is not None and "execution_lease" in header_state[1]["metadata"]:
+                        return True
+                except Exception:
+                    pass
+        return False
+
     def set_session_model_preset(
         self,
         session_key: str,
@@ -1283,6 +1319,7 @@ class AgentLoop:
         *,
         reasoning_effort: str | None = None,
         temporary_session: Session | None = None,
+        next_turn: bool = False,
     ) -> LLMRuntime:
         """Validate and persist one session's preset selection."""
         runtime = self.runtime_resolver.resolve_preset(name)
@@ -1293,6 +1330,14 @@ class AgentLoop:
                 raise ValueError("Reasoning effort is unavailable for this model.")
             metadata[SESSION_REASONING_EFFORT_METADATA_KEY] = reasoning_effort
             runtime = replace(runtime, generation=replace(runtime.generation, reasoning_effort=reasoning_effort))
+        if temporary_session is None and (
+            next_turn or self._has_active_turn_for_session(session_key)
+        ):
+            prefs = self.set_next_turn_model_preset(
+                session_key, name, reasoning_effort=reasoning_effort,
+            )
+            if prefs is not None:
+                return runtime
         session = temporary_session or self.sessions.get_or_create(session_key)
         removals = (SESSION_REASONING_EFFORT_METADATA_KEY,) if reasoning_effort is None else ()
         if session.policy.persist and not self.sessions.upsert_session_metadata(
@@ -1300,12 +1345,142 @@ class AgentLoop:
             create_if_absent=True,
         ):
             raise RuntimeError("could not persist session model selection")
+        if session.policy.persist:
+            self.sessions.update_next_turn_preferences(
+                session_key, {}, removals=("model_preset", "reasoning_effort"),
+            )
         # Publish only after commit. Temporary sessions never acquire durable
         # authority; existing references still observe the selected value.
         session.metadata.update(metadata)
         for key in removals:
             session.metadata.pop(key, None)
         return runtime
+
+    def set_next_turn_model_preset(
+        self,
+        session_key: str,
+        name: str,
+        *,
+        reasoning_effort: str | None = None,
+    ) -> "NextTurnPreferences | None":
+        """Record a validated model/effort choice for the *next* turn only.
+
+        The admitted turn keeps the runtime it started with and the session
+        header (confirmed selection) is untouched; the write is O(1) in history.
+        Returns ``None`` when the chat has no canonical source yet, in which case
+        the caller uses :meth:`set_session_model_preset`.
+        """
+        runtime = self.runtime_resolver.resolve_preset(name)
+        updates: dict[str, Any] = {"model_preset": runtime.model_preset}
+        removals: tuple[str, ...] = ("reasoning_effort",)
+        if reasoning_effort is not None:
+            levels = reasoning_effort_values_for(runtime.provider.provider_name, runtime.model)
+            if not reasoning_effort or reasoning_effort not in levels:
+                raise ValueError("Reasoning effort is unavailable for this model.")
+            updates["reasoning_effort"] = reasoning_effort
+            removals = ()
+        return self.sessions.update_next_turn_preferences(
+            session_key, updates, removals=removals,
+        )
+
+    def admit_next_turn_model(self, session: Session) -> bool:
+        """Apply the validated next-turn model choice at a new-turn admission.
+
+        Only this admission promotes the choice into the confirmed selection, and
+        it retires exactly what it applied, so a choice made meanwhile survives.
+        An unavailable choice is dropped with a warning (never applied silently).
+        """
+        if not session.policy.persist:
+            return False
+        prefs = self.sessions.read_next_turn_preferences(session.key)
+        if prefs is None:
+            return False
+        name, effort = prefs.get("model_preset"), prefs.get("reasoning_effort")
+        if name is None and effort is None:
+            return False
+        consumed = {k: v for k, v in (("model_preset", name), ("reasoning_effort", effort))
+                    if v is not None}
+        try:
+            runtime = (
+                self.runtime_resolver.resolve_preset(name) if name is not None
+                else self.runtime_for_session(session, recover_removed=False)
+            )
+            if effort is not None and effort not in reasoning_effort_values_for(
+                runtime.provider.provider_name, runtime.model,
+            ):
+                raise ValueError("Reasoning effort is unavailable for this model.")
+        except (KeyError, ValueError):
+            logger.warning("Dropping unavailable next-turn model choice for '{}'", session.key)
+            self.sessions.consume_next_turn_preferences(session.key, consumed)
+            return False
+        metadata: dict[str, Any] = {}
+        removals: tuple[str, ...] = ()
+        if name is not None:
+            metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
+            if effort is None:
+                removals = (SESSION_REASONING_EFFORT_METADATA_KEY,)
+        if effort is not None:
+            metadata[SESSION_REASONING_EFFORT_METADATA_KEY] = effort
+        if not self.sessions.upsert_session_metadata(
+            session.key, metadata, removals=removals, create_if_absent=True,
+        ):
+            raise RuntimeError("could not persist session model selection")
+        session.metadata.update(metadata)
+        for key in removals:
+            session.metadata.pop(key, None)
+        self.sessions.consume_next_turn_preferences(session.key, consumed)
+        return True
+
+    def admit_next_turn_workspace_scope(self, ctx: TurnContext) -> None:
+        """Apply and validate a persisted next-turn workspace scope at new-turn admission."""
+        if ctx.kind is not TurnKind.USER or ctx.ephemeral:
+            return
+        session = ctx.require_session()
+        if not session.policy.persist:
+            return
+        if (
+            ctx.msg.workspace_scope is not None
+            or WORKSPACE_SCOPE_METADATA_KEY in (ctx.msg.metadata or {})
+        ):
+            return
+        prefs = self.sessions.read_next_turn_preferences(session.key)
+        if prefs is None or "workspace_scope" not in prefs.values:
+            return
+        next_raw = prefs.get("workspace_scope")
+        self._retire_workspace_task_before_input(
+            session.key, reason="task_replaced", active_turn=False,
+        )
+        from nanobot.security.workspace_access import (
+            WorkspaceScopeError,
+            validate_workspace_scope_payload,
+        )
+
+        scope = validate_workspace_scope_payload(
+            next_raw,
+            default_workspace=self.workspace_scopes.default_workspace,
+            default_restrict_to_workspace=self.workspace_scopes.default_restrict_to_workspace,
+            source_channel=ctx.delivery.route.channel,
+        )
+        focus_owner = self._workspace_focus_owner()
+        if focus_owner is not None and focus_owner.managed:
+            if (
+                focus_owner.grants.is_private_path(scope.project_path)
+                and scope.project_path != focus_owner.agent_home
+            ):
+                raise WorkspaceScopeError("folder_access_required", status=403)
+            focus_owner.validate_scope(scope)
+        scope_meta = scope.metadata()
+        if not self.sessions.upsert_session_metadata(
+            session.key,
+            {WORKSPACE_SCOPE_METADATA_KEY: scope_meta},
+            create_if_absent=True,
+        ):
+            raise RuntimeError("could not persist session workspace scope")
+        session.metadata[WORKSPACE_SCOPE_METADATA_KEY] = deepcopy(scope_meta)
+        ctx.source_metadata_base[WORKSPACE_SCOPE_METADATA_KEY] = deepcopy(scope_meta)
+        self.sessions.consume_next_turn_preferences(
+            session.key, {"workspace_scope": next_raw},
+        )
 
     def _publish_runtime_selection(
         self,
@@ -1954,6 +2129,14 @@ class AgentLoop:
             root_key = child.root_key or child.parent_key
             if isinstance(root_key, str) and ":" in root_key:
                 route_channel, route_chat_id = root_key.split(":", 1)
+        outbound_metadata = dict(request.metadata or {})
+        outbound_metadata.pop(WEBUI_DISPLAY_SOURCE_KEY, None)
+        if (
+            route_channel == "websocket"
+            and root_source is not None
+            and root_source.session_key == f"websocket:{route_chat_id}"
+        ):
+            outbound_metadata[WEBUI_DISPLAY_SOURCE_KEY] = root_source
         await self.bus.publish_outbound(OutboundMessage(
             channel=route_channel,
             chat_id=route_chat_id,
@@ -2019,7 +2202,7 @@ class AgentLoop:
                     else None
                 ),
             ),
-            metadata=dict(request.metadata or {}),
+            metadata=outbound_metadata,
         ))
         await self._publish_stop_target_for_key(child.root_key)
 
@@ -2972,8 +3155,10 @@ class AgentLoop:
         backend = self.sessions.source_backend(session_key)
         if backend is None:
             return
-        snapshot = backend.source.load_source_snapshot(session_key)
-        state = snapshot.state
+        header_state = backend.source.read_source_header_state(session_key)
+        if header_state is None:
+            return
+        state, _ = header_state
         self.sessions.desktop_permissions.retire_tasks_for_source(
             session_key=session_key,
             source_binding={
@@ -4146,11 +4331,21 @@ class AgentLoop:
                     await self._reject_webui_admission(msg, *steering_rejection)
                     continue
                 continuation = workspace_access_continuation(msg, session_key=effective_key)
+                normalized_cmd = normalize_command_text(raw).lower()
                 protocol_stop = (
                     msg.metadata.get(INBOUND_META_STOP_CLIENT) is True
-                    and normalize_command_text(raw).lower() == "/stop"
+                    and normalized_cmd == "/stop"
                 )
-                if msg.is_user_input and continuation is None and not protocol_stop:
+                side_channel_model = (
+                    bool(normalized_cmd)
+                    and normalized_cmd.split(maxsplit=1)[0] == "/model"
+                )
+                if (
+                    msg.is_user_input
+                    and continuation is None
+                    and not protocol_stop
+                    and not side_channel_model
+                ):
                     if msg.sender_id != "subagent":
                         try:
                             command_name = raw.lower().split(maxsplit=1)[0] if raw else ""
@@ -4376,16 +4571,17 @@ class AgentLoop:
         """Own bus delivery and the injection queue inside canonical admission."""
         msg = dataclasses.replace(original, session_key_override=key, metadata=dict(original.metadata))
         copy_pending_followup_proof(original, msg)
+        current = asyncio.current_task()
+        root_binding = self._active_root_bindings.get(current) if current is not None else None
         delivery = self.turn_delivery_factory.unrouted(
             msg,
             key,
             suppress_channel_output=suppress_channel_output,
+            admitted_source=root_binding.source_state if root_binding is not None else None,
         )
         pending: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=20)
         io = _AdmittedTurnIO(pending_queue=pending, delivery=delivery)
-        current = asyncio.current_task()
         activity_admission = self._source_activity_admissions.get(key)
-        root_binding = self._active_root_bindings.get(current) if current is not None else None
         if activity_admission is not None:
             if (
                 current is None
@@ -4743,9 +4939,35 @@ class AgentLoop:
         delivery: TurnDelivery | None = None,
     ) -> None:
         """Announce queued guidance after it is part of the running turn."""
+        metadata = msg.metadata
+        if msg.channel == "system":
+            envelope = session_message_envelope(metadata)
+            if (
+                envelope is None
+                or source is None
+                or source_event_id is None
+                or not is_webui_session_key(session_key)
+            ):
+                return
+            display_input = CommittedUserInput.from_message(
+                msg,
+                source_event_id,
+                created_at_ms=envelope["created_at_ms"],
+            )
+            committed_metadata = {**metadata, WEBUI_DISPLAY_SOURCE_KEY: source}
+            if delivery is not None:
+                owner = delivery.route.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
+                if isinstance(owner, str):
+                    committed_metadata[WEBSOCKET_TURN_OWNER_METADATA_KEY] = owner
+            await self.runtime_event_publisher.injection_committed(
+                msg, session_key,
+                metadata=committed_metadata,
+                original_input=display_input,
+                publish=(delivery.publish_injection_after_stream if delivery is not None else None),
+            )
+            return
         if msg.channel != "websocket":
             return
-        metadata = msg.metadata
         display_input = (
             CommittedUserInput.from_message(msg, source_event_id)
             if source_event_id is not None and metadata.get(WEBUI_DISPLAY_ON_COMMIT_KEY) is True
@@ -6825,6 +7047,7 @@ class AgentLoop:
             await self.approval_admission.revoke(writer.owner.key)
             self.discard_session_file_state(ctx.session_key)
             self.sessions.invalidate(ctx.session_key)
+            metadata.pop(WEBUI_DISPLAY_SOURCE_KEY, None)
             text = 'New session started.'
         else:
             writer.owner.validate_dispatch()
@@ -6833,7 +7056,11 @@ class AgentLoop:
                 ctx.input_persisted_early = self._persist_user_message_early(
                     ctx.msg, ctx.require_session(), trace_owner=ctx, _command=True)
                 if ctx.input_persisted_early:
-                    await ctx.delivery.input_committed()
+                    admission = ctx.run_context.input_attempt_admission
+                    await ctx.delivery.input_committed(
+                        input_attempt_proof=admission.proof if admission is not None else None,
+                        source_event_id=ctx.run_context.source_input_event_id,
+                    )
             if command in {'/help', '/model', '/history', '/status', USER_SHELL_COMMAND}:
                 result = await self.commands.dispatch(CommandContext(
                     msg=ctx.msg, session=ctx.session, key=ctx.session_key, raw=raw,
@@ -6850,8 +7077,16 @@ class AgentLoop:
                     ctx.msg, ctx.require_session(), trace_owner=ctx, _command=True,
                 )
                 if ctx.input_persisted_early:
-                    await ctx.delivery.input_committed()
+                    admission = ctx.run_context.input_attempt_admission
+                    await ctx.delivery.input_committed(
+                        input_attempt_proof=admission.proof if admission is not None else None,
+                        source_event_id=ctx.run_context.source_input_event_id,
+                    )
             writer.append_message({'role': 'assistant', 'content': text, '_command': True})
+            if WEBUI_DISPLAY_SOURCE_KEY in ctx.delivery.route.metadata:
+                metadata[WEBUI_DISPLAY_SOURCE_KEY] = (
+                    ctx.delivery.route.metadata[WEBUI_DISPLAY_SOURCE_KEY]
+                )
         ctx.outbound = OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id, content=text,
                                        metadata=metadata)
         return True
@@ -6860,6 +7095,17 @@ class AgentLoop:
         assert ctx.run_context is not None and ctx.run_context.source_writer is not None
         writer = ctx.run_context.source_writer
         session = ctx.require_session()
+        self.admit_next_turn_workspace_scope(ctx)
+        if ctx.runtime is None:
+            if self.admit_next_turn_model(session):
+                for key in (
+                    SESSION_MODEL_PRESET_METADATA_KEY,
+                    SESSION_REASONING_EFFORT_METADATA_KEY,
+                ):
+                    if key in session.metadata:
+                        ctx.source_metadata_base[key] = deepcopy(session.metadata[key])
+                    else:
+                        ctx.source_metadata_base.pop(key, None)
         runtime = ctx.runtime or self.runtime_for_session(session)
         ctx.runtime = runtime
         if ctx.on_runtime_admitted is not None:
@@ -6897,8 +7143,10 @@ class AgentLoop:
             await self._build_source_turn(ctx)
             return
         session = ctx.require_session()
+        self.admit_next_turn_workspace_scope(ctx)
         runtime = ctx.runtime
         if runtime is None:
+            self.admit_next_turn_model(session)
             runtime = self.runtime_for_session(session)
             ctx.runtime = runtime
         if ctx.session_key.startswith("dream:"):
@@ -7104,6 +7352,21 @@ class AgentLoop:
             writer = ctx.run_context.source_writer
             updates = {key: value for key, value in ctx.require_session().metadata.items()
                        if key not in ctx.source_metadata_base or value != ctx.source_metadata_base[key]}
+            guarded_keys = (
+                WORKSPACE_SCOPE_METADATA_KEY,
+                SESSION_MODEL_PRESET_METADATA_KEY,
+                SESSION_REASONING_EFFORT_METADATA_KEY,
+            )
+            if any(k in updates for k in guarded_keys):
+                try:
+                    header_state = writer.store.read_source_header_state(writer.owner.key)
+                    if header_state is not None:
+                        current_meta = header_state[1]["metadata"]
+                        for k in guarded_keys:
+                            if k in updates and current_meta.get(k) != ctx.source_metadata_base.get(k):
+                                updates.pop(k, None)
+                except Exception:
+                    pass
             if ctx.usage is not None:
                 updates['_last_usage'] = ctx.usage.to_dict()
             writer.store.update_metadata(writer.owner.key, updates)

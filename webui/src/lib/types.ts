@@ -283,6 +283,8 @@ export interface UIMessage {
    * cannot serve that purpose.
    */
   turnOrdinal?: number;
+  /** Stable server-assigned prompt identity for user rows across windows. */
+  promptId?: string;
   /** Ephemeral delivery lifecycle for optimistic user messages. */
   deliveryStatus?: MessageDeliveryStatus;
   /** Structured rejection reason shown with a failed optimistic message. */
@@ -2114,16 +2116,26 @@ export interface OutboundMcpPresetMention {
 /** Response shape for ``GET .../webui-thread`` (server-built transcript replay). */
 interface WebuiThreadPagePayload {
   before_cursor?: string | null;
+  after_cursor?: string | null;
   has_more_before?: boolean;
+  has_more_after?: boolean;
   loaded_message_count?: number;
   total_known_message_count?: number;
   user_message_offset?: number;
   /** Ordinal of the oldest turn included in this page. */
   first_turn_ordinal?: number;
+  /** Ordinal of the newest turn included in this page. */
+  last_turn_ordinal?: number;
   /** Turns included in this page. */
   loaded_turn_count?: number;
   /** Every turn in the session, loaded or not. */
   total_turn_count?: number;
+  /** Every visible user prompt in the session, loaded or not. */
+  total_prompt_count?: number;
+  /** Index coverage state for this history window. */
+  coverage?: "indexed" | "tail_only" | string;
+  /** Exact target prompt id resolved by an ``around`` request. */
+  target_prompt_id?: string | null;
 }
 
 /** One entry of the whole-session turn index used by the left-hand navigator. */
@@ -2135,16 +2147,41 @@ export interface SessionTurnSummary {
   cursor: string;
 }
 
+/** One visible user prompt entry returned by the seekable prompt index. */
+export interface SessionPromptSummary {
+  prompt_id: string;
+  turn_ordinal: number;
+  prompt_ordinal: number;
+  label: string;
+  created_at: number | null;
+  /** Opaque reveal locator bound to this session history origin. */
+  locator: string;
+}
+
+/** State of an in-flight, ready, or failed selective prompt reveal. */
+export interface PendingPromptReveal {
+  requestId: number;
+  promptId: string;
+  locator?: string | null;
+  cursor?: string | null;
+  status: "loading" | "ready" | "error";
+  errorCode?: "stale_history_cursor" | "prompt_not_found" | "network" | null;
+  errorMessage?: string | null;
+}
+
 /** Response shape for ``GET .../turns``. */
 export interface SessionTurnIndexPayload {
   schemaVersion: number;
   sessionKey?: string;
   turns: SessionTurnSummary[];
+  prompts?: SessionPromptSummary[];
   total_turn_count: number;
+  total_prompt_count?: number;
   page?: {
     before_cursor?: string | null;
     has_more_before?: boolean;
     loaded_turn_count?: number;
+    loaded_prompt_count?: number;
   };
 }
 

@@ -25,11 +25,12 @@ from nanobot.events import NO_EVENTS, AgentEvent, ContextCompactionEvent, EventS
 from nanobot.providers.base import ContextUsageSnapshot, LLMUsage
 from nanobot.session.input_attempt import InputAttemptProof
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
+from nanobot.session.session_messages import session_message_envelope
+from nanobot.session.source_store import SourceState
 from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 from nanobot.webui.metadata import WEBUI_DISPLAY_ON_COMMIT_KEY, WEBUI_DISPLAY_SOURCE_KEY
 
 if TYPE_CHECKING:
-    from nanobot.session.source_store import SourceState
     from nanobot.utils.llm_runtime import LLMRuntime
 
 
@@ -145,8 +146,16 @@ class TurnDeliveryFactory:
         session_key: str,
         *,
         suppress_channel_output: bool = False,
+        admitted_source: SourceState | None = None,
     ) -> TurnDelivery:
         """Create a lifecycle fallback without invoking edge routing policy."""
+        metadata = dict(msg.metadata or {})
+        if (
+            admitted_source is not None
+            and msg.channel == "websocket"
+            and admitted_source.session_key == session_key == f"websocket:{msg.chat_id}"
+        ):
+            metadata[WEBUI_DISPLAY_SOURCE_KEY] = admitted_source
         return TurnDelivery(
             bus=self.bus,
             runtime_event_publisher=self.runtime_event_publisher,
@@ -155,7 +164,7 @@ class TurnDeliveryFactory:
             route=TurnRoute(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
-                metadata=dict(msg.metadata or {}),
+                metadata=metadata,
             ),
             suppress_channel_output=suppress_channel_output,
         )
@@ -323,6 +332,29 @@ class TurnDelivery:
                     else None
                 ),
             )
+            return
+        envelope = session_message_envelope(self.input_message.metadata)
+        source = self.route.metadata.get(WEBUI_DISPLAY_SOURCE_KEY)
+        if (
+            self.input_message.channel == "system"
+            and envelope is not None
+            and source_event_id is not None
+            and self.route.channel == "websocket"
+            and isinstance(source, SourceState)
+        ):
+            committed_msg = dataclasses.replace(
+                self.input_message,
+                metadata={**self.input_message.metadata, WEBUI_DISPLAY_SOURCE_KEY: source},
+            )
+            await self.runtime_event_publisher.user_input_committed(
+                committed_msg,
+                self.session_key,
+                original_input=CommittedUserInput.from_message(
+                    self.input_message,
+                    source_event_id,
+                    created_at_ms=envelope["created_at_ms"],
+                ),
+            )
 
     async def publish_injection_after_stream(self, event: InjectionCommitted) -> None:
         """Archive the preceding reply before publishing a committed input receipt."""
@@ -430,11 +462,20 @@ class TurnDelivery:
             )
         if publish_completion:
             outcome, failure_kind = _turn_outcome(stop_reason)
+            completion_metadata = dict(self.lifecycle_message.metadata or {})
+            if (
+                completed_channel == "websocket"
+                and WEBUI_DISPLAY_SOURCE_KEY not in completion_metadata
+                and WEBUI_DISPLAY_SOURCE_KEY in self.route.metadata
+            ):
+                completion_metadata[WEBUI_DISPLAY_SOURCE_KEY] = (
+                    self.route.metadata[WEBUI_DISPLAY_SOURCE_KEY]
+                )
             await self.runtime_event_publisher.turn_completed(
                 channel=completed_channel,
                 chat_id=completed_chat_id,
                 session_key=self.session_key,
-                metadata=self.lifecycle_message.metadata,
+                metadata=completion_metadata,
                 outcome=outcome,
                 failure_kind=failure_kind,
                 failure_error_kind=(self._failure_error_kind or (

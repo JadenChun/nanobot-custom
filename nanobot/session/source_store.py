@@ -41,6 +41,13 @@ from nanobot.session.input_attempt import (
     find_input_attempt,
     fingerprint,
 )
+from nanobot.session.next_turn_preferences import (
+    NextTurnPreferences,
+    consume_preferences,
+    read_preferences,
+    remove_preferences,
+    update_preferences,
+)
 from nanobot.session.pending_followups import (
     PendingFollowupRecord,
     parse_pending_followup_records,
@@ -148,6 +155,9 @@ class SavedSourceProof:
     version: PrivateFileVersion
     metadata: SavedSourceMetadata
     digest: str | None = None
+    header: dict[str, Any] | None = None
+    event_count: int = 0
+    body_offset: int = 0
 
 
 class SourceOriginMismatchError(RuntimeError):
@@ -1412,6 +1422,11 @@ class SourceSessionStore:
     def invalidate_workspace_access_request(self, key: str) -> bool:
         """Consume any pending decision when canonical user input is accepted."""
         with self._backend.locked_session_files():
+            header_state = self.read_source_header_state(key)
+            if header_state is not None:
+                _, check_header = header_state
+                if not _invalidate_workspace_access_request(deepcopy(check_header["metadata"])):
+                    return False
             header, events = self._read_unlocked(key)
             self._check(header, self._state(header))
             if not _invalidate_workspace_access_request(header["metadata"]):
@@ -1666,6 +1681,7 @@ class SourceSessionStore:
         if self._snapshot(target_header, target_events).state != frozen.target_state:
             raise SourceValidationError("Invalid reset plan")
         result = self._write(target_header, target_events)
+        remove_preferences(self._backend, key)
         if owner is not None:
             from nanobot.session.execution_owner import ExecutionOwner
 
@@ -1907,6 +1923,137 @@ class SourceSessionStore:
             self._write(header, events)
             return discarded
 
+    def read_source_header_state(
+        self, key: str,
+    ) -> tuple[SourceState, dict[str, Any]] | None:
+        """Read validated canonical state and header without scanning settled events."""
+        from nanobot.session.mode_storage import private_file_version
+
+        with self._backend.locked_session_files():
+            path = self._backend.get_session_path(key)
+            proof = self._backend.saved_source_proof(key)
+            if (
+                proof is not None
+                and proof.header is not None
+                and not self._backend.get_runtime_checkpoint_path(key).exists()
+            ):
+                try:
+                    current_version = private_file_version(path.lstat())
+                except FileNotFoundError:
+                    return None
+                if current_version is not None and current_version == proof.version:
+                    return proof.metadata.state, deepcopy(proof.header)
+            try:
+                snapshot = self.load_source_snapshot(key)
+            except FileNotFoundError:
+                return None
+            return snapshot.state, deepcopy(snapshot.header)
+
+    def _try_update_metadata_header_unlocked(
+        self,
+        key: str,
+        updates: dict[str, Any],
+        *,
+        removals: tuple[str, ...] = (),
+    ) -> SourceSnapshot | None:
+        """Update canonical header metadata in O(1) when proof of the file is current."""
+        from nanobot.session.manager import SessionStorageError
+        from nanobot.session.mode_storage import MODE_JSON_LIMIT, private_file_version
+
+        if (
+            type(self) is not SourceSessionStore
+            or "_write" in self.__dict__
+            or "_write_text_atomic" in self._backend.__dict__
+        ):
+            return None
+        proof = self._backend.saved_source_proof(key)
+        if (
+            proof is None
+            or proof.header is None
+            or proof.body_offset <= 0
+            or self._backend.get_runtime_checkpoint_path(key).exists()
+        ):
+            return None
+        path = self._backend.get_session_path(key)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            src_fd = os.open(path, flags)
+        except OSError:
+            return None
+        try:
+            current_version = private_file_version(os.fstat(src_fd))
+            if current_version is None or current_version != proof.version:
+                return None
+            header = deepcopy(proof.header)
+            self._check(header, self._state(header))
+            accepted = accepted_metadata_updates(updates, source=True)
+            metadata = header["metadata"]
+            previous_scope = metadata.get("workspace_scope")
+            scope_removed = "workspace_scope" in removals and "workspace_scope" in metadata
+            scope_changed = (
+                "workspace_scope" in accepted
+                and accepted["workspace_scope"] != previous_scope
+            ) or scope_removed
+            metadata.update(accepted)
+            reserved = set(DURABLE_METADATA_KEYS) | set(LEGACY_RECOVERY_KEYS)
+            for name in removals:
+                if name not in reserved:
+                    metadata.pop(name, None)
+            if scope_changed:
+                _invalidate_workspace_access_request(metadata)
+            header["revision"] += 1
+            _validate_source_header(header, expected_key=key, require_source=True)
+            _validate_archive_boundary(header, proof.event_count)
+            canonical_events([header])
+            try:
+                header_line = (
+                    json.dumps(header, ensure_ascii=False, allow_nan=False) + "\n"
+                ).encode("utf-8")
+            except (TypeError, ValueError, UnicodeError):
+                raise SessionStorageError() from None
+            body_size = proof.version.size - proof.body_offset
+            if body_size < 0 or len(header_line) + body_size > MAX_SOURCE_SERIALIZED_BYTES:
+                raise SourceValidationError(
+                    "source exceeds the maximum readable serialized size"
+                )
+            installed = self._backend.replace_header_atomic(
+                path,
+                header_line,
+                src_fd=src_fd,
+                expected_version=proof.version,
+                body_offset=proof.body_offset,
+            )
+        finally:
+            os.close(src_fd)
+        state = self._state(header)
+        if installed is None or len(header_line) - 1 > MODE_JSON_LIMIT:
+            self._backend.forget_saved_source(key)
+        else:
+            try:
+                saved_meta = self.describe_saved_source(
+                    header, event_count=proof.event_count, expected_key=key,
+                )
+            except ValueError:
+                self._backend.forget_saved_source(key)
+            else:
+                self._backend.remember_saved_source(
+                    key,
+                    SavedSourceProof(
+                        installed,
+                        saved_meta,
+                        header=deepcopy(header),
+                        event_count=proof.event_count,
+                        body_offset=len(header_line),
+                    ),
+                )
+        raw_checkpoint = header["metadata"].get("context_checkpoint")
+        checkpoint: dict[str, Any] | None = (
+            deepcopy(cast(dict[str, Any], raw_checkpoint))
+            if isinstance(raw_checkpoint, dict)
+            else None
+        )
+        return SourceSnapshot(state, deepcopy(header), [], checkpoint)
+
     def update_metadata(
         self,
         key: str,
@@ -1917,6 +2064,9 @@ class SourceSessionStore:
         if isinstance(removals, (str, bytes)) or any(not isinstance(cast(object, name), str) for name in removals):
             raise SourceValidationError("Invalid metadata removals")
         with self._backend.locked_session_files():
+            fast = self._try_update_metadata_header_unlocked(key, updates, removals=removals)
+            if fast is not None:
+                return fast
             header, events = self._read_unlocked(key)
             self._check(header, self._state(header))
             accepted = accepted_metadata_updates(updates, source=True)
@@ -1936,6 +2086,32 @@ class SourceSessionStore:
                 _invalidate_workspace_access_request(metadata)
             header["revision"] += 1
             return self._write(header, events)
+
+    def read_next_turn_preferences(self, key: str) -> NextTurnPreferences | None:
+        """Bounded read of the next-turn record; no event or body access."""
+        with self._backend.locked_session_files():
+            return read_preferences(self._backend, key)
+
+    def update_next_turn_preferences(
+        self,
+        key: str,
+        updates: dict[str, Any],
+        *,
+        removals: tuple[str, ...] = (),
+        expected_revision: int | None = None,
+    ) -> NextTurnPreferences | None:
+        """Atomic, fsynced O(1) write; never rewrites header, events or revision."""
+        with self._backend.locked_session_files():
+            return update_preferences(
+                self._backend, key, updates, removals=removals,
+                expected_revision=expected_revision,
+            )
+
+    def consume_next_turn_preferences(
+        self, key: str, consumed: dict[str, Any],
+    ) -> NextTurnPreferences | None:
+        with self._backend.locked_session_files():
+            return consume_preferences(self._backend, key, consumed)
 
     def advance_consolidated(self, key: str, expected: SourceState, end_offset: int, *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
         from nanobot.session.execution_owner import execution_transaction
@@ -1959,10 +2135,13 @@ class SourceSessionStore:
 
     def _delete_unlocked(self, key: str, expected: SourceState, *, owner: ExecutionOwner | None = None) -> None:
         from nanobot.session.legacy_h1 import require_legacy_h1_disposition
+        from nanobot.session.next_turn_preferences import preference_path
 
         header, _events = self._current_unlocked(key, expected)
         require_legacy_h1_disposition(header["metadata"])
+        pref = preference_path(self._backend, key)
         self._backend.get_session_path(key).unlink()
         from nanobot.session.manager import JsonlSessionStore
 
         JsonlSessionStore.settle_source_deletion(owner, lambda: self._backend)
+        pref.unlink(missing_ok=True)

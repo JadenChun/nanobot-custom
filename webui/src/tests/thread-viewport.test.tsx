@@ -2333,4 +2333,119 @@ describe("ThreadViewport", () => {
 
     await waitFor(() => expect(scroller.scrollTop).toBe(1800));
   });
+
+  it("keeps the prompt rail visible for a short latest window in a long chat and reveals by prompt id", async () => {
+    const shortLatestWindow: UIMessage[] = [
+      { id: "u-latest", promptId: "evt-20", role: "user", content: "Latest prompt", createdAt: 20 },
+      { id: "a-latest", role: "assistant", content: "Latest reply", createdAt: 21 },
+    ];
+    const sessionPrompts = Array.from({ length: 10 }, (_, idx) => ({
+      prompt_id: `evt-${idx + 11}`,
+      turn_ordinal: idx + 10,
+      prompt_ordinal: idx + 10,
+      label: `Prompt ${idx + 11}`,
+      created_at: 100 + idx,
+      locator: `loc-${idx + 11}`,
+    }));
+    const onRevealPrompt = vi.fn();
+    const onLoadMorePrompts = vi.fn();
+    const { container } = render(
+      <ThreadViewport
+        messages={shortLatestWindow}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        sessionPrompts={sessionPrompts}
+        sessionPromptTotal={20}
+        hasMorePromptsBefore
+        onLoadMorePrompts={onLoadMorePrompts}
+        onRevealPrompt={onRevealPrompt}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    expect(screen.getByLabelText("User prompt navigation")).toBeInTheDocument();
+    expect(screen.getAllByTestId("prompt-rail-marker")).toHaveLength(10);
+    fireEvent.click(screen.getByTestId("prompt-rail-load-older"));
+    expect(onLoadMorePrompts).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByLabelText("Jump to prompt: Prompt 11"));
+    expect(onRevealPrompt).toHaveBeenCalledWith({
+      promptId: "evt-11",
+      locator: "loc-11",
+      cursor: null,
+    });
+  });
+
+  it("scrolls and highlights the exact Steer prompt on pendingReveal ready and triggers loadNewer / goToLatest", async () => {
+    const navigateTo = vi.spyOn(ThreadCameraController.prototype, "navigateTo");
+    const steerWindow: UIMessage[] = [
+      { id: "u15a", promptId: "evt-u-15", role: "user", content: "Prompt 15", createdAt: 15 },
+      { id: "a15a", role: "assistant", content: "Before steer", createdAt: 16 },
+      { id: "u15b", promptId: "evt-steer-15", role: "user", content: "Steer 15", createdAt: 17 },
+      { id: "a15b", role: "assistant", content: "After steer with turn_end text", createdAt: 18 },
+    ];
+    const onPendingRevealHandled = vi.fn();
+    const onLoadNewer = vi.fn();
+    const onGoToLatest = vi.fn();
+    const { container } = render(
+      <ThreadViewport
+        messages={steerWindow}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        hasMoreAfter
+        tailActivityPending
+        onLoadNewer={onLoadNewer}
+        onGoToLatest={onGoToLatest}
+        pendingReveal={{
+          requestId: 7,
+          promptId: "evt-steer-15",
+          locator: "loc-steer-15",
+          status: "ready",
+        }}
+        onPendingRevealHandled={onPendingRevealHandled}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 2400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    const steerEl = container.querySelector<HTMLElement>('[data-prompt-key="evt-steer-15"]');
+    const firstEl = container.querySelector<HTMLElement>('[data-prompt-key="evt-u-15"]');
+    expect(steerEl).toBeTruthy();
+    expect(firstEl).toBeTruthy();
+    Object.defineProperty(firstEl!, "offsetTop", { configurable: true, value: 120 });
+    Object.defineProperty(steerEl!, "offsetTop", { configurable: true, value: 940 });
+
+    await waitFor(() => expect(onPendingRevealHandled).toHaveBeenCalledWith(7));
+    expect(steerEl?.dataset.promptHighlighted).toBe("true");
+    expect(firstEl?.dataset.promptHighlighted).toBeUndefined();
+    expect(navigateTo).toHaveBeenCalled();
+
+    // Scrolling near the bottom of an older window triggers forward paging.
+    scroller.scrollTop = 1750;
+    fireEvent.scroll(scroller);
+    expect(onLoadNewer).toHaveBeenCalledTimes(1);
+
+    // Go to latest button shows tail activity and calls onGoToLatest.
+    const latestBtn = screen.getByRole("button", { name: "Go to latest" });
+    expect(latestBtn).toHaveAttribute("data-tail-activity", "true");
+    fireEvent.click(latestBtn);
+    expect(onGoToLatest).toHaveBeenCalledTimes(1);
+  });
 });

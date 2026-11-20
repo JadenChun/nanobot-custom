@@ -551,6 +551,53 @@ describe("webui API helpers", () => {
     );
   });
 
+  it("forwards around, after, and prompt_id params and surfaces 409/404 prompt errors", async () => {
+    await fetchWebuiThread("tok", "websocket:chat-1", {
+      limit: 40,
+      direction: "around",
+      around: "loc-1",
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/sessions/websocket%3Achat-1/webui-thread?limit=40&direction=around&around=loc-1&view=history",
+      expect.anything(),
+    );
+
+    await fetchWebuiThread("tok", "websocket:chat-1", {
+      limit: 120,
+      direction: "after",
+      after: "after-1",
+    });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/sessions/websocket%3Achat-1/webui-thread?limit=120&direction=after&after=after-1&view=history",
+      expect.anything(),
+    );
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: "stale_history_cursor" }),
+    } as unknown as Response);
+    await expect(
+      fetchWebuiThread("tok", "websocket:chat-1", { direction: "around", around: "stale-loc" }),
+    ).rejects.toMatchObject({ status: 409, message: "stale_history_cursor" });
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "prompt_not_found" }),
+    } as unknown as Response);
+    await expect(
+      fetchWebuiThread("tok", "websocket:chat-1", { direction: "around", promptId: "missing" }),
+    ).rejects.toMatchObject({ status: 404, message: "prompt_not_found" });
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: "not_found" }),
+    } as unknown as Response);
+    await expect(fetchWebuiThread("tok", "websocket:chat-1")).resolves.toBeNull();
+  });
+
   it("aborts a WebUI thread request when its caller signal is aborted", async () => {
     let requestSignal: AbortSignal | null = null;
     vi.mocked(fetch).mockImplementation((_input, init) => new Promise((_resolve, reject) => {

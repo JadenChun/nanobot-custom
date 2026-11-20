@@ -886,6 +886,45 @@ class WebUICommandRouter:
                     chat_id=chat_id,
                 )
                 return
+            is_next_turn = (
+                envelope.get("next_turn") is True
+                or envelope.get("target") == "next_turn"
+                or "next_workspace_scope" in envelope
+            )
+            if is_next_turn:
+                result = await self.workspace_scope_or_error(
+                    connection,
+                    lambda: self._workspaces.set_next_turn_scope(
+                        chat_id,
+                        envelope,
+                        controls_available=self.workspace_controls_available(connection),
+                    ),
+                    chat_id=chat_id,
+                )
+                if result is None:
+                    return
+                extra = {
+                    "workspace_scope": result["workspace_scope"],
+                    "next_workspace_scope": result["next_workspace_scope"],
+                    **(
+                        {"next_turn_revision": result["next_turn_revision"]}
+                        if "next_turn_revision" in result
+                        else {}
+                    ),
+                }
+                await self._transport.send_session_updated(
+                    chat_id,
+                    scope="metadata",
+                    **extra,
+                )
+                await self._transport.webui_send_event(
+                    connection,
+                    "session_updated",
+                    chat_id=chat_id,
+                    scope="metadata",
+                    **extra,
+                )
+                return
             scope = await self.workspace_scope_or_error(
                 connection,
                 lambda: self._workspaces.scope_for_set_request(
@@ -899,17 +938,32 @@ class WebUICommandRouter:
             if scope is None:
                 return
             self._workspaces.stage_scope(chat_id, scope)
+            session_key = webui_session_key(chat_id)
+            next_scope = self._workspaces.next_scope_for_session_key(session_key)
+            update_fields: dict[str, Any] = {
+                "workspace_scope": (
+                    self._workspaces.scope_payload(
+                        self._workspaces.scope_for_session_key(session_key)
+                    )
+                    if next_scope is not None
+                    else self._workspaces.scope_payload(scope)
+                ),
+            }
+            if next_scope is not None:
+                update_fields["next_workspace_scope"] = self._workspaces.scope_payload(
+                    next_scope
+                )
             await self._transport.send_session_updated(
                 chat_id,
                 scope="metadata",
-                workspace_scope=self._workspaces.scope_payload(scope),
+                **update_fields,
             )
             await self._transport.webui_send_event(
                 connection,
                 "session_updated",
                 chat_id=chat_id,
                 scope="metadata",
-                workspace_scope=self._workspaces.scope_payload(scope),
+                **update_fields,
             )
             return
         if command_type == "transcribe_audio":
@@ -1371,6 +1425,7 @@ class WebUICommandRouter:
                 return
             local_controls = self.workspace_controls_available(connection)
             controls_available = local_controls or _typed_owner_mobile_identity(connection) is not None
+            was_chat_running = websocket_turn_wall_started_at(chat_id) is not None
             scope = await self.workspace_scope_or_error(
                 connection,
                 lambda: (
@@ -1382,7 +1437,7 @@ class WebUICommandRouter:
                     else self._workspaces.scope_for_message(
                         envelope,
                         chat_id=chat_id,
-                        chat_running=websocket_turn_wall_started_at(chat_id) is not None,
+                        chat_running=was_chat_running,
                         controls_available=controls_available,
                     )
                 ),
@@ -1566,13 +1621,11 @@ class WebUICommandRouter:
                     temporary_policy is None or temporary_policy.persist_transcript
                 ):
                     sessions = self.gateway.session_manager
-                    if (
-                        sessions is not None and sessions.has_managed_authority
-                        and not is_user_shell and not content.lstrip().startswith("/")
-                    ):
-                        # Normal composer input (including Steer) gets a display
-                        # row only when its canonical append actually commits.
-                        metadata[WEBUI_DISPLAY_ON_COMMIT_KEY] = True
+                    if sessions is not None and sessions.has_managed_authority:
+                        # Managed WebUI inputs (including !shell and /commands)
+                        # get a display row only when their canonical append commits.
+                        if not (content.strip() == "/stop" and not media_paths):
+                            metadata[WEBUI_DISPLAY_ON_COMMIT_KEY] = True
                     else:
                         self._transcripts.append_user_message(
                             chat_id,
@@ -1622,8 +1675,27 @@ class WebUICommandRouter:
                     permission_reference=permission_reference,
                 )
                 if temporary_policy is None:
-                    self._workspaces.persist_scope(chat_id, scope)
-                    self._workspaces.remember_request_defaults(chat_id, scope)
+                    stripped_content = content.strip()
+                    is_model_cmd = (
+                        bool(stripped_content)
+                        and stripped_content.lower().split(maxsplit=1)[0] == "/model"
+                    )
+                    should_persist_scope = (
+                        not was_chat_running
+                        and not is_stop
+                        and request_intent != "steer"
+                        and (
+                            not is_model_cmd
+                            or self.gateway.session_manager is None
+                            or self.gateway.session_manager.read_session_metadata(
+                                webui_session_key(chat_id)
+                            )
+                            is None
+                        )
+                    )
+                    if should_persist_scope:
+                        self._workspaces.persist_scope(chat_id, scope)
+                        self._workspaces.remember_request_defaults(chat_id, scope)
                 accepted = True
             finally:
                 if not accepted and queued_owner is not None:
@@ -2001,7 +2073,10 @@ class WebUICommandRouter:
             backend = sessions.source_backend(key)
             if backend is None:
                 return None
-            state = backend.source.load_source_snapshot(key).state
+            header_state = backend.source.read_source_header_state(key)
+            if header_state is None:
+                return None
+            state, _ = header_state
             return {
                 "store_identity": state.store_identity,
                 "incarnation": state.incarnation,
@@ -2023,7 +2098,7 @@ class WebUICommandRouter:
             if not sessions.has_managed_authority:
                 return False, None
             key = webui_session_key(chat_id)
-            resolved = sessions.resolve_session_mode(key)
+            resolved = sessions.resolve_session_mode_for_metadata(key)
             if resolved.state == "absent":
                 return True, None
             if resolved.state != "active" or resolved.mode != "canonical":
@@ -2031,7 +2106,10 @@ class WebUICommandRouter:
             backend = sessions.source_backend(key)
             if backend is None:
                 return False, None
-            state = backend.source.load_source_snapshot(key).state
+            header_state = backend.source.read_source_header_state(key)
+            if header_state is None:
+                return False, None
+            state, _ = header_state
             return True, {
                 "store_identity": state.store_identity,
                 "incarnation": state.incarnation,

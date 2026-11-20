@@ -19,9 +19,13 @@ export interface CachedSessionPage {
   messages: UIMessage[];
   beforeCursor: string | null;
   hasMoreBefore: boolean;
+  afterCursor?: string | null;
+  hasMoreAfter?: boolean;
   userMessageOffset: number;
   completedTurnIds: string[];
   forkBoundaryMessageCount: number | null;
+  totalTurnCount?: number;
+  totalPromptCount?: number;
   version: number;
 }
 

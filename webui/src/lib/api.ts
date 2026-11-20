@@ -772,8 +772,11 @@ export async function listSessions(
 /** Disk-backed WebUI display thread snapshot (separate from agent session). */
 export interface FetchWebuiThreadOptions {
   limit?: number;
-  direction?: "latest";
+  direction?: "latest" | "before" | "after" | "around";
   before?: string | null;
+  after?: string | null;
+  around?: string | null;
+  promptId?: string | null;
   signal?: AbortSignal;
 }
 
@@ -789,6 +792,9 @@ export async function fetchWebuiThread(
   if (options?.limit !== undefined) params.set("limit", String(options.limit));
   if (options?.direction) params.set("direction", options.direction);
   if (options?.before) params.set("before", options.before);
+  if (options?.after) params.set("after", options.after);
+  if (options?.around) params.set("around", options.around);
+  if (options?.promptId) params.set("prompt_id", options.promptId);
   params.set("view", "history");
   const payload = await fetchThreadView(token, key, params.toString(), options?.signal, resolvedBase);
   if (payload?.view === "history" && payload.sessionKey !== key) {
@@ -811,6 +817,19 @@ export async function fetchWebuiThreadControls(
   return payload as WebuiThreadControlsPayload;
 }
 
+async function readApiErrorDetail(res: Response): Promise<string | null> {
+  try {
+    if (typeof res.json !== "function") return null;
+    const body: unknown = await res.json();
+    if (isObjectRecord(body) && typeof body.error === "string" && body.error) {
+      return body.error;
+    }
+  } catch {
+    // Non-JSON or empty error response body.
+  }
+  return null;
+}
+
 async function fetchThreadView(
   token: string,
   key: string,
@@ -825,8 +844,17 @@ async function fetchThreadView(
     cache: "no-store",
     signal,
   });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  if (res.status === 404) {
+    const detail = await readApiErrorDetail(res);
+    if (detail === "prompt_not_found") {
+      throw new ApiError(404, detail);
+    }
+    return null;
+  }
+  if (!res.ok) {
+    const detail = res.status === 409 ? await readApiErrorDetail(res) : null;
+    throw new ApiError(res.status, detail ?? `HTTP ${res.status}`);
+  }
   const payload: unknown = await res.json();
   if (!isObjectRecord(payload)) return null;
   if (payload.workspace_permissions === undefined) return payload;
@@ -858,7 +886,10 @@ export async function fetchDelegatedChildren(
     signal: options.signal,
   });
   if (res.status === 404) return null;
-  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  if (!res.ok) {
+    const detail = res.status === 409 ? await readApiErrorDetail(res) : null;
+    throw new ApiError(res.status, detail ?? `HTTP ${res.status}`);
+  }
   const payload: unknown = await res.json();
   if (!isObjectRecord(payload)) return null;
   return payload as unknown as WebuiDelegatedChildrenPayload;
@@ -883,7 +914,10 @@ export async function fetchSessionTurns(
     signal: options.signal,
   });
   if (res.status === 404) return null;
-  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  if (!res.ok) {
+    const detail = res.status === 409 ? await readApiErrorDetail(res) : null;
+    throw new ApiError(res.status, detail ?? `HTTP ${res.status}`);
+  }
   const payload: unknown = await res.json();
   if (!isObjectRecord(payload)) return null;
   return payload as unknown as SessionTurnIndexPayload;

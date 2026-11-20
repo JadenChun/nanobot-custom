@@ -31,11 +31,14 @@ import type {
   CliAppInfo,
   DelegatedChildReference,
   McpPresetInfo,
+  PendingPromptReveal,
   RetryStatus,
+  SessionPromptSummary,
   SessionTurnSummary,
   SlashCommand,
   UIMessage,
 } from "@/lib/types";
+import type { RevealPromptTarget } from "@/hooks/useSessions";
 
 export interface ThreadViewportHandle {
   jumpToUserPrompt: (promptId: string) => void;
@@ -73,8 +76,24 @@ interface ThreadViewportProps {
   forkBoundaryMessageCount?: number | null;
   hasMoreBefore?: boolean;
   loadingOlder?: boolean;
+  hasMoreAfter?: boolean;
+  loadingNewer?: boolean;
+  tailActivityPending?: boolean;
   userMessageOffset?: number;
   onLoadOlder?: () => Promise<void> | void;
+  onLoadNewer?: () => Promise<void> | void;
+  onGoToLatest?: () => Promise<boolean | void> | void;
+  /** Bounded visible user prompt summaries for the left rail, when loaded. */
+  sessionPrompts?: SessionPromptSummary[];
+  sessionPromptTotal?: number;
+  hasMorePromptsBefore?: boolean;
+  loadingMorePrompts?: boolean;
+  onLoadMorePrompts?: () => void;
+  onRevealPrompt?: (target: RevealPromptTarget) => void;
+  pendingReveal?: PendingPromptReveal | null;
+  onPendingRevealHandled?: (requestId: number) => void;
+  onRetryReveal?: () => void;
+  onDismissRevealError?: () => void;
   /** Whole-session turn index for the left rail, when loaded. */
   sessionTurns?: SessionTurnSummary[];
   sessionTurnTotal?: number;
@@ -264,8 +283,23 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   forkBoundaryMessageCount = null,
   hasMoreBefore = false,
   loadingOlder = false,
+  hasMoreAfter = false,
+  loadingNewer = false,
+  tailActivityPending = false,
   userMessageOffset = 0,
   onLoadOlder,
+  onLoadNewer,
+  onGoToLatest,
+  sessionPrompts = [],
+  sessionPromptTotal = 0,
+  hasMorePromptsBefore = false,
+  loadingMorePrompts = false,
+  onLoadMorePrompts,
+  onRevealPrompt,
+  pendingReveal = null,
+  onPendingRevealHandled,
+  onRetryReveal,
+  onDismissRevealError,
   sessionTurns = [],
   sessionTurnTotal = 0,
   onNeedSessionTurns,
@@ -296,6 +330,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     );
   const conversationHandoffAnimationRef = useRef<Animation | null>(null);
   const pendingConversationScrollRef = useRef(true);
+  const pendingGoToLatestScrollRef = useRef(false);
   const pendingPromptJumpRef = useRef<string | null>(null);
   const restoreScrollAfterPrependRef =
     useRef<{ height: number; top: number } | null>(null);
@@ -303,6 +338,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const composerInputScrollTopRef = useRef<number | null>(null);
   const composerDockHeightRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
+  const [highlightedPromptId, setHighlightedPromptId] = useState<string | null>(null);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
   const [keyboardInsetBottom, setKeyboardInsetBottom] = useState(0);
   const [hasVerticalOverflow, setHasVerticalOverflow] = useState(false);
@@ -495,6 +531,15 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     onLoadOlder,
   ]);
 
+  const loadNewerMessages = useCallback(() => {
+    if (!hasMoreAfter || !onLoadNewer || loadingNewer) return;
+    captureHistoryScrollAnchor();
+    threadMotionRef.current?.takeUserControl();
+    setAtBottom(false);
+    setVisibleMessageCount((count) => count + HISTORY_WINDOW_INCREMENT);
+    void onLoadNewer();
+  }, [captureHistoryScrollAnchor, hasMoreAfter, loadingNewer, onLoadNewer]);
+
   const maybeLoadEarlierFromScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el || !hasMessages || pendingConversationScrollRef.current) return;
@@ -503,6 +548,14 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     if (hiddenMessageCount <= 0 && !hasMoreBefore) return;
     loadEarlierMessages();
   }, [hasMessages, hasMoreBefore, hiddenMessageCount, loadEarlierMessages]);
+
+  const maybeLoadNewerFromScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !hasMessages || !hasMoreAfter || loadingNewer || !onLoadNewer) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom > historyPrefetchDistance(el)) return;
+    loadNewerMessages();
+  }, [hasMessages, hasMoreAfter, loadNewerMessages, loadingNewer, onLoadNewer]);
 
   const navigateToVisiblePrompt = useCallback((promptId: string) => {
     const scrollEl = scrollRef.current;
@@ -522,7 +575,9 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
 
   const jumpToUserPrompt = useCallback((promptId: string) => {
     if (navigateToVisiblePrompt(promptId)) return;
-    const index = messages.findIndex((message) => message.id === promptId);
+    const index = messages.findIndex(
+      (message) => message.id === promptId || message.promptId === promptId,
+    );
     if (index < 0) return;
     threadMotionRef.current?.takeUserControl();
     pendingPromptJumpRef.current = promptId;
@@ -619,10 +674,12 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     conversationHandoffAnimationRef.current = null;
     conversationHandoffPendingRef.current = conversationKey !== null;
     pendingConversationScrollRef.current = true;
+    pendingGoToLatestScrollRef.current = false;
     historyScrollAnchorRef.current = null;
     restoreScrollAfterPrependRef.current = null;
     threadMotionRef.current?.reset();
     setAtBottom(true);
+    setHighlightedPromptId(null);
     setVisibleMessageCount(INITIAL_HISTORY_WINDOW);
 
     const surface = messageRegionRef.current;
@@ -697,6 +754,50 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     threadMotionRef.current?.jumpTo(nextTop);
   }, [reconcileHistoryScrollAnchor, visibleMessages.length, messages.length]);
 
+  useEffect(() => {
+    if (!highlightedPromptId) return undefined;
+    const timer = window.setTimeout(() => {
+      setHighlightedPromptId((current) => (current === highlightedPromptId ? null : current));
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [highlightedPromptId]);
+
+  useLayoutEffect(() => {
+    if (!pendingReveal || pendingReveal.status !== "ready" || !pendingReveal.promptId) return;
+    pendingConversationScrollRef.current = false;
+    pendingGoToLatestScrollRef.current = false;
+    const targetId = pendingReveal.promptId;
+    const scrollEl = scrollRef.current;
+    const mounted = scrollEl ? findPromptElement(scrollEl, targetId) : null;
+    if (!mounted) {
+      const index = messages.findIndex(
+        (message) =>
+          message.role === "user"
+          && (message.promptId === targetId || message.id === targetId),
+      );
+      if (index >= 0 && messages.length - index > visibleMessageCount) {
+        setVisibleMessageCount((count) => Math.max(count, messages.length - index));
+      }
+      return;
+    }
+    navigateToVisiblePrompt(targetId);
+    setHighlightedPromptId(targetId);
+    onPendingRevealHandled?.(pendingReveal.requestId);
+  }, [
+    messages,
+    navigateToVisiblePrompt,
+    onPendingRevealHandled,
+    pendingReveal,
+    visibleMessageCount,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!pendingGoToLatestScrollRef.current) return;
+    if (hasMoreAfter || !conversationReady) return;
+    pendingGoToLatestScrollRef.current = false;
+    scrollToBottom(true, { force: true });
+  }, [conversationReady, hasMoreAfter, messages.length, scrollToBottom]);
+
   useLayoutEffect(() => {
     const promptId = pendingPromptJumpRef.current;
     const scrollEl = scrollRef.current;
@@ -709,6 +810,14 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   useLayoutEffect(() => {
     if (!pendingConversationScrollRef.current) return;
     if (!conversationReady) return;
+    if (
+      hasMoreAfter
+      || pendingReveal?.status === "loading"
+      || pendingReveal?.status === "ready"
+    ) {
+      pendingConversationScrollRef.current = false;
+      return;
+    }
     if (!conversationKey) {
       pendingConversationScrollRef.current = false;
       scrollToBottom(false, { force: true });
@@ -721,7 +830,9 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     conversationKey,
     conversationReady,
     hasMessages,
+    hasMoreAfter,
     messages,
+    pendingReveal?.status,
     scrollToBottom,
   ]);
 
@@ -779,14 +890,17 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     const onScroll = (allowHistoryLoad = true) => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const near = distance < NEAR_BOTTOM_PX;
-      const owner = threadMotionRef.current?.observeScroll(near) ?? "automatic";
-      const logicallyAtBottom = owner === "automatic" || (owner === "navigation" && near);
+      const owner = threadMotionRef.current?.observeScroll(near && !hasMoreAfter) ?? "automatic";
+      const logicallyAtBottom = !hasMoreAfter && (owner === "automatic" || (owner === "navigation" && near));
       setAtBottom((current) =>
         current === logicallyAtBottom ? current : logicallyAtBottom,
       );
-      if (owner === "user") {
+      if (owner === "user" || hasMoreAfter) {
         captureHistoryScrollAnchor();
-        if (allowHistoryLoad) maybeLoadEarlierFromScroll();
+        if (allowHistoryLoad) {
+          maybeLoadEarlierFromScroll();
+          maybeLoadNewerFromScroll();
+        }
       } else if (near) {
         historyScrollAnchorRef.current = null;
       }
@@ -878,7 +992,9 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   }, [
     captureHistoryScrollAnchor,
     hasMessages,
+    hasMoreAfter,
     maybeLoadEarlierFromScroll,
+    maybeLoadNewerFromScroll,
     yieldCameraToUser,
   ]);
 
@@ -951,6 +1067,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   onOpenChildHistory={onOpenChildHistory}
                   delegatedStatusAvailable={delegatedStatusAvailable}
                   onQuoteSelection={onQuoteSelection}
+                  highlightedPromptId={highlightedPromptId}
                 />
               </div>
               <div aria-hidden className="thread-message-end-gap shrink-0" />
@@ -1008,7 +1125,7 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                   data-testid="thread-composer-motion"
                   className="mx-auto w-full max-w-[58rem]"
                 >
-                  <ThreadComposerChromeHiddenProvider value={!atBottom}>
+                  <ThreadComposerChromeHiddenProvider value={!atBottom || hasMoreAfter}>
                     {composer}
                   </ThreadComposerChromeHiddenProvider>
                 </div>
@@ -1031,12 +1148,78 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         className="pointer-events-none absolute inset-x-0 top-0 h-3 bg-gradient-to-b from-background to-transparent"
       />
 
+      {hasMessages && !obscured && pendingReveal?.status === "error" ? (
+        <div
+          role="status"
+          data-testid="prompt-reveal-error"
+          className="absolute left-1/2 top-4 z-30 flex max-w-[min(92vw,32rem)] -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background/95 px-3.5 py-1.5 text-xs text-foreground shadow-md backdrop-blur"
+        >
+          <span>
+            {pendingReveal.errorCode === "stale_history_cursor"
+              ? t("thread.promptNavigator.staleHistory", {
+                  defaultValue: "History changed since this list loaded.",
+                })
+              : pendingReveal.errorCode === "prompt_not_found"
+                ? t("thread.promptNavigator.notFound", {
+                    defaultValue: "That prompt is no longer in this chat.",
+                  })
+                : t("thread.promptNavigator.revealFailed", {
+                    defaultValue: "Could not load that prompt.",
+                  })}
+          </span>
+          {pendingReveal.errorCode === "stale_history_cursor" && onGoToLatest ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={() => {
+                onDismissRevealError?.();
+                pendingGoToLatestScrollRef.current = true;
+                void onGoToLatest();
+              }}
+            >
+              {t("thread.goToLatest", { defaultValue: "Go to latest" })}
+            </Button>
+          ) : pendingReveal.errorCode !== "prompt_not_found" && onRetryReveal ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={onRetryReveal}
+            >
+              {t("thread.generatedAssets.retry")}
+            </Button>
+          ) : null}
+          {onDismissRevealError ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-muted-foreground"
+              onClick={onDismissRevealError}
+            >
+              {t("common.dismiss", { defaultValue: "Dismiss" })}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
       {hasMessages && !obscured ? (
         <PromptRail
           messages={visibleMessages}
           scrollRef={scrollRef}
           bottomOffset={scrollButtonBottom}
           onJumpToPrompt={navigateToVisiblePrompt}
+          sessionPrompts={sessionPrompts}
+          totalPromptCount={sessionPromptTotal}
+          hasMoreBefore={hasMoreBefore}
+          hasMoreAfter={hasMoreAfter}
+          hasMorePromptsBefore={hasMorePromptsBefore}
+          loadingMorePrompts={loadingMorePrompts}
+          onLoadMorePrompts={onLoadMorePrompts}
+          onRevealPrompt={onRevealPrompt}
           sessionTurns={sessionTurns}
           totalTurnCount={sessionTurnTotal}
           onNeedSessionTurns={onNeedSessionTurns}
@@ -1044,22 +1227,43 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         />
       ) : null}
 
-      {showScrollToBottomButton && !obscured && !atBottom && (
+      {showScrollToBottomButton && !obscured && (!atBottom || hasMoreAfter) && (
         <div
           className="absolute left-1/2 z-20 -translate-x-1/2"
           style={{ bottom: scrollButtonBottom }}
         >
           <Button
             variant="outline"
-            size="icon"
-            onClick={() => scrollToBottom(true, { force: true })}
+            size={hasMoreAfter ? "sm" : "icon"}
+            data-tail-activity={tailActivityPending || (hasMoreAfter && isStreaming) ? "true" : undefined}
+            onClick={() => {
+              if (hasMoreAfter && onGoToLatest) {
+                pendingGoToLatestScrollRef.current = true;
+                void onGoToLatest();
+                return;
+              }
+              scrollToBottom(true, { force: true });
+            }}
             className={cn(
-              "h-8 w-8 rounded-full shadow-md",
+              hasMoreAfter
+                ? "h-8 gap-1.5 rounded-full px-3 text-xs shadow-md"
+                : "h-8 w-8 rounded-full shadow-md",
               "bg-background/90 backdrop-blur",
               "animate-in fade-in-0 zoom-in-95",
             )}
-            aria-label={t("thread.scrollToBottom")}
+            aria-label={hasMoreAfter
+              ? t("thread.goToLatest", { defaultValue: "Go to latest" })
+              : t("thread.scrollToBottom")}
           >
+            {tailActivityPending || (hasMoreAfter && isStreaming) ? (
+              <span
+                aria-hidden
+                className="h-2 w-2 rounded-full bg-primary"
+              />
+            ) : null}
+            {hasMoreAfter ? (
+              <span>{t("thread.goToLatest", { defaultValue: "Go to latest" })}</span>
+            ) : null}
             <ArrowDown className="h-4 w-4" />
           </Button>
         </div>
