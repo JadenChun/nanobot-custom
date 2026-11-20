@@ -2397,6 +2397,41 @@ async def test_send_removes_connection_on_connection_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_live_progress_frames_stream_without_persisting_a_row() -> None:
+    bus = MagicMock()
+    channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
+    mock_ws = AsyncMock()
+    channel._attach(mock_ws, "chat-1")
+    channel._persist_turn_transcript_event = MagicMock(return_value=True)
+
+    await channel.send(OutboundMessage(
+        channel="websocket",
+        chat_id="chat-1",
+        content="",
+        event=ProgressEvent(
+            content="",
+            tool_events=[{
+                "version": 1,
+                "phase": "progress",
+                "call_id": "call-comfy",
+                "name": "mcp_comfy_generate_video",
+                "progress": 62,
+                "total": 100,
+                "message": "ComfyUI is generating prompt...",
+            }],
+        ),
+        metadata={"webui_turn_id": "turn-1"},
+    ))
+
+    payload = json.loads(mock_ws.send.await_args.args[0])
+    assert payload["event"] == "message"
+    assert payload["kind"] == "progress"
+    assert payload["tool_events"][0]["phase"] == "progress"
+    assert payload["tool_events"][0]["message"] == "ComfyUI is generating prompt..."
+    channel._persist_turn_transcript_event.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_send_progress_includes_structured_tool_events() -> None:
     bus = MagicMock()
     channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))

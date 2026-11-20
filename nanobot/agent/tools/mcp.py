@@ -22,6 +22,10 @@ import httpx
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, invalid_numeric_limit
+from nanobot.agent.tools.progress import (
+    ProgressThrottle,
+    current_tool_progress_sink,
+)
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome
 from nanobot.security.network import (
@@ -1167,10 +1171,41 @@ class MCPToolWrapper(_MCPWrapperBase):
     def parameters(self) -> dict[str, Any]:
         return self._parameters
 
+    def _mcp_progress_callback(self) -> Any:
+        """Build a callback that forwards MCP progress to the live UI.
+
+        The MCP SDK attaches ``_meta.progressToken`` only when a callback is
+        present, so servers such as the ComfyUI harness start sending
+        ``notifications/progress`` frames. Frames stay live-only: no transcript
+        row is written for them.
+        """
+        sink = current_tool_progress_sink()
+        if sink is None:
+            return None
+        throttle = ProgressThrottle()
+
+        async def on_progress(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            if not throttle.should_emit(total, message):
+                return
+            with suppress(Exception):
+                await sink.emit(progress, total, message)
+
+        return on_progress
+
     @_admitted_generation
     async def execute(self, **kwargs: Any) -> Any:
         retried_transient = False
         refreshed_session = False
+        progress_callback = self._mcp_progress_callback()
+        call_options: dict[str, Any] = (
+            {"progress_callback": progress_callback}
+            if progress_callback is not None
+            else {}
+        )
         while True:
             try:
                 if self._kohaku_media_stop_enabled:
@@ -1181,6 +1216,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                                 self._original_name,
                                 arguments=kwargs,
                                 meta={_KOHAKU_MEDIA_CALL_META_KEY: call_id},
+                                **call_options,
                             ),
                             timeout=self._tool_timeout,
                         )
@@ -1198,7 +1234,11 @@ class MCPToolWrapper(_MCPWrapperBase):
                         )
                 else:
                     result = await asyncio.wait_for(
-                        self._session.call_tool(self._original_name, arguments=kwargs),
+                        self._session.call_tool(
+                            self._original_name,
+                            arguments=kwargs,
+                            **call_options,
+                        ),
                         timeout=self._tool_timeout,
                     )
             except asyncio.TimeoutError:

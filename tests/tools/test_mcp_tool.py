@@ -26,6 +26,7 @@ from nanobot.agent.tools.mcp import (
     _validate_mcp_schema,
     connect_mcp_servers,
 )
+from nanobot.agent.tools.progress import ToolProgressSink, bind_tool_progress_sink
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.config.schema import MCPServerConfig
 
@@ -566,6 +567,63 @@ async def test_execute_returns_text_blocks() -> None:
     result = await wrapper.execute(value=1)
 
     assert result == "hello\n42"
+
+
+@pytest.mark.asyncio
+async def test_execute_passes_progress_callback_to_running_sink() -> None:
+    progress_frames: list[dict[str, object]] = []
+
+    async def publish(payload: dict[str, object]) -> None:
+        progress_frames.append(payload)
+
+    async def call_tool(
+        _name: str,
+        arguments: dict,
+        *,
+        progress_callback: object = None,
+    ) -> object:
+        assert arguments == {"prompt": "a cat"}
+        assert callable(progress_callback)
+        await progress_callback(35, 100, "Starting ComfyUI")  # type: ignore[misc]
+        await progress_callback(35, 100, "Starting ComfyUI")  # type: ignore[misc]
+        await progress_callback(62, 100, "ComfyUI is generating prompt...")  # type: ignore[misc]
+        return SimpleNamespace(content=[_FakeTextContent("done")])
+
+    sink = ToolProgressSink(
+        call_id="call-comfy",
+        name="mcp_comfy_generate_video",
+        publish=publish,
+    )
+    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool))
+
+    with bind_tool_progress_sink(sink):
+        result = await wrapper.execute(prompt="a cat")
+
+    assert result == "done"
+    assert [frame["message"] for frame in progress_frames] == [
+        "Starting ComfyUI",
+        "ComfyUI is generating prompt...",
+    ]
+    assert all(frame["phase"] == "progress" for frame in progress_frames)
+    assert all(frame["call_id"] == "call-comfy" for frame in progress_frames)
+    assert progress_frames[-1]["progress"] == 62
+    assert progress_frames[-1]["total"] == 100
+
+
+@pytest.mark.asyncio
+async def test_execute_omits_progress_callback_without_a_sink() -> None:
+    received: dict[str, object] = {}
+
+    async def call_tool(_name: str, arguments: dict, **options: object) -> object:
+        received.update(options)
+        return SimpleNamespace(content=[_FakeTextContent("plain")])
+
+    wrapper = _make_wrapper(SimpleNamespace(call_tool=call_tool))
+
+    result = await wrapper.execute()
+
+    assert result == "plain"
+    assert "progress_callback" not in received
 
 
 @pytest.mark.asyncio

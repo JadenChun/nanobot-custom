@@ -31,6 +31,7 @@ from nanobot.agent.tools.filesystem_effect import (
     FilesystemEffectFact,
     FilesystemEffectReconciliationRequiredError,
 )
+from nanobot.agent.tools.progress import bind_tool_progress_sink
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.agent.tools.shell import bind_approved_exec_cwd
 from nanobot.agent.turn import ToolOutcome, TurnContext
@@ -434,6 +435,7 @@ async def _execute_tool_call(
             edit_binding = decision.edit_binding
             exec_cwd = decision.exec_cwd
         dispatched = preflight_result is None
+        progress_sink = hook.tool_progress_sink(tool_call) if dispatched else None
         try:
             binding_token = set_assessed_write_target(assessed_write_target, edit_binding)
             previous_intent = (
@@ -442,7 +444,7 @@ async def _execute_tool_call(
             if turn_context is not None:
                 turn_context.active_tool_intent_binding = tool_intent_binding
             try:
-                with bind_approved_exec_cwd(exec_cwd):
+                with bind_approved_exec_cwd(exec_cwd), bind_tool_progress_sink(progress_sink):
                     if preflight_result is not None:
                         result = preflight_result
                     elif tool is not None:

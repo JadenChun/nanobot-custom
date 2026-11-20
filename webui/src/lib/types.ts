@@ -562,7 +562,8 @@ export interface GoalStateWsPayload {
 
 export interface ToolProgressEvent {
   version?: number;
-  phase?: "start" | "end" | "error" | string;
+  /** `progress` frames are live-only updates for a running tool call. */
+  phase?: "start" | "end" | "error" | "progress" | string;
   call_id?: string;
   name?: string;
   arguments?: unknown;
@@ -571,6 +572,11 @@ export interface ToolProgressEvent {
   files?: unknown[];
   embeds?: unknown[];
   media_artifacts?: unknown[];
+  /** Live server-reported progress for the running call. */
+  progress?: number | null;
+  total?: number | null;
+  /** Live phase text for the running call, e.g. "Starting ComfyUI". */
+  message?: string | null;
 }
 
 export interface UIFileDiff {

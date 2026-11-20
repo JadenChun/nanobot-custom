@@ -74,6 +74,18 @@ _LISTENER_CHECK_INTERVAL_S = 0.5
 _LISTENER_STABLE_AFTER_S = 30.0
 _LISTENER_RESTART_BACKOFF_S = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
 
+
+def _is_live_progress_event(progress_event: "ProgressEvent | None") -> bool:
+    """True when a progress frame is live-only and must not be persisted.
+
+    ``phase: "progress"`` tool events describe a running call's incremental
+    state. They refresh the live row over WebSocket and are intentionally
+    excluded from the session transcript so replay never duplicates rows.
+    """
+    if progress_event is None or not progress_event.tool_events:
+        return False
+    return all(event.get("phase") == "progress" for event in progress_event.tool_events)
+
 # Outbound delivery is isolated per connection.  A bounded queue keeps a slow
 # or suspended terminal from retaining an unbounded stream in server memory.
 _OUTBOUND_QUEUE_MAX_FRAMES = 256
@@ -1331,17 +1343,18 @@ class WebSocketChannel(BaseChannel):
         elif progress_event:
             payload["kind"] = "progress"
         phase = "activity" if payload.get("kind") in ("tool_hint", "progress") else "answer"
-        self._persist_turn_transcript_event(
-            msg.chat_id,
-            payload,
-            metadata=msg.metadata,
-            phase=phase,
-            include_source=True,
-            transcript_overrides={
-                "text": text,
-                "media_publications": retained_markdown_media(wire_text),
-            },
-        )
+        if not _is_live_progress_event(progress_event):
+            self._persist_turn_transcript_event(
+                msg.chat_id,
+                payload,
+                metadata=msg.metadata,
+                phase=phase,
+                include_source=True,
+                transcript_overrides={
+                    "text": text,
+                    "media_publications": retained_markdown_media(wire_text),
+                },
+            )
         raw = json.dumps(payload, ensure_ascii=False)
         if not conns:
             return

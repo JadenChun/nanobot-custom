@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClient } from "@/providers/ClientProvider";
 import { toMediaAttachment } from "@/lib/media";
 import {
+  applyToolProgressPatches,
   mergeToolProgressEvents,
   mergeToolProgressTraceLines,
   normalizeToolProgressEvents,
@@ -51,6 +52,7 @@ import type {
   MessageDeliveryStatus,
   RecoveryState,
   RetryStatus,
+  ToolProgressEvent,
   UIMediaAttachment,
   UIMessage,
 } from "@/lib/types";
@@ -241,6 +243,24 @@ export interface SubmittedTurn {
    * owner commits the input; a route-level ``message_accepted`` never resolves
    * it. Undefined for surfaces that do not need to hold queue state. */
   admission?: Promise<boolean>;
+}
+
+function findLiveProgressRow(
+  messages: UIMessage[],
+  patches: ToolProgressEvent[],
+): number {
+  const callIds = new Set<string>();
+  for (const patch of patches) {
+    if (patch.call_id) callIds.add(patch.call_id);
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.kind !== "trace" || !message.toolEvents?.length) continue;
+    if (message.toolEvents.some((event) => event.call_id && callIds.has(event.call_id))) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function eventTurnId(ev: InboundEvent): string | undefined {
@@ -1558,7 +1578,22 @@ export function useNanobotStream(
         // Attach them to the last trace row if it was the last emitted item
         // so a sequence of calls collapses into one compact trace group.
         if (ev.kind === "tool_hint" || ev.kind === "progress") {
-          const structuredEvents = normalizeToolProgressEvents(ev.tool_events);
+          const incomingEvents = normalizeToolProgressEvents(ev.tool_events);
+          const progressPatches = incomingEvents.filter((event) => event.phase === "progress");
+          const structuredEvents = incomingEvents.filter((event) => event.phase !== "progress");
+          if (structuredEvents.length === 0 && progressPatches.length > 0) {
+            // A live progress frame refreshes its running tool row in place.
+            // It never adds a row, so long GPU handoffs cannot duplicate traces.
+            setMessages((prev) => {
+              const index = findLiveProgressRow(prev, progressPatches);
+              if (index < 0) return prev;
+              const row = prev[index];
+              const toolEvents = applyToolProgressPatches(row.toolEvents, progressPatches);
+              if (toolEvents === row.toolEvents) return prev;
+              return replaceMessageAt(prev, index, { ...row, toolEvents });
+            });
+            return;
+          }
           const turn = turnFieldsFromEvent(ev, "activity");
           setMessages((prev) => {
             const segmentId = ensureActivitySegmentId();
@@ -1602,7 +1637,7 @@ export function useNanobotStream(
                 content: mergedLines
                   ? mergedLines[mergedLines.length - 1]
                   : lines[lines.length - 1],
-                toolEvents: mergedEvents,
+                toolEvents: applyToolProgressPatches(mergedEvents, progressPatches),
                 activitySegmentId: last.activitySegmentId ?? segmentId,
                 ...turn,
               };
@@ -1616,7 +1651,12 @@ export function useNanobotStream(
                 kind: "trace",
                 content: lines[lines.length - 1],
                 traces: lines,
-                ...(visibleStructuredEvents.length ? { toolEvents: visibleStructuredEvents } : {}),
+                ...(visibleStructuredEvents.length ? {
+                  toolEvents: applyToolProgressPatches(
+                    visibleStructuredEvents,
+                    progressPatches,
+                  ),
+                } : {}),
                 activitySegmentId: segmentId,
                 ...turn,
                 createdAt: Date.now(),
