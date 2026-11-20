@@ -26,6 +26,7 @@ import {
   fetchNanobotFeatures,
   fetchProviderModels,
   fetchSessionAutomations,
+  fetchSessionGeneratedAssets,
   fetchSettingsUsage,
   fetchSidebarState,
   fetchSkillDetail,
@@ -660,6 +661,17 @@ describe("webui API helpers", () => {
 
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions/websocket%3Achat-1/automations",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }),
+    );
+  });
+
+  it("requests newest-first ordering for session generated assets", async () => {
+    await fetchSessionGeneratedAssets("tok", "websocket:chat-1", "", { limit: 50 });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/websocket%3Achat-1/generated-assets?limit=50&order=newest",
       expect.objectContaining({
         headers: { Authorization: "Bearer tok" },
       }),

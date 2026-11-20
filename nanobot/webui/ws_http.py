@@ -2426,6 +2426,7 @@ class GatewayHTTPHandler:
                 ),
                 cursor=cursor,
                 limit=limit,
+                newest_first=_query_first(query, "order") == "newest",
             )
         except Exception:
             self._log.exception("generated assets projection failed")

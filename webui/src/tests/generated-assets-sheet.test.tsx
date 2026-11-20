@@ -211,6 +211,32 @@ describe("GeneratedAssetsSheet", () => {
     );
   });
 
+  it("renders newest-first session assets first in flat and call views", async () => {
+    const newestFirst = {
+      ...payload,
+      groups: [...payload.groups].reverse().map((group, index) => ({
+        ...group,
+        sequence: payload.groups.length - index,
+      })),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(newestFirst)));
+    const user = userEvent.setup();
+    render(<GeneratedAssetsSheet sessionKey="websocket:chat-1" token="tok" />);
+
+    await user.click(screen.getByRole("button", { name: "Open generated assets" }));
+
+    const flatThumbs = await screen.findAllByTestId("generated-asset-thumbnail");
+    expect(
+      flatThumbs.map((thumb) => thumb.querySelector("button")?.getAttribute("aria-label")),
+    ).toEqual(["Open b1.png", "Open a1.png", "Open a2.png"]);
+
+    await user.click(screen.getByRole("button", { name: "By tool call" }));
+
+    const groups = await screen.findAllByTestId("generated-assets-group");
+    expect(groups[0]).toHaveTextContent("second batch prompt");
+    expect(groups[1]).toHaveTextContent("first batch prompt");
+  });
+
   it("renders and opens generated video assets", async () => {
     const videoGroup = {
       ...payload.groups[1],

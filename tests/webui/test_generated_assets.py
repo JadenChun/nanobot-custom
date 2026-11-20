@@ -567,6 +567,60 @@ async def test_route_paginates_generated_assets(assets_client) -> None:
     assert second_payload["next"] is None
 
 
+async def test_route_orders_session_assets_newest_first_on_request(assets_client) -> None:
+    _project, instance, services, token = assets_client
+    paths = [
+        _media_file(instance / "media", f"route-order-{index}.png")
+        for index in range(3)
+    ]
+    key = "websocket:generated-assets-order"
+    for index, path in enumerate(paths):
+        append_transcript_object(
+            key,
+            {
+                "event": "message",
+                "kind": "progress",
+                "turn_id": "turn-1",
+                "created_at_ms": 1000 * (index + 1),
+                "tool_events": [
+                    _event(
+                        call_id=f"call-{index}",
+                        result={
+                            "artifacts": [
+                                _artifact(path, artifact_id=f"route-order-{index}")
+                            ]
+                        },
+                    )
+                ],
+            },
+        )
+
+    async def fetch(query: str) -> dict[str, object]:
+        response = await services.endpoint.process_request(
+            None,
+            Request(
+                f"/api/sessions/{key}/generated-assets{query}",
+                Headers({"Authorization": f"Bearer {token}"}),
+            ),
+            is_allowed=lambda _client: True,
+        )
+        assert response.status_code == 200, response.body
+        return json.loads(response.body)
+
+    default_payload = await fetch("")
+    assert [group["sequence"] for group in default_payload["groups"]] == [1, 2, 3]
+
+    newest_payload = await fetch("?order=newest")
+    assert [group["sequence"] for group in newest_payload["groups"]] == [3, 2, 1]
+
+    first = await fetch("?limit=1&cursor=0&order=newest")
+    second = await fetch("?limit=1&cursor=1&order=newest")
+    assert [group["sequence"] for group in first["groups"]] == [3]
+    assert first["next"] == "1"
+    assert [group["sequence"] for group in second["groups"]] == [2]
+    assert second["next"] == "2"
+
+
 async def test_global_generated_asset_library_pages_across_retained_sessions(
     assets_client,
 ) -> None:

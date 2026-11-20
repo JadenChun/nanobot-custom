@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from mcp.types import ResourceLink as _RealResourceLink
 
 import nanobot.agent.tools.mcp as mcp_mod
 from nanobot.agent.tools.mcp import (
@@ -783,6 +784,105 @@ async def test_execute_stages_trusted_video_resource(tmp_path: Path) -> None:
     assert artifact["bytes"] == len(b"video-bytes")
     assert Path(artifact["path"]).is_file()
     assert Path(artifact["path"]).read_bytes() == b"video-bytes"
+
+
+@pytest.mark.asyncio
+async def test_execute_stages_resource_link_with_any_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic.networks import AnyUrl
+
+    from nanobot.agent.turn import ToolOutcome
+    from nanobot.config.loader import set_config_path
+
+    set_config_path(tmp_path / "config.json")
+    output_root = tmp_path / "comfy-output"
+    output_root.mkdir()
+    video = output_root / "clip.mp4"
+    video.write_bytes(b"video-bytes")
+
+    link = _RealResourceLink(
+        type="resource_link",
+        uri=video.as_uri(),
+        name="clip.mp4",
+        mimeType="video/mp4",
+    )
+    assert isinstance(link.uri, AnyUrl)
+    assert not isinstance(link.uri, str)
+    monkeypatch.setattr(sys.modules["mcp"].types, "ResourceLink", _RealResourceLink)
+
+    async def call_tool(_name: str, arguments: dict) -> object:
+        return SimpleNamespace(content=[
+            _FakeTextContent(json.dumps({"prompt": "a clip"})),
+            link,
+        ])
+
+    wrapper = _make_wrapper(
+        SimpleNamespace(call_tool=call_tool),
+        media_output_roots=(output_root,),
+    )
+
+    result = await wrapper.execute(prompt="a clip")
+
+    assert isinstance(result, ToolOutcome)
+    assert len(result.media_artifacts) == 1
+    artifact = result.media_artifacts[0]
+    assert artifact["kind"] == "video"
+    assert artifact["mime"] == "video/mp4"
+    assert Path(artifact["path"]).read_bytes() == b"video-bytes"
+    visible = json.loads(result.content)
+    assert [item["id"] for item in visible["artifacts"]] == [artifact["id"]]
+
+
+@pytest.mark.asyncio
+async def test_execute_keeps_video_artifact_and_demotes_review_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.turn import ToolOutcome
+    from nanobot.config.loader import set_config_path
+
+    set_config_path(tmp_path / "config.json")
+    output_root = tmp_path / "comfy-output"
+    output_root.mkdir()
+    video = output_root / "clip.mp4"
+    video.write_bytes(b"video-bytes")
+    monkeypatch.setattr(sys.modules["mcp"].types, "ResourceLink", _RealResourceLink)
+
+    payload = {
+        "video": str(video),
+        "review": {"sampled_frames": [1, 2, 3]},
+    }
+
+    async def call_tool(_name: str, arguments: dict) -> object:
+        content: list[object] = [
+            _FakeTextContent(json.dumps(payload)),
+            _RealResourceLink(
+                type="resource_link",
+                uri=video.as_uri(),
+                name="clip.mp4",
+                mimeType="video/mp4",
+            ),
+        ]
+        for frame in range(3):
+            content.append(_FakeTextContent(f"REVIEW FRAME {frame + 1}/3"))
+            content.append(_FakeImageContent(_PNG_B64, "image/png"))
+        return SimpleNamespace(content=content)
+
+    wrapper = _make_wrapper(
+        SimpleNamespace(call_tool=call_tool),
+        media_output_roots=(output_root,),
+    )
+
+    result = await wrapper.execute(prompt="a clip", workflow="minimax_h3")
+
+    assert isinstance(result, ToolOutcome)
+    assert [artifact["kind"] for artifact in result.media_artifacts] == ["video"]
+    visible = json.loads(result.content)
+    assert [artifact["kind"] for artifact in visible["artifacts"]] == ["video"]
+    assert visible["artifacts"][0]["model"] == "minimax_h3"
+    reference_images = visible["reference_images"]
+    assert len(reference_images) == 3
+    assert all(Path(path).is_file() for path in reference_images)
 
 
 @pytest.mark.asyncio

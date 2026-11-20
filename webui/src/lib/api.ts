@@ -985,6 +985,7 @@ export async function fetchSessionGeneratedAssets(
   const query = new URLSearchParams();
   if (options.limit !== undefined) query.set("limit", String(options.limit));
   if (options.cursor) query.set("cursor", options.cursor);
+  query.set("order", "newest");
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<SessionGeneratedAssetsPayload>(
     `${base}/api/sessions/${encodeURIComponent(key)}/generated-assets${suffix}`,

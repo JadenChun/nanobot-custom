@@ -1334,6 +1334,24 @@ class MCPToolWrapper(_MCPWrapperBase):
             )
 
             payload = parse_embedded_text_payload("\n".join(text_parts))
+            staged_videos = [
+                artifact for artifact in artifacts if artifact.get("kind") == "video"
+            ]
+            review_images = [
+                image["path"] for image in inline_images if image is not None
+            ]
+            if staged_videos and review_images:
+                # Video tools return the clip as a resource link plus sampled
+                # review frames. Keep the clip as the primary artifact and expose
+                # the frames only as reference images so the assets library stays clean.
+                return (
+                    _mcp_media_tool_result(
+                        text_parts,
+                        staged_videos,
+                        reference_images=review_images,
+                    ),
+                    staged_videos,
+                )
             candidate_count = candidate_artifact_count(payload)
             if candidate_count is not None and candidate_count <= len(inline_images):
                 # Each inline image has one slot. File links can repeat those images.
@@ -1358,7 +1376,7 @@ class MCPToolWrapper(_MCPWrapperBase):
             return store_generated_image_artifact(
                 data_url,
                 prompt=str(arguments.get("prompt") or ""),
-                model=str(arguments.get("model") or ""),
+                model=str(arguments.get("model") or arguments.get("workflow") or ""),
                 save_dir="generated",
                 provider=f"mcp:{self._server_name}",
             )
@@ -1376,11 +1394,21 @@ class MCPToolWrapper(_MCPWrapperBase):
         """Stage a trusted local MCP resource file into the managed media store."""
         from nanobot.utils.artifacts import ArtifactError, store_generated_file_artifact
 
-        uri = getattr(block, "uri", None)
-        if not isinstance(uri, str) or not uri:
+        raw_uri = getattr(block, "uri", None)
+        # The MCP SDK models ``uri`` as ``pydantic.AnyUrl``, not ``str``.
+        uri = str(raw_uri).strip() if raw_uri is not None else ""
+        if not uri:
+            logger.warning(
+                "MCP tool '{}' returned a resource link without a URI", self._name
+            )
             return None
         parsed = urllib.parse.urlparse(uri)
         if parsed.scheme != "file":
+            logger.debug(
+                "MCP tool '{}' returned non-file resource link scheme '{}'",
+                self._name,
+                parsed.scheme,
+            )
             return None
         raw_path = urllib.parse.unquote(parsed.path)
         if parsed.netloc and parsed.netloc not in {"", "localhost"}:
@@ -1392,7 +1420,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                 Path(raw_path),
                 kind=kind,
                 prompt=str(arguments.get("prompt") or ""),
-                model=str(arguments.get("model") or ""),
+                model=str(arguments.get("model") or arguments.get("workflow") or ""),
                 provider=f"mcp:{self._server_name}",
                 allowed_roots=self._media_output_roots,
                 save_dir="generated",
