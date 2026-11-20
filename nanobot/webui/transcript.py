@@ -1154,49 +1154,6 @@ def _read_chunk_turns(session_key: str, chunk_id: str) -> list[list[dict[str, An
     return _split_transcript_turns(_read_transcript_file(path))
 
 
-def _group_transcript_turn_lines(path: Path) -> list[list[str]]:
-    """Group raw transcript lines into turns without parsing their records."""
-    grouped: list[list[str]] = []
-    current: list[str] = []
-    try:
-        with path.open(encoding="utf-8") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                current.append(line)
-                if '"turn_end"' in line:
-                    grouped.append(current)
-                    current = []
-    except OSError:
-        return []
-    if current:
-        grouped.append(current)
-    return grouped
-
-
-def _grouped_turn_stats(grouped: list[list[str]]) -> tuple[int, int]:
-    """Return (turn count, user row count) for already-grouped lines."""
-    users = sum(
-        1
-        for turn in grouped
-        for line in turn
-        if '"event":"user"' in line or '"role":"user"' in line
-    )
-    return len(grouped), users
-
-
-def _parse_transcript_turn_lines(lines: list[str]) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for line in lines:
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict):
-            records.append(cast(dict[str, Any], record))
-    return records
-
-
 def _cached_chunk_turns(
     session_key: str,
     chunk_id: str,
@@ -1205,36 +1162,6 @@ def _cached_chunk_turns(
     if chunk_id not in turn_cache:
         turn_cache[chunk_id] = _read_chunk_turns(session_key, chunk_id)
     return turn_cache[chunk_id]
-
-
-def _chunk_turn(
-    session_key: str,
-    chunk_id: str,
-    turn_index: int,
-    turn_cache: dict[str, list[list[dict[str, Any]]]],
-    raw_cache: dict[str, list[list[str]]] | None = None,
-) -> list[dict[str, Any]]:
-    """Return one turn of a chunk, parsing only that turn of the active file.
-
-    A page selects a handful of trailing turns. Parsing the whole active chunk
-    to reach them made an uncached page read scale with the file; grouping the
-    raw lines once and parsing only the selected turns keeps it page-bounded.
-    """
-    if chunk_id != _TRANSCRIPT_ACTIVE_CHUNK_ID:
-        turns = _cached_chunk_turns(session_key, chunk_id, turn_cache)
-        if not 0 <= turn_index < len(turns):
-            return []
-        return turns[turn_index]
-    groups = _active_chunk_groups(session_key, raw_cache if raw_cache is not None else {})
-    if not 0 <= turn_index < len(groups):
-        return []
-    parsed = turn_cache.get(chunk_id)
-    if parsed is None:
-        parsed = [_parse_transcript_turn_lines(group) for group in groups]
-        turn_cache[chunk_id] = parsed
-    if not 0 <= turn_index < len(parsed):
-        return []
-    return parsed[turn_index]
 
 
 def _encode_page_cursor(before_turn_ordinal: int) -> str:
@@ -1273,22 +1200,9 @@ def _coerce_page_limit(limit: int | None) -> int:
     return max(1, min(_MAX_TRANSCRIPT_PAGE_LIMIT, int(limit)))
 
 
-def _active_chunk_groups(
-    session_key: str,
-    raw_cache: dict[str, list[list[str]]],
-) -> list[list[str]]:
-    """Return the active chunk's turns as raw line groups, read once per page."""
-    groups = raw_cache.get(_TRANSCRIPT_ACTIVE_CHUNK_ID)
-    if groups is None:
-        groups = _group_transcript_turn_lines(active_transcript_path(session_key))
-        raw_cache[_TRANSCRIPT_ACTIVE_CHUNK_ID] = groups
-    return groups
-
-
 def _chunk_turn_refs(
     session_key: str,
     turn_cache: dict[str, list[list[dict[str, Any]]]],
-    raw_cache: dict[str, list[list[str]]] | None = None,
 ) -> list[_TranscriptChunkRef]:
     refs: list[_TranscriptChunkRef] = []
     ordinal = 0
@@ -1299,21 +1213,16 @@ def _chunk_turn_refs(
             continue
         refs.append(_TranscriptChunkRef(chunk_id, ordinal, turn_count, int(entry["user_count"])))
         ordinal += turn_count
-    if active_transcript_path(session_key).is_file():
-        # Grouping raw lines once replaces a full record parse: this ref needs
-        # only the turn and user counts, and a page parses just the turns it
-        # selects from the same groups.
-        groups = _active_chunk_groups(session_key, raw_cache if raw_cache is not None else {})
-        active_turn_count, active_user_count = _grouped_turn_stats(groups)
-        if active_turn_count > 0:
-            refs.append(
-                _TranscriptChunkRef(
-                    _TRANSCRIPT_ACTIVE_CHUNK_ID,
-                    ordinal,
-                    active_turn_count,
-                    active_user_count,
-                ),
-            )
+    # Use the same structural boundaries as segment rotation and replay.
+    # Cache the decoded active chunk for just this request, not across writes.
+    active_turns = _cached_chunk_turns(session_key, _TRANSCRIPT_ACTIVE_CHUNK_ID, turn_cache)
+    if active_turns:
+        refs.append(_TranscriptChunkRef(
+            _TRANSCRIPT_ACTIVE_CHUNK_ID,
+            ordinal,
+            len(active_turns),
+            sum(1 for turn in active_turns for row in turn if _is_user_transcript_row(row)),
+        ))
     return refs
 
 
@@ -1352,8 +1261,7 @@ def _select_transcript_page(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     page_limit = _coerce_page_limit(limit)
     turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
-    raw_cache: dict[str, list[list[str]]] = {}
-    chunks = _chunk_turn_refs(session_key, turn_cache, raw_cache)
+    chunks = _chunk_turn_refs(session_key, turn_cache)
     total_turns = sum(chunk.turn_count for chunk in chunks)
     before_ordinal = _decode_page_cursor(before)
     upper_ordinal = total_turns if before_ordinal is None else min(before_ordinal, total_turns)
@@ -1382,9 +1290,7 @@ def _select_transcript_page(
         local_upper = min(local_upper, len(turns))
         for turn_index in range(local_upper - 1, -1, -1):
             ordinal = chunk.start_ordinal + turn_index
-            turn = _chunk_turn(
-                session_key, chunk.chunk_id, turn_index, turn_cache, raw_cache,
-            )
+            turn = turns[turn_index]
             selected.append(_TranscriptTurnRef(ordinal, turn))
             selected_message_count += len(replay_transcript_to_ui_messages(turn))
             if selected_message_count >= page_limit:
@@ -1434,22 +1340,6 @@ def _select_transcript_page(
 _TURN_INDEX_DEFAULT_LIMIT = 400
 
 
-def _turn_user_record(group: list[str]) -> dict[str, Any] | None:
-    """Return a turn's user row, parsing only candidate lines."""
-    for line in group:
-        if '"event":"user"' not in line and '"role":"user"' not in line:
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict) and _is_user_transcript_row(
-            cast(dict[str, Any], record),
-        ):
-            return cast(dict[str, Any], record)
-    return None
-
-
 def _turn_label(record: dict[str, Any] | None, ordinal: int) -> str:
     text = ""
     if record is not None:
@@ -1463,38 +1353,19 @@ def _turn_label(record: dict[str, Any] | None, ordinal: int) -> str:
     return text if len(text) <= 120 else f"{text[:117]}..."
 
 
-def _chunk_turn_groups(
-    session_key: str,
-    chunk_id: str,
-    raw_cache: dict[str, list[list[str]]],
-) -> list[list[str]]:
-    if chunk_id == _TRANSCRIPT_ACTIVE_CHUNK_ID:
-        return _active_chunk_groups(session_key, raw_cache)
-    groups = raw_cache.get(chunk_id)
-    if groups is None:
-        groups = _group_transcript_turn_lines(_segment_file_path(session_key, chunk_id))
-        raw_cache[chunk_id] = groups
-    return groups
-
-
 def session_turn_index(
     session_key: str,
     *,
     limit: int | None = None,
     before: str | None = None,
 ) -> dict[str, Any] | None:
-    """Summarise every turn so a navigator can draw the whole session.
-
-    Only user rows are parsed, and the newest page is selected first, so the
-    cost tracks the requested page plus one sequential scan rather than a full
-    record replay.
-    """
+    """Summarise a page of turns without replaying their display rows."""
     page_limit = max(
         1,
         min(_MAX_TRANSCRIPT_PAGE_LIMIT, int(limit) if limit is not None else _TURN_INDEX_DEFAULT_LIMIT),
     )
-    raw_cache: dict[str, list[list[str]]] = {}
-    chunks = _chunk_turn_refs(session_key, {}, raw_cache)
+    turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
+    chunks = _chunk_turn_refs(session_key, turn_cache)
     total_turns = sum(chunk.turn_count for chunk in chunks)
     turns: list[dict[str, Any]] = []
     if total_turns <= 0:
@@ -1509,11 +1380,13 @@ def session_turn_index(
         local_upper = min(chunk.turn_count, upper_ordinal - chunk.start_ordinal)
         if local_upper <= 0:
             continue
-        groups = _chunk_turn_groups(session_key, chunk.chunk_id, raw_cache)
-        local_upper = min(local_upper, len(groups))
+        chunk_turns = _cached_chunk_turns(session_key, chunk.chunk_id, turn_cache)
+        local_upper = min(local_upper, len(chunk_turns))
         for turn_index in range(local_upper - 1, -1, -1):
             ordinal = chunk.start_ordinal + turn_index
-            record = _turn_user_record(groups[turn_index])
+            record = next(
+                (row for row in chunk_turns[turn_index] if _is_user_transcript_row(row)), None,
+            )
             created_at = record.get("created_at_ms") if record is not None else None
             turns.append({
                 "ordinal": ordinal,

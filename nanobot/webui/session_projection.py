@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger as default_logger
 
@@ -16,6 +16,9 @@ from nanobot.session.webui_turns import (
     websocket_turn_stopping,
     websocket_turn_wall_started_at,
 )
+
+if TYPE_CHECKING:
+    from nanobot.session.source_store import SourceSnapshot
 
 
 class SessionMetadataReader(Protocol):
@@ -38,13 +41,18 @@ class WebUISessionProjection:
         self._stop_target_for_key = stop_target_for_key
         self._log = log
 
-    def attach_fields(self, session_key: str) -> dict[str, Any]:
+    def attach_fields(
+        self, session_key: str, *, source: SourceSnapshot | None = None,
+    ) -> dict[str, Any]:
         """Return the session runtime facts sent with an attach handshake."""
-        snapshot = (
-            self._sessions.read_session_metadata(session_key)
-            if self._sessions is not None else None
-        )
-        raw_metadata = snapshot.get("metadata") if snapshot is not None else None
+        if source is not None and source.state.session_key == session_key:
+            raw_metadata = source.header["metadata"]
+        else:
+            snapshot = (
+                self._sessions.read_session_metadata(session_key)
+                if self._sessions is not None else None
+            )
+            raw_metadata = snapshot.get("metadata") if snapshot is not None else None
         metadata = cast(dict[str, object], raw_metadata) if isinstance(raw_metadata, dict) else None
 
         fields: dict[str, Any] = {}

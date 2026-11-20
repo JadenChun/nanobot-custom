@@ -409,6 +409,7 @@ class WebUIWorkspaceController:
         session_key: str,
         *,
         source_snapshot: SourceSnapshot | None = None,
+        include_live_permissions: bool = True,
     ) -> WorkspaceScope:
         if source_snapshot is not None and source_snapshot.state.session_key != session_key:
             raise WorkspaceScopeError("workspace source does not match the session")
@@ -428,7 +429,7 @@ class WebUIWorkspaceController:
         metadata_data = cast(dict[str, Any], metadata)
         scope = self._scope_from_metadata_value(
             cast(object, metadata_data.get(WORKSPACE_SCOPE_METADATA_KEY)),
-            preserve_full=True,
+            preserve_full=include_live_permissions,
         )
         if scope.access_mode == "full":
             source = (

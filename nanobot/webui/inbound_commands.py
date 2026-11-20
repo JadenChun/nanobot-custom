@@ -87,6 +87,7 @@ from nanobot.workspace_access_recovery import FolderAccessRequest, WorkspaceScop
 
 if TYPE_CHECKING:
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
+    from nanobot.session.source_store import SourceSnapshot
 
 _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
@@ -639,13 +640,13 @@ class WebUICommandRouter:
             return principal_tag("local")
         return None
 
-    async def _input_attempt_attach_fields(
+    async def _read_input_attempt_attach(
         self, connection: ServerConnection, chat_id: str, envelope: dict[str, Any],
-    ) -> dict[str, object]:
-        """One authorized, noncreating source read; no negative/replay authority."""
+    ) -> tuple[dict[str, object], SourceSnapshot | None]:
+        """Read exact attempt proof and the source for the same attach handshake."""
         principal = self._input_attempt_principal(connection)
         if principal is None:
-            return {}
+            return {}, None
         fields: dict[str, object] = {}
         attempt: InputAttempt | None = None
         if "input_attempt_query" in envelope:
@@ -658,22 +659,22 @@ class WebUICommandRouter:
                     try:
                         turn_id = turn_identity(cast(dict[object, object], raw).get("turn_id"))
                     except ValueError:
-                        return fields
+                        return fields, None
                     fields["input_attempt_result"] = {
                         "version": 1, "turn_id": turn_id, "disposition": "unknown",
                     }
-                return fields
+                return fields, None
             fields["input_attempt_result"] = {
                 "version": 1, "turn_id": attempt.turn_id, "disposition": "unknown",
             }
         sessions = self.gateway.session_manager
         if sessions is None:
-            return fields
+            return fields, None
         try:
             read = await asyncio.to_thread(sessions.read_existing_canonical_source,
                                            webui_session_key(chat_id))
             if read is None:
-                return fields
+                return fields, None
             _, snapshot = read
             source = InputAttemptSource.from_state(snapshot.state)
             fields["input_attempt_source"] = {
@@ -689,8 +690,8 @@ class WebUICommandRouter:
                     }
         except Exception:
             # Read/storage/conflict errors are UNKNOWN; never log raw evidence.
-            pass
-        return fields
+            return fields, None
+        return fields, snapshot
 
     async def dispatch(
         self,
@@ -818,9 +819,10 @@ class WebUICommandRouter:
                 return
             self._transport.webui_attach(connection, chat_id)
             principal_before_read = self._input_attempt_principal(connection)
-            fields = self._session_projection.attach_fields(webui_session_key(chat_id))
+            attempt_fields: dict[str, object] = {}
+            source: SourceSnapshot | None = None
             if not self._temporary_chats.owns(connection, chat_id):
-                fields.update(await self._input_attempt_attach_fields(connection, chat_id, envelope))
+                attempt_fields, source = await self._read_input_attempt_attach(connection, chat_id, envelope)
             # Authorization/subscription may change while the pure read awaits.
             if _typed_mobile_identity(connection) is not None:
                 if not await self._transport.revalidate_mobile_connection(connection):
@@ -833,6 +835,8 @@ class WebUICommandRouter:
                 return
             if self._input_attempt_principal(connection) != principal_before_read:
                 return
+            fields = self._session_projection.attach_fields(webui_session_key(chat_id), source=source)
+            fields.update(attempt_fields)
             await self._transport.webui_send_event(connection, "attached", chat_id=chat_id, **fields)
             await self._transport.webui_hydrate(chat_id)
             return

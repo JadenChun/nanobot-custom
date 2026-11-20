@@ -607,7 +607,7 @@ class WorkspaceAccessRecoveryOwner:
         controls_available: bool,
         scope: WorkspaceScope,
     ) -> tuple[FolderAccessRequest | None, Any, WorkspacePermissionReference | None]:
-        """Project the history response from one validated canonical source."""
+        """Project the current controls from one validated canonical source."""
         key, checked_chat = self._key(chat_id)
         if snapshot.state.session_key != key or snapshot.header["metadata"].get("webui") is not True:
             raise WorkspaceAccessActionError(404, "session_not_found")

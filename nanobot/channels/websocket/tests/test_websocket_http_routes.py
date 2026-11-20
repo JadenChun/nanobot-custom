@@ -3213,9 +3213,10 @@ async def test_webui_thread_resigns_assistant_media_urls(
         pending = channel.gateway.media.attachment_store.custody.records("pending")
 
         repeated = await _http_get(
-            "http://127.0.0.1:29914/api/sessions/websocket:video-replay/webui-thread",
+            "http://127.0.0.1:29914/api/sessions/websocket:video-replay/webui-thread?view=history",
             headers=auth,
         )
+        assert repeated.status_code == 200
         repeated_assistant = next(
             m for m in repeated.json()["messages"] if m["role"] == "assistant"
         )

@@ -1452,6 +1452,100 @@ async def test_first_managed_chat_open_does_not_read_unrelated_sources(
         await lease.close()
 
 
+@pytest.mark.parametrize("remote", [False, True])
+async def test_saved_history_and_controls_have_independent_availability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    lease = await DurableSessionAuthority(workspace, sessions_root=tmp_path / "sessions").acquire()
+    key = "websocket:split-read"
+    try:
+        manager = lease.manager
+        assert manager.upsert_session_metadata(key, {
+            "webui": True,
+            "workspace_scope": default_workspace_scope(workspace, True).metadata(),
+        }, create_if_absent=True)
+        history = [
+            {"role": "user", "content": "saved question"},
+            {"role": "assistant", "content": "saved reply"},
+        ]
+        write_session_messages_as_transcript(key, history)
+        gateway = _make_channel(tmp_path, manager).gateway
+        token = gateway.tokens.issue_api_token(300)
+        headers = Headers([("Host", "127.0.0.1:8765"), ("Authorization", f"Bearer {token}")])
+        connection = SimpleNamespace(
+            remote_address=("127.0.0.1", 1234), request=SimpleNamespace(headers=headers),
+        )
+
+        async def read(query: str) -> tuple[int, dict[str, Any]]:
+            if remote:
+                return gateway.http.mobile_thread_payload(
+                    key, {"view": [query]}, owner=True,
+                )
+            response = await gateway.http.dispatch(
+                connection, Request(f"/api/sessions/{key}/webui-thread?view={query}", headers),
+            )
+            return response.status_code, json.loads(response.body) if response.status_code == 200 else {}
+
+        def unavailable(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("live projection unavailable")
+
+        def no_stop(*_args: object, **_kwargs: object) -> None:
+            pytest.fail("a saved history read must not project Stop")
+
+        recovery = gateway.http.workspace_access_recovery
+        assert recovery is not None
+        with monkeypatch.context() as patch:
+            patch.setattr(recovery, "thread_permission_context", unavailable)
+            status, body = await read("history")
+            assert status == 200
+            assert [row["content"] for row in body["messages"]] == ["saved question", "saved reply"]
+            assert body["view"] == "history"
+            assert "workspace_permissions" not in body
+            assert "workspace_access_request" not in body
+            assert "stop_target" not in body
+
+            patch.setattr(gateway.http, "stop_target_for_key", no_stop)
+            assert (await read("history"))[0] == 200
+
+        def no_history(*_args: object, **_kwargs: object) -> None:
+            pytest.fail("a controls read must not replay saved history")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ws_http, "build_webui_thread_response", no_history)
+            status, body = await read("controls")
+            assert status == 200
+            assert body["view"] == "controls"
+            assert body["workspace_permissions"]["mode"] == "restricted"
+            assert body["workspace_access_request"] is None
+            assert "messages" not in body
+            patch.setattr(recovery, "thread_permission_context", unavailable)
+            assert (await read("controls"))[0] == 503
+
+        # A persisted Full label is folder context, not permission evidence.
+        # Its owner need not answer for the saved conversation to be readable.
+        assert manager.upsert_session_metadata(key, {
+            "workspace_scope": default_workspace_scope(workspace, False).metadata(),
+        })
+        with monkeypatch.context() as patch:
+            patch.setattr(manager.desktop_permissions, "full_reference", unavailable)
+            assert (await read("history"))[0] == 200
+
+        # Leave a readable display copy to prove it is not read authority.
+        assert manager.delete_session(key)
+        write_session_messages_as_transcript(key, history)
+        assert (await read("history"))[0] == 404
+
+        refused = await gateway.http.dispatch(
+            connection, Request(f"/api/sessions/{key}/webui-thread?view=history", Headers()),
+        )
+        assert refused.status_code == 401
+    finally:
+        assert lease.close is not None
+        await lease.close()
+
+
 def test_restricted_mode_is_idempotent_while_once_is_live(tmp_path: Path) -> None:
     home = tmp_path / "agent"
     project = tmp_path / "project"

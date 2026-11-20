@@ -18,7 +18,8 @@ func TestMobileUIReadRoutesAreAllowlisted(t *testing.T) {
 	}{
 		{"mobile_model_settings", "/mobile/v1/model-settings"},
 		{"mobile_workspaces", "/mobile/v1/workspaces"},
-		{"mobile_thread", "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2&direction=latest"},
+		{"mobile_thread", "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2&direction=latest&view=history"},
+		{"mobile_thread", "/mobile/v1/sessions/websocket%3Achat-1/thread?view=controls"},
 		{"mobile_delegated_children", "/mobile/v1/sessions/websocket%3Achat-1/delegated-children?limit=20&before=eyJ2IjoxfQ"},
 		{"mobile_api", "/mobile/v1/api?path=%2Fapi%2Fcommands"},
 		{"mobile_dispatch", "/mobile/v1/dispatch?path=%2Fapi%2Fsettings"},
