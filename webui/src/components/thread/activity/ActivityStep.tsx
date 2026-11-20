@@ -10,6 +10,8 @@ export interface ActivityStepProps {
   icon?: LucideIcon;
   marker?: ReactNode;
   label: ReactNode;
+  /** Optional second line, used for live progress detail under the label. */
+  description?: ReactNode;
   ariaLabel?: string;
   active?: boolean;
   tone?: ActivityStepTone;
@@ -24,6 +26,7 @@ export function ActivityStep({
   icon: Icon,
   marker,
   label,
+  description,
   ariaLabel,
   active = false,
   tone = active ? "active" : "neutral",
@@ -81,6 +84,11 @@ export function ActivityStep({
             {label}
           </StreamingLabelSheen>
         </div>
+        {description ? (
+          <div data-testid="activity-description" className="mt-1 min-w-0">
+            {description}
+          </div>
+        ) : null}
       </div>
     </div>
   );

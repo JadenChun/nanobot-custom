@@ -502,6 +502,59 @@ describe("AgentActivityCluster", () => {
     expect(screen.getByText("Worked for 12s")).toBeInTheDocument();
   });
 
+  it("ticks the live Working duration while the turn streams", () => {
+    vi.useFakeTimers();
+    try {
+      const startedAt = 1_800_000_000_000;
+      vi.setSystemTime(startedAt + 12_000);
+      render(
+        <AgentActivityCluster
+          messages={[{
+            id: "live",
+            role: "tool",
+            kind: "trace",
+            content: "search()",
+            traces: ["search()"],
+            createdAt: startedAt,
+          }]}
+          isTurnStreaming
+          hasBodyBelow={false}
+          startedAtMs={startedAt}
+        />,
+      );
+
+      const live = screen.getByRole("button", { name: "Working · 12s" });
+      expect(live).toHaveAttribute("aria-expanded", "true");
+
+      act(() => { vi.advanceTimersByTime(3_000); });
+      expect(screen.getByRole("button", { name: "Working · 15s" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the larger preview height while live and when completed activity is expanded", () => {
+    const { rerender } = render(
+      <AgentActivityCluster
+        messages={activityMessages()}
+        isTurnStreaming
+        hasBodyBelow={false}
+      />,
+    );
+
+    expect(screen.getByTestId("agent-activity-scroll")).toHaveClass("max-h-[min(42vh,360px)]");
+
+    rerender(
+      <AgentActivityCluster
+        messages={activityMessages()}
+        isTurnStreaming={false}
+        hasBodyBelow
+        turnLatencyMs={12_400}
+      />,
+    );
+    expect(screen.getByTestId("agent-activity-scroll")).toHaveClass("max-h-[min(60vh,520px)]");
+  });
+
   it("labels mixed tool activity as work instead of thought", () => {
     render(
       <AgentActivityCluster
@@ -1454,6 +1507,49 @@ describe("AgentActivityCluster", () => {
     expect(screen.queryByText(/browser_navigate/)).not.toBeInTheDocument();
     expect(screen.getByTestId("activity-mcp-logo-browserbase")).toBeInTheDocument();
     expect(screen.queryByText(/mcp_browserbase_browser_navigate/)).not.toBeInTheDocument();
+  });
+
+  it("shows live ComfyUI progress text and percentage on the running MCP row", () => {
+    render(
+      <AgentActivityCluster
+        messages={[{
+          id: "t-comfy",
+          role: "tool",
+          kind: "trace",
+          content: 'mcp_comfy_generate_video({"workflow":"wan"})',
+          traces: ['mcp_comfy_generate_video({"workflow":"wan"})'],
+          toolEvents: [
+            {
+              phase: "start",
+              call_id: "call-comfy",
+              name: "mcp_comfy_generate_video",
+              arguments: { workflow: "wan" },
+            },
+            {
+              phase: "progress",
+              call_id: "call-comfy",
+              name: "mcp_comfy_generate_video",
+              arguments: { workflow: "wan" },
+              progress: 62,
+              total: 100,
+              message: "ComfyUI is generating prompt...",
+            },
+          ],
+          createdAt: 1,
+        }]}
+        isTurnStreaming
+        hasBodyBelow={false}
+        mcpPresets={[{ ...BROWSERBASE_MCP, name: "comfy", display_name: "ComfyUI" }]}
+      />,
+    );
+
+    const row = screen.getByTestId("activity-line");
+    expect(row).toHaveTextContent("Generating video wan · ComfyUI");
+    expect(row).toHaveTextContent("ComfyUI is generating prompt...");
+    expect(row).toHaveTextContent("62%");
+    const bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuenow", "62");
+    expect(bar).toHaveTextContent("62%");
   });
 
   it("renders public web fetch traces with the site favicon", () => {

@@ -47,6 +47,12 @@ import {
 import { WebSearchRun } from "@/components/thread/activity/WebSearchRun";
 import { webSearchRunsByTraceLine } from "@/components/thread/activity/web-search-model";
 import {
+  formatWorkDuration,
+  progressPercent,
+  titleFromPresetName,
+  useWorkingNow,
+} from "@/components/thread/working-status";
+import {
   isAgentActivityMember,
   isReasoningOnlyAssistant,
 } from "@/lib/activity-timeline";
@@ -100,6 +106,10 @@ interface McpRunSummary {
   args: unknown;
   status: McpRunStatus;
   error?: string;
+  /** Live phase text reported by the MCP server while the call runs. */
+  progressMessage?: string;
+  /** Rounded 0–100 progress for the running call. */
+  progressPercent?: number;
 }
 
 function countActivity(
@@ -207,7 +217,10 @@ export function AgentActivityCluster({
   const [userToggledOuter, setUserToggledOuter] = useState(false);
   const [outerOpenLocal, setOuterOpenLocal] = useState(false);
   const [completionHoldOpen, setCompletionHoldOpen] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useWorkingNow(
+    isTurnStreaming && (retryStatus?.state === "waiting" || showTurnDuration),
+    pageVisible,
+  );
   const [activityScrollFade, setActivityScrollFade] = useState({ top: false, bottom: false });
   const activityScrollRef = useRef<HTMLDivElement>(null);
   const activityContentRef = useRef<HTMLDivElement>(null);
@@ -246,10 +259,14 @@ export function AgentActivityCluster({
     ? 0
     : Math.max(0, Math.ceil(retryStatus.next_retry_at - now / 1000));
   const elapsedLabel = isTurnStreaming
-    // Live work names the state only. A ticking duration beside a live answer
-    // reads as a second progress claim, and the reference chat UIs say
-    // "Working" while the request is in flight.
-    ? t("message.activityWorking", { defaultValue: "Working" })
+    // Live work stays a moving target: the ticking elapsed time proves the
+    // request is progressing even when reasoning and tool rows are folded away.
+    ? durationMs > 0
+      ? t("message.activityWorkingFor", {
+          duration: activityDuration,
+          defaultValue: "Working · {{duration}}",
+        })
+      : t("message.activityWorking", { defaultValue: "Working" })
     : durationMs <= 0
       ? t("message.activityWorked", { defaultValue: "Worked" })
       : t("message.activityWorkedFor", {
@@ -341,14 +358,6 @@ export function AgentActivityCluster({
   }, [outerExpanded, scheduleActivityScrollToBottom, syncActivityScrollFade]);
 
   useEffect(() => cancelActivityScrollFrame, [cancelActivityScrollFrame]);
-
-  // Only a retry countdown needs a live clock; the working label is static.
-  useEffect(() => {
-    if (retryStatus?.state !== "waiting" || !isTurnStreaming || !pageVisible) return undefined;
-    setNow(Date.now());
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [isTurnStreaming, pageVisible, retryStatus?.state]);
 
   useEffect(() => {
     const wasStreaming = wasTurnStreamingRef.current;
@@ -447,11 +456,7 @@ function activityDurationMs(
 }
 
 function formatActivityDuration(ms: number): string {
-  const seconds = ms > 0 && ms < 1000 ? 1 : Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  return formatWorkDuration(ms);
 }
 
 function traceLines(message: UIMessage): string[] {
@@ -1004,30 +1009,26 @@ function collectCliRuns(messages: UIMessage[]): CliRunSummary[] {
   return [...runsByKey.values()];
 }
 
-function titleFromPresetName(name: string): string {
-  const productName = PRODUCT_NAME_OVERRIDES[name.toLowerCase()];
-  if (productName) return productName;
-  return name
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ") || name;
-}
-
-const PRODUCT_NAME_OVERRIDES: Record<string, string> = {
-  github: "GitHub",
-  gitlab: "GitLab",
-  openai: "OpenAI",
-};
-
 function mcpRunFromToolName(
   toolName: string,
   argsObject: unknown,
-  options: { key: string; status: McpRunStatus; error?: string },
+  options: {
+    key: string;
+    status: McpRunStatus;
+    error?: string;
+    event?: ToolProgressEvent;
+  },
 ): McpRunSummary | null {
   const match = MCP_TOOL_NAME_RE.exec(toolName);
   if (!match) return null;
   const presetName = match[1].toLowerCase();
+  const percent = options.event
+    ? progressPercent(options.event.progress, options.event.total)
+    : null;
+  const message = options.event && typeof options.event.message === "string"
+    && options.event.message.trim()
+    ? options.event.message.trim()
+    : undefined;
   return {
     key: options.key,
     presetName,
@@ -1036,6 +1037,8 @@ function mcpRunFromToolName(
     args: argsObject,
     status: options.status,
     error: options.error,
+    ...(message ? { progressMessage: message } : {}),
+    ...(percent !== null ? { progressPercent: percent } : {}),
   };
 }
 
@@ -1063,6 +1066,7 @@ function mcpRunFromEvent(event: ToolProgressEvent): McpRunSummary | null {
     key,
     status: cliRunStatusFromPhase(event.phase),
     error: cliRunError(event),
+    event,
   });
 }
 
@@ -1302,12 +1306,22 @@ function McpRunRow({ run, active, preset }: { run: McpRunSummary; active: boolea
     failed ? "error" : rowActive ? "running" : "done",
   );
   const label = `${activity.action}${activity.target ? ` ${activity.target}` : ""} · ${displayName}`;
+  const liveLabel = rowActive
+    ? [
+        label,
+        run.progressMessage,
+        run.progressPercent !== undefined ? `${run.progressPercent}%` : undefined,
+      ].filter(Boolean).join(" · ")
+    : label;
 
   return (
     <ActivityStep
       active={rowActive}
       tone={failed ? "error" : rowActive ? "active" : run.status === "done" ? "success" : "neutral"}
-      label={label}
+      label={liveLabel}
+      description={rowActive && run.progressPercent !== undefined ? (
+        <LiveProgressBar percent={run.progressPercent} color={color} />
+      ) : undefined}
       marker={(
         <span
           data-testid={`activity-mcp-logo-${run.presetName.toLowerCase()}`}
@@ -1340,6 +1354,33 @@ function McpRunRow({ run, active, preset }: { run: McpRunSummary; active: boolea
         </span>
       )}
     />
+  );
+}
+
+function LiveProgressBar({ percent, color }: { percent: number; color: string }) {
+  const clamped = Math.min(100, Math.max(0, percent));
+  return (
+    <span
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={clamped}
+      data-testid="activity-progress-bar"
+      className="flex items-center gap-2"
+    >
+      <span
+        aria-hidden
+        className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted-foreground/15"
+      >
+        <span
+          className="block h-full rounded-full transition-[width] duration-300 ease-out motion-reduce:transition-none"
+          style={{ width: `${clamped}%`, backgroundColor: color }}
+        />
+      </span>
+      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">
+        {clamped}%
+      </span>
+    </span>
   );
 }
 

@@ -1117,6 +1117,10 @@
     "error": "Connection error"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Working",
+      "ariaLabel": "Current step"
+    },
     "compaction": {
       "cancelled": "Context compaction cancelled",
       "empty": "Nothing to compact.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Configure model",
       "chooseAI": "Choose your AI",
       "switchModel": "Switch model for this chat",
+      "back": "Back",
+      "backToQuickModels": "Back to quick models",
+      "searchModels": "Search models",
+      "noMatchingModels": "No matching models",
+      "moreModels": "More models ({{count}})",
       "manageModels": "Manage models",
       "context": {
         "tooltip": "Context {{percent}}%",
@@ -1487,6 +1496,7 @@
     "activityThoughtFor": "Thought for {{duration}}",
     "activityGroup": "Activity",
     "activityWorking": "Working",
+    "activityWorkingFor": "Working · {{duration}}",
     "activityWorked": "Worked",
     "activityWorkedFor": "Worked for {{duration}}",
     "retryConnection": "Connection failed",

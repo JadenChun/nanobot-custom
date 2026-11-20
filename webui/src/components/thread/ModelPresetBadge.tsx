@@ -1,13 +1,12 @@
 import {
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
-import { Check, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -20,6 +19,7 @@ import { inferProviderFromModelName, providerBrand } from "@/lib/provider-brand"
 import { cn } from "@/lib/utils";
 
 const pickerWidthClassName = "w-[min(18rem,calc(100vw-2rem))]";
+const QUICK_SWITCH_LIMIT = 3;
 const LONG_PRESS_MS = 400;
 const PRESS_SLOP_PX = 8;
 const PILL_GAP_PX = 4;
@@ -114,7 +114,6 @@ export function ModelPresetBadge({
   modelPresets = [],
   onPresetChange,
   reasoning,
-  onManageModels,
   onRequestComposerFocus,
   provider,
   providerLabel,
@@ -126,6 +125,8 @@ export function ModelPresetBadge({
 }: ModelPresetBadgeProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
   const [motion, setMotion] = useState<PresetMotion | null>(null);
   const [motionWidth, setMotionWidth] = useState<number | null>(null);
   const gestureRef = useRef<PresetGesture | null>(null);
@@ -160,6 +161,31 @@ export function ModelPresetBadge({
   const opensSetup = Boolean(onClick);
   const canSwitch = !opensSetup && Boolean(onPresetChange) && activeName !== "" && presets.length > 1;
   const currentIndex = Math.max(0, presets.findIndex((preset) => preset.name === activeName));
+  const hasMoreModels = presets.length > QUICK_SWITCH_LIMIT + 1;
+  const quickSwitchPresets = hasMoreModels
+    ? presets
+        .filter((preset) => preset.name !== activeName)
+        .slice(0, QUICK_SWITCH_LIMIT)
+    : presets;
+  const query = modelQuery.trim().toLowerCase();
+  const filteredPresets = query
+    ? presets.filter((preset) =>
+        preset.name.toLowerCase().includes(query)
+        || (preset.model ?? "").toLowerCase().includes(query))
+    : presets;
+  const activeProviderLabel = providerLabel
+    || displayProvider
+    || inferProviderFromModelName(displayModelDetail || displayLabel);
+  // The composer label is the user-facing model name; the preset key is an
+  // internal identifier, so the header never leads with it.
+  const activeDisplayName = displayLabel;
+  const activeDetail = compactModelName(displayModelDetail);
+  const effortLabelFor = (effort: string) => t(`thread.composer.reasoningEfforts.${effort}`, {
+    defaultValue: effortLabel(effort),
+  });
+  // A non-default effort is part of how the next turn will run, so the closed
+  // pill names it next to the model.
+  const activeEffortLabel = reasoning?.value ? effortLabelFor(reasoning.value) : null;
   const pillHeight = isHero ? 32 : 36;
   const pillStride = pillHeight + PILL_GAP_PX;
   const switchModelLabel = t("thread.composer.switchModel", {
@@ -171,11 +197,6 @@ export function ModelPresetBadge({
     setOpen(false);
     if (name !== activeName) onPresetChange?.(name);
     requestAnimationFrame(() => onRequestComposerFocus?.());
-  };
-
-  const openModelSettings = () => {
-    setOpen(false);
-    onManageModels?.();
   };
 
   const clearGesture = () => {
@@ -292,6 +313,7 @@ export function ModelPresetBadge({
       modelDetail={displayModelDetail}
       provider={displayProvider}
       providerLabel={fallbackModelName ? null : providerLabel}
+      effortLabel={needsSetup || fallbackModelName ? null : activeEffortLabel}
       needsSetup={needsSetup}
       needsAttention={needsSetup && attentionRequest > 0}
       fallbackModelName={fallbackModelName}
@@ -416,6 +438,7 @@ export function ModelPresetBadge({
         aria-label={switchModelLabel}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
+          if (showAllModels) return;
           const content = event.currentTarget;
           if (!(content instanceof HTMLElement)) return;
           const selected = content.querySelector<HTMLElement>(
@@ -425,133 +448,212 @@ export function ModelPresetBadge({
         }}
         className={cn(
           pickerWidthClassName,
-          "max-h-[var(--radix-popover-content-available-height)] overflow-y-auto origin-[var(--radix-popover-content-transform-origin)] p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
+          "max-h-[var(--radix-popover-content-available-height)] origin-[var(--radix-popover-content-transform-origin)] overflow-y-auto p-1.5 scrollbar-thin scrollbar-track-transparent data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-bottom-1 data-[state=open]:slide-in-from-bottom-1 duration-200 ease-out motion-reduce:animate-none",
         )}
       >
-        <div
-          role="listbox"
-          aria-label={switchModelLabel}
-          className="max-h-[min(16rem,var(--radix-popover-content-available-height))] overflow-y-auto py-1 scrollbar-thin scrollbar-track-transparent"
-        >
-          {presets.map((preset) => (
-            <PresetOption
-              key={preset.name}
-              preset={preset}
-              selected={preset.name === activeName}
-              onSelect={selectPreset}
-            />
-          ))}
-        </div>
-        {reasoning && <ReasoningEffortSlider key={activeName} control={reasoning} />}
-        {onManageModels ? (
-          <div className="mt-1 border-t border-border/55 pt-1">
-            <button
-              type="button"
-              onClick={openModelSettings}
-              className={cn(
-                floatingItemClassName,
-                floatingItemFocusClassName,
-                "flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground",
-              )}
+        {showAllModels ? (
+          <div data-testid="model-picker-all">
+            <div className="flex items-center gap-1 pb-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAllModels(false);
+                  setModelQuery("");
+                }}
+                aria-label={t("thread.composer.backToQuickModels", {
+                  defaultValue: "Back to quick models",
+                })}
+                className={cn(
+                  floatingItemClassName,
+                  floatingItemFocusClassName,
+                  "inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <ChevronLeft className="size-3.5 shrink-0" strokeWidth={1.9} aria-hidden />
+                <span>{t("thread.composer.back", { defaultValue: "Back" })}</span>
+              </button>
+            </div>
+            <label className="flex items-center gap-2 rounded-lg bg-muted/45 px-2.5 py-1.5">
+              <Search className="size-3.5 shrink-0 text-muted-foreground/70" strokeWidth={1.9} aria-hidden />
+              <input
+                autoFocus
+                type="search"
+                value={modelQuery}
+                onChange={(event) => setModelQuery(event.target.value)}
+                placeholder={t("thread.composer.searchModels", { defaultValue: "Search models" })}
+                aria-label={t("thread.composer.searchModels", { defaultValue: "Search models" })}
+                className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground/60"
+              />
+            </label>
+            <div
+              role="listbox"
+              aria-label={switchModelLabel}
+              className="max-h-[min(16rem,var(--radix-popover-content-available-height))] overflow-y-auto py-1 scrollbar-thin scrollbar-track-transparent"
             >
-              <SlidersHorizontal className="size-4 shrink-0" strokeWidth={1.75} />
-              <span>{t("thread.composer.manageModels")}</span>
-            </button>
+              {filteredPresets.map((preset) => (
+                <PresetOption
+                  key={preset.name}
+                  preset={preset}
+                  selected={preset.name === activeName}
+                  onSelect={selectPreset}
+                />
+              ))}
+            </div>
+            {filteredPresets.length === 0 ? (
+              <p className="px-2.5 py-2 text-xs text-muted-foreground">
+                {t("thread.composer.noMatchingModels", { defaultValue: "No matching models" })}
+              </p>
+            ) : null}
           </div>
-        ) : null}
+        ) : (
+          <>
+            <div
+              data-testid="model-picker-active"
+              className="flex min-w-0 items-center gap-2.5 rounded-lg bg-muted/55 px-2.5 py-2"
+            >
+              <PresetProviderIcon
+                label={activeDisplayName}
+                modelDetail={activeDetail}
+                provider={displayProvider}
+                isHero={false}
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
+                    {activeDisplayName}
+                  </span>
+                  <Check className="size-3.5 shrink-0 text-foreground/70" aria-hidden />
+                </span>
+                {activeProviderLabel ? (
+                  <span className="min-w-0 truncate text-[11.5px] text-muted-foreground">
+                    {activeProviderLabel}
+                  </span>
+                ) : activeDetail && activeDetail !== activeDisplayName ? (
+                  <span className="min-w-0 truncate text-[11.5px] text-muted-foreground">
+                    {activeDetail}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+            {reasoning ? (
+              <ReasoningEffortPills
+                key={activeName}
+                control={reasoning}
+                labelFor={effortLabelFor}
+              />
+            ) : null}
+            <div
+              role="listbox"
+              aria-label={switchModelLabel}
+              data-testid="model-picker-quick-switch"
+              className="py-1"
+            >
+              {quickSwitchPresets.map((preset) => (
+                <PresetOption
+                  key={preset.name}
+                  preset={preset}
+                  selected={preset.name === activeName}
+                  onSelect={selectPreset}
+                />
+              ))}
+            </div>
+            {hasMoreModels ? (
+              <div className="border-t border-border/55 pt-1">
+                <button
+                  type="button"
+                  data-testid="model-picker-more"
+                  onClick={() => setShowAllModels(true)}
+                  className={cn(
+                    floatingItemClassName,
+                    floatingItemFocusClassName,
+                    "flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    {t("thread.composer.moreModels", {
+                      count: presets.length,
+                      defaultValue: "More models ({{count}})",
+                    })}
+                  </span>
+                  <ChevronRight className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
       </PopoverContent>
     </Popover>
   );
 }
 
-function ReasoningEffortSlider({ control }: { control: ModelReasoningControl }) {
-  const { t } = useTranslation();
-  const id = useId();
-  const [preview, setPreview] = useState<number | null>(null);
-  const pointer = useRef<number | null>(null);
-  const efforts = [null, ...control.options];
-  const committed = Math.max(0, efforts.indexOf(control.value));
-  const selected = preview ?? committed;
-  const last = efforts.length - 1;
-  const defaultLabel = t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" });
-  const labelFor = (effort: string) => t(`thread.composer.reasoningEfforts.${effort}`, {
-    defaultValue: effortLabel(effort),
-  });
-  const selectedEffort = efforts[selected];
-  const label = selectedEffort ? labelFor(selectedEffort) : defaultLabel;
-  const valueText = !selectedEffort && control.defaultValue
-    ? `${label} (${labelFor(control.defaultValue)})`
-    : label;
+interface ReasoningEffortPillsProps {
+  control: ModelReasoningControl;
+  labelFor: (effort: string) => string;
+}
 
-  const commit = (index: number) => {
-    if (!control.pending && index !== committed && index >= 0 && index <= last) {
-      control.onChange(efforts[index]);
-    }
-  };
-  const endPreview = (event: PointerEvent<HTMLInputElement>, apply: boolean) => {
-    if (pointer.current !== event.pointerId) return;
-    pointer.current = null;
-    setPreview(null);
-    if (apply) commit(event.currentTarget.valueAsNumber);
-  };
+/**
+ * One-click segmented effort pills.
+ *
+ * Every available option stays visible, including middle values, so the user
+ * never has to drag a slider to discover or select an intermediate effort. A
+ * preset default is offered as a labelled reset option.
+ */
+function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) {
+  const { t } = useTranslation();
+  const efforts: (string | null)[] = [null, ...control.options];
+  const committed = Math.max(0, efforts.indexOf(control.value));
+  const valueText = efforts[committed]
+    ? labelFor(efforts[committed] as string)
+    : control.defaultValue
+      ? `${t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" })} (${labelFor(control.defaultValue)})`
+      : t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" });
 
   return (
-    <div className="space-y-1 border-t border-border/55 px-2.5 py-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-        <label htmlFor={id} className="text-xs font-medium text-muted-foreground">
+    <div
+      data-testid="reasoning-effort-pills"
+      role="group"
+      aria-label={t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })}
+      aria-busy={control.pending}
+      className="space-y-1.5 border-t border-border/55 px-1 py-2"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 px-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
           {t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })}
-        </label>
+        </span>
         <span className="text-xs font-medium text-foreground">{valueText}</span>
       </div>
-      <input
-        id={id}
-        type="range"
-        min={0}
-        max={last}
-        step={1}
-        value={selected}
-        aria-valuetext={valueText}
-        aria-disabled={control.pending}
-        aria-busy={control.pending}
-        onChange={(event) => {
-          const index = event.target.valueAsNumber;
-          if (pointer.current === null) commit(index);
-          else setPreview(index);
-        }}
-        onPointerDown={(event) => {
-          if (control.pending || event.button !== 0) {
-            event.preventDefault();
-            return;
-          }
-          pointer.current = event.pointerId;
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-        }}
-        onPointerUp={(event) => endPreview(event, true)}
-        onPointerCancel={(event) => endPreview(event, false)}
-        onLostPointerCapture={(event) => endPreview(event, false)}
-        className="block h-7 w-full cursor-pointer touch-pan-y accent-primary focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50 aria-disabled:cursor-wait"
-      />
-      <div className="flex justify-between gap-1">
-        {efforts.map((effort, index) => (
-          (efforts.length <= 4 || index === 0 || index === last) && (
+      <div className="flex flex-wrap gap-1 px-1">
+        {efforts.map((effort, index) => {
+          const active = index === committed;
+          return (
             <button
               key={effort ?? "default"}
               type="button"
-              aria-pressed={index === committed}
+              aria-pressed={active}
               aria-disabled={control.pending}
-              onClick={() => commit(index)}
-              className="min-h-7 rounded px-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50 aria-pressed:font-semibold aria-pressed:text-foreground"
+              onClick={() => {
+                if (control.pending || active) return;
+                control.onChange(effort);
+              }}
+              className={cn(
+                "min-h-7 flex-1 rounded-lg border px-1.5 text-[11.5px] font-medium transition-colors duration-150 motion-reduce:transition-none",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50",
+                active
+                  ? "border-foreground/25 bg-foreground text-background"
+                  : "border-border/55 bg-card text-muted-foreground hover:text-foreground",
+                "aria-disabled:cursor-wait aria-disabled:opacity-60",
+              )}
             >
               {effort ? labelFor(effort) : t("settings.values.default", { defaultValue: "Default" })}
             </button>
-          )
-        ))}
+          );
+        })}
       </div>
-      {control.failed && (
-        <p role="status" className="text-xs text-destructive">
+      {control.failed ? (
+        <p role="status" className="px-1.5 text-xs text-destructive">
           {t("thread.composer.reasoningEffortFailed", { defaultValue: "Could not update reasoning effort. Try again." })}
         </p>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -606,6 +708,7 @@ function PresetPill({
   modelDetail,
   provider,
   providerLabel,
+  effortLabel,
   needsSetup = false,
   needsAttention = false,
   fallbackModelName,
@@ -618,6 +721,7 @@ function PresetPill({
   modelDetail?: string | null;
   provider?: string | null;
   providerLabel?: string | null;
+  effortLabel?: string | null;
   needsSetup?: boolean;
   needsAttention?: boolean;
   fallbackModelName?: string | null;
@@ -631,7 +735,8 @@ function PresetPill({
   const inferredProvider = needsSetup
     ? null
     : provider || inferProviderFromModelName(modelDetail || label);
-  const title = [...new Set([label, modelDetail, providerLabel].filter(Boolean))].join(" · ");
+  const title = [...new Set([label, modelDetail, providerLabel, effortLabel].filter(Boolean))]
+    .join(" · ");
   const fallbackTitle = fallbackModelName
     ? `${fallbackFromLabel || label} · using ${fallbackModelName}`
     : title;
@@ -685,6 +790,17 @@ function PresetPill({
       >
         {needsSetup ? <SetupPromptLabel label={label} /> : label}
       </span>
+      {effortLabel && !needsSetup ? (
+        <span
+          data-testid="composer-model-effort-tag"
+          className={cn(
+            "shrink-0 rounded-full bg-muted/70 px-1.5 text-[10.5px] font-semibold leading-4 text-muted-foreground",
+            isHero && "px-1 text-[10px]",
+          )}
+        >
+          {effortLabel}
+        </span>
+      ) : null}
     </span>
   );
 }

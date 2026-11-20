@@ -175,9 +175,9 @@ describe("admission refused for session recovery", () => {
     expect(screen.getByText("Kohaku paused this chat after an interrupted turn. Start a new chat to continue.")).toBeVisible();
     expect(screen.getByText(content)).toBeVisible();
     expect(screen.queryByText("Sending")).not.toBeInTheDocument();
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
-    expect(screen.queryByRole("status", { name: "Working" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Working" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Working(?: · |$)/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: /^Working(?: · |$)/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Working(?: · |$)/ })).not.toBeInTheDocument();
     if (negotiated) {
       expect(client.hasUnknownMessageSend(chatId)).toBe(true);
       await act(async () => {
@@ -208,10 +208,10 @@ describe("admission refused for session recovery", () => {
       socket.fakeMessage({ event: "goal_status", chat_id: chatId, turn_id: newer.turn_id,
         status: "running", started_at: Date.now() / 1000 });
     });
-    expect(await screen.findByRole("status", { name: "Working" })).toBeVisible();
+    expect(await screen.findByRole("status", { name: /^Working(?: · |$)/ })).toBeVisible();
     act(() => socket.fakeMessage({ event: "error", chat_id: chatId, turn_id: "turn-old",
       detail: "not_admitted", reason: "session_recovery_required" }));
-    expect(screen.getByRole("status", { name: "Working" })).toBeVisible();
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeVisible();
   });
 });
 
@@ -265,7 +265,7 @@ describe("canonical activity projection over the actual client and shell", () =>
       FakeSocket.instances[1]!.fakeMessage({ event: "attached", chat_id: chatId, stop_target: null }); });
     await waitFor(() => expect(historyReads).toBe(2));
     expect(await screen.findByText(omitted ? "latest reset reply" : "one completed reply")).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText("Working")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(/^Working(?: · |$)/)).not.toBeInTheDocument());
     expect(screen.getAllByText("one unknown attempt")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Awaiting confirmation" })).toBeInTheDocument();
     expect(client.hasUnknownMessageSend(chatId)).toBe(true);
@@ -287,7 +287,7 @@ describe("canonical activity projection over the actual client and shell", () =>
     expect(client.hasUnknownMessageSend(chatId)).toBe(false);
     expect(screen.getByRole("button", { name: "Workspace access mode: Sandbox" })).toBeEnabled();
     expect(client.getRunStartedAt(chatId)).toBeNull();
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Working(?: · |$)/)).not.toBeInTheDocument();
   });
 
   it("does not infer admission from attached or turn_end and accepts a later exact receipt", async () => {
@@ -375,7 +375,7 @@ describe("live activity metadata conservatism", () => {
     expect(await screen.findByText("completed after attach")).toBeInTheDocument();
     expect(screen.queryByText("resumed cursor")).not.toBeInTheDocument();
     expect(screen.getAllByText("active input")).toHaveLength(1);
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Working(?: · |$)/)).not.toBeInTheDocument();
     const frames = FakeSocket.instances.flatMap((socket) => socket.sent).map((frame) => JSON.parse(frame));
     expect(frames.filter((frame) => frame.type === "message")).toHaveLength(1);
   });
@@ -449,7 +449,7 @@ describe("UNKNOWN queue and independent draft projection", () => {
         binding: { queueKey: chatId, promptId: original.id, turnId: attempt.turn_id },
       },
     });
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Working(?: · |$)/)).not.toBeInTheDocument();
     if (action === "independent send") {
       fireEvent.click(screen.getByRole("button", { name: "Send message" }));
       expect(within(queue).getByText("original queued input")).toBeInTheDocument();
@@ -476,7 +476,7 @@ describe("UNKNOWN queue and independent draft projection", () => {
       expect(screen.getByRole("group", { name: "Queued guidance" })).toHaveTextContent("later queued input");
       expect(screen.getByLabelText("Message input")).toHaveValue("rich independent draft");
       expect(screen.getByText("draft.txt")).toBeInTheDocument();
-      expect(screen.queryByText("Working")).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Working(?: · |$)/)).not.toBeInTheDocument();
     }
   });
 });

@@ -1117,6 +1117,10 @@
     "error": "Erreur de connexion"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Traitement en cours",
+      "ariaLabel": "Étape en cours"
+    },
     "compaction": {
       "cancelled": "Compression du contexte annulée",
       "empty": "Aucun contexte à compresser.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Configurer le modèle",
       "chooseAI": "Choisissez votre IA",
       "switchModel": "Changer le modèle de cette conversation",
+      "back": "Retour",
+      "backToQuickModels": "Retour aux modèles rapides",
+      "searchModels": "Rechercher des modèles",
+      "noMatchingModels": "Aucun modèle correspondant",
+      "moreModels": "Plus de modèles ({{count}})",
       "manageModels": "Gérer les modèles",
       "context": {
         "tooltip": "Contexte {{percent}} %",
@@ -1514,6 +1523,7 @@
     "activityThoughtFor": "Réflexion terminée en {{duration}}",
     "activityGroup": "Activité",
     "activityWorking": "Traitement en cours",
+    "activityWorkingFor": "Traitement en cours · {{duration}}",
     "activityWorked": "Travail terminé",
     "activityWorkedFor": "Travail terminé en {{duration}}",
     "retryConnection": "Échec de la connexion",

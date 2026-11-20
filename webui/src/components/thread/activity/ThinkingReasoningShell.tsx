@@ -106,7 +106,10 @@ export function ThinkingReasoningShell({
               data-fade-top={fadeTop}
               data-fade-bottom={fadeBottom}
               onScroll={onScroll}
-              className="mt-1.5 max-h-[180px] overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              className={cn(
+                "scrollbar-thin scrollbar-track-transparent mt-1.5 overflow-y-auto pr-1",
+                active ? "max-h-[min(42vh,360px)]" : "max-h-[min(60vh,520px)]",
+              )}
             >
               <div ref={contentRef} className="flex flex-col gap-0.5">
                 {children}

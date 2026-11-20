@@ -1188,7 +1188,7 @@ describe("MessageBubble", () => {
     render(<MessageBubble message={message} onOpenChildHistory={onOpen} />);
 
     const row = screen.getByRole("region", { name: "Inspect the API contract" });
-    expect(within(row).getByText("Working")).toBeInTheDocument();
+    expect(within(row).getByText(/^Working(?: · |$)/)).toBeInTheDocument();
     expect(within(row).getByText("Two compatible routes were found.")).toBeInTheDocument();
     const inspect = within(row).getByRole("button", {
       name: "Inspect Inspect the API contract activity",

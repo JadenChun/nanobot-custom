@@ -36,16 +36,16 @@ describe("ThreadMessages", () => {
     );
     // Before the first activity row the pending fold already says "Working", so
     // the request never looks idle while it is processing.
-    expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
 
     act(() => { vi.advanceTimersByTime(10_000); });
     rerender(<ThreadMessages messages={messages.slice(0, 3)} isStreaming activeTurnId={turnId} />);
-    expect(screen.getByRole("button", { name: "Working" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toHaveAttribute("aria-expanded", "true");
 
     act(() => { vi.advanceTimersByTime(20_000); });
     rerender(<ThreadMessages messages={messages} isStreaming activeTurnId={turnId} />);
-    const live = screen.getByRole("button", { name: "Working" });
-    expect(screen.getAllByRole("button", { name: "Working" })).toHaveLength(1);
+    const live = screen.getByRole("button", { name: /^Working(?: · |$)/ });
+    expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
     // One work group per turn, placed before that turn's answers, so the turn
     // never reads as work/reply/work/reply. The live fold is that group.
     const order = [
@@ -64,7 +64,7 @@ describe("ThreadMessages", () => {
       { ...messages[5], content: "Done", latencyMs: 42_000, createdAt: startedAt + 42_000 },
     ]} />);
     expect(screen.getByRole("button", { name: "Worked for 42s" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Working" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Working(?: · |$)/ })).toBeNull();
   });
 
   it("shows one historical duration for each completed run", () => {
@@ -106,7 +106,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
 
       rerender(
         <ThreadMessages
@@ -116,7 +116,7 @@ describe("ThreadMessages", () => {
           runStartedAt={(now + clockSkewMs) / 1000}
         />,
       );
-      expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
       act(() => { vi.advanceTimersByTime(1000); });
 
       rerender(
@@ -140,7 +140,7 @@ describe("ThreadMessages", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     },
   );
 
@@ -165,7 +165,7 @@ describe("ThreadMessages", () => {
         runStartedAt={(now - 43_000) / 1000}
       />,
     );
-    expect(screen.getByRole("status", { name: "Working" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
   });
 
   it("opens child history from its canonical row and marks disconnected state unavailable", () => {
@@ -998,7 +998,7 @@ describe("ThreadMessages", () => {
 
     render(<ThreadMessages messages={messages} isStreaming />);
 
-    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
   });
 
   it("keeps the original turn start after guidance and more activity", () => {
@@ -1061,13 +1061,13 @@ describe("ThreadMessages", () => {
         runStartedAt={startedAt / 1000} />
     );
     const { rerender } = render(renderRun(messages.slice(0, 3)));
-    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
 
     act(() => { vi.advanceTimersByTime(20_000); });
     rerender(renderRun(messages));
     // Guidance and later work stay in the same live fold; the state is named
     // once, so the transcript cannot show two progress claims at the same time.
-    expect(screen.getAllByRole("button", { name: "Working" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Working(?: · |$)/ })).toHaveLength(1);
   });
 
   it("folds final answer reasoning into the preceding activity timeline", () => {

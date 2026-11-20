@@ -4652,7 +4652,7 @@ describe("ThreadShell", () => {
 
     await waitFor(() => expect(queuedRow()).toBeNull());
     expect(screen.getByText("How is it going?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Working(?: · |$)/ })).toBeInTheDocument();
     expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Thinking for / })).not.toBeInTheDocument();
   });

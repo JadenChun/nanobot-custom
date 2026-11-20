@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -447,6 +447,47 @@ function renderPresetComposer(
   return {
     badge: screen.getByRole("button", { name: "kimi" }),
     onPresetChange,
+  };
+}
+
+const MANY_MODEL_PRESETS = [
+  { name: "kimi", model: "moonshot/kimi-k2.5", provider: "moonshot" },
+  { name: "dflash", model: "deepseek/deepseek-v4-flash", provider: "deepseek" },
+  { name: "dspro", model: "deepseek/deepseek-v4-pro", provider: "deepseek" },
+  { name: "qwen-flash", model: "qwen/qwen3.8-flash-next", provider: "qwen" },
+  { name: "qwen-27b", model: "qwen/qwen3.8-27b", provider: "qwen" },
+  { name: "qwen-27b-unc", model: "qwen/qwen3.8-27b-uncensored", provider: "qwen" },
+];
+
+function renderReasoningComposer(
+  effort: string | null,
+  options: string[] = ["low", "medium", "high", "xhigh"],
+  onChange: (next: string | null) => void = vi.fn(),
+) {
+  render(
+    <ThreadComposer
+      onSend={vi.fn()}
+      modelLabel="DeepSeek V4.1 Flash"
+      modelPreset="dflash"
+      modelDetail="deepseek/deepseek-v4.1-flash"
+      modelProvider="commandcode"
+      modelProviderLabel="CommandCode"
+      modelPresets={MODEL_PRESETS}
+      onModelPresetChange={vi.fn()}
+      modelReasoning={{
+        value: effort,
+        defaultValue: "medium",
+        options,
+        pending: false,
+        failed: false,
+        onChange,
+      }}
+      placeholder="Type your message..."
+    />,
+  );
+  return {
+    badge: screen.getByRole("button", { name: "DeepSeek V4.1 Flash" }),
+    onChange,
   };
 }
 
@@ -918,16 +959,14 @@ describe("ThreadComposer", () => {
     expect(badge).toHaveClass("w-fit");
   });
 
-  it("opens model settings from the picker footer", async () => {
+  it("keeps model management in Settings instead of the picker footer", async () => {
     const onManageModels = vi.fn();
     const { badge } = renderPresetComposer("thread", onManageModels);
 
     fireEvent.click(badge);
     const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
-    fireEvent.click(within(picker).getByRole("button", { name: "Manage models" }));
-
-    expect(onManageModels).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(within(picker).queryByRole("button", { name: "Manage models" })).not.toBeInTheDocument();
+    expect(onManageModels).not.toHaveBeenCalled();
   });
 
   it("keeps long-press drag switching alongside the click picker", () => {
@@ -945,6 +984,79 @@ describe("ThreadComposer", () => {
     expect(onPresetChange).toHaveBeenCalledWith("dflash");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     vi.useRealTimers();
+  });
+
+  it("shows the active model header and one-click effort pills for every option", () => {
+    const { onChange } = renderReasoningComposer("high");
+
+    fireEvent.click(screen.getByRole("button", { name: "DeepSeek V4.1 Flash" }));
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    expect(within(picker).getByTestId("model-picker-active")).toHaveTextContent(
+      "DeepSeek V4.1 Flash",
+    );
+
+    // Every effort option is one click away, including middle values.
+    const efforts = within(picker).getByTestId("reasoning-effort-pills");
+    const buttons = within(efforts).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Default",
+      "Low",
+      "Medium",
+      "High",
+      "Extra high",
+    ]);
+    expect(within(efforts).getByRole("button", { name: "High" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(within(efforts).getByRole("button", { name: "Medium" }));
+    expect(onChange).toHaveBeenCalledWith("medium");
+  });
+
+  it("shows the effort tag on the closed composer pill only when it is not default", () => {
+    renderReasoningComposer(null);
+    expect(screen.queryByTestId("composer-model-effort-tag")).not.toBeInTheDocument();
+    cleanup();
+    renderReasoningComposer("high");
+    expect(screen.getByTestId("composer-model-effort-tag")).toHaveTextContent("High");
+  });
+
+  it("collapses extra presets behind a searchable more-models view", () => {
+    const onPresetChange = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        modelLabel="kimi"
+        modelPreset="kimi"
+        modelPresets={MANY_MODEL_PRESETS}
+        onModelPresetChange={onPresetChange}
+        placeholder="Type your message..."
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "kimi" }));
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    const quick = within(picker).getByTestId("model-picker-quick-switch");
+    expect(within(quick).getAllByRole("option")).toHaveLength(3);
+    expect(within(picker).queryByRole("option", { name: "qwen-27b-unc" })).toBeNull();
+
+    fireEvent.click(within(picker).getByTestId("model-picker-more"));
+    const all = screen.getByTestId("model-picker-all");
+    expect(within(all).getAllByRole("option")).toHaveLength(MANY_MODEL_PRESETS.length);
+    fireEvent.change(within(all).getByRole("searchbox", { name: "Search models" }), {
+      target: { value: "unc" },
+    });
+    expect(within(all).getAllByRole("option")).toHaveLength(1);
+    fireEvent.click(within(all).getByRole("option", { name: "qwen-27b-unc" }));
+    expect(onPresetChange).toHaveBeenCalledWith("qwen-27b-unc");
+  });
+
+  it("renders no more-models row when every preset is a quick switch", () => {
+    const { badge } = renderPresetComposer();
+    fireEvent.click(badge);
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    expect(within(picker).queryByTestId("model-picker-more")).toBeNull();
+    expect(within(picker).getAllByRole("option")).toHaveLength(MODEL_PRESETS.length);
   });
 
   it("uses the same click picker in hero mode", () => {

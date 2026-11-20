@@ -1117,6 +1117,10 @@
     "error": "Error de conexión"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Trabajando",
+      "ariaLabel": "Paso actual"
+    },
     "compaction": {
       "cancelled": "Compresión de contexto cancelada",
       "empty": "No hay contexto que comprimir.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Configurar modelo",
       "chooseAI": "Elige tu IA",
       "switchModel": "Cambiar el modelo de este chat",
+      "back": "Atrás",
+      "backToQuickModels": "Volver a los modelos rápidos",
+      "searchModels": "Buscar modelos",
+      "noMatchingModels": "No hay modelos coincidentes",
+      "moreModels": "Más modelos ({{count}})",
       "manageModels": "Gestionar modelos",
       "context": {
         "tooltip": "Contexto {{percent}}%",
@@ -1514,6 +1523,7 @@
     "activityThoughtFor": "Pensó durante {{duration}}",
     "activityGroup": "Actividad",
     "activityWorking": "Trabajando",
+    "activityWorkingFor": "Trabajando · {{duration}}",
     "activityWorked": "Trabajo completado",
     "activityWorkedFor": "Trabajó durante {{duration}}",
     "retryConnection": "Error de conexión",

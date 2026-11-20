@@ -1117,6 +1117,10 @@
     "error": "連線錯誤"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "處理中",
+      "ariaLabel": "目前步驟"
+    },
     "compaction": {
       "cancelled": "上下文壓縮已取消",
       "empty": "無需壓縮上下文",
@@ -1240,6 +1244,11 @@
       "configureModel": "設定模型",
       "chooseAI": "選擇你的 AI",
       "switchModel": "切換此對話使用的模型",
+      "back": "返回",
+      "backToQuickModels": "返回快捷模型",
+      "searchModels": "搜尋模型",
+      "noMatchingModels": "沒有符合的模型",
+      "moreModels": "更多模型（{{count}}）",
       "manageModels": "管理模型預設",
       "context": {
         "tooltip": "上下文 {{percent}}%",
@@ -1513,6 +1522,7 @@
     "activityThoughtFor": "已思考 {{duration}}",
     "activityGroup": "活動",
     "activityWorking": "處理中",
+    "activityWorkingFor": "處理中 · {{duration}}",
     "activityWorked": "已處理",
     "activityWorkedFor": "已處理 {{duration}}",
     "retryConnection": "連線失敗",

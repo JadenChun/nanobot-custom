@@ -1117,6 +1117,10 @@
     "error": "连接出错"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "处理中",
+      "ariaLabel": "当前步骤"
+    },
     "compaction": {
       "cancelled": "上下文压缩已取消",
       "empty": "无需压缩上下文",
@@ -1239,6 +1243,11 @@
       "configureModel": "配置模型",
       "chooseAI": "选择你的 AI",
       "switchModel": "切换本次对话所用模型",
+      "back": "返回",
+      "backToQuickModels": "返回快捷模型",
+      "searchModels": "搜索模型",
+      "noMatchingModels": "没有匹配的模型",
+      "moreModels": "更多模型（{{count}}）",
       "manageModels": "管理模型预设",
       "context": {
         "tooltip": "上下文 {{percent}}%",
@@ -1487,6 +1496,7 @@
     "activityThoughtFor": "思考了 {{duration}}",
     "activityGroup": "活动",
     "activityWorking": "处理中",
+    "activityWorkingFor": "处理中 · {{duration}}",
     "activityWorked": "已处理",
     "activityWorkedFor": "处理了 {{duration}}",
     "retryConnection": "连接失败",

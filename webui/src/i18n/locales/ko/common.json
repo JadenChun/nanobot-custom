@@ -1117,6 +1117,10 @@
     "error": "연결 오류"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "작업 중",
+      "ariaLabel": "현재 단계"
+    },
     "compaction": {
       "cancelled": "컨텍스트 압축이 취소되었습니다",
       "empty": "압축할 컨텍스트가 없습니다.",
@@ -1240,6 +1244,11 @@
       "configureModel": "모델 설정",
       "chooseAI": "AI 선택",
       "switchModel": "이 대화에서 사용할 모델 전환",
+      "back": "뒤로",
+      "backToQuickModels": "빠른 모델로 돌아가기",
+      "searchModels": "모델 검색",
+      "noMatchingModels": "일치하는 모델 없음",
+      "moreModels": "모델 더 보기 ({{count}})",
       "manageModels": "모델 관리",
       "context": {
         "tooltip": "컨텍스트 {{percent}}%",
@@ -1514,6 +1523,7 @@
     "activityThoughtFor": "{{duration}} 동안 생각함",
     "activityGroup": "활동",
     "activityWorking": "작업 중",
+    "activityWorkingFor": "작업 중 · {{duration}}",
     "activityWorked": "작업함",
     "activityWorkedFor": "{{duration}} 동안 작업함",
     "retryConnection": "연결 실패",

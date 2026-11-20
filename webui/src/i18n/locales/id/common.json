@@ -1117,6 +1117,10 @@
     "error": "Kesalahan koneksi"
   },
   "thread": {
+    "workingBar": {
+      "defaultStep": "Sedang bekerja",
+      "ariaLabel": "Langkah saat ini"
+    },
     "compaction": {
       "cancelled": "Pemadatan konteks dibatalkan",
       "empty": "Tidak ada konteks yang perlu dipadatkan.",
@@ -1240,6 +1244,11 @@
       "configureModel": "Konfigurasi model",
       "chooseAI": "Pilih AI Anda",
       "switchModel": "Ganti model untuk percakapan ini",
+      "back": "Kembali",
+      "backToQuickModels": "Kembali ke model cepat",
+      "searchModels": "Cari model",
+      "noMatchingModels": "Tidak ada model yang cocok",
+      "moreModels": "Model lainnya ({{count}})",
       "manageModels": "Kelola model",
       "context": {
         "tooltip": "Konteks {{percent}}%",
@@ -1514,6 +1523,7 @@
     "activityThoughtFor": "Selesai berpikir dalam {{duration}}",
     "activityGroup": "Aktivitas",
     "activityWorking": "Sedang bekerja",
+    "activityWorkingFor": "Sedang bekerja · {{duration}}",
     "activityWorked": "Selesai memproses",
     "activityWorkedFor": "Diproses selama {{duration}}",
     "retryConnection": "Koneksi gagal",

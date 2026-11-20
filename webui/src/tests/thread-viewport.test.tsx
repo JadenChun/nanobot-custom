@@ -321,6 +321,81 @@ describe("ThreadViewport", () => {
     expect(screen.getByTestId("thread-composer-dock")).not.toHaveClass("mt-auto");
   });
 
+  it("shows a persistent working bar above the composer only while streaming", () => {
+    const { rerender } = render(
+      <ThreadViewport
+        messages={messages}
+        isStreaming
+        runStartedAt={Date.now() / 1000 - 12}
+        composer={<div>composer</div>}
+      />,
+    );
+
+    const bar = screen.getByTestId("thread-working-bar");
+    expect(bar).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("thread-working-bar-timer")).toHaveTextContent(/^\d+s$/);
+    // The bar docks with the composer, above its input, so it stays in view.
+    const dock = screen.getByTestId("thread-composer-dock");
+    expect(dock).toContainElement(bar);
+    const dockChildren = Array.from(dock.querySelectorAll("[data-testid]"))
+      .map((node) => node.getAttribute("data-testid"));
+    expect(dockChildren.indexOf("thread-working-bar")).toBeLessThan(
+      dockChildren.indexOf("thread-composer-motion"),
+    );
+
+    rerender(
+      <ThreadViewport
+        messages={messages}
+        isStreaming={false}
+        composer={<div>composer</div>}
+      />,
+    );
+    expect(screen.queryByTestId("thread-working-bar")).toBeNull();
+    expect(screen.queryByTestId("thread-working-bar-slot")).toBeNull();
+  });
+
+  it("names the running MCP step and its live progress in the working bar", () => {
+    const streaming: UIMessage[] = [
+      ...messages,
+      {
+        id: "tool-row",
+        role: "tool",
+        kind: "trace",
+        content: 'mcp_comfy_generate_video({"workflow":"wan"})',
+        traces: ['mcp_comfy_generate_video({"workflow":"wan"})'],
+        createdAt: Date.now(),
+        toolEvents: [{
+          phase: "start",
+          call_id: "call-1",
+          name: "mcp_comfy_generate_video",
+          arguments: { workflow: "wan" },
+        }, {
+          phase: "progress",
+          call_id: "call-1",
+          name: "mcp_comfy_generate_video",
+          arguments: { workflow: "wan" },
+          progress: 62,
+          total: 100,
+          message: "ComfyUI is generating prompt...",
+        }],
+      },
+    ];
+    render(
+      <ThreadViewport
+        messages={streaming}
+        isStreaming
+        runStartedAt={Date.now() / 1000}
+        mcpPresets={[{ name: "comfy", display_name: "ComfyUI" }]}
+        composer={<div>composer</div>}
+      />,
+    );
+
+    const bar = screen.getByTestId("thread-working-bar");
+    expect(bar).toHaveTextContent("ComfyUI · Generating video · wan");
+    expect(bar).toHaveTextContent("ComfyUI is generating prompt...");
+    expect(bar).toHaveTextContent("62%");
+  });
+
   it("keeps the docked composer outside the message scrollport", () => {
     const { container } = render(
       <ThreadViewport
