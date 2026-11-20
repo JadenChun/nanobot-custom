@@ -1173,6 +1173,10 @@ export function ThreadShell({
     refresh: refreshHistory,
     version: historyVersion,
     forkBoundaryMessageCount,
+    turnIndex: sessionTurns,
+    totalTurnCount: sessionTurnTotal,
+    loadTurnIndex,
+    loadTurnAt,
   } = useSessionHistory(historyKey);
   const [appliedHistoryVersion, setAppliedHistoryVersion] = useState(0);
   const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
@@ -2964,6 +2968,17 @@ export function ThreadShell({
     setFilePreview({ parentKey: historyKey, path });
   }, [historyKey]);
 
+  // The whole-session rail loads its index on first need and jumps by turn.
+  const handleNeedSessionTurns = useCallback(() => {
+    if (!historyKey) return;
+    void loadTurnIndex();
+  }, [historyKey, loadTurnIndex]);
+
+  const handleJumpToTurn = useCallback((cursor: string) => {
+    if (!historyKey || !cursor) return;
+    void loadTurnAt(cursor);
+  }, [historyKey, loadTurnAt]);
+
   useEffect(() => {
     filePreviewEditKeysRef.current = new Set();
   }, [filePreviewPath]);
@@ -3455,6 +3470,10 @@ export function ThreadShell({
             loadingOlder={loadingOlder}
             userMessageOffset={userMessageOffset}
             onLoadOlder={loadOlder}
+            sessionTurns={sessionTurns}
+            sessionTurnTotal={sessionTurnTotal}
+            onNeedSessionTurns={handleNeedSessionTurns}
+            onJumpToTurn={handleJumpToTurn}
             onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
             onForkFromMessage={onForkChat && !showingOpeningPage ? handleForkFromMessage : undefined}
             onOpenChildHistory={handleOpenChildHistory}

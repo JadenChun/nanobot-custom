@@ -7,6 +7,7 @@ import {
   deleteSession as apiDeleteSession,
   fetchDelegatedChildren,
   fetchSessionAutomations,
+  fetchSessionTurns,
   fetchWebuiThread,
   listSessions,
   normalizeWorkspacePermissionProjection,
@@ -18,12 +19,17 @@ import {
   parseStopExpectation,
 } from "@/lib/delegated-child-projection";
 import { deriveTitle } from "@/lib/format";
+import {
+  readCachedSessionPage,
+  writeCachedSessionPage,
+} from "@/lib/session-page-cache";
 import type {
   ChatSummary,
   DelegatedChildReference,
   FolderAccessRequest,
   SessionAutomationJob,
   SessionDeleteResult,
+  SessionTurnSummary,
   UIMessage,
   StopExpectation,
   WorkspacePermissionProjection,
@@ -32,6 +38,7 @@ import type {
 
 const EMPTY_MESSAGES: UIMessage[] = [];
 const INITIAL_HISTORY_PAGE_LIMIT = 40;
+const TURN_INDEX_PAGE_LIMIT = 400;
 const OLDER_HISTORY_PAGE_LIMIT = 120;
 const DELEGATED_CHILD_PAGE_LIMIT = 120;
 const CHAT_CREATE_TIMEOUT_MS = 60_000;
@@ -430,6 +437,12 @@ export function useSessionHistory(key: string | null): {
   markWorkspacePermissionsStale: () => void;
   updateWorkspacePermissions: (permissions: WorkspacePermissionProjection | null) => void;
   refreshWorkspacePermissions: () => Promise<WorkspacePermissionProjection | null>;
+  /** Every turn in the session, newest page last; loaded on demand. */
+  turnIndex: SessionTurnSummary[];
+  totalTurnCount: number;
+  loadTurnIndex: () => Promise<SessionTurnSummary[]>;
+  /** Replace the window with the page ending at this turn cursor. */
+  loadTurnAt: (cursor: string) => Promise<void>;
 } {
   const { getToken } = useClient();
   const loadingOlderRef = useRef(false);
@@ -438,6 +451,8 @@ export function useSessionHistory(key: string | null): {
   const accessRequestReadVersionRef = useRef(0);
   const permissionReadVersionRef = useRef(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
+  const [turnIndex, setTurnIndex] = useState<SessionTurnSummary[]>([]);
+  const [totalTurnCount, setTotalTurnCount] = useState(0);
   const refresh = useCallback(() => {
     setRefreshSeq((value) => value + 1);
   }, []);
@@ -548,6 +563,49 @@ export function useSessionHistory(key: string | null): {
     olderRequestAbortRef.current?.abort();
     olderRequestAbortRef.current = null;
     loadingOlderRef.current = false;
+    setTurnIndex((current) => (current.length === 0 ? current : []));
+    // Paint the previously loaded window immediately on a revisit. The network
+    // refresh below still runs and replaces it, so this only removes the blank
+    // wait; it never decides what the UI believes after the fetch settles.
+    const cachedPage = readCachedSessionPage(key);
+    if (cachedPage) {
+      historyVersionRef.current += 1;
+      setState((prev) => prev.key === key
+        ? { ...prev, messages: cachedPage.messages, loading: false }
+        : {
+            key,
+            messages: cachedPage.messages,
+            loading: false,
+            loadingOlder: false,
+            error: null,
+            hasPendingToolCalls: false,
+            completedTurnIds: cachedPage.completedTurnIds,
+            forkBoundaryMessageCount: cachedPage.forkBoundaryMessageCount,
+            beforeCursor: cachedPage.beforeCursor,
+            hasMoreBefore: cachedPage.hasMoreBefore,
+            userMessageOffset: cachedPage.userMessageOffset,
+            version: cachedPage.version,
+            continuity: "initial",
+            // Seed lineage at 0 (not the cached version) so the refresh below
+            // is still treated as the initial page for this mount. The cached
+            // window is a display stand-in only; treating it as an already
+            // merged lineage would make the refresh discard the prefix.
+            lineage: 0,
+            activeTurnId: null,
+            activitySnapshotAvailable: false,
+            stopTarget: null,
+            stopTargetSnapshotAvailable: false,
+            delegatedChildren: [],
+            delegatedChildrenLoading: false,
+            delegatedChildrenError: false,
+            workspaceAccessRequest: null,
+            workspaceAccessRequestLoading: true,
+            workspaceAccessRequestError: false,
+            workspacePermissions: null,
+            workspacePermissionsLoading: true,
+            workspacePermissionsError: false,
+          });
+    }
     // Mark the new key as loading immediately so callers never see stale
     // messages from the previous session during the render right after a switch.
     setState((prev) => prev.key === key
@@ -613,6 +671,9 @@ export function useSessionHistory(key: string | null): {
         const forkBoundary = typeof body?.fork_boundary_message_count === "number"
           ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))
           : null;
+        if (typeof body?.page?.total_turn_count === "number") {
+          setTotalTurnCount(body.page.total_turn_count);
+        }
         setState((prev) => {
           const merged = prev.key === key
             ? mergeLatestHistory(prev.messages, ui, prev.lineage === 0)
@@ -688,13 +749,29 @@ export function useSessionHistory(key: string | null): {
         });
         if (body === null) return;
 
-        const childPages = await fetchAllDelegatedChildren(getToken, key, controller.signal)
-          .catch(() => ({
+        // Fetch delegated children only when this page actually shows a child
+        // row. Codex loads children per-parent on demand rather than scanning
+        // every session on open, and the route is the most expensive read in
+        // the gateway (list_sessions plus a full snapshot per child). A
+        // conversation with no delegated activity has nothing to hydrate, so
+        // the request cannot return anything. The thread payload already
+        // carries `stop_target` when this gateway can derive it; the child page
+        // is only the fallback for sessions that render child rows.
+        const hasChildRows = persisted.some((message) => message.kind === "delegated_child");
+        const childPages = hasChildRows
+          ? await fetchAllDelegatedChildren(getToken, key, controller.signal)
+            .catch(() => ({
+              children: [],
+              stopTarget: null,
+              stopTargetSnapshotAvailable: false,
+              incomplete: true,
+            }))
+          : {
             children: [],
             stopTarget: null,
             stopTargetSnapshotAvailable: false,
-            incomplete: true,
-          }));
+            incomplete: false,
+          };
         if (cancelled) return;
         // Explicit null is a modern idle snapshot, not a request to fall back.
         const stopTarget = threadStopTargetSnapshotAvailable ? threadStopTarget : childPages.stopTarget;
@@ -792,6 +869,24 @@ export function useSessionHistory(key: string | null): {
       controller.abort();
     };
   }, [getToken, key, refreshSeq]);
+
+  // Keep the renderer cache in step with the settled window. Writing it here,
+  // rather than mid-fetch, means a scroll-back prefix and any merged overlap are
+  // part of what a revisit paints. Loading and error states are skipped so a
+  // half-built window never becomes the cached view.
+  useEffect(() => {
+    if (!key || state.key !== key) return;
+    if (state.loading || state.loadingOlder || state.error) return;
+    writeCachedSessionPage(key, {
+      messages: state.messages,
+      beforeCursor: state.beforeCursor,
+      hasMoreBefore: state.hasMoreBefore,
+      userMessageOffset: state.userMessageOffset,
+      completedTurnIds: state.completedTurnIds,
+      forkBoundaryMessageCount: state.forkBoundaryMessageCount,
+      version: state.version,
+    });
+  }, [key, state]);
 
   const markWorkspaceAccessRequestStale = useCallback(() => {
     accessRequestReadVersionRef.current += 1;
@@ -979,6 +1074,100 @@ export function useSessionHistory(key: string | null): {
     getToken,
   ]);
 
+  /**
+   * Load the whole-session turn index, newest page last.
+   *
+   * The navigator needs every turn, not just the loaded window, so this pages
+   * the cheap user-row index until the server reports no older page.
+   */
+  const loadTurnIndex = useCallback(async (): Promise<SessionTurnSummary[]> => {
+    if (!key) return [];
+    const collected: SessionTurnSummary[] = [];
+    let before: string | null = null;
+    let total = 0;
+    for (let page = 0; page < 20; page += 1) {
+      const payload = await fetchSessionTurns(getToken(), key, {
+        limit: TURN_INDEX_PAGE_LIMIT,
+        before,
+      });
+      if (!payload) break;
+      total = payload.total_turn_count ?? total;
+      collected.unshift(...(Array.isArray(payload.turns) ? payload.turns : []));
+      if (payload.page?.has_more_before !== true) break;
+      const next = payload.page?.before_cursor ?? null;
+      if (!next || next === before) break;
+      before = next;
+    }
+    setTotalTurnCount(total || collected.length);
+    setTurnIndex(collected);
+    return collected;
+  }, [getToken, key]);
+
+  /**
+   * Replace the rendered window with the page that ends at one turn.
+   *
+   * This is the navigator's jump. It intentionally starts a fresh lineage: the
+   * target window may be far from the current one, so merging the two would
+   * invent continuity that does not exist.
+   */
+  const loadTurnAt = useCallback(async (cursor: string): Promise<void> => {
+    if (!key || !cursor) return;
+    olderRequestAbortRef.current?.abort();
+    const controller = new AbortController();
+    olderRequestAbortRef.current = controller;
+    loadingOlderRef.current = true;
+    setState((prev) => (prev.key === key
+      ? { ...prev, loading: true, error: null }
+      : prev));
+    try {
+      const body = await fetchWebuiThread(getToken(), key, {
+        limit: INITIAL_HISTORY_PAGE_LIMIT,
+        direction: "latest",
+        before: cursor,
+        signal: controller.signal,
+      });
+      if (!body) return;
+      const ui = persistedMessagesToUi(body.messages ?? [])
+        .filter((message) => message.kind !== "delegated_child");
+      historyVersionRef.current += 1;
+      const responseVersion = historyVersionRef.current;
+      const pending = hasPendingToolCallsFromThread(body, ui);
+      setState((prev) => (prev.key === key
+        ? {
+            ...prev,
+            messages: ui,
+            loading: false,
+            loadingOlder: false,
+            error: null,
+            beforeCursor: body.page?.before_cursor ?? null,
+            hasMoreBefore: body.page?.has_more_before === true,
+            userMessageOffset: Math.max(0, body.page?.user_message_offset ?? 0),
+            version: responseVersion,
+            continuity: "initial",
+            lineage: responseVersion,
+            hasPendingToolCalls: pending,
+            completedTurnIds: completedTurnIdsFromThread(body),
+            forkBoundaryMessageCount: typeof body.fork_boundary_message_count === "number"
+              ? Math.max(0, Math.min(body.fork_boundary_message_count, ui.length))
+              : null,
+            activeTurnId: typeof body.active_turn_id === "string"
+              ? body.active_turn_id
+              : null,
+          }
+        : prev));
+    } catch (e) {
+      if (isAbortError(e)) return;
+      setState((prev) => (prev.key === key
+        ? { ...prev, loading: false, error: (e as Error).message }
+        : prev));
+    } finally {
+      if (olderRequestAbortRef.current === controller) {
+        olderRequestAbortRef.current = null;
+        loadingOlderRef.current = false;
+      }
+    }
+  }, [getToken, key]);
+
   if (!key) {
     return {
       messages: EMPTY_MESSAGES,
@@ -1014,6 +1203,10 @@ export function useSessionHistory(key: string | null): {
       markWorkspacePermissionsStale,
       updateWorkspacePermissions,
       refreshWorkspacePermissions,
+      turnIndex,
+      totalTurnCount,
+      loadTurnIndex,
+      loadTurnAt,
     };
   }
 
@@ -1054,6 +1247,10 @@ export function useSessionHistory(key: string | null): {
       markWorkspacePermissionsStale,
       updateWorkspacePermissions,
       refreshWorkspacePermissions,
+      turnIndex,
+      totalTurnCount,
+        loadTurnIndex,
+      loadTurnAt,
     };
   }
 
@@ -1091,6 +1288,10 @@ export function useSessionHistory(key: string | null): {
     markWorkspacePermissionsStale,
     updateWorkspacePermissions,
     refreshWorkspacePermissions,
+    turnIndex,
+    totalTurnCount,
+    loadTurnIndex,
+    loadTurnAt,
   };
 }
 

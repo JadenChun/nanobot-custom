@@ -218,6 +218,10 @@ export interface UIMessage {
   /** For trace rows: each individual hint line, so consecutive hints can
    * render as a single collapsible group. */
   traces?: string[];
+  /** How many times each deduplicated trace line occurred, keyed by the
+   * canonical line. Lets a repeated call read as "Ran command · 5 calls"
+   * instead of five identical rows. */
+  traceRepeatCounts?: Record<string, number>;
   /** Structured tool events behind trace rows. Kept so activity cards can
    * distinguish running, completed, and failed tool phases. */
   toolEvents?: ToolProgressEvent[];
@@ -271,6 +275,14 @@ export interface UIMessage {
   turnId?: string;
   turnPhase?: UITurnPhase;
   turnSeq?: number;
+  /**
+   * Whole-session position of the turn this row belongs to.
+   *
+   * Sent for persisted user rows, so a navigator can place a turn even when
+   * only a window of the session is rendered. ``turnSeq`` is turn-local and
+   * cannot serve that purpose.
+   */
+  turnOrdinal?: number;
   /** Ephemeral delivery lifecycle for optimistic user messages. */
   deliveryStatus?: MessageDeliveryStatus;
   /** Structured rejection reason shown with a failed optimistic message. */
@@ -2106,6 +2118,34 @@ interface WebuiThreadPagePayload {
   loaded_message_count?: number;
   total_known_message_count?: number;
   user_message_offset?: number;
+  /** Ordinal of the oldest turn included in this page. */
+  first_turn_ordinal?: number;
+  /** Turns included in this page. */
+  loaded_turn_count?: number;
+  /** Every turn in the session, loaded or not. */
+  total_turn_count?: number;
+}
+
+/** One entry of the whole-session turn index used by the left-hand navigator. */
+export interface SessionTurnSummary {
+  ordinal: number;
+  label: string;
+  created_at: number | null;
+  /** Page cursor whose window ends with this turn. */
+  cursor: string;
+}
+
+/** Response shape for ``GET .../turns``. */
+export interface SessionTurnIndexPayload {
+  schemaVersion: number;
+  sessionKey?: string;
+  turns: SessionTurnSummary[];
+  total_turn_count: number;
+  page?: {
+    before_cursor?: string | null;
+    has_more_before?: boolean;
+    loaded_turn_count?: number;
+  };
 }
 
 export type WebuiThreadSourcePayload = SourceOrigin;

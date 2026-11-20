@@ -13,7 +13,7 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { floatingSurfaceElevationClassName } from "@/components/ui/floating-surface";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
-import type { UIMessage } from "@/lib/types";
+import type { SessionTurnSummary, UIMessage } from "@/lib/types";
 import {
   type PromptAnchor,
   userPromptAnchors,
@@ -24,6 +24,16 @@ interface PromptRailProps {
   messages: UIMessage[];
   onJumpToPrompt: (promptId: string) => void;
   scrollRef: RefObject<HTMLDivElement>;
+  /**
+   * Every turn in the session, when known. The rail is one navigator: turns
+   * inside the rendered window are placed by measured DOM position, and turns
+   * outside it by their whole-session ordinal, so a long history stays visible
+   * instead of collapsing to the handful of rows currently loaded.
+   */
+  sessionTurns?: SessionTurnSummary[];
+  totalTurnCount?: number;
+  onNeedSessionTurns?: () => void;
+  onJumpToTurn?: (cursor: string) => void;
 }
 
 interface MeasuredPrompt extends PromptAnchor {
@@ -35,6 +45,8 @@ interface PromptMarker {
   answerPreview: string;
   count: number;
   ids: string[];
+  /** Page cursor for a turn outside the rendered window. */
+  cursor?: string;
   label: string;
   preview: string;
   topPercent: number;
@@ -58,6 +70,10 @@ export function PromptRail({
   messages,
   onJumpToPrompt,
   scrollRef,
+  sessionTurns = [],
+  totalTurnCount = 0,
+  onNeedSessionTurns,
+  onJumpToTurn,
 }: PromptRailProps) {
   const { t } = useTranslation();
   const enabled = useMediaQuery("(min-width: 768px)");
@@ -112,11 +128,28 @@ export function PromptRail({
 
     const measured = measurePrompts(scrollEl, promptAnchors, scrollRange);
     measuredPromptsRef.current = measured;
+
+    // Once the whole-session index is known, it defines the marker count. The
+    // measured rows only refine the turns that happen to be rendered.
+    if (sessionTurns.length > 0) {
+      const rendered = new Map<number, PromptAnchor>();
+      for (const anchor of promptAnchors) {
+        if (anchor.ordinal !== undefined) rendered.set(anchor.ordinal, anchor);
+      }
+      const nextMarkers = distributeMarkerPositions(
+        sessionPromptMarkers(sessionTurns, rendered),
+        nextRailHeight,
+      );
+      setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
+      setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
+      return;
+    }
+
     const grouped = groupPromptMarkers(measured, nextRailHeight);
     const nextMarkers = distributeMarkerPositions(grouped, nextRailHeight);
     setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
     setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
-  }, [enabled, promptAnchors, scrollRef]);
+  }, [enabled, promptAnchors, scrollRef, sessionTurns]);
 
   const updateActivePrompt = useCallback(() => {
     const scrollEl = scrollRef.current;
@@ -181,6 +214,14 @@ export function PromptRail({
     return () => observer.disconnect();
   }, [enabled, scrollRef, updateMarkers]);
 
+  // Ask for the whole-session index when the window is only part of the
+  // conversation. Without it the rail can only ever show rendered turns.
+  useEffect(() => {
+    if (!enabled || !onNeedSessionTurns) return;
+    if (sessionTurns.length > 0) return;
+    if (totalTurnCount > promptAnchors.length) onNeedSessionTurns();
+  }, [enabled, onNeedSessionTurns, promptAnchors.length, sessionTurns.length, totalTurnCount]);
+
   if (markers.length === 0) return null;
 
   return (
@@ -205,7 +246,13 @@ export function PromptRail({
             <button
               type="button"
               aria-label={t("thread.promptNavigator.jumpTo", { label: marker.label })}
-              onClick={() => onJumpToPrompt(marker.ids[marker.ids.length - 1])}
+              onClick={() => {
+                if (marker.ids.length > 0) {
+                  onJumpToPrompt(marker.ids[marker.ids.length - 1]);
+                  return;
+                }
+                if (marker.cursor && onJumpToTurn) onJumpToTurn(marker.cursor);
+              }}
               onBlur={() => setFocusedMarkerIndex(null)}
               onFocus={() => setFocusedMarkerIndex(index)}
               onPointerEnter={() => setFocusedMarkerIndex(index)}
@@ -324,6 +371,7 @@ function promptMarkersEqual(
       || a.label !== b.label
       || a.preview !== b.preview
       || a.answerPreview !== b.answerPreview
+      || a.cursor !== b.cursor
       || a.ids.length !== b.ids.length
       || a.ids.some((id, idIndex) => id !== b.ids[idIndex])
     ) {
@@ -332,6 +380,35 @@ function promptMarkersEqual(
   }
   return true;
 }
+
+/**
+ * Build one marker per turn of the whole session from the turn index.
+ *
+ * The rail already spaces markers evenly (``distributeMarkerPositions``), so a
+ * marker only needs its identity and jump target, not a measured position. That
+ * makes the rail a true navigator: it shows the real number of turns in the
+ * conversation instead of only the rows in the loaded window. Turns that happen
+ * to be rendered also carry their row id, so clicking one scrolls within the
+ * window; every other turn jumps by its page cursor.
+ */
+function sessionPromptMarkers(
+  sessionTurns: SessionTurnSummary[],
+  renderedOrdinals: Map<number, PromptAnchor>,
+): PromptMarker[] {
+  return sessionTurns.map((turn) => {
+    const rendered = renderedOrdinals.get(turn.ordinal);
+    return {
+      answerPreview: rendered?.answerPreview ?? "",
+      count: 1,
+      cursor: turn.cursor,
+      ids: rendered ? [rendered.id] : [],
+      label: rendered?.label ?? turn.label,
+      preview: rendered?.preview ?? turn.label,
+      topPercent: 0,
+    };
+  });
+}
+
 
 function groupPromptMarkers(
   measured: MeasuredPrompt[],

@@ -1641,6 +1641,57 @@ describe("ThreadViewport", () => {
     expect(navigateTo).toHaveBeenCalledWith(1064);
   });
 
+  it("shows one marker per turn in the whole session, not just the loaded window", async () => {
+    // Five turns are rendered; the session has twenty. The rail must report the
+    // real conversation length, because the left navigator is the only place a
+    // reader can see how much history exists.
+    const messages = makePromptExchangeMessages(5);
+    const sessionTurns = Array.from({ length: 20 }, (_, ordinal) => ({
+      ordinal,
+      label: `Prompt ${ordinal + 1}`,
+      created_at: null,
+      cursor: `cursor-${ordinal}`,
+    }));
+
+    const onJumpToTurn = vi.fn();
+    const { container } = render(
+      <ThreadViewport
+        messages={messages}
+        isStreaming={false}
+        composer={<div />}
+        sessionTurns={sessionTurns}
+        sessionTurnTotal={20}
+        onNeedSessionTurns={() => {}}
+        onJumpToTurn={onJumpToTurn}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1800 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    Array.from(container.querySelectorAll<HTMLElement>("[data-user-prompt-id]"))
+      .forEach((el, index) => {
+        Object.defineProperty(el, "offsetTop", { configurable: true, value: index * 360 });
+      });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    // One rail, and it carries every turn in the session.
+    expect(screen.getAllByLabelText("User prompt navigation")).toHaveLength(1);
+    const markers = screen.getAllByTestId("prompt-rail-marker");
+    expect(markers).toHaveLength(20);
+
+    // A turn outside the rendered window jumps by its cursor.
+    fireEvent.click(screen.getByLabelText("Jump to prompt: Prompt 1"));
+    expect(onJumpToTurn).toHaveBeenCalledWith("cursor-0");
+  });
+
   it("does not render or measure the prompt rail below the desktop breakpoint", async () => {
     const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
       matches: false,

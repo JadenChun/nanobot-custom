@@ -409,6 +409,61 @@ function transcriptFromSimpleMessages(
   };
 }
 
+/**
+ * A minimal delegated-child row.
+ *
+ * The client only asks for delegated children when the rendered page actually
+ * contains one, so a test that exercises child loading must include a row.
+ */
+function delegatedChildRow(
+  parentKey: string,
+  childId: string,
+  label: string,
+): UIMessage {
+  return {
+    id: `delegated-child-${childId}`,
+    role: "assistant",
+    kind: "delegated_child",
+    content: "",
+    createdAt: 1000,
+    delegatedChild: {
+      history_kind: "row",
+      parent_session_key: parentKey,
+      root_key: parentKey,
+      child_session_key: `delegated:${childId}`,
+      child_id: childId,
+      profile: "worker",
+      state: "completed",
+      outcome: "completed",
+      task_label: label,
+      task_label_truncated: false,
+      result_summary: null,
+      result_summary_truncated: false,
+      runtime_generation: null,
+      parent_run_id: null,
+      child_run_id: null,
+      parent_store_identity: null,
+      parent_incarnation: null,
+      parent_generation: null,
+      root_store_identity: null,
+      root_incarnation: null,
+      root_generation: null,
+      child_store_identity: null,
+      child_incarnation: null,
+      child_generation: null,
+      run_sequence: null,
+      state_sequence: null,
+      control_epoch: null,
+      holds_capacity: false,
+      can_stop: false,
+      owned_work: false,
+      pending_approval_id: null,
+      blocked_run_id: null,
+      result_disposition: null,
+    } as never,
+  };
+}
+
 function httpJson(body: unknown) {
   return {
     ok: true,
@@ -4538,7 +4593,7 @@ describe("ThreadShell", () => {
 
     await waitFor(() => expect(queuedRow()).toBeNull());
     expect(screen.getByText("How is it going?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Working for / })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Working" })).toBeInTheDocument();
     expect(screen.queryByText("Worked for 1s")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /^Thinking for / })).not.toBeInTheDocument();
   });
@@ -7045,9 +7100,17 @@ describe("ThreadShell", () => {
       }
       if (url.includes(encodeURIComponent(firstKey) + "/webui-thread")) {
         const replies = added ? ["First saved reply", "Later saved reply"] : ["First saved reply"];
-        return httpJson(transcriptFromSimpleMessages(
+        const base = transcriptFromSimpleMessages(
           replies.map((content) => ({ role: "assistant", content })),
-        ));
+        );
+        return httpJson({
+          ...base,
+          // The child row is what triggers the delegated-children request.
+          messages: [
+            ...base.messages,
+            delegatedChildRow(firstKey, "probe-anchor", "Loaded child anchor"),
+          ],
+        });
       }
       if (url.includes("websocket%3Aaway/webui-thread")) {
         return httpJson(transcriptFromSimpleMessages([{ role: "assistant", content: "Other chat" }]));
@@ -7078,9 +7141,21 @@ describe("ThreadShell", () => {
       for (const chat of ["a", "b"]) {
         const path = `websocket%3Aopening-${chat}/`;
         if (url.includes(path + "webui-thread")) {
-          return Promise.resolve(httpJson(transcriptFromSimpleMessages([
-            { role: "assistant", content: `Saved reply in chat ${chat}` },
-          ])));
+          return Promise.resolve(httpJson({
+            ...transcriptFromSimpleMessages([
+              { role: "assistant", content: `Saved reply in chat ${chat}` },
+            ]),
+            messages: [
+              ...transcriptFromSimpleMessages([
+                { role: "assistant", content: `Saved reply in chat ${chat}` },
+              ]).messages,
+              // A child row is what makes the client request delegated
+              // children; the assertion below proves the transcript still
+              // renders while that request is outstanding.
+              delegatedChildRow(`websocket:opening-${chat}`, `opening-${chat}-child`,
+                `Child in chat ${chat}`),
+            ],
+          }));
         }
         if (url.includes(path + "delegated-children")) {
           return new Promise<ReturnType<typeof httpJson>>((resolve) => {

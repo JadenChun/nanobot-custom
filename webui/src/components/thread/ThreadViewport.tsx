@@ -32,6 +32,7 @@ import type {
   DelegatedChildReference,
   McpPresetInfo,
   RetryStatus,
+  SessionTurnSummary,
   SlashCommand,
   UIMessage,
 } from "@/lib/types";
@@ -74,6 +75,11 @@ interface ThreadViewportProps {
   loadingOlder?: boolean;
   userMessageOffset?: number;
   onLoadOlder?: () => Promise<void> | void;
+  /** Whole-session turn index for the left rail, when loaded. */
+  sessionTurns?: SessionTurnSummary[];
+  sessionTurnTotal?: number;
+  onNeedSessionTurns?: () => void;
+  onJumpToTurn?: (cursor: string) => void;
   onOpenFilePreview?: (path: string) => void;
   onForkFromMessage?: (beforeUserIndex: number) => void;
   onOpenChildHistory?: (child: DelegatedChildReference, trigger: HTMLButtonElement) => void;
@@ -260,6 +266,10 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   loadingOlder = false,
   userMessageOffset = 0,
   onLoadOlder,
+  sessionTurns = [],
+  sessionTurnTotal = 0,
+  onNeedSessionTurns,
+  onJumpToTurn,
   onOpenFilePreview,
   onForkFromMessage,
   onOpenChildHistory,
@@ -1027,6 +1037,10 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
           scrollRef={scrollRef}
           bottomOffset={scrollButtonBottom}
           onJumpToPrompt={navigateToVisiblePrompt}
+          sessionTurns={sessionTurns}
+          totalTurnCount={sessionTurnTotal}
+          onNeedSessionTurns={onNeedSessionTurns}
+          onJumpToTurn={onJumpToTurn}
         />
       ) : null}
 

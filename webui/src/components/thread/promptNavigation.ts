@@ -7,6 +7,8 @@ export interface PromptAnchor {
   preview: string;
   createdAt: number;
   index: number;
+  /** Whole-session turn ordinal, when the row carries one. */
+  ordinal?: number;
 }
 
 export function userPromptAnchors(messages: UIMessage[]): PromptAnchor[] {
@@ -20,6 +22,7 @@ export function userPromptAnchors(messages: UIMessage[]): PromptAnchor[] {
       preview: promptPreview(message.content, index),
       createdAt: message.createdAt,
       index,
+      ...(message.turnOrdinal === undefined ? {} : { ordinal: message.turnOrdinal }),
     };
     index += 1;
     return [anchor];

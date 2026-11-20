@@ -6,6 +6,8 @@ import { sessionTitle, useSessionHistory, useSessions } from "@/hooks/useSession
 import * as api from "@/lib/api";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { folderAccessThreadFixture } from "@/tests/fixtures/folder-access-request";
+import { resetSessionPageCache } from "@/lib/session-page-cache";
+
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -67,6 +69,8 @@ describe("useSessions", () => {
     vi.mocked(api.deleteSession).mockReset();
     vi.mocked(api.fetchWebuiThread).mockReset();
     vi.mocked(api.fetchDelegatedChildren).mockReset();
+    // The renderer page cache is module-level, so each case must start empty.
+    resetSessionPageCache();
   });
 
   it("does not use low-information greetings as fallback session titles", () => {
@@ -1423,6 +1427,45 @@ describe("useSessions", () => {
     expect(result.current.workspaceAccessRequestError).toBe(true);
   });
 
+  it("does not request delegated children when the page has no child rows", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const { result } = renderHook(() => useSessionHistory("websocket:chat-title"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // A conversation with no delegated activity has nothing to hydrate, so the
+    // most expensive read in the gateway must not be issued at all.
+    expect(api.fetchDelegatedChildren).not.toHaveBeenCalled();
+    expect(result.current.delegatedChildren).toEqual([]);
+    expect(result.current.delegatedChildrenLoading).toBe(false);
+  });
+
+  it("paints a previously loaded session from the renderer cache before the revisit fetch settles", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
+      wrapper: wrap(fakeClient()),
+    });
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    const loadedIds = first.result.current.messages.map((message) => message.id);
+    expect(loadedIds.length).toBeGreaterThan(0);
+    first.unmount();
+
+    // Hold the revisit request open: the cached window must render anyway, which
+    // is the whole point of keeping the loaded page in the renderer.
+    let resolveThread!: (value: unknown) => void;
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(
+      new Promise((resolve) => { resolveThread = resolve; }) as never,
+    );
+    const second = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(second.result.current.messages.map((message) => message.id))
+      .toEqual(loadedIds));
+    resolveThread(null);
+  });
+
   it("commits the root page and permissions before delegated activity settles", async () => {
     const key = "websocket:chat-title";
     const permissions = {
@@ -1436,10 +1479,56 @@ describe("useSessions", () => {
       task_access: null,
       retirement: null,
     };
+    // Delegated children are only fetched when the page renders a child row,
+    // so this case needs one to exercise "root commits before children settle".
     vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
       ...folderAccessThreadFixture,
       workspace_permissions: permissions,
       stop_target: null,
+      messages: [
+        ...folderAccessThreadFixture.messages,
+        {
+          id: "delegated-child-settle",
+          role: "assistant",
+          content: "",
+          createdAt: 1,
+          kind: "delegated_child",
+          delegatedChild: {
+            parent_session_key: key,
+            child_session_key: "delegated:settle-a",
+            child_id: "settle-a",
+            profile: "delegated",
+            task_label: "Inspect task",
+            task_label_truncated: false,
+            state: "active",
+            outcome: null,
+            runtime_generation: 0,
+            parent_run_id: "root-run",
+            child_run_id: "child-run",
+            parent_store_identity: "root-store",
+            parent_incarnation: "root-incarnation",
+            parent_generation: 0,
+            root_key: key,
+            root_store_identity: "root-store",
+            root_incarnation: "root-incarnation",
+            root_generation: 0,
+            child_store_identity: "child-store-a",
+            child_incarnation: "child-incarnation-a",
+            child_generation: 0,
+            run_sequence: 1,
+            state_sequence: 1,
+            control_epoch: 2,
+            holds_capacity: true,
+            can_stop: true,
+            owned_work: true,
+            pending_approval_id: null,
+            blocked_run_id: null,
+            result_disposition: null,
+            result_summary: null,
+            result_summary_truncated: false,
+          },
+        },
+      ],
     });
     let finishChildren!: (value: Awaited<ReturnType<typeof api.fetchDelegatedChildren>>) => void;
     vi.mocked(api.fetchDelegatedChildren).mockReturnValueOnce(new Promise((resolve) => {
