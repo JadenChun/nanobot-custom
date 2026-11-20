@@ -51,6 +51,7 @@ function IntegrationComposer({ chatId }: { chatId: string }) {
       onJoinQueuedAttempt={stream.joinQueuedAttempt}
       onConsumeQueuedAttempt={stream.consumeQueuedAttempt}
       isStreaming={stream.isStreaming}
+      queueCompletionTurnId={stream.queueCompletionTurnId}
       automaticQueueSendBlocked={stream.hasUnknownMessageSend || !stream.connectionOpen}
       pendingQueueKey={chatId}
       placeholder="Type your message..."
@@ -99,6 +100,7 @@ function OwnerBackedComposer({
       onJoinQueuedAttempt={(binding) => client.waitForQueuedAttempt(chatId, binding)}
       onConsumeQueuedAttempt={(binding) => client.consumeQueuedAttempt(chatId, binding)}
       isStreaming={isStreaming}
+      queueCompletionTurnId={isStreaming ? null : "just-completed"}
       pendingQueueKey={chatId}
       placeholder="Type your message..."
     />

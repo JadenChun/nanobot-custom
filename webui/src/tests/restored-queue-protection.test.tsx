@@ -39,7 +39,7 @@ describe("restored queued-row protection", () => {
     expect(malformedRow).toBeTruthy();
     for (const row of [legacyRow!, malformedRow!]) {
       expect(within(row).getByRole("status")).toHaveTextContent("Awaiting confirmation");
-      expect(within(row).getByRole("button", { name: "Steer" })).toBeDisabled();
+      expect(within(row).getByRole("button", { name: "Send", exact: true })).toBeDisabled();
       expect(within(row).getByRole("button", { name: "Edit guidance" })).toBeDisabled();
       expect(within(row).getByRole("button", { name: "Delete guidance" })).toBeDisabled();
     }
@@ -61,14 +61,14 @@ describe("restored queued-row protection", () => {
     vi.spyOn(window.localStorage, "setItem").mockImplementationOnce(() => {
       throw new DOMException("quota exceeded", "QuotaExceededError");
     });
-    rerender(<ThreadComposer onSend={onSend} isStreaming={false} pendingQueueKey={chatId} />);
+    rerender(<ThreadComposer onSend={onSend} pendingQueueKey={chatId} queueCompletionTurnId="completed" />);
 
     expect(await screen.findByText("must remain safe")).toBeInTheDocument();
     expect(screen.getByText("Queued messages could not be saved safely. Try again before sending."))
       .toBeInTheDocument();
     expect(onSend).not.toHaveBeenCalled();
     expect(localStorage.getItem(queueKey(chatId))).toBe(savedBeforeAttempt);
-    expect(screen.getByRole("button", { name: "Steer" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
   });
 
   it("does not dispatch when protection serialization fails", async () => {
@@ -85,9 +85,11 @@ describe("restored queued-row protection", () => {
       throw new TypeError("serialization failed");
     });
 
-    rerender(<ThreadComposer onSend={onSend} isStreaming={false} pendingQueueKey={chatId} />);
+    rerender(<ThreadComposer onSend={onSend} pendingQueueKey={chatId} queueCompletionTurnId="completed" />);
 
     expect(await screen.findByText("must serialize first")).toBeInTheDocument();
+    expect(screen.getByText("Queued messages could not be saved safely. Try again before sending."))
+      .toBeInTheDocument();
     expect(onSend).not.toHaveBeenCalled();
     expect(localStorage.getItem(queueKey(chatId))).toBe(savedBeforeAttempt);
     expect(JSON.parse(savedBeforeAttempt!)[0].submission).toEqual({ version: 1, state: "ready" });
@@ -109,7 +111,7 @@ describe("restored queued-row protection", () => {
       vi.spyOn(window.localStorage, "setItem").mockImplementationOnce((key, value) => {
         if (readback === "truncated") originalSetItem(key, value.slice(0, -1));
       });
-      rerender(<ThreadComposer onSend={onSend} isStreaming={false} pendingQueueKey={chatId} />);
+      rerender(<ThreadComposer onSend={onSend} pendingQueueKey={chatId} queueCompletionTurnId="completed" />);
 
       expect(await screen.findByText("readback must verify")).toBeInTheDocument();
       expect(screen.getByText("Queued messages could not be saved safely. Try again before sending."))
@@ -165,7 +167,7 @@ describe("restored queued-row protection", () => {
     expect(screen.getByText("later.txt")).toBeInTheDocument();
   });
 
-  it("keeps the original binding when persisted prompt text normalizes to 4,000 characters", async () => {
+  it("preserves the full accepted payload and its original binding in the queue snapshot", () => {
     const chatId = "normalized-held-binding";
     const longText = "x".repeat(4_500);
     const onSend = vi.fn();
@@ -186,7 +188,7 @@ describe("restored queued-row protection", () => {
       undefined,
       expect.objectContaining({ queuedAttempt: expect.any(Object) }),
     );
-    expect(saved.text).toHaveLength(4000);
+    expect(saved.text).toBe(longText);
     expect(saved.submission).toMatchObject({
       version: 1,
       state: "submitted",

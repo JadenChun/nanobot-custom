@@ -2161,6 +2161,7 @@ export interface WebuiDelegatedChildrenPayload {
 export interface WebuiThreadPersistedPayload {
   schemaVersion: number;
   sessionKey?: string;
+  view?: "history";
   savedAt?: string;
   messages: UIMessage[];
   fork_boundary_message_count?: number;
@@ -2182,6 +2183,11 @@ export interface WebuiThreadPersistedPayload {
   /** Local authenticated UI projection; absent on remote/temporary reads and old gateways. */
   workspace_permissions?: WorkspacePermissionProjection | null;
 }
+
+export type WebuiThreadControlsPayload = Pick<
+  WebuiThreadPersistedPayload,
+  "sessionKey" | "stop_target" | "workspace_access_request" | "workspace_permissions" | "workspace_scope"
+>;
 
 export interface FilePreviewEntry {
   name: string;

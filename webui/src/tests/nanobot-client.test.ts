@@ -575,6 +575,27 @@ describe("NanobotClient", () => {
     expect(handler).toHaveBeenCalledTimes(3);
   });
 
+  it("shares one attach between listeners for the same chat", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    const first = vi.fn();
+    const second = vi.fn();
+    client.onChat("shared-chat", first);
+    client.onChat("shared-chat", second);
+    expect(lastSocket().sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "attach", chat_id: "shared-chat" },
+    ]);
+    const attached = { event: "attached", chat_id: "shared-chat" };
+    lastSocket().fakeMessage(attached);
+    expect(first.mock.calls[0]?.[0]).toEqual(attached);
+    expect(second.mock.calls[0]?.[0]).toEqual(attached);
+  });
+
   it("forwards owner admission receipts to the matching chat subscriber", () => {
     const client = new NanobotClient({
       url: "ws://test",

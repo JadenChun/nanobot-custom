@@ -227,6 +227,8 @@ export interface SendOptions {
   finalizeActiveTurn?: boolean;
   /** Append guidance to the running turn without detaching its active answer segment. */
   continueActiveTurn?: boolean;
+  /** The turn presented by the Steer action, not whatever runs after upload. */
+  steerTargetTurnId?: string;
   /** Content-free client binding for one persisted queued submission. */
   queuedAttempt?: QueuedAttemptBinding;
 }
@@ -314,11 +316,14 @@ export function useNanobotStream(
   initialStopTarget: StopExpectation | null = null,
   onProjectionRefreshNeeded?: () => void,
   initialStopTargetSnapshotAvailable = initialStopTarget !== null,
+  requireVerifiedStopTarget = false,
 ): {
   messages: UIMessage[];
   /** Whether ``messages`` belongs to the current ``chatId`` after a session switch. */
   messagesReady: boolean;
   isStreaming: boolean;
+  /** Live, natural settlement of this chat's exact run; never inferred from idle. */
+  queueCompletionTurnId: string | null;
   hasOwnedWork: boolean;
   stopCanBeSent: boolean;
   stopPending: boolean;
@@ -414,6 +419,9 @@ export function useNanobotStream(
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
   const liveStopTargetSeenRef = useRef(false);
   const stopTargetRef = useRef(stopTarget);
+  const stoppedTurnIdRef = useRef<string | null>(null);
+  const [queueCompletion, setQueueCompletion] =
+    useState<{ chatId: string; turnId: string } | null>(null);
   const admissionWaitersRef = useRef(new Map<string, (admitted: boolean) => void>());
   const trustedStopSourceRef = useRef(initialStopTarget?.source ?? null);
   const stopTargetRequiresRefreshRef = useRef(false);
@@ -448,7 +456,8 @@ export function useNanobotStream(
   const stopCanBeSent = connectionOpen
     && !stopPending
     && (stopTarget !== null || (
-      !hasModernStopTargetSnapshot
+      !requireVerifiedStopTarget
+      && !hasModernStopTargetSnapshot
       && isStreaming
       && !childOwnedWork
       && !stopTargetRequiresRefresh
@@ -466,6 +475,7 @@ export function useNanobotStream(
   }, []);
 
   useEffect(() => client.onStatus((status) => {
+    if (status !== "open") setQueueCompletion(null);
     setConnectionStatus(status);
     refreshUnknownMessageSend();
   }), [client, refreshUnknownMessageSend]);
@@ -960,6 +970,8 @@ export function useNanobotStream(
     stopTargetRefreshBaselineRef.current = null;
     setStopTargetRequiresRefresh(false);
     liveStopTargetSeenRef.current = false;
+    stoppedTurnIdRef.current = null;
+    setQueueCompletion(null);
     setStopPending(false);
     setStopNotice(null);
     admissionWaitersRef.current.clear();
@@ -1042,7 +1054,7 @@ export function useNanobotStream(
       }
     };
 
-    const handle = (ev: InboundEvent, admission?: LocalInputAdmission) => {
+    const handle = (ev: InboundEvent, admission?: LocalInputAdmission, liveNaturalCompletion?: true) => {
       // Read the attempt owner after every existing callback, including receipt
       // early returns; transcript hydration never supplies this safety fact.
       refreshUnknownMessageSend();
@@ -1341,6 +1353,8 @@ export function useNanobotStream(
           if (ev.turn_id && !unresolvedAdmission) resolveAdmission(ev.turn_id, true);
         } else if (ev.status === "stopping") {
           // Stop was accepted; keep the turn visible until settlement.
+          stoppedTurnIdRef.current = ev.turn_id ?? client.getRunTurnId(chatId);
+          setQueueCompletion(null);
           setStopPending(true);
           setIsStreaming(true);
         } else {
@@ -1385,6 +1399,14 @@ export function useNanobotStream(
 
       if (ev.event === "turn_end") {
         const completedTurnId = typeof ev.turn_id === "string" ? ev.turn_id : null;
+        if (
+          liveNaturalCompletion
+          && completedTurnId
+          && completedTurnId !== stoppedTurnIdRef.current
+          && !stopPending
+        ) {
+          setQueueCompletion({ chatId, turnId: completedTurnId });
+        }
         // A turn that ends without an owner receipt cannot be treated as
         // admitted; keep the queued item unresolved and held.
         if (completedTurnId) sideChannelTurnIdsRef.current.delete(completedTurnId);
@@ -1740,6 +1762,13 @@ export function useNanobotStream(
       // Text is optional when files are attached — the agent will still see
       // them via ``media`` paths.
       if (!hasAttachments && !content.trim()) return null;
+      const continueActiveTurn = options?.continueActiveTurn === true;
+      const targetTurnId = continueActiveTurn
+        ? (options?.steerTargetTurnId ?? client.getRunTurnId(chatId))
+        : null;
+      // Keep the selected target even if it has since changed. The gateway
+      // validates that exact turn and can settle a queued attempt as refused.
+      if (continueActiveTurn && !targetTurnId) return null;
 
       const queuedAttempt = options?.queuedAttempt;
       const startsNewRun = !options?.sideChannel && !options?.continueActiveTurn;
@@ -1747,11 +1776,11 @@ export function useNanobotStream(
         queuedAttempt
         && !client.prepareQueuedAttempt(chatId, queuedAttempt, startsNewRun)
       ) return null;
+      if (startsNewRun) setQueueCompletion(null);
 
       setStreamError(null);
       const sideChannel = options?.sideChannel === true;
       const finalizeActiveTurn = options?.finalizeActiveTurn === true;
-      const continueActiveTurn = options?.continueActiveTurn === true;
       const outboundContent = options?.quotedContext
         ? formatQuotedUserMessage(content, options.quotedContext)
         : content;
@@ -1805,7 +1834,6 @@ export function useNanobotStream(
       });
       if (!sideChannel) setIsStreaming(true);
       const wireMedia = hasAttachments ? images!.map((i) => i.media) : undefined;
-      const targetTurnId = continueActiveTurn ? client.getRunTurnId(chatId) : null;
       const clientOptions = {
         ...options,
         turnId,
@@ -1817,6 +1845,7 @@ export function useNanobotStream(
       delete clientOptions.quotedContext;
       delete clientOptions.finalizeActiveTurn;
       delete clientOptions.continueActiveTurn;
+      delete clientOptions.steerTargetTurnId;
       const needsUpload = !!wireMedia?.some(
         (media) => !!media.data_url && !media.id,
       );
@@ -1863,7 +1892,8 @@ export function useNanobotStream(
       && legacyTargetTurnId.trim().length > 0;
     const hasModernSnapshot = stopTargetSnapshotAvailable || liveStopTargetSeenRef.current;
     if (!target && (
-      hasModernSnapshot
+      requireVerifiedStopTarget
+      || hasModernSnapshot
       || !isStreaming
       || childWork
       || stopTargetRequiresRefreshRef.current
@@ -1880,6 +1910,8 @@ export function useNanobotStream(
       projectionRefreshRef.current?.();
       return;
     }
+    stoppedTurnIdRef.current = target?.active_turn_id ?? legacyTargetTurnId;
+    setQueueCompletion(null);
     setStopPending(true);
     setStopNotice(null);
     client.sendMessage(
@@ -1904,6 +1936,7 @@ export function useNanobotStream(
     connectionOpen,
     expectedRootSessionKey,
     isStreaming,
+    requireVerifiedStopTarget,
     stopTargetSnapshotAvailable,
     stopTargetRequiresRefresh,
   ]);
@@ -1947,6 +1980,10 @@ export function useNanobotStream(
     messages,
     messagesReady: messageOwnerChatId === chatId,
     isStreaming,
+    queueCompletionTurnId: queueCompletion?.chatId === chatId
+      && queueCompletion.turnId === client.getRunTurnId(chatId)
+      ? queueCompletion.turnId
+      : null,
     hasOwnedWork,
     stopCanBeSent,
     stopPending,

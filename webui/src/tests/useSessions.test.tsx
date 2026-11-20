@@ -16,7 +16,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     listSessions: vi.fn(),
     deleteSession: vi.fn(),
     fetchWebuiThread: vi.fn(),
+    fetchWebuiThreadControls: vi.fn(),
     fetchDelegatedChildren: vi.fn(),
+    fetchSessionTurns: vi.fn(),
   };
 });
 
@@ -68,7 +70,9 @@ describe("useSessions", () => {
     vi.mocked(api.listSessions).mockReset();
     vi.mocked(api.deleteSession).mockReset();
     vi.mocked(api.fetchWebuiThread).mockReset();
+    vi.mocked(api.fetchWebuiThreadControls).mockReset();
     vi.mocked(api.fetchDelegatedChildren).mockReset();
+    vi.mocked(api.fetchSessionTurns).mockReset();
     // The renderer page cache is module-level, so each case must start empty.
     resetSessionPageCache();
   });
@@ -1414,7 +1418,7 @@ describe("useSessions", () => {
 
     await waitFor(() => expect(result.current.workspaceAccessRequest?.access_request_id)
       .toBe(folderAccessThreadFixture.workspace_access_request?.access_request_id));
-    vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(api.fetchWebuiThreadControls).mockRejectedValueOnce(new Error("offline"));
 
     await act(async () => {
       result.current.markWorkspaceAccessRequestStale();
@@ -1442,9 +1446,10 @@ describe("useSessions", () => {
   });
 
   it("paints a previously loaded session from the renderer cache before the revisit fetch settles", async () => {
+    const wrapper = wrap(fakeClient());
     vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
     const first = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
-      wrapper: wrap(fakeClient()),
+      wrapper,
     });
     await waitFor(() => expect(first.result.current.loading).toBe(false));
     const loadedIds = first.result.current.messages.map((message) => message.id);
@@ -1458,12 +1463,96 @@ describe("useSessions", () => {
       new Promise((resolve) => { resolveThread = resolve; }) as never,
     );
     const second = renderHook(() => useSessionHistory("websocket:chat-revisit"), {
-      wrapper: wrap(fakeClient()),
+      wrapper,
     });
 
     await waitFor(() => expect(second.result.current.messages.map((message) => message.id))
       .toEqual(loadedIds));
     resolveThread(null);
+  });
+
+  it("does not paint a cached page for a new authenticated client with the same session key", async () => {
+    const key = "websocket:chat-title";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient(), "first") });
+    await waitFor(() => expect(first.result.current.messages.length).toBeGreaterThan(0));
+    first.unmount();
+
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(new Promise(() => {}));
+    const second = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient(), "second") });
+    expect(api.fetchWebuiThread).toHaveBeenLastCalledWith("second", key, expect.any(Object));
+    expect(second.result.current.messages).toEqual([]);
+  });
+
+  it("does not paint a cached page after its session has been deleted", async () => {
+    const key = "websocket:chat-title";
+    const wrapper = wrap(fakeClient());
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const first = renderHook(() => useSessionHistory(key), { wrapper });
+    await waitFor(() => expect(first.result.current.messages.length).toBeGreaterThan(0));
+    first.unmount();
+
+    vi.mocked(api.listSessions).mockResolvedValueOnce([]);
+    vi.mocked(api.deleteSession).mockResolvedValueOnce({ deleted: true });
+    const catalog = renderHook(useSessions, { wrapper });
+    await act(async () => { await catalog.result.current.deleteChat(key); });
+
+    vi.mocked(api.fetchWebuiThread).mockReturnValueOnce(new Promise(() => {}));
+    const second = renderHook(() => useSessionHistory(key), { wrapper });
+    expect(second.result.current.messages).toEqual([]);
+  });
+
+  it("keeps the settled window when a warm refresh loses transport", async () => {
+    const key = "websocket:chat-title";
+    vi.mocked(api.fetchWebuiThread)
+      .mockResolvedValueOnce(folderAccessThreadFixture)
+      .mockRejectedValueOnce(new TypeError("offline"));
+    const { result } = renderHook(() => useSessionHistory(key), { wrapper: wrap(fakeClient()) });
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+    const settled = result.current.messages;
+
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.error).toBe("offline"));
+    expect(result.current.messages).toBe(settled);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.historyAccessDenied).toBe(false);
+  });
+
+  it.each(["switch", "refusal"])("discards a late turn index after a history %s", async (change) => {
+    const key = "websocket:chat-title";
+    const otherKey = "websocket:other-chat";
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const { result, rerender } = renderHook(
+      ({ selected }) => useSessionHistory(selected),
+      { initialProps: { selected: key }, wrapper: wrap(fakeClient()) },
+    );
+    await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+
+    let finishIndex!: () => void;
+    vi.mocked(api.fetchSessionTurns).mockReturnValueOnce(new Promise((resolve) => {
+      finishIndex = () => resolve({
+        schemaVersion: 3,
+        sessionKey: key,
+        turns: [{ ordinal: 0, label: "Prompt from the old grant", created_at: null, cursor: "p0" }],
+        total_turn_count: 1,
+      });
+    }));
+    let indexRead!: ReturnType<typeof result.current.loadTurnIndex>;
+    act(() => { indexRead = result.current.loadTurnIndex(); });
+
+    if (change === "refusal") {
+      vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(new api.ApiError(403, "refused"));
+      act(() => result.current.refresh());
+      await waitFor(() => expect(result.current.historyAccessDenied).toBe(true));
+    } else {
+      vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+        ...folderAccessThreadFixture, sessionKey: otherKey,
+      });
+      rerender({ selected: otherKey });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+    }
+    await act(async () => { finishIndex(); await indexRead; });
+    expect(result.current.turnIndex).toEqual([]);
   });
 
   it("commits the root page and permissions before delegated activity settles", async () => {
@@ -1605,17 +1694,15 @@ describe("useSessions", () => {
     act(() => result.current.updateWorkspacePermissions({ ...current, revision: 3 }));
     expect(result.current.workspacePermissions).toEqual(current);
 
-    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
-      ...folderAccessThreadFixture,
+    vi.mocked(api.fetchWebuiThreadControls).mockResolvedValueOnce({
       workspace_permissions: restarted,
     });
     act(() => result.current.updateWorkspacePermissions(restarted));
     await waitFor(() => expect(result.current.workspacePermissions).toEqual(restarted));
-    expect(api.fetchWebuiThread).toHaveBeenCalledTimes(2);
-    expect(api.fetchWebuiThread).toHaveBeenLastCalledWith(
+    expect(api.fetchWebuiThread).toHaveBeenCalledTimes(1);
+    expect(api.fetchWebuiThreadControls).toHaveBeenCalledWith(
       "tok",
       "websocket:chat-permissions",
-      { limit: 1, direction: "latest" },
     );
   });
 

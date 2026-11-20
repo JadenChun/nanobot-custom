@@ -46,7 +46,6 @@ import {
   fetchFilePreviewAvailability,
   fetchInstalledCliApps,
   fetchMcpPresets,
-  fetchSettings,
   isCanonicalAbsolutePath,
   listSlashCommands,
   prepareWorkspaceFullAccess,
@@ -1143,6 +1142,7 @@ export function ThreadShell({
     messages: historical,
     loading,
     error: historyError,
+    historyAccessDenied,
     loadingOlder,
     loadOlder,
     hasMoreBefore,
@@ -1170,6 +1170,8 @@ export function ThreadShell({
     markWorkspacePermissionsStale,
     updateWorkspacePermissions,
     refreshWorkspacePermissions,
+    separateControls,
+    refreshLiveControls,
     refresh: refreshHistory,
     version: historyVersion,
     forkBoundaryMessageCount,
@@ -1178,6 +1180,7 @@ export function ThreadShell({
     loadTurnIndex,
     loadTurnAt,
   } = useSessionHistory(historyKey);
+  const refreshStopState = separateControls ? refreshLiveControls : refreshHistory;
   const [appliedHistoryVersion, setAppliedHistoryVersion] = useState(0);
   const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
   const pendingRecoveryResolveRef = useRef<PendingRecoveryResolve | null>(null);
@@ -1329,7 +1332,7 @@ export function ThreadShell({
     isPayload: isMcpPresetsPayload,
     selectItems: installedMcpPresetsFromPayload,
   });
-  const [settings, setSettings] = useState<SettingsPayload | null>(settingsSnapshot);
+  const settings = settingsSnapshot;
   const [heroGreetingKey, setHeroGreetingKey] = useState(randomHeroGreetingKey);
   const [submittedViewportTurnId, setSubmittedViewportTurnId] = useState<string | null>(null);
   const [childHistoryInspection, setChildHistoryInspection] =
@@ -1445,6 +1448,7 @@ export function ThreadShell({
     messages,
     messagesReady,
     isStreaming,
+    queueCompletionTurnId,
     hasOwnedWork,
     stopCanBeSent,
     stopPending,
@@ -1475,8 +1479,9 @@ export function ThreadShell({
     handleTurnEnd,
     historyKey,
     historyStopTarget,
-    () => refreshHistory(),
+    refreshStopState,
     historyStopTargetSnapshotAvailable,
+    separateControls,
   );
 
   const admissionRejectedTurn = useMemo(() => {
@@ -1961,7 +1966,9 @@ export function ThreadShell({
     if (!showingOpeningPage) return [];
     return projectWebuiThreadMessages(historical);
   }, [historical, showingOpeningPage]);
-  const viewportMessages = showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
+  const viewportMessages = historyAccessDenied
+    ? []
+    : showingOpeningPage || !messagesReady ? openingMessages : displayMessages;
   const conversationLoading = (openingConversation || historyIsPending) && viewportMessages.length === 0;
   const showHeroComposer = viewportMessages.length === 0 && !conversationLoading;
   const composerVariant = showHeroComposer ? emptyComposerVariant : "thread";
@@ -2078,28 +2085,6 @@ export function ThreadShell({
     wasShowingHeroComposerRef.current = showHeroComposer;
   }, [showHeroComposer]);
 
-  const refreshModelSettings = useCallback(async () => {
-    try {
-      setSettings(await fetchSettings(getToken()));
-    } catch {
-      if (!settingsSnapshot) setSettings(null);
-    }
-  }, [getToken, settingsSnapshot]);
-
-  useEffect(() => {
-    if (settingsSnapshot) {
-      setSettings(settingsSnapshot);
-      return;
-    }
-    void refreshModelSettings();
-  }, [refreshModelSettings, settingsSnapshot]);
-
-  useEffect(() => {
-    return client.onRuntimeModelUpdate(() => {
-      void refreshModelSettings();
-    });
-  }, [client, refreshModelSettings]);
-
   useEffect(() => {
     if (!chatId) {
       setFallbackModelName(null);
@@ -2174,6 +2159,13 @@ export function ThreadShell({
   useEffect(() => {
     if (!historyKey || !chatId || loading) return;
     setAppliedHistoryVersion(historyVersion);
+    if (historyAccessDenied) {
+      messageCacheRef.current.delete(chatId);
+      pendingCanonicalHydrateRef.current.delete(chatId);
+      pendingCanonicalCommitRef.current.delete(chatId);
+      setMessages([]);
+      return;
+    }
     const cached = messageCacheRef.current.get(chatId);
     const pendingCanonicalHydrate = pendingCanonicalHydrateRef.current.get(chatId);
     const hasNewCanonicalHistory = (
@@ -2312,6 +2304,7 @@ export function ThreadShell({
     client,
     completedTurnIds,
     historical,
+    historyAccessDenied,
     historyVersion,
     historyContinuity,
     historyLineage,
@@ -2737,11 +2730,11 @@ export function ThreadShell({
       skipLayoutCacheRef.current = false;
       return;
     }
-    if (loading) {
+    if (loading || historyAccessDenied) {
       return;
     }
     messageCacheRef.current.set(chatId, displayMessages);
-  }, [chatId, displayMessages, loading]);
+  }, [chatId, displayMessages, historyAccessDenied, loading]);
 
   // The landing composer queues the first message while `new_chat` is in flight.
   // Only the chat created for that send may consume it; selecting another chat
@@ -2842,6 +2835,10 @@ export function ThreadShell({
 
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
+      if (options?.continueActiveTurn) {
+        if (!canonicalRunTurnId) return null;
+        options = { ...options, steerTargetTurnId: canonicalRunTurnId };
+      }
       setFallbackModelName(null);
       const submitted = send(content, images, options);
       if (
@@ -2866,7 +2863,8 @@ export function ThreadShell({
       }
       return submitted;
     },
-    [chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, send, workspaceAccessRequest],
+    [canonicalRunTurnId, chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef,
+      pendingRecoveryResolveRef, send, workspaceAccessRequest],
   );
 
   const handleAdmissionRejectedPromptRestored = useCallback((turnId: string) => {
@@ -3052,7 +3050,7 @@ export function ThreadShell({
           <button
             type="button"
             className="shrink-0 rounded px-2 py-1 font-medium underline underline-offset-2"
-            onClick={() => void refreshHistory()}
+            onClick={refreshStopState}
           >
             {t("thread.stop.refresh", { defaultValue: "Refresh status" })}
           </button>
@@ -3078,7 +3076,7 @@ export function ThreadShell({
           {childHistoryError}
         </p>
       ) : null}
-      {session ? (
+      {session || historyKey ? (
         <>
         {riskyApproval ? (
           <ApprovalRequestCard
@@ -3182,12 +3180,15 @@ export function ThreadShell({
           onConsumeQueuedAttempt={consumeQueuedAttempt}
           admissionRejectedTurn={admissionRejectedTurn}
           onAdmissionRejectedPromptRestored={handleAdmissionRejectedPromptRestored}
-          disabled={!chatId || reasoningPending}
+          disabled={historyAccessDenied}
+          newTurnBlocked={!chatId || reasoningPending}
+          steerDisabled={!connectionOpen || !canonicalRunTurnId}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
+          queueCompletionTurnId={queueCompletionTurnId}
           automaticQueueSendBlocked={hasUnknownMessageSend || !connectionOpen}
           stopAvailable={hasOwnedWork}
-          stopDisabled={!stopCanBeSent || (delegatedChildrenLoading && !stopTarget)}
+          stopDisabled={historyAccessDenied || !stopCanBeSent || (delegatedChildrenLoading && !stopTarget)}
           stopPending={stopPending}
           placeholder={
             composerVariant === "hero"
@@ -3198,8 +3199,8 @@ export function ThreadShell({
           modelDetail={modelBadge.model}
           modelPreset={activeModelPreset}
           modelPresets={modelPresetOptions}
-          onModelPresetChange={handleModelPresetChange}
-          modelReasoning={modelReasoning}
+          onModelPresetChange={chatId ? handleModelPresetChange : undefined}
+          modelReasoning={chatId ? modelReasoning : undefined}
           modelProvider={modelBadge.provider}
           modelProviderLabel={modelBadge.providerLabel}
           modelNeedsSetup={modelBadge.needsSetup}
@@ -3221,7 +3222,7 @@ export function ThreadShell({
           onTranscribeAudio={transcribeAudio}
           goalState={currentGoalState}
           workspaceScope={workspaceScope}
-          workspaceControlsHidden={temporary}
+          workspaceControlsHidden={temporary || !chatId}
           workspaceDefaultScope={workspaceDefaultScope}
           workspaceControls={workspaceControls}
           workspaces={workspaces}
@@ -3244,6 +3245,7 @@ export function ThreadShell({
             current?.chatId === chatId ? null : current
           ))}
           pendingQueueKey={temporary ? null : chatId}
+          draftKey={historyKey ?? chatId}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}
           quotedContext={quotedContext}
@@ -3323,7 +3325,11 @@ export function ThreadShell({
     </>
   );
 
-  const emptyState = conversationLoading ? (
+  const emptyState = historyAccessDenied ? (
+    <div role="status" className="text-sm text-muted-foreground">
+      {t("thread.conversationUnavailable", { defaultValue: "This conversation is unavailable." })}
+    </div>
+  ) : conversationLoading ? (
     <div role="status" className="text-sm text-muted-foreground">
       {t("thread.loadingConversation")}
     </div>

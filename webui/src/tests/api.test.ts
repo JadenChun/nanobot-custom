@@ -32,6 +32,7 @@ import {
   fetchSkills,
   fetchTrendingMarketplaceSkills,
   fetchWebuiThread,
+  fetchWebuiThreadControls,
   fetchWorkspaces,
   forgetRepository,
   importMcpConfig,
@@ -506,7 +507,7 @@ describe("webui API helpers", () => {
     await fetchWebuiThread("tok", "websocket:chat-1");
 
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions/websocket%3Achat-1/webui-thread",
+      "/api/sessions/websocket%3Achat-1/webui-thread?view=history",
       expect.objectContaining({
         headers: { Authorization: "Bearer tok" },
         credentials: "same-origin",
@@ -526,9 +527,13 @@ describe("webui API helpers", () => {
       }),
     );
 
-    const thread = await fetchWebuiThread("tok", "websocket:chat-title");
+    const thread = await fetchWebuiThreadControls("tok", "websocket:chat-title");
 
     expect(thread?.workspace_access_request).toEqual(folderAccessThreadFixture.workspace_access_request);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/websocket%3Achat-title/webui-thread?view=controls",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("passes pagination params when fetching a WebUI thread page", async () => {
@@ -538,7 +543,7 @@ describe("webui API helpers", () => {
     });
 
     expect(fetch).toHaveBeenCalledWith(
-      "/api/sessions/websocket%3Achat-1/webui-thread?limit=120&before=abc%2B%2F%3D",
+      "/api/sessions/websocket%3Achat-1/webui-thread?limit=120&before=abc%2B%2F%3D&view=history",
       expect.objectContaining({
         headers: { Authorization: "Bearer tok" },
         credentials: "same-origin",

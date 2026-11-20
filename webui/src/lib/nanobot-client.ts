@@ -94,7 +94,11 @@ export type LocalInputAdmission = {
   readonly turnId: string;
   readonly disposition: "unresolved" | "admitted";
 };
-type EventHandler = (ev: InboundEvent, admission?: LocalInputAdmission) => void;
+type EventHandler = (
+  ev: InboundEvent,
+  admission?: LocalInputAdmission,
+  liveNaturalCompletion?: true,
+) => void;
 type StatusHandler = (status: ConnectionStatus) => void;
 type RuntimeModelHandler = (modelName: string | null, modelPreset?: string | null) => void;
 type SessionUpdateScope = "metadata" | "thread" | string;
@@ -1236,6 +1240,7 @@ export class NanobotClient {
   /** Subscribe to events for a given chat_id. Auto-attaches on the next open. */
   onChat(chatId: string, handler: EventHandler): Unsubscribe {
     let handlers = this.chatHandlers.get(chatId);
+    const firstListener = handlers === undefined;
     if (!handlers) {
       handlers = new Set();
       this.chatHandlers.set(chatId, handlers);
@@ -1250,7 +1255,8 @@ export class NanobotClient {
         else handler(event);
       }
     }
-    this.attach(chatId);
+    // The socket subscribes to the chat, not to each local listener.
+    if (firstListener) this.attach(chatId);
     return () => {
       const current = this.chatHandlers.get(chatId);
       if (!current) return;
@@ -1760,6 +1766,7 @@ export class NanobotClient {
 
   private handleOpen(sock: WebSocket): void {
     if (this.socket !== sock) return;
+    this.clearRunStatusesForReconnect();
     this.setStatus("open");
     this.reconnectAttempts = 0;
     this.authRetryFailures = 0;
@@ -2090,6 +2097,16 @@ export class NanobotClient {
     if (chatId) {
       if (this.isCanonicalCompletedTurnEvent(chatId, parsed)) return;
       const supersededRunCompletion = this.isSupersededRunCompletion(chatId, parsed);
+      // Check before consuming the running state. A legacy synthesized ID,
+      // duplicate terminal frame, or reconnect's idle snapshot is display
+      // evidence only and cannot release a new input from the queue.
+      const liveNaturalCompletion = parsed.event === "turn_end"
+        && this.status_ === "open"
+        && receivedTurnId !== null
+        && receivedTurnId === this.getRunTurnId(chatId)
+        && this.runStartedAtByChatId.has(chatId)
+        && this.runStartedAtByTurnKey.has(this.runSendKey(chatId, receivedTurnId))
+        && (parsed.outcome === undefined || parsed.outcome === "completed");
       this.recordGoalStatusForRunStrip(chatId, parsed);
       if (supersededRunCompletion) {
         if (parsed.event === "turn_end") {
@@ -2106,7 +2123,7 @@ export class NanobotClient {
       // Notify before dispatch: the recovery handler calls finishRunLocally(),
       // which clears ownership. Keepalive release waits until after dispatch.
       this.emitTaskNotificationForEvent(chatId, parsed);
-      this.dispatch(chatId, parsed);
+      this.dispatch(chatId, parsed, undefined, liveNaturalCompletion || undefined);
       this.settleKeepAliveForEvent(chatId, parsed);
     }
   }
@@ -2159,7 +2176,12 @@ export class NanobotClient {
     }
   }
 
-  private dispatch(chatId: string, ev: InboundEvent, admission?: LocalInputAdmission): void {
+  private dispatch(
+    chatId: string,
+    ev: InboundEvent,
+    admission?: LocalInputAdmission,
+    liveNaturalCompletion?: true,
+  ): void {
     if (!admission && "turn_id" in ev && typeof ev.turn_id === "string") {
       const pending = this.pendingMessageSends.get(this.runSendKey(chatId, ev.turn_id));
       if (pending?.recovery && !pending.recovery.proven) {
@@ -2169,7 +2191,8 @@ export class NanobotClient {
     const handlers = this.chatHandlers.get(chatId);
     if (handlers !== undefined && handlers.size > 0) {
       for (const h of handlers) {
-        if (admission) h(ev, admission);
+        if (liveNaturalCompletion) h(ev, admission, liveNaturalCompletion);
+        else if (admission) h(ev, admission);
         else h(ev);
       }
       return;
@@ -2179,6 +2202,7 @@ export class NanobotClient {
       q = [];
       this.pendingInboundByChat.set(chatId, q);
     }
+    // Replay restores the display, never a deferred queue-send trigger.
     q.push({ event: ev, admission });
     const over = q.length - NanobotClient.PENDING_INBOUND_MAX;
     if (over > 0) {

@@ -866,6 +866,69 @@ describe("ThreadShell", () => {
     }));
   });
 
+  it("paints saved text while controls are pending and withdraws it only when read access is refused", async () => {
+    const client = makeClient();
+    const chatId = "separate-controls";
+    const key = `websocket:${chatId}`;
+    let releaseControls!: () => void;
+    const controls = new Promise<Response>((resolve) => {
+      releaseControls = () => resolve(new Response("", { status: 503 }));
+    });
+    let readFailure: "offline" | "refused" | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "https://example.test");
+      if (!url.pathname.endsWith("/webui-thread")) return new Response(null, { status: 404 });
+      if (url.searchParams.get("view") === "controls") return controls;
+      if (readFailure === "offline") throw new TypeError("offline");
+      if (readFailure === "refused") return new Response(null, { status: 403 });
+      return Response.json({
+        view: "history",
+        sessionKey: key,
+        schemaVersion: 3,
+        active_turn_id: "running-turn",
+        has_pending_tool_calls: true,
+        messages: [{ id: "saved", role: "assistant", content: "Saved before the run", createdAt: 1 }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const showThread = (resolved: boolean) => wrap(client, <ThreadShell
+      session={resolved ? session(chatId) : null}
+      routeSessionKey={key}
+      openingConversation={!resolved}
+      title="Separate controls"
+      onToggleSidebar={() => {}}
+    />);
+    const { rerender } = render(showThread(false));
+
+    expect(await screen.findByText(replyText("Saved before the run"))).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/webui-thread?view=controls"),
+      expect.anything(),
+    );
+    rerender(showThread(true));
+    act(() => client._emitChat(chatId, {
+      event: "goal_status",
+      chat_id: chatId,
+      status: "running",
+      started_at: 1_700_000_000,
+      turn_id: "running-turn",
+    }));
+    const stopButton = await screen.findByRole("button", { name: "Stop response" });
+    expect(stopButton).toBeDisabled();
+    await act(async () => releaseControls());
+    expect(screen.getByText(replyText("Saved before the run"))).toBeInTheDocument();
+    expect(stopButton).toBeDisabled();
+    expect(client.finishRunLocally).not.toHaveBeenCalled();
+
+    readFailure = "offline";
+    await act(async () => { client._emitSessionUpdate(chatId, "thread"); });
+    expect(screen.getByText(replyText("Saved before the run"))).toBeInTheDocument();
+
+    readFailure = "refused";
+    act(() => client._emitSessionUpdate(chatId, "thread"));
+    await waitFor(() => expect(screen.queryByText(replyText("Saved before the run"))).toBeNull());
+  });
+
   it("does not enable legacy Stop after authenticated history reports stop_target null", async () => {
     const client = makeClient();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
@@ -4394,11 +4457,8 @@ describe("ThreadShell", () => {
       expect(screen.getByText("missed prefix resumed suffix")).toBeInTheDocument(),
     );
     expect(screen.queryByText("resumed suffix")).not.toBeInTheDocument();
-    await waitFor(() => expectSendMessageWithTurn(
-      client,
-      "before-delta-chat",
-      "queued guidance",
-    ));
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText("queued guidance")).toBeInTheDocument();
   });
 
   it("keeps the live answer cursor when a resumed turn is still running", async () => {
@@ -4502,11 +4562,8 @@ describe("ThreadShell", () => {
       expect(screen.getByText("partial answer missed resumed")).toBeInTheDocument(),
     );
     expect(screen.queryByText("partial answer resumed")).not.toBeInTheDocument();
-    await waitFor(() => expectSendMessageWithTurn(
-      client,
-      "active-resume-chat",
-      "queued guidance",
-    ));
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByText("queued guidance")).toBeInTheDocument();
   });
 
   it("keeps active-run timing attached to the original turn after guidance", async () => {
@@ -4568,6 +4625,8 @@ describe("ThreadShell", () => {
     fireEvent.change(input, { target: { value: "How is it going?" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Steer", exact: true }));
 
     // The queued guidance leaves the queue only when its own owner receipt
     // arrives; the row is still visible as guidance before that.
@@ -4985,7 +5044,7 @@ describe("ThreadShell", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (!url.includes("websocket%3Achat-title/webui-thread")) return { ok: false, status: 404, json: async () => ({}) };
-      if (replySent && url.includes("?limit=1&direction=latest")) {
+      if (replySent && url.includes("?view=controls")) {
         owningReads += 1;
         if (owningReads === 2) readsStarted();
         await readsGate;
@@ -5257,7 +5316,7 @@ describe("ThreadShell", () => {
           workspace_access_request: latestRequest,
           workspace_permissions: latestPermissions,
         };
-        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+        if (deferOwningReads && url.includes("?view=controls")) {
           const index = owningReadCount++;
           if (owningReadCount >= 2) resolveOwningReadsStarted?.();
           if (index < 2) {
@@ -5395,7 +5454,7 @@ describe("ThreadShell", () => {
           workspace_access_request: latestRequest,
           workspace_permissions: latestPermissions,
         };
-        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+        if (deferOwningReads && url.includes("?view=controls")) {
           const index = owningReadCount++;
           if (owningReadCount >= 2) resolveOwningReadsStarted?.();
           if (index < 2) {

@@ -58,6 +58,7 @@ import type {
   WorkspaceOnceReceipt,
   WorkspacePermissionProjection,
   WebuiDelegatedChildrenPayload,
+  WebuiThreadControlsPayload,
   WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
 } from "./types";
@@ -788,28 +789,53 @@ export async function fetchWebuiThread(
   if (options?.limit !== undefined) params.set("limit", String(options.limit));
   if (options?.direction) params.set("direction", options.direction);
   if (options?.before) params.set("before", options.before);
-  const query = params.toString();
-  const suffix = query ? `?${query}` : "";
-  const url = `${resolvedBase}/api/sessions/${encodeURIComponent(key)}/webui-thread${suffix}`;
+  params.set("view", "history");
+  const payload = await fetchThreadView(token, key, params.toString(), options?.signal, resolvedBase);
+  if (payload?.view === "history" && payload.sessionKey !== key) {
+    throw new ApiError(403, "session history identity mismatch");
+  }
+  return payload as unknown as WebuiThreadPersistedPayload | null;
+}
+
+export async function fetchWebuiThreadControls(
+  token: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<WebuiThreadControlsPayload> {
+  const payload = await fetchThreadView(token, key, "view=controls", signal, "");
+  if (!payload || (payload.sessionKey !== undefined && payload.sessionKey !== key)) {
+    throw new ApiError(503, "permission_state_unavailable");
+  }
+  // A compatible older gateway may return the combined payload. Use only
+  // explicitly supplied control fields from it, never infer them from rows.
+  return payload as WebuiThreadControlsPayload;
+}
+
+async function fetchThreadView(
+  token: string,
+  key: string,
+  query: string,
+  signal: AbortSignal | undefined,
+  base: string,
+): Promise<Record<string, unknown> | null> {
+  const url = `${base}/api/sessions/${encodeURIComponent(key)}/webui-thread?${query}`;
   const res = await fetchWithTimeout(url, {
     headers: { Authorization: `Bearer ${token}` },
     credentials: "same-origin",
     cache: "no-store",
-    signal: options?.signal,
+    signal,
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
   const payload: unknown = await res.json();
   if (!isObjectRecord(payload)) return null;
-  if (payload.workspace_permissions === undefined) {
-    return payload as unknown as WebuiThreadPersistedPayload;
-  }
+  if (payload.workspace_permissions === undefined) return payload;
   return {
     ...payload,
     workspace_permissions: payload.workspace_permissions === null
       ? null
       : normalizeWorkspacePermissionProjection(payload.workspace_permissions),
-  } as unknown as WebuiThreadPersistedPayload;
+  };
 }
 
 /** Canonical child references for one parent chat, used after reconnect. */

@@ -9,6 +9,7 @@ import {
   fetchSessionAutomations,
   fetchSessionTurns,
   fetchWebuiThread,
+  fetchWebuiThreadControls,
   listSessions,
   normalizeWorkspacePermissionProjection,
 } from "@/lib/api";
@@ -16,10 +17,12 @@ import { hasPendingAgentActivity } from "@/lib/activity-timeline";
 import {
   delegatedChildReferences,
   mergeDelegatedChildRows,
+  parseSourceOrigin,
   parseStopExpectation,
 } from "@/lib/delegated-child-projection";
 import { deriveTitle } from "@/lib/format";
 import {
+  clearCachedSessionPage,
   readCachedSessionPage,
   writeCachedSessionPage,
 } from "@/lib/session-page-cache";
@@ -37,6 +40,7 @@ import type {
 } from "@/lib/types";
 
 const EMPTY_MESSAGES: UIMessage[] = [];
+const EMPTY_TURN_INDEX: SessionTurnSummary[] = [];
 const INITIAL_HISTORY_PAGE_LIMIT = 40;
 const TURN_INDEX_PAGE_LIMIT = 400;
 const OLDER_HISTORY_PAGE_LIMIT = 120;
@@ -50,6 +54,10 @@ function isAbortError(error: unknown): boolean {
     && "name" in error
     && error.name === "AbortError"
   );
+}
+
+function isHistoryReadRefusal(error: unknown): error is ApiError {
+  return error instanceof ApiError && [401, 403, 404, 503].includes(error.status);
 }
 
 export type SessionHistoryContinuity = "initial" | "overlap" | "reset";
@@ -366,6 +374,7 @@ export function useSessions(): {
       const optimistic = optimisticKeysRef.current.has(key);
       const result = await apiDeleteSession(client, key, options);
       if (result.blocked_by_automations || (!result.deleted && !optimistic)) return result;
+      clearCachedSessionPage(client, key);
       optimisticKeysRef.current.delete(key);
       setSessions((prev) => prev.filter((s) => s.key !== key));
       // The gateway may have restarted and forgotten an unpersisted chat's
@@ -398,7 +407,10 @@ export function useSessionHistory(key: string | null): {
   loading: boolean;
   loadingOlder: boolean;
   error: string | null;
+  historyAccessDenied: boolean;
   refresh: () => void;
+  refreshLiveControls: () => void;
+  separateControls: boolean;
   loadOlder: () => Promise<void>;
   hasMoreBefore: boolean;
   userMessageOffset: number;
@@ -418,7 +430,7 @@ export function useSessionHistory(key: string | null): {
   activitySnapshotAvailable: boolean;
   /** Live root-scoped snapshot used only for an explicitly requested Stop. */
   stopTarget: StopExpectation | null;
-  /** True when authenticated history explicitly included the live Stop field, even when null. */
+  /** True when an authenticated control snapshot supplied Stop, even when null. */
   stopTargetSnapshotAvailable: boolean;
   /** Child activity is hydrated separately; it cannot delay root history or permissions. */
   delegatedChildren: DelegatedChildReference[];
@@ -444,12 +456,14 @@ export function useSessionHistory(key: string | null): {
   /** Replace the window with the page ending at this turn cursor. */
   loadTurnAt: (cursor: string) => Promise<void>;
 } {
-  const { getToken } = useClient();
+  const { client, getToken } = useClient();
   const loadingOlderRef = useRef(false);
   const olderRequestAbortRef = useRef<AbortController | null>(null);
+  const turnIndexRequestAbortRef = useRef<AbortController | null>(null);
   const historyVersionRef = useRef(0);
   const accessRequestReadVersionRef = useRef(0);
   const permissionReadVersionRef = useRef(0);
+  const controlsReadVersionRef = useRef(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
   const [turnIndex, setTurnIndex] = useState<SessionTurnSummary[]>([]);
   const [totalTurnCount, setTotalTurnCount] = useState(0);
@@ -457,11 +471,14 @@ export function useSessionHistory(key: string | null): {
     setRefreshSeq((value) => value + 1);
   }, []);
   const [state, setState] = useState<{
+    client: typeof client;
     key: string | null;
     messages: UIMessage[];
     loading: boolean;
     loadingOlder: boolean;
     error: string | null;
+    historyAccessDenied?: boolean;
+    separateControls?: boolean;
     hasPendingToolCalls: boolean;
     completedTurnIds: string[];
     forkBoundaryMessageCount: number | null;
@@ -485,6 +502,7 @@ export function useSessionHistory(key: string | null): {
     workspacePermissionsLoading: boolean;
     workspacePermissionsError: boolean;
   }>({
+    client,
     key: null,
     messages: [],
     loading: false,
@@ -514,6 +532,101 @@ export function useSessionHistory(key: string | null): {
     workspacePermissionsError: false,
   });
 
+  const readLiveControls = useCallback(async (requestedKey: string, signal?: AbortSignal) => {
+    const controlsVersion = ++controlsReadVersionRef.current;
+    const requestVersion = ++accessRequestReadVersionRef.current;
+    const permissionVersion = ++permissionReadVersionRef.current;
+    const current = () => !signal?.aborted && controlsVersion === controlsReadVersionRef.current;
+    try {
+      const body = await fetchWebuiThreadControls(getToken(), requestedKey, signal);
+      if (!current()) return;
+      const permissions = normalizeWorkspacePermissionProjection(body.workspace_permissions);
+      const stopTarget = parseStopExpectation(body.stop_target);
+      setState((prev) => prev.key === requestedKey && !prev.historyAccessDenied && current()
+        ? {
+          ...prev,
+          stopTarget,
+          stopTargetSnapshotAvailable: stopTarget !== null || body.stop_target === null,
+          ...(requestVersion === accessRequestReadVersionRef.current ? {
+            workspaceAccessRequest: body.workspace_access_request === undefined
+              ? prev.workspaceAccessRequest
+              : body.workspace_access_request,
+            workspaceAccessRequestLoading: false,
+            workspaceAccessRequestError: body.workspace_access_request === undefined,
+          } : {}),
+          ...(permissionVersion === permissionReadVersionRef.current ? {
+            workspacePermissions: permissions
+              ? mergePermissionProjection(prev.workspacePermissions, permissions)
+              : prev.workspacePermissions,
+            workspacePermissionsLoading: false,
+            workspacePermissionsError: permissions === null,
+          } : {}),
+        }
+        : prev);
+    } catch {
+      if (!current()) return;
+      setState((prev) => prev.key === requestedKey && !prev.historyAccessDenied && current()
+        ? {
+          ...prev,
+          stopTarget: null,
+          stopTargetSnapshotAvailable: false,
+          ...(requestVersion === accessRequestReadVersionRef.current ? {
+            workspaceAccessRequestLoading: false,
+            workspaceAccessRequestError: true,
+          } : {}),
+          ...(permissionVersion === permissionReadVersionRef.current ? {
+            workspacePermissionsLoading: false,
+            workspacePermissionsError: true,
+          } : {}),
+        }
+        : prev);
+    }
+  }, [getToken]);
+
+  const refreshLiveControls = useCallback(() => {
+    if (key) void readLiveControls(key);
+  }, [key, readLiveControls]);
+
+  const denyHistoryRead = useCallback((requestedKey: string, error: string | null) => {
+    clearCachedSessionPage(client, requestedKey);
+    turnIndexRequestAbortRef.current?.abort();
+    const version = ++historyVersionRef.current;
+    setTurnIndex(EMPTY_TURN_INDEX);
+    setTotalTurnCount(0);
+    setState((prev) => prev.client === client && prev.key === requestedKey
+      ? {
+          ...prev,
+          messages: EMPTY_MESSAGES,
+          loading: false,
+          loadingOlder: false,
+          error,
+          historyAccessDenied: true,
+          hasPendingToolCalls: false,
+          completedTurnIds: [],
+          forkBoundaryMessageCount: null,
+          beforeCursor: null,
+          hasMoreBefore: false,
+          userMessageOffset: 0,
+          version,
+          continuity: "reset",
+          lineage: version,
+          activeTurnId: null,
+          activitySnapshotAvailable: false,
+          stopTarget: null,
+          stopTargetSnapshotAvailable: false,
+          delegatedChildren: [],
+          delegatedChildrenLoading: false,
+          delegatedChildrenError: false,
+          workspaceAccessRequest: null,
+          workspaceAccessRequestLoading: false,
+          workspaceAccessRequestError: true,
+          workspacePermissions: null,
+          workspacePermissionsLoading: false,
+          workspacePermissionsError: true,
+        }
+      : prev);
+  }, [client]);
+
   useEffect(() => () => {
     olderRequestAbortRef.current?.abort();
     olderRequestAbortRef.current = null;
@@ -521,11 +634,13 @@ export function useSessionHistory(key: string | null): {
   }, []);
 
   useEffect(() => {
+    controlsReadVersionRef.current += 1;
     if (!key) {
       olderRequestAbortRef.current?.abort();
       olderRequestAbortRef.current = null;
       loadingOlderRef.current = false;
       setState({
+        client,
         key: null,
         messages: [],
         loading: false,
@@ -567,12 +682,13 @@ export function useSessionHistory(key: string | null): {
     // Paint the previously loaded window immediately on a revisit. The network
     // refresh below still runs and replaces it, so this only removes the blank
     // wait; it never decides what the UI believes after the fetch settles.
-    const cachedPage = readCachedSessionPage(key);
+    const cachedPage = readCachedSessionPage(client, key);
     if (cachedPage) {
       historyVersionRef.current += 1;
-      setState((prev) => prev.key === key
+      setState((prev) => prev.client === client && prev.key === key
         ? { ...prev, messages: cachedPage.messages, loading: false }
         : {
+            client,
             key,
             messages: cachedPage.messages,
             loading: false,
@@ -608,7 +724,7 @@ export function useSessionHistory(key: string | null): {
     }
     // Mark the new key as loading immediately so callers never see stale
     // messages from the previous session during the render right after a switch.
-    setState((prev) => prev.key === key
+    setState((prev) => prev.client === client && prev.key === key
       ? {
           ...prev,
           loading: true,
@@ -622,6 +738,7 @@ export function useSessionHistory(key: string | null): {
           workspacePermissionsError: false,
         }
       : {
+          client,
           key,
           messages: [],
           loading: true,
@@ -658,6 +775,11 @@ export function useSessionHistory(key: string | null): {
           signal: controller.signal,
         });
         if (cancelled) return;
+        const separateControls = body?.view === "history";
+        if (body === null && cachedPage && cachedPage.messages.length > 0) {
+          denyHistoryRead(key, null);
+          return;
+        }
         const persisted = persistedMessagesToUi(body?.messages ?? []);
         const ui = persisted.filter((message) => message.kind !== "delegated_child");
         const userMessageOffset = Math.max(0, body?.page?.user_message_offset ?? 0);
@@ -686,12 +808,17 @@ export function useSessionHistory(key: string | null): {
           )
             ? prev.forkBoundaryMessageCount
             : null;
+          const applyRequest = !separateControls && accessRequestReadVersion === accessRequestReadVersionRef.current;
+          const applyPermissions = !separateControls && permissionReadVersion === permissionReadVersionRef.current;
           return {
+            client,
             key,
             messages: merged.messages,
             loading: false,
             loadingOlder: false,
             error: null,
+            historyAccessDenied: false,
+            separateControls,
             hasPendingToolCalls: hasPending,
             completedTurnIds,
             forkBoundaryMessageCount: forkBoundary === null
@@ -722,41 +849,42 @@ export function useSessionHistory(key: string | null): {
               && (body.root_key === undefined || body.root_key === key)
               && (body.active_turn_id === null || typeof body.active_turn_id === "string")
               && typeof body.has_pending_tool_calls === "boolean",
-            stopTarget: threadStopTarget,
-            stopTargetSnapshotAvailable: threadStopTargetSnapshotAvailable,
+            stopTarget: separateControls && prev.key === key ? prev.stopTarget : threadStopTarget,
+            stopTargetSnapshotAvailable: separateControls && prev.key === key
+              ? prev.stopTargetSnapshotAvailable
+              : threadStopTargetSnapshotAvailable,
             delegatedChildren: [],
             delegatedChildrenLoading: body !== null,
             delegatedChildrenError: false,
-            workspaceAccessRequest: accessRequestReadVersion === accessRequestReadVersionRef.current
+            workspaceAccessRequest: applyRequest
               ? body?.workspace_access_request ?? null
               : prev.workspaceAccessRequest,
-            workspaceAccessRequestLoading: accessRequestReadVersion === accessRequestReadVersionRef.current
+            workspaceAccessRequestLoading: applyRequest
               ? false
               : prev.workspaceAccessRequestLoading,
-            workspaceAccessRequestError: accessRequestReadVersion === accessRequestReadVersionRef.current
+            workspaceAccessRequestError: applyRequest
               ? false
               : prev.workspaceAccessRequestError,
-            workspacePermissions: permissionReadVersion === permissionReadVersionRef.current
+            workspacePermissions: applyPermissions
               ? mergePermissionProjection(prev.key === key ? prev.workspacePermissions : null, permissionProjection)
               : prev.workspacePermissions,
-            workspacePermissionsLoading: permissionReadVersion === permissionReadVersionRef.current
+            workspacePermissionsLoading: applyPermissions
               ? false
               : prev.workspacePermissionsLoading,
-            workspacePermissionsError: permissionReadVersion === permissionReadVersionRef.current
+            workspacePermissionsError: applyPermissions
               ? false
               : prev.workspacePermissionsError,
           };
         });
         if (body === null) return;
+        // Do not await controls before making the saved window renderable.
+        if (separateControls) void readLiveControls(key, controller.signal);
 
         // Fetch delegated children only when this page actually shows a child
         // row. Codex loads children per-parent on demand rather than scanning
         // every session on open, and the route is the most expensive read in
         // the gateway (list_sessions plus a full snapshot per child). A
-        // conversation with no delegated activity has nothing to hydrate, so
-        // the request cannot return anything. The thread payload already
-        // carries `stop_target` when this gateway can derive it; the child page
-        // is only the fallback for sessions that render child rows.
+        // conversation with no delegated activity has nothing to hydrate.
         const hasChildRows = persisted.some((message) => message.kind === "delegated_child");
         const childPages = hasChildRows
           ? await fetchAllDelegatedChildren(getToken, key, controller.signal)
@@ -775,13 +903,16 @@ export function useSessionHistory(key: string | null): {
         if (cancelled) return;
         // Explicit null is a modern idle snapshot, not a request to fall back.
         const stopTarget = threadStopTargetSnapshotAvailable ? threadStopTarget : childPages.stopTarget;
-        const hydrated = hydrateDelegatedChildren(persisted, childPages.children, key, stopTarget?.source ?? null);
+        const rootSource = separateControls ? parseSourceOrigin(body.source) : stopTarget?.source ?? null;
+        const hydrated = hydrateDelegatedChildren(persisted, childPages.children, key, rootSource);
         setState((prev) => prev.key === key && prev.version === responseVersion
           ? {
               ...prev,
-              stopTarget,
-              stopTargetSnapshotAvailable: threadStopTargetSnapshotAvailable
-                || childPages.stopTargetSnapshotAvailable,
+              ...(!separateControls ? {
+                stopTarget,
+                stopTargetSnapshotAvailable: threadStopTargetSnapshotAvailable
+                  || childPages.stopTargetSnapshotAvailable,
+              } : {}),
               delegatedChildren: hydrated.children,
               delegatedChildrenLoading: false,
               delegatedChildrenError: childPages.incomplete || hydrated.refreshRequired,
@@ -790,94 +921,43 @@ export function useSessionHistory(key: string | null): {
       } catch (e) {
         if (cancelled || isAbortError(e)) return;
         controller.abort();
-        if (e instanceof ApiError && e.status === 404) {
-          historyVersionRef.current += 1;
-          const responseVersion = historyVersionRef.current;
-          setState((prev) => {
-            const continuity = prev.key === key && prev.lineage > 0
-              ? "reset"
-              : "initial";
-            return {
-              key,
-              messages: [],
-              loading: false,
-              loadingOlder: false,
-              error: null,
-              hasPendingToolCalls: false,
-              completedTurnIds: [],
-              forkBoundaryMessageCount: null,
-              beforeCursor: null,
-              hasMoreBefore: false,
-              userMessageOffset: 0,
-              version: responseVersion,
-              continuity,
-              lineage: responseVersion,
-              activeTurnId: null,
-              activitySnapshotAvailable: false,
-              stopTarget: null,
-              stopTargetSnapshotAvailable: false,
-              delegatedChildren: [],
-              delegatedChildrenLoading: false,
-              delegatedChildrenError: false,
-              workspaceAccessRequest: null,
-              workspaceAccessRequestLoading: false,
-              workspaceAccessRequestError: false,
-              workspacePermissions: null,
-              workspacePermissionsLoading: false,
-              workspacePermissionsError: false,
-            };
-          });
+        if (isHistoryReadRefusal(e)) {
+          denyHistoryRead(key, e.status === 404 ? null : e.message);
         } else {
-          setState((prev) => ({
-            key,
-            messages: [],
-            loading: false,
-            loadingOlder: false,
-            error: (e as Error).message,
-            hasPendingToolCalls: false,
-            completedTurnIds: [],
-            forkBoundaryMessageCount: null,
-            beforeCursor: null,
-            hasMoreBefore: false,
-            userMessageOffset: 0,
-            version: prev.key === key ? prev.version : 0,
-            continuity: prev.key === key ? prev.continuity : "initial",
-            lineage: prev.key === key ? prev.lineage : 0,
-            activeTurnId: prev.key === key ? prev.activeTurnId : null,
-            activitySnapshotAvailable: false,
-            stopTarget: prev.key === key ? prev.stopTarget : null,
-            stopTargetSnapshotAvailable: prev.key === key
-              ? prev.stopTargetSnapshotAvailable
-              : false,
-            delegatedChildren: [],
-            delegatedChildrenLoading: false,
-            delegatedChildrenError: prev.key === key
-              ? prev.delegatedChildrenError
-              : false,
-            workspaceAccessRequest: prev.key === key ? prev.workspaceAccessRequest : null,
-            workspaceAccessRequestLoading: false,
-            workspaceAccessRequestError: prev.key === key ? true : false,
-            workspacePermissions: prev.key === key ? prev.workspacePermissions : null,
-            workspacePermissionsLoading: false,
-            workspacePermissionsError: prev.key === key ? true : false,
-          }));
+          // Transport failure does not invalidate this client's already
+          // settled page. An explicit read refusal takes the path above.
+          setState((prev) => prev.client === client && prev.key === key
+            ? {
+                ...prev,
+                loading: false,
+                loadingOlder: false,
+                error: (e as Error).message,
+                activitySnapshotAvailable: false,
+                delegatedChildrenLoading: false,
+                workspaceAccessRequestLoading: false,
+                workspaceAccessRequestError: true,
+                workspacePermissionsLoading: false,
+                workspacePermissionsError: true,
+              }
+            : prev);
         }
       }
     })();
     return () => {
       cancelled = true;
       controller.abort();
+      turnIndexRequestAbortRef.current?.abort();
     };
-  }, [getToken, key, refreshSeq]);
+  }, [client, denyHistoryRead, getToken, key, readLiveControls, refreshSeq]);
 
   // Keep the renderer cache in step with the settled window. Writing it here,
   // rather than mid-fetch, means a scroll-back prefix and any merged overlap are
   // part of what a revisit paints. Loading and error states are skipped so a
   // half-built window never becomes the cached view.
   useEffect(() => {
-    if (!key || state.key !== key) return;
-    if (state.loading || state.loadingOlder || state.error) return;
-    writeCachedSessionPage(key, {
+    if (!key || state.client !== client || state.key !== key) return;
+    if (state.loading || state.loadingOlder || state.error || state.historyAccessDenied) return;
+    writeCachedSessionPage(client, key, {
       messages: state.messages,
       beforeCursor: state.beforeCursor,
       hasMoreBefore: state.hasMoreBefore,
@@ -886,7 +966,7 @@ export function useSessionHistory(key: string | null): {
       forkBoundaryMessageCount: state.forkBoundaryMessageCount,
       version: state.version,
     });
-  }, [key, state]);
+  }, [client, key, state]);
 
   const markWorkspaceAccessRequestStale = useCallback(() => {
     accessRequestReadVersionRef.current += 1;
@@ -917,8 +997,9 @@ export function useSessionHistory(key: string | null): {
       ? { ...prev, workspaceAccessRequestLoading: true, workspaceAccessRequestError: false }
       : prev);
     try {
-      const body = await fetchWebuiThread(getToken(), key, { limit: 1, direction: "latest" });
-      const request = body?.workspace_access_request ?? null;
+      const body = await fetchWebuiThreadControls(getToken(), key);
+      if (body.workspace_access_request === undefined) throw new Error("folder_request_unavailable");
+      const request = body.workspace_access_request;
       if (readVersion === accessRequestReadVersionRef.current) {
         setState((prev) => prev.key === key
           ? { ...prev, workspaceAccessRequest: request, workspaceAccessRequestLoading: false, workspaceAccessRequestError: false }
@@ -943,8 +1024,9 @@ export function useSessionHistory(key: string | null): {
       ? { ...prev, workspacePermissionsLoading: true, workspacePermissionsError: false }
       : prev);
     try {
-      const body = await fetchWebuiThread(getToken(), requestedKey, { limit: 1, direction: "latest" });
-      const permissions = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
+      const body = await fetchWebuiThreadControls(getToken(), requestedKey);
+      const permissions = normalizeWorkspacePermissionProjection(body.workspace_permissions);
+      if (permissions === null) throw new Error("permission_state_unavailable");
       if (readVersion === permissionReadVersionRef.current) {
         setState((prev) => prev.key === requestedKey
           ? {
@@ -978,12 +1060,12 @@ export function useSessionHistory(key: string | null): {
     if (!key) return;
     const normalized = normalizeWorkspacePermissionProjection(permissions);
     if (!normalized) {
-      void refreshWorkspacePermissions();
+      void refreshWorkspacePermissions().catch(() => {});
       return;
     }
     const current = state.key === key ? state.workspacePermissions : null;
     if (current && current.runtime_id !== normalized.runtime_id) {
-      void refreshWorkspacePermissions();
+      void refreshWorkspacePermissions().catch(() => {});
       return;
     }
     setState((prev) => prev.key === key
@@ -1019,6 +1101,11 @@ export function useSessionHistory(key: string | null): {
         before: beforeCursor,
         signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
+      if (body === null) {
+        denyHistoryRead(requestKey, null);
+        return;
+      }
       setState((prev) => {
         if (!matchesRequest(prev)) return prev;
         if (!body?.messages?.length) {
@@ -1051,7 +1138,11 @@ export function useSessionHistory(key: string | null): {
         };
       });
     } catch (e) {
-      if (isAbortError(e)) return;
+      if (controller.signal.aborted || isAbortError(e)) return;
+      if (isHistoryReadRefusal(e)) {
+        denyHistoryRead(requestKey, e.message);
+        return;
+      }
       setState((prev) => matchesRequest(prev)
         ? {
             ...prev,
@@ -1066,6 +1157,7 @@ export function useSessionHistory(key: string | null): {
       }
     }
   }, [
+    denyHistoryRead,
     key,
     state.beforeCursor,
     state.hasMoreBefore,
@@ -1080,28 +1172,46 @@ export function useSessionHistory(key: string | null): {
    * The navigator needs every turn, not just the loaded window, so this pages
    * the cheap user-row index until the server reports no older page.
    */
+  const canBrowseTurnIndex = state.client === client && state.key === key && !state.historyAccessDenied;
   const loadTurnIndex = useCallback(async (): Promise<SessionTurnSummary[]> => {
-    if (!key) return [];
-    const collected: SessionTurnSummary[] = [];
-    let before: string | null = null;
-    let total = 0;
-    for (let page = 0; page < 20; page += 1) {
-      const payload = await fetchSessionTurns(getToken(), key, {
-        limit: TURN_INDEX_PAGE_LIMIT,
-        before,
-      });
-      if (!payload) break;
-      total = payload.total_turn_count ?? total;
-      collected.unshift(...(Array.isArray(payload.turns) ? payload.turns : []));
-      if (payload.page?.has_more_before !== true) break;
-      const next = payload.page?.before_cursor ?? null;
-      if (!next || next === before) break;
-      before = next;
+    if (!key || !canBrowseTurnIndex) return EMPTY_TURN_INDEX;
+    turnIndexRequestAbortRef.current?.abort();
+    const controller = new AbortController();
+    turnIndexRequestAbortRef.current = controller;
+    try {
+      const collected: SessionTurnSummary[] = [];
+      let before: string | null = null;
+      let total = 0;
+      for (let page = 0; page < 20; page += 1) {
+        const payload = await fetchSessionTurns(getToken(), key, {
+          limit: TURN_INDEX_PAGE_LIMIT,
+          before,
+          signal: controller.signal,
+        });
+        // Some transports cannot cancel the underlying read. Its result still
+        // cannot restore labels for a closed or superseded history window.
+        if (controller.signal.aborted) return EMPTY_TURN_INDEX;
+        if (!payload) break;
+        if (payload.sessionKey !== undefined && payload.sessionKey !== key) return EMPTY_TURN_INDEX;
+        total = payload.total_turn_count ?? total;
+        collected.unshift(...(Array.isArray(payload.turns) ? payload.turns : []));
+        if (payload.page?.has_more_before !== true) break;
+        const next = payload.page?.before_cursor ?? null;
+        if (!next || next === before) break;
+        before = next;
+      }
+      setTotalTurnCount(total || collected.length);
+      setTurnIndex(collected);
+      return collected;
+    } catch {
+      // Index availability must not change the settled conversation.
+      return EMPTY_TURN_INDEX;
+    } finally {
+      if (turnIndexRequestAbortRef.current === controller) {
+        turnIndexRequestAbortRef.current = null;
+      }
     }
-    setTotalTurnCount(total || collected.length);
-    setTurnIndex(collected);
-    return collected;
-  }, [getToken, key]);
+  }, [canBrowseTurnIndex, getToken, key]);
 
   /**
    * Replace the rendered window with the page that ends at one turn.
@@ -1126,7 +1236,11 @@ export function useSessionHistory(key: string | null): {
         before: cursor,
         signal: controller.signal,
       });
-      if (!body) return;
+      if (controller.signal.aborted) return;
+      if (body === null) {
+        denyHistoryRead(key, null);
+        return;
+      }
       const ui = persistedMessagesToUi(body.messages ?? [])
         .filter((message) => message.kind !== "delegated_child");
       historyVersionRef.current += 1;
@@ -1156,7 +1270,11 @@ export function useSessionHistory(key: string | null): {
           }
         : prev));
     } catch (e) {
-      if (isAbortError(e)) return;
+      if (controller.signal.aborted || isAbortError(e)) return;
+      if (isHistoryReadRefusal(e)) {
+        denyHistoryRead(key, e.message);
+        return;
+      }
       setState((prev) => (prev.key === key
         ? { ...prev, loading: false, error: (e as Error).message }
         : prev));
@@ -1166,7 +1284,7 @@ export function useSessionHistory(key: string | null): {
         loadingOlderRef.current = false;
       }
     }
-  }, [getToken, key]);
+  }, [denyHistoryRead, getToken, key]);
 
   if (!key) {
     return {
@@ -1174,7 +1292,10 @@ export function useSessionHistory(key: string | null): {
       loading: false,
       loadingOlder: false,
       error: null,
+      historyAccessDenied: false,
       refresh,
+      refreshLiveControls,
+      separateControls: false,
       loadOlder,
       hasMoreBefore: false,
       userMessageOffset: 0,
@@ -1212,13 +1333,16 @@ export function useSessionHistory(key: string | null): {
 
   // Even before the effect above commits its loading state, never surface the
   // previous session's payload for a brand-new key.
-  if (state.key !== key) {
+  if (state.client !== client || state.key !== key) {
     return {
       messages: EMPTY_MESSAGES,
       loading: true,
       loadingOlder: false,
       error: null,
+      historyAccessDenied: false,
       refresh,
+      refreshLiveControls,
+      separateControls: false,
       loadOlder,
       hasMoreBefore: false,
       userMessageOffset: 0,
@@ -1247,9 +1371,9 @@ export function useSessionHistory(key: string | null): {
       markWorkspacePermissionsStale,
       updateWorkspacePermissions,
       refreshWorkspacePermissions,
-      turnIndex,
-      totalTurnCount,
-        loadTurnIndex,
+      turnIndex: EMPTY_TURN_INDEX,
+      totalTurnCount: 0,
+      loadTurnIndex,
       loadTurnAt,
     };
   }
@@ -1259,7 +1383,10 @@ export function useSessionHistory(key: string | null): {
     loading: state.loading,
     loadingOlder: state.loadingOlder,
     error: state.error,
+    historyAccessDenied: state.historyAccessDenied === true,
     refresh,
+    refreshLiveControls,
+    separateControls: state.separateControls === true,
     loadOlder,
     hasMoreBefore: state.hasMoreBefore,
     userMessageOffset: state.userMessageOffset,
@@ -1288,9 +1415,9 @@ export function useSessionHistory(key: string | null): {
     markWorkspacePermissionsStale,
     updateWorkspacePermissions,
     refreshWorkspacePermissions,
-    turnIndex,
-    totalTurnCount,
-    loadTurnIndex,
+      turnIndex: EMPTY_TURN_INDEX,
+      totalTurnCount: 0,
+      loadTurnIndex,
     loadTurnAt,
   };
 }
