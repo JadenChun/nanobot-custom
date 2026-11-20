@@ -75,7 +75,7 @@
       "id": "chat",
       "label": "Chat, history, sessions, temporary chats, media",
       "required": true,
-      "row_count": 24,
+      "row_count": 25,
       "rows": [
         {
           "id": "chat.sessions.list",
@@ -460,6 +460,68 @@
             "mobile_implementation": "partial",
             "evidence": [
               "mobile edge allowlist includes generated-assets"
+            ]
+          },
+          "exception": null,
+          "notes": ""
+        },
+        {
+          "id": "chat.session_turns.read",
+          "category": "chat",
+          "feature": "Chat history",
+          "action": "List every turn in a session",
+          "desktop": {
+            "source": [
+              "nanobot/webui/transcript.py:session_turn_index",
+              "nanobot/webui/ws_http.py:_handle_session_turns_get"
+            ],
+            "tests": [
+              "tests/webui/test_session_turn_index.py"
+            ],
+            "implementation": "present"
+          },
+          "api": {
+            "kind": "http",
+            "method": "GET",
+            "path": "/api/sessions/{key}/turns"
+          },
+          "ui": {
+            "entry": "Left session turn rail"
+          },
+          "auth": {
+            "owner": "read",
+            "legacy": "chat.read",
+            "local_only": false,
+            "current_local_only": false
+          },
+          "native": {
+            "operation": "sessions.turns",
+            "bounds": {
+              "max_response_bytes": 2097152,
+              "timeout_s": 30,
+              "range_requests": false
+            },
+            "replay": "none"
+          },
+          "dependency": [
+            "M11",
+            "M31"
+          ],
+          "checks": {
+            "positive": [
+              "owner lists turn ordinals, labels and page cursors for their session"
+            ],
+            "negative": [
+              "foreign session key denied",
+              "non-owner denied",
+              "unsupported query rejected"
+            ]
+          },
+          "status": {
+            "desktop_implementation": "present",
+            "mobile_implementation": "partial",
+            "evidence": [
+              "mobile edge allowlist includes turns"
             ]
           },
           "exception": null,

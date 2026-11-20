@@ -52,6 +52,7 @@ _DELEGATED_CHILDREN_RE = re.compile(
 _MOBILE_API_ROUTES: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
     (re.compile(r"^/api/commands$"), frozenset()),
     (re.compile(r"^/api/sessions/[^/]+/file-preview$"), frozenset({"path", "probe"})),
+    (re.compile(r"^/api/sessions/[^/]+/turns$"), frozenset({"limit", "before"})),
     (re.compile(r"^/api/sessions/[^/]+/generated-assets$"), frozenset({"limit", "cursor"})),
     (re.compile(r"^/api/generated-assets$"), frozenset({"limit", "cursor"})),
     (re.compile(r"^/api/sessions/[^/]+/automations$"), frozenset()),
