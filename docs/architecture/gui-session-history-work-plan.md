@@ -333,7 +333,7 @@ or legacy-adoption change was made at this checkpoint.
     1,792 tests passed**, including the new integrated `ThreadShell` reveal +
     live-tail isolation test.
 
-### Package 4A (Composer drafts/focus/usage) & Gate G3 (Backend bounded settings + next-turn split) checkpoint
+### Package 4A (Composer drafts/focus/usage) & Gate G3 (Backend bounded settings + next-turn split) checkpoint (`c63a88a1`)
 
 - **Package 4A — Composer drafts, focus/caret, first-send handoff, and window-independent context usage:**
   - Added [composer-drafts.ts](../../webui/src/lib/composer-drafts.ts) and
@@ -386,8 +386,14 @@ or legacy-adoption change was made at this checkpoint.
     `ruff check nanobot/` -> `All checks passed!`; `git diff --check` clean;
     `pytest tests/session/ tests/security/test_workspace_access_recovery.py tests/webui/test_transcript_index.py tests/webui/test_managed_display_origin.py tests/webui/test_child_thread_route.py tests/webui/test_permission_v2_api.py -q` -> **2,115 passed** (including all 11 new tests in `tests/session/test_next_turn_preferences.py`).
 
-### Boundary 1 follow-up: warm revisit coalescing and bounded settled startup scan
+### Boundary 1 follow-up: warm revisit coalescing and bounded settled startup scan (`4cf01820`)
 
+- **Package 4B (Composer next-turn settings)** is committed separately at
+  `72eeeb5d` with review cleanup `2725983d`: next-turn model, effort, and folder
+  choices go through one correlated chat-scoped operation and apply immediately
+  without locking the picker or editor during a run. The running turn keeps its
+  admitted scope; only a new turn consumes the next-turn choice and retires
+  `Once` grants.
 - **Client attach reuse (same live socket):**
   - `NanobotClient.attach` now reuses an existing live subscription for
     `(socket, chat)` when the socket is still open and the source incarnation is
@@ -430,16 +436,126 @@ or legacy-adoption change was made at this checkpoint.
 | **2 · Storage windows and prompt summaries** | Storage and gateway readers, after **G2**. Use real segmented and pre-index fixtures to bind ranges to committed generations. Prove bounded latest, older, newer, and exact-around reads and a bounded pre-index first open; reject obsolete ranges after replacement. Keep the writer unchanged. |
 | **3 · Viewport and prompt rail** | History hook, viewport and mobile navigator, after 2. Prove unloaded prompt selection reaches the exact mounted row, both paging directions work without gaps, and navigation/reconnect cannot replace a newer selection or steal the reader's anchor. |
 | **4 · Composer and next-turn settings** | Finish draft restoration on switch and relaunch, focus/caret, first-send payload handoff, and usage independent of the selected window. Keep edits to shared shell files in sequence with 3. Before changing settings, settle **G3**: bounded metadata readback/commit at the existing owner, instant selection, and exact new-turn admission without changing the active scope or granting authority on timeout. The active-workspace lock remains until that boundary is proven. |
-| **5 · Transcript consolidation** | Storage and display projection after 1–4. Finish **G4** before changing a writer: prove field parity, media custody, lifecycle/restart and reversible read compatibility. No bulk migration. |
+| **5 · Transcript consolidation** | Storage and display projection after 1–4. **G4** is now passed: see the field matrix, consumer inventory, rollback proof, and verdict above. Retire the duplicate full write and keep every distinct display fact. No bulk migration. |
 | **6 · Bundled apps** | Compare first open, prompt navigation and composer in Kohaku and Codex Desktop on macOS; smoke Linux and one paired Android device. Repeat affected checks after writer cutover. |
 
-### G4 inventory started; not cutover evidence
+### Phase C Gate G4: display parity and rollback audit
 
-| Required fact | Current owner/evidence to compare |
-| --- | --- |
-| Prompt, answer, turn identity and admission | Canonical [source turn writer](../../nanobot/session/turn_writer.py) and row replay in [WebUI transcript](../../nanobot/webui/transcript.py). A display row is not proof of admission. |
-| Permitted reasoning, bounded trace/file edits, compaction and usage | Replay has display-specific shaping and segmentation. Compare produced rows with durable canonical events plus distinct display facts; do not assume canonical replay alone preserves them. |
-| Fork/parent/child lineage, unfinished tails, retention and media | Match canonical source generations and recovery evidence to fork and incomplete markers, authorized asset references and cleanup in the existing owners. Test reset, deletion, restart, interruption, and older-history rollback before dropping any write. |
+**Gate G4 result: G4 PASSED WITH EXPLICIT DISTINCT DISPLAY-FACT LIST.**
+New write evidence is `tests/webui/test_g4_display_parity.py` (22 checks). No
+production code changed in this stage. The audit compares the canonical
+[source turn writer](../../nanobot/session/turn_writer.py) with
+[WebUI transcript](../../nanobot/webui/transcript.py) replay,
+`build_webui_thread_response`, and [transcript_index.py](../../nanobot/webui/transcript_index.py).
+Package 5 can retire the duplicate full-history write, but it must keep every
+fact marked "display-only" below. It must not reconstruct those facts from the
+canonical source.
+
+#### Field-by-field provenance matrix
+
+"Canonical alone?" answers one question: can the chat page rebuild this fact
+from the canonical session store without the display transcript? "Replay" means
+`replay_transcript_to_ui_messages` plus `build_webui_thread_response`.
+
+| # | Display fact | Canonical owner | Display owner | Reconstructible from canonical alone? | Package 5 action |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Prompt text, answer text, turn identity, prompt identity, admission | `SourceTurnWriter.append_message` / `admit_input`; `_event_id` is the durable prompt identity | `user`, `stream_end`, `message` rows; `_webui_source_prompt_id`; `turn_id`; `completed_turn_ids` | **Partly.** Text and prompt identity are canonical. A settled **turn boundary** (`turn_end`), `turn_id`, and the completed-turn list are display facts. | Keep display prompt/answer rows bound to `(store_identity, incarnation, generation, turn_id, prompt_id)`. Keep the settled `turn_end` marker. Never treat a display row as admission proof. |
+| 2 | Permitted reasoning detail; raw/private reasoning redaction | `_persisted_content` strips `thinking`/`redaction`/`reasoning_content`; `_append` drops `reasoning_content`/`thinking_blocks`/`_meta` | `reasoning_delta` / `reasoning_end` / `message(kind=reasoning)`; replayed `reasoning` field | **No.** Canonical source keeps no reasoning text on purpose. | Keep the permitted display reasoning summary only. Never persist raw provider reasoning. |
+| 3a | Bounded tool traces (`traces`, `toolEvents`) | Assistant `tool_calls` survive canonically, but no per-call start/end result payload, phase, or error text is canonical | `message(kind=tool_hint/progress)` with `tool_events`; `_bounded_tool_event`; `tool_trace_lines_from_events` | **No.** The canonical tool event holds only role, name, call id, arguments, and result content. It has no `phase`, no redacted oversized preview, and no merged start/end ordering. | Keep bounded `toolEvents` and `traces`. Cap inline payloads and oversized fields at the existing limits. |
+| 3b | Approval outcome | `TurnEndEvent.outcome`, delegated `pending_approval_id`/`state` | `turn_end.outcome`; `delegated_child.pending_approval_id`; replayed `delegatedChild` | **Partly.** Canonical `TurnEndEvent` outcome exists, but the refusal/waiting display row and its label are display-only. | Keep the delegated approval row and its `pending_approval_id`, `can_stop`, `owned_work`, `state`, `outcome`. |
+| 3c | File-edit diffs (`fileEdits`) | Canonical filesystem effect facts (`operation`, `target`, `disposition`, hashes) are execution evidence, not per-edit added/removed display lines | `file_edit` rows; `upsert_file_edits`; `_filter_covered_file_edit_tool_events` | **No.** The canonical store has no `+/-` display summary and no call/path grouping for the page. | Keep `fileEdits` and the covered-tool-hint filtering. Do not merge file-edit facts into a canonical copy. |
+| 4 | Context-compaction markers and turn usage | Canonical retains no compaction marker and no turn token usage; compaction is a runtime notification | `context_compaction` rows; `turn_end` `usage`, `round_usages`, `context_window_tokens`, `context_usage`; `_sanitize_turn_usage` | **No.** These are derived display facts and transport observations. | Keep them as bounded display facts. Sanitize usage on write and replay. |
+| 5 | Fork and parent/child delegated lineage | Fork boundary comes from the canonical fork operation; child lifetime evidence is canonical metadata and events | `fork_marker`; `fork_boundary_message_count`; `delegated_child`; `_delegated_child_lifetime` | **Partly.** The fork exists canonically, but the display cut position and the collapsed one-row child lifecycle are display facts. | Keep `fork_marker` and the delegated child row. Keep the stale-lifetime and stale-sequence rejection. |
+| 6 | Incomplete tails, interruption, and crash/restart recovery | Canonical answer text is durable; the incomplete tail marker is a display fact | `transcript_incomplete`; `_recover_incomplete_turns`; `_repair_unfinished_tail`; `_recover_interrupted_rotation` | **Partly.** Recovery can restore answer text from canon. The pending/incomplete display state is display-only. | Keep `transcript_incomplete` and the rotation intent file. Rotation recovery must stay replayable after any writer change. |
+| 7 | Media, attachments, signed URLs, generated assets | Canonical user `media` paths survive; signed URLs are process-local | `user.media_paths`/`attachments`; `stream_end.media`; `_media_from_signed_urls`; `rewrite_local_markdown_images` | **No for URLs.** Canonical keeps paths, not signed URLs or asset display. | Keep authorized references and re-sign on read. Never persist a raw host path or a stale signed URL as durable truth. |
+| 8 | Retention, deletion, and incarnation replacement | Canonical reset/delete and incarnation/generation are the authority | `delete_webui_transcript_result`; `delete_transcript_index`; origin stamping in `_record_origin` | **Yes for authority.** The lifecycle decision is canonical. | Bind every display fact to the origin. Delete index and segments on delete. Reject prior-lifetime rows and cursors. |
+| 9 | Read compatibility and rollback | Canonical history is unchanged | Indexed windows, `read_preindex_latest_tail`, direct JSONL/segment read | **Yes.** Durable JSONL plus the segment manifest replay without the index. | Keep zero bulk migration. Keep the bounded pre-index tail and index rebuild. |
+
+#### Live consumer inventory
+
+Every non-test importer of [transcript.py](../../nanobot/webui/transcript.py) or
+[transcript_index.py](../../nanobot/webui/transcript_index.py) under `nanobot/`,
+found by import-graph scan, with the behavior each one depends on:
+
+| Consumer | Imports | Depends on | G4 status |
+| --- | --- | --- | --- |
+| [ws_http.py](../../nanobot/webui/ws_http.py) | `HistoryWindowError`, `WEBUI_TRANSCRIPT_SCHEMA_VERSION`, `build_webui_thread_response`, `delete_webui_transcript_result`, `read_transcript_lines`, `session_turn_index`, `webui_transcript_signature` | Bounded history/turns windows, split delete result, prompt-summary ranges, display rows for file-preview references, generated-asset signature | Covered. Display facts needed: prompt/answer, turn identity, traces, compaction, usage, child rows, media refs. |
+| [session_access.py](../../nanobot/webui/session_access.py) | `build_webui_thread_response`, `normalize_session_mentions_metadata` | The combined thread read for session search/tools | Covered. Uses the same replay projection. |
+| [forking.py](../../nanobot/webui/forking.py) | `append_fork_marker`, `delete_webui_transcript`, `fork_transcript_before_user_index`, `write_managed_fork_transcript`, `write_session_messages_as_transcript` | Fork cut position and display prefix copy | Covered. Needs `fork_marker` and prompt-position identity. |
+| [gateway_services.py](../../nanobot/webui/gateway_services.py) | `WebUITranscriptRecorder` | The managed display writer | Covered. Package 5 changes only what this writer persists, not the recorder's admission binding. |
+| [generated_asset_index.py](../../nanobot/webui/generated_asset_index.py) | `media_publication`, `read_transcript_lines`, `webui_transcript_signature` | Asset references and media custody during writes | Covered. Needs `stream_end.media` / `media_paths` and the write signature. |
+| [media_gateway.py](../../nanobot/webui/media_gateway.py) | `rewrite_local_markdown_images` | Signed media rewrite for replay | Covered. Paths stay canonical; URLs stay read-time. |
+| [thread_disk.py](../../nanobot/webui/thread_disk.py) | `delete_webui_transcript` | Legacy JSON cleanup | Covered. No display fact. |
+| [attachments/_inventory.py](../../nanobot/attachments/_inventory.py) | `validate_retained_transcript_record`, `validate_retained_webui_thread` | Fail-closed retention of display records | Covered. Package 5 must keep these validators satisfied. |
+| [session/webui_turns.py](../../nanobot/session/webui_turns.py) | `append_session_message_input` | Cross-session display input after admission | Covered. Needs `session_message` display metadata. |
+| [session/recovery.py](../../nanobot/session/recovery.py) | `has_unfinished_transcript_tail` | Startup recovery for an interrupted display tail | Covered. Needs `transcript_incomplete` / unfinished-tail detection. |
+| [channels/websocket/runtime.py](../../nanobot/channels/websocket/runtime.py) | `WEBUI_TRANSCRIPT_INCOMPLETE_KEY` | Live incomplete marker | Covered. Needs the incomplete key. |
+
+No live consumer reads a canonical body to rebuild a display fact. Each one
+either reads a display fact directly or reads canonical state for authority.
+
+#### Rollback and pre-index proof summary
+
+All proofs run against `tests/webui/test_g4_display_parity.py` with `tmp_path`:
+
+- **Index delete and rebuild:** for a 12-turn chat with a two-prompt Steer turn,
+  `delete_transcript_index` then `rebuild_transcript_index` reproduces identical
+  `UIMessage` rows, `promptId`s, `before`/`after`/`around` cursors, prompt
+  summaries, and `/turns` output.
+- **Pre-index chat:** `read_preindex_latest_tail` and
+  `build_webui_thread_response` serve a bounded `tail_only` window with explicit
+  `has_more_before`, no total-count claim, and no index creation. There is no
+  bulk migration.
+- **Rollback without the index:** deleting only the index still replays the
+  committed JSONL, segment files, and manifest. A rotated 7-turn fixture serves
+  the bounded tail, then the rebuild restores the identical full projection.
+- **Canonical-only chat:** a canonical turn with no display rows produces an
+  explicit empty display read. The canonical text is never substituted for a
+  display projection.
+- **Live turn:** one real managed turn proves the display prompt row appears
+  only after canonical admission, carries the committed canonical event id, and
+  survives a restart plus index rebuild. A forced canonical append failure
+  creates no display row.
+
+#### Gate G4 verdict
+
+**G4 PASSED WITH EXPLICIT DISTINCT DISPLAY-FACT LIST.**
+
+The following are distinct display facts that Package 5 must keep durable under
+`(store_identity, incarnation, generation)` and `(turn_id, prompt_id)`. They
+cannot be rebuilt from the canonical source:
+
+1. Settled turn boundaries and `turn_id` / completed-turn markers.
+2. Permitted reasoning summary text.
+3. Bounded `toolEvents` and `traces` (phase, redacted previews, merged order).
+4. Approval display rows and delegated-child lifecycle rows.
+5. `fileEdits` diffs and covered-tool-hint filtering.
+6. Context-compaction markers and sanitized turn usage / context usage.
+7. Fork markers and fork message cut positions.
+8. `transcript_incomplete` markers and interrupted-rotation intent.
+9. Authorized media references and generated-asset references.
+
+The following are not display facts and must not be duplicated: raw or private
+reasoning, full canonical model context, private tool payloads beyond the
+bounded preview, and stale signed URLs. No live consumer lacks a replacement.
+No blocker requires keeping the duplicate full write: Package 5 may proceed.
+
+### Phase C Gate G4 verification
+
+```sh
+.venv/bin/pytest tests/webui/test_g4_display_parity.py tests/webui/test_transcript_index.py \
+  tests/webui/test_managed_display_origin.py tests/webui/test_child_thread_route.py -q
+.venv/bin/ruff check nanobot/ tests/webui/test_g4_display_parity.py
+.venv/bin/basedpyright --outputjson > /tmp/overnight-basedpyright-after.json || true
+.venv/bin/python scripts/check_type_regressions.py \
+  --before /tmp/overnight-basedpyright-before.json \
+  --after /tmp/overnight-basedpyright-after.json
+git diff --check
+```
+
+Result: **79 passed**; Ruff `All checks passed!`; type regression check
+`PASS_NO_NEW_DIAGNOSTICS` (`introduced: 0`); `git diff --check` clean. No
+production code changed.
 
 ## Reproduction and checks
 
