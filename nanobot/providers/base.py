@@ -792,6 +792,9 @@ class LLMResponse:
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
     local_usage_receipt: LocalRequestUsageReceipt | None = field(default=None, repr=False)
+    # Resolved context window capacity of the leaf provider that actually produced
+    # this response, used when pre-request route preview was unavailable.
+    context_window_tokens: int | None = field(default=None, repr=False)
 
     @property
     def has_tool_calls(self) -> bool:

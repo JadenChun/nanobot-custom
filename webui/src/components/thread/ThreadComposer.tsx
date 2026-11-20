@@ -1111,7 +1111,9 @@ export function ThreadComposer({
 }: ThreadComposerProps) {
   const { t } = useTranslation();
   const hasStopAction = isStreaming || stopAvailable;
-  const mobileComposer = isMobileRuntimeActive();
+  const mobileRuntimeActive = isMobileRuntimeActive();
+  const isNarrowViewport = useMediaQuery("(max-width: 639px)");
+  const mobileComposer = mobileRuntimeActive || isNarrowViewport;
   const composerChromeHidden = useThreadComposerChromeHidden();
   const [value, setValue] = useState("");
   const [selectedSessionMentions, setSelectedSessionMentions] = useState<SessionMention[]>([]);
@@ -2040,7 +2042,7 @@ export function ThreadComposer({
   const setVoiceError = useCallback((key: VoiceRecorderErrorKey) => {
     clearVoiceErrorTimers();
     setVoiceErrorFading(false);
-    const isNative = mobileComposer || typeof window.__TAURI_INTERNALS__ !== "undefined";
+    const isNative = mobileRuntimeActive || typeof window.__TAURI_INTERNALS__ !== "undefined";
     const messageKey = key === "permission" && isNative ? "nativePermission" : key;
     setInlineError(t(`thread.composer.voiceErrors.${messageKey}`));
     voiceErrorFadeTimerRef.current = setTimeout(() => {
@@ -2051,7 +2053,7 @@ export function ThreadComposer({
         voiceErrorFadeTimerRef.current = null;
       }, VOICE_ERROR_FADE_MS);
     }, VOICE_ERROR_VISIBLE_MS);
-  }, [clearVoiceErrorTimers, mobileComposer, t]);
+  }, [clearVoiceErrorTimers, mobileRuntimeActive, t]);
   const voiceRecorder = useVoiceRecorder({
     disabled: interactionDisabled,
     draftKey,
@@ -2796,9 +2798,11 @@ export function ThreadComposer({
   // One primary button. While a turn runs it stops an empty composer and sends
   // (queueing guidance) when there is something to say, matching the reference
   // harness. Stop stays reachable from the queue rows and the slash command.
+  // A secondary Stop icon is only shown when the main turn is idle yet
+  // background child work can still be stopped.
   const showGuidanceSendButton = canQueueGuidance;
   const showStopButton = isStreaming && !!onStop && !hasComposerContent;
-  const showSecondaryStopButton = hasStopAction && !!onStop && !showStopButton;
+  const showSecondaryStopButton = !isStreaming && stopAvailable && !!onStop;
   const relaxedHeroInput = isHero && images.length === 0 && !isStreaming;
   const inputTextClasses = cn(
     "w-full resize-none bg-transparent",

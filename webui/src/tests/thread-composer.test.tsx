@@ -3675,13 +3675,49 @@ describe("ThreadComposer", () => {
 
     fireEvent.change(input, { target: { value: "also check the mobile layout" } });
 
-    // Drafting does not remove the independent Stop action.
-    expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
+    // Drafting switches the single primary button from Stop to Add to queue.
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
 
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByText("also check the mobile layout")).toBeInTheDocument();
     expect(input).toHaveValue("");
+    // Once cleared, the single primary button returns to Stop.
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
+  });
+
+  it("activates the compact mobile composer layout on narrow web viewports", () => {
+    const originalMatchMedia = window.matchMedia;
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query.includes("max-width: 639px"),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+    try {
+      const { container } = render(
+        <ThreadComposer
+          onSend={vi.fn()}
+          contextUsage={{ contextTokens: 1_000, contextWindowTokens: 10_000 }}
+          hasConfiguredModel
+          placeholder="Type your message..."
+        />,
+      );
+      const workspaceRow = container.querySelector(".thread-composer-mobile-workspace-row");
+      expect(workspaceRow).not.toBeNull();
+      expect(
+        within(workspaceRow as HTMLElement).getByTestId("composer-context-usage"),
+      ).toBeInTheDocument();
+    } finally {
+      vi.stubGlobal("matchMedia", originalMatchMedia);
+    }
   });
 
   it("does not steer a queued row when plain Enter is pressed again", () => {

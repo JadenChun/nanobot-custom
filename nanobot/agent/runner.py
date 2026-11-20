@@ -2902,8 +2902,18 @@ class AgentRunner:
             and recorded_response.context_usage_epoch == state.context_usage_epoch
             and state.usage.context_tokens is not None
         ):
+            window_tokens = (
+                recorded_response.context_window_tokens
+                if recorded_response.context_window_tokens is not None
+                else (
+                    response.context_window_tokens
+                    if type(response.context_window_tokens) is int
+                    and response.context_window_tokens > 0
+                    else None
+                )
+            )
             state.context_usage = ContextUsageSnapshot(
-                state.usage.context_tokens, recorded_response.context_window_tokens,
+                state.usage.context_tokens, window_tokens,
             )
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 

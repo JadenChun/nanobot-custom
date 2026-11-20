@@ -173,13 +173,15 @@ export function PromptRail({
     const measured = measurePrompts(scrollEl, promptAnchors, Math.max(1, scrollRange));
     measuredPromptsRef.current = measured;
 
+    const topInsetPx = hasMorePromptsBefore && onLoadMorePrompts ? 28 : 0;
+
     // Prefer per-prompt summaries so multi-prompt turns (e.g. Steer) get
     // distinct, identity-bound markers. Bucket dense ranges so long histories
     // never render one DOM node per historical prompt.
     if (sessionPrompts.length > 0) {
       const rawMarkers = sessionPromptSummaryMarkers(sessionPrompts, promptAnchors);
       const bounded = bucketSummaryMarkers(rawMarkers, nextRailHeight);
-      const nextMarkers = distributeMarkerPositions(bounded, nextRailHeight);
+      const nextMarkers = distributeMarkerPositions(bounded, nextRailHeight, topInsetPx);
       setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
       setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
       return;
@@ -193,21 +195,23 @@ export function PromptRail({
       }
       const rawMarkers = sessionPromptMarkers(sessionTurns, rendered);
       const bounded = bucketSummaryMarkers(rawMarkers, nextRailHeight);
-      const nextMarkers = distributeMarkerPositions(bounded, nextRailHeight);
+      const nextMarkers = distributeMarkerPositions(bounded, nextRailHeight, topInsetPx);
       setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
       setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
       return;
     }
 
     const grouped = groupPromptMarkers(measured, nextRailHeight);
-    const nextMarkers = distributeMarkerPositions(grouped, nextRailHeight);
+    const nextMarkers = distributeMarkerPositions(grouped, nextRailHeight, topInsetPx);
     setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
     setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
   }, [
     effectiveTotalPrompts,
     enabled,
     hasMoreBefore,
+    hasMorePromptsBefore,
     hasUnloadedHistory,
+    onLoadMorePrompts,
     promptAnchors,
     scrollRef,
     sessionPrompts,
@@ -267,6 +271,7 @@ export function PromptRail({
     };
   }, [enabled, scrollRef, updateActivePrompt, updateMarkers]);
 
+  const railMounted = markers.length > 0;
   useEffect(() => {
     if (!enabled) return undefined;
     const scrollEl = scrollRef.current;
@@ -274,8 +279,9 @@ export function PromptRail({
     const observer = new ResizeObserver(() => updateMarkers());
     observer.observe(scrollEl);
     if (scrollEl.firstElementChild) observer.observe(scrollEl.firstElementChild);
+    if (railRef.current) observer.observe(railRef.current);
     return () => observer.disconnect();
-  }, [enabled, scrollRef, updateMarkers]);
+  }, [enabled, railMounted, scrollRef, updateMarkers]);
 
   // After the selected history paints, request one bounded page of prompt
   // summaries when older prompts exist outside the loaded window.
@@ -399,7 +405,7 @@ export function PromptRail({
                   ? "translate-x-0 scale-100 opacity-100"
                   : "-translate-x-2 scale-[0.98] opacity-0",
               )}
-              style={{ top: `${marker.topPercent}%` }}
+              style={{ top: `${clamp(marker.topPercent, 14, 86)}%` }}
             >
               {previewVisible ? (
                 <>
@@ -707,16 +713,24 @@ function bucketPromptMarkers(
   });
 }
 
-function distributeMarkerPositions(markers: PromptMarker[], railHeight: number): PromptMarker[] {
+function distributeMarkerPositions(
+  markers: PromptMarker[],
+  railHeight: number,
+  topInsetPx = 0,
+): PromptMarker[] {
   const height = railHeight > 0 ? railHeight : RAIL_FALLBACK_HEIGHT_PX;
+  const usableHeight = Math.max(0, height - topInsetPx);
   if (markers.length <= 1) {
-    return markers.map((marker) => ({ ...marker, topPercent: 50 }));
+    return markers.map((marker) => ({
+      ...marker,
+      topPercent: ((topInsetPx + usableHeight / 2) / height) * 100,
+    }));
   }
 
-  const availableHeight = Math.max(0, height - MARKER_STACK_GAP_PX);
+  const availableHeight = Math.max(0, usableHeight - MARKER_STACK_GAP_PX);
   const stepPx = Math.min(MARKER_STACK_GAP_PX, availableHeight / (markers.length - 1));
   const stackHeight = stepPx * (markers.length - 1);
-  const firstMarkerPx = (height - stackHeight) / 2;
+  const firstMarkerPx = topInsetPx + (usableHeight - stackHeight) / 2;
 
   return markers.map((marker, index) => ({
     ...marker,

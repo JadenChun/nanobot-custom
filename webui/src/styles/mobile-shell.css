@@ -396,13 +396,21 @@ html.mobile-runtime .thread-composer-footer-actions .thread-composer-model-label
   }
 }
 
+@media (max-width: 639px) {
+  .thread-composer-footer-actions {
+    max-width: 72%;
+  }
+}
+
 @media (max-width: 380px) {
+  .thread-composer-footer-actions,
   html.mobile-runtime .thread-composer-footer-actions {
     max-width: 72%;
   }
 }
 
 @media (max-width: 340px) {
+  .thread-composer-footer-actions,
   html.mobile-runtime .thread-composer-footer-actions {
     max-width: 69%;
   }

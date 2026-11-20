@@ -1641,6 +1641,47 @@ describe("ThreadViewport", () => {
     expect(navigateTo).toHaveBeenCalledWith(1064);
   });
 
+  it("reserves top inset for load-older button and clamps preview vertically", async () => {
+    const prompts = Array.from({ length: 25 }, (_, i) => ({
+      prompt_id: `p-${i + 1}`,
+      turn_ordinal: i + 1,
+      label: `Prompt ${i + 1}`,
+      created_at: 1000 + i,
+      locator: `loc-${i + 1}`,
+    }));
+    const onLoadMorePrompts = vi.fn();
+    render(
+      <ThreadViewport
+        messages={makePromptExchangeMessages(5)}
+        isStreaming={false}
+        composer={<div />}
+        sessionPrompts={prompts}
+        sessionPromptTotal={40}
+        hasMoreBefore
+        hasMorePromptsBefore
+        onLoadMorePrompts={onLoadMorePrompts}
+      />,
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+
+    expect(screen.getByTestId("prompt-rail-load-older")).toBeInTheDocument();
+    const markerButtons = screen.getAllByRole("button", { name: /Jump to prompt:/ });
+    const firstTop = Number.parseFloat(markerButtons[0].style.top);
+    // 28px inset on 300px fallback rail height is > 9%, keeping markers clear of the top `…` button.
+    expect(firstTop).toBeGreaterThanOrEqual(9);
+
+    fireEvent.pointerEnter(markerButtons[0]);
+    const topPreview = screen.getByTestId("prompt-rail-preview");
+    expect(Number.parseFloat(topPreview.style.top)).toBeGreaterThanOrEqual(14);
+
+    fireEvent.pointerEnter(markerButtons[markerButtons.length - 1]);
+    const bottomPreview = screen.getByTestId("prompt-rail-preview");
+    expect(Number.parseFloat(bottomPreview.style.top)).toBeLessThanOrEqual(86);
+  });
+
   it("shows one marker per turn in the whole session, not just the loaded window", async () => {
     // Five turns are rendered; the session has twenty. The rail must report the
     // real conversation length, because the left navigator is the only place a

@@ -195,6 +195,15 @@ class FallbackProvider(LLMProvider):
         return self._primary.supports_source_summary
 
     @staticmethod
+    def _with_leaf_context_window(
+        response: LLMResponse,
+        window: object,
+    ) -> LLMResponse:
+        if type(window) is int and window > 0:
+            return replace(response, context_window_tokens=window)
+        return response
+
+    @staticmethod
     def _strip_bound_continuation(response: LLMResponse) -> LLMResponse:
         """Prevent a routing wrapper from exposing a leaf-bound receipt."""
         states = {}
@@ -735,7 +744,9 @@ class FallbackProvider(LLMProvider):
             if response.finish_reason != "error":
                 self._primary_failures = 0
                 self._primary_tripped_at = None
-                return response
+                return self._with_leaf_context_window(
+                    response, self._primary_context_window_tokens,
+                )
             primary_response = response
             primary_error = (response.content or primary_error)[:120]
 
@@ -858,7 +869,9 @@ class FallbackProvider(LLMProvider):
                     "Fallback '{}' succeeded after primary '{}' failed",
                     fallback_model, primary_model,
                 )
-                return fallback_response
+                return self._with_leaf_context_window(
+                    fallback_response, getattr(fallback, "context_window_tokens", None),
+                )
 
             last_response = fallback_response
             consumed_through = max(consumed_through, idx + 1)
