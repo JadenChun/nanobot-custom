@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "프로젝트 폴더 선택",
-      "clearProject": "프로젝트 폴더 선택 해제"
+      "clearProject": "프로젝트 폴더 선택 해제",
+      "nextTurn": "다음 턴: {{folder}}",
+      "nextTurnLabel": "다음 턴",
+      "nextTurnHint": "실행 중인 턴은 현재 폴더를 유지합니다. 이 선택은 다음 턴에 적용됩니다.",
+      "nextTurnPending": "다음 폴더를 저장하는 중…",
+      "nextTurnFailed": "폴더 변경이 저장되지 않았습니다. 이전 선택이 그대로 적용되며 초안은 유지됩니다."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "Chọn thư mục dự án",
-      "clearProject": "Bỏ chọn thư mục dự án"
+      "clearProject": "Bỏ chọn thư mục dự án",
+      "nextTurn": "Lượt tiếp theo: {{folder}}",
+      "nextTurnLabel": "Lượt tiếp theo",
+      "nextTurnHint": "Lượt đang chạy giữ nguyên thư mục. Lựa chọn này áp dụng cho lượt tiếp theo.",
+      "nextTurnPending": "Đang lưu thư mục tiếp theo…",
+      "nextTurnFailed": "Thay đổi thư mục chưa được lưu. Lựa chọn trước vẫn có hiệu lực; bản nháp của bạn vẫn nguyên vẹn."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

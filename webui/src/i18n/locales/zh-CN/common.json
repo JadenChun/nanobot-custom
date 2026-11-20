@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "选择项目文件夹",
-      "clearProject": "清除项目文件夹"
+      "clearProject": "清除项目文件夹",
+      "nextTurn": "下一轮：{{folder}}",
+      "nextTurnLabel": "下一轮",
+      "nextTurnHint": "正在运行的一轮保留其文件夹。此选择应用于下一轮。",
+      "nextTurnPending": "正在保存下一个文件夹…",
+      "nextTurnFailed": "文件夹更改未保存。之前的选择仍然有效，您的草稿保持完整。"
     },
     "folders": {
       "saved": "文件夹已保存，目录索引与沙箱规则已更新。",

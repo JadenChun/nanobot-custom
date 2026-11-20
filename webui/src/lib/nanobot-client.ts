@@ -19,6 +19,7 @@ import type {
   InputAttemptBinding,
   InputAttemptCapability,
   InputAttemptProof,
+  NextTurnSettingsAcknowledgement,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
 import {
@@ -108,10 +109,38 @@ type SessionUpdateHandler = (
   workspaceScope?: WorkspaceScopePayload,
   workspaceAccessRequest?: FolderAccessRequest,
   workspacePermissions?: WorkspacePermissionProjection,
+  nextTurn?: NextTurnSessionUpdate,
 ) => void;
 type SidebarStateUpdateHandler = (state: SidebarStatePayload) => void;
 type SettingsUpdatedHandler = () => void;
 type RunStatusHandler = (chatId: string, startedAt: number | null) => void;
+
+/** Detached next-turn settings projected by attach/session updates. */
+export interface NextTurnSettingsSnapshot {
+  workspaceScope?: WorkspaceScopePayload | null;
+  modelPreset?: string | null;
+  reasoningEffort?: string | null;
+  revision?: number | null;
+}
+
+/** Next-turn facts carried by one ``session_updated`` notification. */
+export interface NextTurnSessionUpdate {
+  workspaceScope?: WorkspaceScopePayload | null;
+  revision?: number | null;
+}
+
+type NextTurnSettingsHandler = (settings: NextTurnSettingsSnapshot) => void;
+
+interface PendingNextTurnScope {
+  chatId: string;
+  socket: WebSocket;
+  /** Last revision observed when the request started; older acks are stale. */
+  baselineRevision: number | null;
+  workspaceScope: WorkspaceScopePayload;
+  resolve: (ack: NextTurnSettingsAcknowledgement) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 /** Terminal run event consumed by the global task-notification hook. */
 export type TaskNotificationEvent =
@@ -366,6 +395,13 @@ export class NanobotClient {
   private pendingAttachmentUploads = new Map<string, PendingRequest<string>>();
   private pendingSystemCommands = new Map<string, PendingRequest<void>>();
   private pendingWebUIRequests = new Map<string, PendingWebUIRequest>();
+  /** Detached next-turn facts keyed by chat id; never active-turn authority. */
+  private nextTurnWorkspaceByChatId = new Map<string, WorkspaceScopePayload>();
+  private nextModelPresetByChatId = new Map<string, string | null>();
+  private nextReasoningEffortByChatId = new Map<string, string | null>();
+  private nextTurnRevisionByChatId = new Map<string, number>();
+  private pendingNextTurnScopes = new Map<string, PendingNextTurnScope>();
+  private nextTurnSettingsHandlers = new Set<NextTurnSettingsHandler>();
   // Frames queued while the socket is not yet OPEN
   private sendQueue: Outbound[] = [];
   private reconnectAttempts = 0;
@@ -1717,6 +1753,69 @@ export class NanobotClient {
     });
   }
 
+  /**
+   * Persist a working-folder choice for the *next* turn only.
+   *
+   * The active turn keeps its admitted scope, Stop target and folder-recovery
+   * request. The correlated `session_updated` acknowledgement resolves the
+   * returned promise; a refusal or timeout rejects it so a pending send can
+   * stay unadmitted instead of running under the previous folder.
+   */
+  setNextTurnWorkspaceScope(
+    chatId: string,
+    workspaceScope: WorkspaceScopePayload,
+    timeoutMs = 10_000,
+  ): Promise<NextTurnSettingsAcknowledgement> {
+    if (this.temporaryChatIds.has(chatId)) {
+      return Promise.reject(new Error("temporary_chat_scope_is_connection_owned"));
+    }
+    this.knownChats.add(chatId);
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WS_OPEN) {
+      return Promise.reject(new Error("workspace settings require an open connection"));
+    }
+    return new Promise<NextTurnSettingsAcknowledgement>((resolve, reject) => {
+      const pending: PendingNextTurnScope = {
+        chatId,
+        socket,
+        baselineRevision: this.nextTurnRevisionByChatId.get(chatId) ?? null,
+        workspaceScope,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          if (this.pendingNextTurnScopes.get(chatId) !== pending) return;
+          this.pendingNextTurnScopes.delete(chatId);
+          reject(new Error("workspace settings timed out"));
+        }, timeoutMs),
+      };
+      this.pendingNextTurnScopes.set(chatId, pending);
+      this.queueSend({
+        type: "set_workspace_scope",
+        chat_id: chatId,
+        next_turn: true,
+        next_workspace_scope: workspaceScope,
+      });
+    });
+  }
+
+  /** Latest detached next-turn facts this client has observed for a chat. */
+  getNextTurnSettings(chatId: string): NextTurnSettingsSnapshot {
+    return {
+      workspaceScope: this.nextTurnWorkspaceByChatId.get(chatId) ?? null,
+      modelPreset: this.nextModelPresetByChatId.get(chatId) ?? null,
+      reasoningEffort: this.nextReasoningEffortByChatId.get(chatId) ?? null,
+      revision: this.nextTurnRevisionByChatId.get(chatId) ?? null,
+    };
+  }
+
+  /** Subscribe to detached next-turn settings projected by the gateway. */
+  onNextTurnSettings(handler: NextTurnSettingsHandler): Unsubscribe {
+    this.nextTurnSettingsHandlers.add(handler);
+    return () => {
+      this.nextTurnSettingsHandlers.delete(handler);
+    };
+  }
+
   controlDelegatedChild(
     parentKey: string,
     childId: string,
@@ -2007,6 +2106,7 @@ export class NanobotClient {
       const capability = parseAttemptCapability(parsed.input_attempt_source, parsed.chat_id);
       if (capability && parsed.temporary !== true) this.inputAttemptSources.set(parsed.chat_id, capability);
       else this.inputAttemptSources.delete(parsed.chat_id);
+      this.applyAttachedNextTurn(parsed);
       const query = this.inputAttemptQueries.get(parsed.chat_id);
       this.inputAttemptQueries.delete(parsed.chat_id);
       const binding = query?.pending.recovery?.binding;
@@ -2052,12 +2152,14 @@ export class NanobotClient {
     }
 
     if (parsed.event === "session_updated") {
+      const nextTurn = this.applyNextTurnSessionUpdate(parsed);
       this.emitSessionUpdate(
         parsed.chat_id,
         parsed.scope,
         parsed.workspace_scope,
         parsed.workspace_access_request,
         parsed.workspace_permissions,
+        nextTurn,
       );
       return;
     }
@@ -2072,6 +2174,16 @@ export class NanobotClient {
     }
 
     if (parsed.event === "error" && parsed.detail === "workspace_scope_rejected") {
+      const pendingScope = parsed.chat_id
+        ? this.pendingNextTurnScopes.get(parsed.chat_id)
+        : undefined;
+      if (pendingScope && pendingScope.socket === this.socket) {
+        // A refused next-turn choice rejects its own send ordering; it never
+        // leaves the send silently running under the previous folder.
+        this.pendingNextTurnScopes.delete(pendingScope.chatId);
+        clearTimeout(pendingScope.timer);
+        pendingScope.reject(new Error(parsed.reason || "workspace_scope_rejected"));
+      }
       this.emitError({
         kind: "workspace_scope_rejected",
         reason: parsed.reason,
@@ -2140,18 +2252,117 @@ export class NanobotClient {
     workspaceScope?: WorkspaceScopePayload,
     workspaceAccessRequest?: FolderAccessRequest,
     workspacePermissions?: WorkspacePermissionProjection,
+    nextTurn?: NextTurnSessionUpdate,
   ): void {
     for (const handler of this.sessionUpdateHandlers) {
-      if (workspaceAccessRequest === undefined && workspacePermissions === undefined) {
+      if (
+        workspaceAccessRequest === undefined
+        && workspacePermissions === undefined
+        && nextTurn === undefined
+      ) {
         handler(chatId, scope, workspaceScope);
-      } else if (workspacePermissions === undefined) {
+      } else if (workspacePermissions === undefined && nextTurn === undefined) {
         handler(chatId, scope, workspaceScope, workspaceAccessRequest);
-      } else if (workspaceAccessRequest === undefined) {
+      } else if (workspaceAccessRequest === undefined && nextTurn === undefined) {
         handler(chatId, scope, workspaceScope, undefined, workspacePermissions);
       } else {
-        handler(chatId, scope, workspaceScope, workspaceAccessRequest, workspacePermissions);
+        handler(
+          chatId,
+          scope,
+          workspaceScope,
+          workspaceAccessRequest,
+          workspacePermissions,
+          nextTurn,
+        );
       }
     }
+  }
+
+  /**
+   * Apply detached next-turn facts from an attach handshake.
+   *
+   * The attach is a fresh authoritative read of the source, but a delayed
+   * handshake must not erase a newer local choice made after it was sent. So a
+   * missing revision only clears the snapshot while no local change is pending.
+   */
+  private applyAttachedNextTurn(
+    parsed: Extract<InboundEvent, { event: "attached" }>,
+  ): void {
+    const chatId = parsed.chat_id;
+    if (parsed.temporary === true) return;
+    const revision = typeof parsed.next_turn_revision === "number"
+      ? parsed.next_turn_revision
+      : null;
+    const current = this.nextTurnRevisionByChatId.get(chatId);
+    if (revision !== null && current !== undefined && revision < current) return;
+    if (revision === null && this.pendingNextTurnScopes.has(chatId)) return;
+    if (revision !== null) this.nextTurnRevisionByChatId.set(chatId, revision);
+    else this.nextTurnRevisionByChatId.delete(chatId);
+    const scope = parsed.next_workspace_scope;
+    if (scope === null || scope === undefined) this.nextTurnWorkspaceByChatId.delete(chatId);
+    else this.nextTurnWorkspaceByChatId.set(chatId, scope);
+    const preset = parsed.next_model_preset;
+    if (preset === null || preset === undefined) this.nextModelPresetByChatId.delete(chatId);
+    else this.nextModelPresetByChatId.set(chatId, preset);
+    const effort = parsed.next_reasoning_effort;
+    if (effort === null || effort === undefined) this.nextReasoningEffortByChatId.delete(chatId);
+    else this.nextReasoningEffortByChatId.set(chatId, effort);
+    for (const handler of this.nextTurnSettingsHandlers) handler(this.getNextTurnSettings(chatId));
+  }
+
+  /**
+   * Record detached next-turn facts from one `session_updated` frame.
+   *
+   * A reply for a superseded request is ignored: only a strictly newer
+   * revision, or the answer to this client's own pending request, may replace
+   * the latest local selection. Older replies never overwrite a newer one.
+   */
+  private applyNextTurnSessionUpdate(
+    parsed: Extract<InboundEvent, { event: "session_updated" }>,
+  ): NextTurnSessionUpdate | undefined {
+    const chatId = parsed.chat_id;
+    if (!("next_workspace_scope" in parsed) && !("next_turn_revision" in parsed)) {
+      return undefined;
+    }
+    const revision = typeof parsed.next_turn_revision === "number"
+      ? parsed.next_turn_revision
+      : null;
+    const pending = this.pendingNextTurnScopes.get(chatId);
+    const nextScope = parsed.next_workspace_scope;
+    const matchesPending = !!(
+      pending
+      && pending.socket === this.socket
+      && revision !== null
+      && (pending.baselineRevision === null || revision > pending.baselineRevision)
+      && nextScope !== undefined
+      && nextScope !== null
+      && nextScope.project_path === pending.workspaceScope.project_path
+      && nextScope.access_mode === pending.workspaceScope.access_mode
+    );
+    const current = this.nextTurnRevisionByChatId.get(chatId);
+    const advances = revision !== null && (current === undefined || revision > current);
+    if (!advances && !matchesPending) {
+      // A stale or replayed acknowledgement cannot replace a newer selection.
+      return undefined;
+    }
+    if (revision !== null) this.nextTurnRevisionByChatId.set(chatId, revision);
+    if (nextScope === null) this.nextTurnWorkspaceByChatId.delete(chatId);
+    else if (nextScope !== undefined) this.nextTurnWorkspaceByChatId.set(chatId, nextScope);
+    const update: NextTurnSessionUpdate = {
+      workspaceScope: nextScope === undefined ? undefined : nextScope,
+      revision,
+    };
+    if (pending) {
+      this.pendingNextTurnScopes.delete(chatId);
+      clearTimeout(pending.timer);
+      pending.resolve({
+        workspace_scope: parsed.workspace_scope,
+        next_workspace_scope: nextScope ?? null,
+        next_turn_revision: revision,
+      });
+    }
+    for (const handler of this.nextTurnSettingsHandlers) handler(this.getNextTurnSettings(chatId));
+    return update;
   }
 
   private emitSidebarStateUpdate(state: SidebarStatePayload): void {
@@ -2242,6 +2453,11 @@ export class NanobotClient {
       pending.reject(new Error("socket closed"));
     }
     this.pendingSystemCommands.clear();
+    for (const pending of this.pendingNextTurnScopes.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("socket closed"));
+    }
+    this.pendingNextTurnScopes.clear();
     // Surface structured reasons *before* reconnect logic so the UI can
     // display the error even while the client transparently reconnects.
     // Browsers populate ``CloseEvent.code`` with the wire-level close code;
@@ -2427,6 +2643,16 @@ export class NanobotClient {
     this.unsettledRunTurnIdsByChatId.delete(chatId);
     this.canonicalCompletedTurnIdsByChatId.delete(chatId);
     this.goalStateByChatId.delete(chatId);
+    this.nextTurnWorkspaceByChatId.delete(chatId);
+    this.nextModelPresetByChatId.delete(chatId);
+    this.nextReasoningEffortByChatId.delete(chatId);
+    this.nextTurnRevisionByChatId.delete(chatId);
+    const pendingScope = this.pendingNextTurnScopes.get(chatId);
+    if (pendingScope) {
+      this.pendingNextTurnScopes.delete(chatId);
+      clearTimeout(pendingScope.timer);
+      pendingScope.reject(new Error("temporary chat discarded"));
+    }
     for (const key of [...this.runStartedAtByTurnKey.keys()]) {
       if (key.startsWith(`${chatId}\u0000`)) this.runStartedAtByTurnKey.delete(key);
     }

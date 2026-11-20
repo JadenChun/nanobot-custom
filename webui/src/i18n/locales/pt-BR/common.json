@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "Escolher pasta do projeto",
-      "clearProject": "Limpar pasta do projeto"
+      "clearProject": "Limpar pasta do projeto",
+      "nextTurn": "Próximo turno: {{folder}}",
+      "nextTurnLabel": "Próximo turno",
+      "nextTurnHint": "O turno em execução mantém a pasta. Esta escolha vale para o próximo turno.",
+      "nextTurnPending": "Salvando a próxima pasta…",
+      "nextTurnFailed": "A alteração de pasta não foi salva. A escolha anterior continua valendo; seu rascunho está intacto."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

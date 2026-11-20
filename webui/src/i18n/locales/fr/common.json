@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "Choisir un dossier de projet",
-      "clearProject": "Effacer le dossier de projet"
+      "clearProject": "Effacer le dossier de projet",
+      "nextTurn": "Tour suivant : {{folder}}",
+      "nextTurnLabel": "Tour suivant",
+      "nextTurnHint": "Le tour en cours conserve son dossier. Ce choix s'applique au tour suivant.",
+      "nextTurnPending": "Enregistrement du dossier suivant…",
+      "nextTurnFailed": "Le changement de dossier n'a pas été enregistré. Le choix précédent reste actif ; votre brouillon est intact."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

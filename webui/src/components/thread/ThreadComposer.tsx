@@ -277,6 +277,17 @@ interface ThreadComposerProps {
   workspaces?: WorkspacesPayload | null;
   onRefreshWorkspaces?: () => Promise<void>;
   workspaceScopeDisabled?: boolean;
+  /** Detached working-folder choice for the next turn while one is running. */
+  nextWorkspaceScope?: WorkspaceScopePayload | null;
+  /** A next-turn setting change is awaiting its acknowledgement. */
+  nextTurnSettingsPending?: boolean;
+  /** A next-turn setting change was refused; the previous choice still applies. */
+  nextTurnSettingsError?: string | null;
+  /**
+   * Settle any in-flight next-turn setting before a queued row is admitted.
+   * Rejects when the choice was refused so the row stays ready to retry.
+   */
+  onBeforeNewTurnSend?: () => Promise<void>;
   /** UNKNOWN input disposition blocks persistent-chat access mutations, not known live controls. */
   workspaceAccessModeUnknownBlocked?: boolean;
   workspaceError?: string | null;
@@ -1070,6 +1081,10 @@ export function ThreadComposer({
   workspaces = null,
   onRefreshWorkspaces,
   workspaceScopeDisabled = false,
+  nextWorkspaceScope = null,
+  nextTurnSettingsPending = false,
+  nextTurnSettingsError = null,
+  onBeforeNewTurnSend,
   workspaceAccessModeUnknownBlocked = false,
   workspaceError = null,
   onPickWorkspaceFolder,
@@ -2466,6 +2481,26 @@ export function ThreadComposer({
     ],
   );
 
+  /**
+   * Admit one queued row only after the next-turn setting acknowledgement.
+   *
+   * A refused choice keeps the row ready and the draft intact; it never sends
+   * under the previous folder/model/mode.
+   */
+  const sendQueuedPromptAfterSettings = useCallback((
+    prompt: QueuedPrompt,
+  ): Promise<void> => {
+    if (!onBeforeNewTurnSend || isStreaming) {
+      sendQueuedPrompt(prompt);
+      return Promise.resolve();
+    }
+    return onBeforeNewTurnSend().then(() => {
+      sendQueuedPrompt(prompt);
+    }).catch(() => {
+      // The owner already surfaced the refusal; the row stays retryable.
+    });
+  }, [isStreaming, onBeforeNewTurnSend, sendQueuedPrompt]);
+
   useEffect(() => {
     if (!queueCompletionTurnId || handledQueueCompletionRef.current === queueCompletionTurnId) return;
     const head = queuedPromptsRef.current[0];
@@ -2476,9 +2511,10 @@ export function ThreadComposer({
     // eligible later. Reconnect, Stop, or an uncertain head never do.
     if (eligible && newTurnBlocked) return;
     handledQueueCompletionRef.current = queueCompletionTurnId;
-    if (eligible) sendQueuedPrompt(head);
+    if (eligible) void sendQueuedPromptAfterSettings(head);
   }, [automaticQueueSendBlocked, interactionDisabled, isStreaming, modelNeedsSetup, newTurnBlocked,
-    queueCompletionTurnId, queuedEdit?.id, sendQueuedPrompt, stopPending, workspaceFullRetiring]);
+    queueCompletionTurnId, queuedEdit?.id, sendQueuedPromptAfterSettings, stopPending,
+    workspaceFullRetiring]);
 
   const submit = useCallback((steer = false) => {
     const content = value.trim();
@@ -2784,6 +2820,9 @@ export function ThreadComposer({
       controls={workspaceControls}
       workspaces={workspaces}
       error={workspaceError}
+      nextTurnScope={nextWorkspaceScope}
+      nextTurnPending={nextTurnSettingsPending}
+      turnActive={isStreaming}
       onPickFolder={onPickWorkspaceFolder}
       onRefreshWorkspaces={onRefreshWorkspaces}
       onChange={onWorkspaceScopeChange}
@@ -2799,6 +2838,9 @@ export function ThreadComposer({
       controls={workspaceControls}
       workspaces={workspaces}
       error={workspaceError}
+      nextTurnScope={nextWorkspaceScope}
+      nextTurnPending={nextTurnSettingsPending}
+      turnActive={isStreaming}
       onPickFolder={onPickWorkspaceFolder}
       onRefreshWorkspaces={onRefreshWorkspaces}
       onChange={onWorkspaceScopeChange}
@@ -2977,7 +3019,7 @@ export function ThreadComposer({
           deleteLabel={t("thread.composer.queued.delete")}
           dragLabel={t("thread.composer.queued.drag")}
           editLabel={t("thread.composer.queued.edit")}
-          onAction={sendQueuedPrompt}
+          onAction={(prompt) => void sendQueuedPromptAfterSettings(prompt)}
           onDelete={removeQueuedPrompt}
           onEdit={editQueuedPrompt}
           onDragStart={(id) => {
@@ -3146,6 +3188,17 @@ export function ThreadComposer({
             >
               {t("thread.composer.reattachDismiss", { defaultValue: "Dismiss" })}
             </button>
+          </div>
+        ) : null}
+        {nextTurnSettingsError && !inlineError ? (
+          <div
+            role="alert"
+            data-testid="composer-next-turn-error"
+            className="mx-3 mb-1 rounded-md border border-destructive/40 bg-destructive/8 px-2.5 py-1 text-[11.5px] font-medium text-destructive"
+          >
+            {t("workspace.picker.nextTurnFailed", {
+              defaultValue: "The folder change was not saved. The previous choice is still in effect; your draft is intact.",
+            })}
           </div>
         ) : null}
         {inlineError ? (

@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "プロジェクトフォルダーを選択",
-      "clearProject": "プロジェクトフォルダーの選択を解除"
+      "clearProject": "プロジェクトフォルダーの選択を解除",
+      "nextTurn": "次のターン: {{folder}}",
+      "nextTurnLabel": "次のターン",
+      "nextTurnHint": "実行中のターンは現在のフォルダを維持します。この選択は次のターンに適用されます。",
+      "nextTurnPending": "次のフォルダを保存しています…",
+      "nextTurnFailed": "フォルダの変更は保存されませんでした。以前の選択が有効なままで、下書きは保持されています。"
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

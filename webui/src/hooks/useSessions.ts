@@ -566,6 +566,11 @@ export function useSessionHistory(key: string | null): {
   workspacePermissions: WorkspacePermissionProjection | null;
   workspacePermissionsLoading: boolean;
   workspacePermissionsError: boolean;
+  /** Detached next-turn folder while the active turn keeps its own scope. */
+  nextWorkspaceScope: WorkspaceScopePayload | null;
+  nextModelPreset: string | null;
+  nextReasoningEffort: string | null;
+  nextTurnRevision: number | null;
   markWorkspacePermissionsStale: () => void;
   updateWorkspacePermissions: (permissions: WorkspacePermissionProjection | null) => void;
   refreshWorkspacePermissions: () => Promise<WorkspacePermissionProjection | null>;
@@ -652,6 +657,10 @@ export function useSessionHistory(key: string | null): {
     workspacePermissions: WorkspacePermissionProjection | null;
     workspacePermissionsLoading: boolean;
     workspacePermissionsError: boolean;
+    nextWorkspaceScope?: WorkspaceScopePayload | null;
+    nextModelPreset?: string | null;
+    nextReasoningEffort?: string | null;
+    nextTurnRevision?: number | null;
   }>({
     client,
     key: null,
@@ -706,6 +715,18 @@ export function useSessionHistory(key: string | null): {
           ...prev,
           stopTarget,
           stopTargetSnapshotAvailable: stopTarget !== null || body.stop_target === null,
+          ...(body.next_workspace_scope !== undefined
+            ? { nextWorkspaceScope: body.next_workspace_scope }
+            : {}),
+          ...(body.next_model_preset !== undefined
+            ? { nextModelPreset: body.next_model_preset }
+            : {}),
+          ...(body.next_reasoning_effort !== undefined
+            ? { nextReasoningEffort: body.next_reasoning_effort }
+            : {}),
+          ...(body.next_turn_revision !== undefined
+            ? { nextTurnRevision: body.next_turn_revision }
+            : {}),
           ...(requestVersion === accessRequestReadVersionRef.current ? {
             workspaceAccessRequest: body.workspace_access_request === undefined
               ? prev.workspaceAccessRequest
@@ -805,6 +826,10 @@ export function useSessionHistory(key: string | null): {
           workspacePermissions: null,
           workspacePermissionsLoading: false,
           workspacePermissionsError: true,
+          nextWorkspaceScope: null,
+          nextModelPreset: null,
+          nextReasoningEffort: null,
+          nextTurnRevision: null,
         }
       : prev);
   }, [client]);
@@ -887,6 +912,10 @@ export function useSessionHistory(key: string | null): {
         workspacePermissions: null,
         workspacePermissionsLoading: false,
         workspacePermissionsError: false,
+        nextWorkspaceScope: null,
+        nextModelPreset: null,
+        nextReasoningEffort: null,
+        nextTurnRevision: null,
       });
       return;
     }
@@ -921,6 +950,13 @@ export function useSessionHistory(key: string | null): {
       setTotalTurnCount(0);
       setTotalPromptCount(0);
       setPendingReveal(null);
+      setState((prev) => ({
+        ...prev,
+        nextWorkspaceScope: null,
+        nextModelPreset: null,
+        nextReasoningEffort: null,
+        nextTurnRevision: null,
+      }));
     } else if (!detachedOlderWindow) {
       olderRequestAbortRef.current?.abort();
       olderRequestAbortRef.current = null;
@@ -979,6 +1015,10 @@ export function useSessionHistory(key: string | null): {
             workspacePermissions: null,
             workspacePermissionsLoading: true,
             workspacePermissionsError: false,
+            nextWorkspaceScope: null,
+            nextModelPreset: null,
+            nextReasoningEffort: null,
+            nextTurnRevision: null,
           });
     }
     // Mark the new key as loading immediately so callers never see stale
@@ -1035,6 +1075,10 @@ export function useSessionHistory(key: string | null): {
             workspacePermissions: null,
             workspacePermissionsLoading: true,
             workspacePermissionsError: false,
+            nextWorkspaceScope: null,
+            nextModelPreset: null,
+            nextReasoningEffort: null,
+            nextTurnRevision: null,
           });
     }
     (async () => {
@@ -1163,6 +1207,18 @@ export function useSessionHistory(key: string | null): {
               workspacePermissionsError: applyPermissions
                 ? false
                 : prev.workspacePermissionsError,
+              ...(body?.next_workspace_scope !== undefined
+                ? { nextWorkspaceScope: body.next_workspace_scope }
+                : {}),
+              ...(body?.next_model_preset !== undefined
+                ? { nextModelPreset: body.next_model_preset }
+                : {}),
+              ...(body?.next_reasoning_effort !== undefined
+                ? { nextReasoningEffort: body.next_reasoning_effort }
+                : {}),
+              ...(body?.next_turn_revision !== undefined
+                ? { nextTurnRevision: body.next_turn_revision }
+                : {}),
             };
           }
           const replaced = prev.key === key && sourceOriginReplaced(prev.sourceOrigin, incomingOrigin);
@@ -1242,6 +1298,18 @@ export function useSessionHistory(key: string | null): {
             workspacePermissionsError: applyPermissions
               ? false
               : prev.workspacePermissionsError,
+            ...(body?.next_workspace_scope !== undefined
+              ? { nextWorkspaceScope: body.next_workspace_scope }
+              : {}),
+            ...(body?.next_model_preset !== undefined
+              ? { nextModelPreset: body.next_model_preset }
+              : {}),
+            ...(body?.next_reasoning_effort !== undefined
+              ? { nextReasoningEffort: body.next_reasoning_effort }
+              : {}),
+            ...(body?.next_turn_revision !== undefined
+              ? { nextTurnRevision: body.next_turn_revision }
+              : {}),
           };
         });
         if (body === null) return;
@@ -2092,6 +2160,10 @@ export function useSessionHistory(key: string | null): {
       workspacePermissions: null,
       workspacePermissionsLoading: false,
       workspacePermissionsError: false,
+      nextWorkspaceScope: null,
+      nextModelPreset: null,
+      nextReasoningEffort: null,
+      nextTurnRevision: null,
       markWorkspacePermissionsStale,
       updateWorkspacePermissions,
       refreshWorkspacePermissions,
@@ -2155,6 +2227,10 @@ export function useSessionHistory(key: string | null): {
       workspacePermissions: null,
       workspacePermissionsLoading: true,
       workspacePermissionsError: false,
+      nextWorkspaceScope: null,
+      nextModelPreset: null,
+      nextReasoningEffort: null,
+      nextTurnRevision: null,
       markWorkspacePermissionsStale,
       updateWorkspacePermissions,
       refreshWorkspacePermissions,
@@ -2218,6 +2294,10 @@ export function useSessionHistory(key: string | null): {
     workspacePermissions: state.workspacePermissions,
     workspacePermissionsLoading: state.workspacePermissionsLoading,
     workspacePermissionsError: state.workspacePermissionsError,
+    nextWorkspaceScope: state.nextWorkspaceScope ?? null,
+    nextModelPreset: state.nextModelPreset ?? null,
+    nextReasoningEffort: state.nextReasoningEffort ?? null,
+    nextTurnRevision: state.nextTurnRevision ?? null,
     markWorkspacePermissionsStale,
     updateWorkspacePermissions,
     refreshWorkspacePermissions,

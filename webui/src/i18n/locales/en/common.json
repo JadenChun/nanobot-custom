@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "Choose project folder",
-      "clearProject": "Clear project folder"
+      "clearProject": "Clear project folder",
+      "nextTurn": "Next turn: {{folder}}",
+      "nextTurnLabel": "Next turn",
+      "nextTurnHint": "The running turn keeps its folder. This choice applies to the next turn.",
+      "nextTurnPending": "Saving the next folder…",
+      "nextTurnFailed": "The folder change was not saved. The previous choice is still in effect; your draft is intact."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

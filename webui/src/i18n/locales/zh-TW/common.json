@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "選擇專案資料夾",
-      "clearProject": "清除專案資料夾"
+      "clearProject": "清除專案資料夾",
+      "nextTurn": "下一輪：{{folder}}",
+      "nextTurnLabel": "下一輪",
+      "nextTurnHint": "執行中的一輪保留其資料夾。此選擇套用於下一輪。",
+      "nextTurnPending": "正在儲存下一個資料夾…",
+      "nextTurnFailed": "資料夾變更未儲存。先前的選擇仍然有效，您的草稿保持完整。"
     },
     "folders": {
       "saved": "資料夾已儲存，目錄索引與沙箱規則已更新。",

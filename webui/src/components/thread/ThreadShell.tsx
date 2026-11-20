@@ -49,6 +49,7 @@ import {
 } from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
 import { useSessionHistory, type RevealPromptTarget } from "@/hooks/useSessions";
+import { NextTurnSettingsTracker, type NextTurnSettingKind } from "@/lib/next-turn-settings";
 import {
   ApiError,
   fetchFilePreviewAvailability,
@@ -1177,6 +1178,10 @@ export function ThreadShell({
     workspacePermissions,
     workspacePermissionsLoading,
     workspacePermissionsError,
+    nextWorkspaceScope: liveNextWorkspaceScope,
+    nextModelPreset: liveNextModelPreset,
+    nextReasoningEffort: liveNextReasoningEffort,
+    nextTurnRevision: liveNextTurnRevision,
     markWorkspaceAccessRequestStale,
     updateWorkspaceAccessRequest,
     refreshWorkspaceAccessRequest,
@@ -1205,6 +1210,67 @@ export function ThreadShell({
   const viewingHistoricalWindow = historyKey !== null && hasMoreAfter;
   const effectivePromptTotal = Math.max(sessionPromptTotal, sessionTurnTotal);
   const refreshStopState = separateControls ? refreshLiveControls : refreshHistory;
+  const nextTurnTrackerRef = useRef(new NextTurnSettingsTracker());
+  const [nextTurnScopeOverride, setNextTurnScopeOverride] =
+    useState<WorkspaceScopePayload | null>(null);
+  const [nextTurnSettingsError, setNextTurnSettingsError] = useState<string | null>(null);
+  const [nextTurnPendingKinds, setNextTurnPendingKinds] =
+    useState<ReadonlySet<NextTurnSettingKind>>(() => new Set());
+  const nextTurnChatIdRef = useRef<string | null>(chatId);
+  const nextTurnSettings = nextTurnTrackerRef.current;
+  const nextTurnSettingsPending = nextTurnPendingKinds.size > 0;
+  // The gateway acknowledgement is authoritative; the local override only
+  // displays the in-flight choice so the picker reacts immediately.
+  const nextWorkspaceScope = liveNextWorkspaceScope ?? nextTurnScopeOverride;
+  const trackNextTurnSetting = useCallback((
+    ownerChatId: string,
+    kind: NextTurnSettingKind,
+    operation: Promise<unknown>,
+  ) => {
+    nextTurnSettings.begin(ownerChatId, kind, operation);
+    setNextTurnPendingKinds((current) => {
+      const next = new Set(current);
+      next.add(kind);
+      return next;
+    });
+    const settle = () => {
+      setNextTurnPendingKinds((current) => {
+        if (!current.has(kind)) return current;
+        const next = new Set(current);
+        next.delete(kind);
+        return next;
+      });
+    };
+    void operation.then(settle, settle);
+  }, [nextTurnSettings]);
+  useEffect(() => {
+    if (nextTurnChatIdRef.current === chatId) return;
+    nextTurnChatIdRef.current = chatId;
+    nextTurnSettings.clear(nextTurnChatIdRef.current ?? "");
+    setNextTurnScopeOverride(null);
+    setNextTurnSettingsError(null);
+    setNextTurnPendingKinds((current) => (current.size === 0 ? current : new Set()));
+  }, [chatId, nextTurnSettings]);
+  useEffect(() => {
+    if (!liveNextWorkspaceScope) return;
+    setNextTurnScopeOverride((current) => (
+      current && current.project_path === liveNextWorkspaceScope.project_path
+        && current.access_mode === liveNextWorkspaceScope.access_mode
+        ? null
+        : current
+    ));
+  }, [liveNextWorkspaceScope]);
+  useEffect(() => {
+    // A confirmed scope equal to the pending choice means admission consumed
+    // it; the picker now shows the active folder, not a pending one.
+    setNextTurnScopeOverride((current) => (
+      current && workspaceScope
+        && current.project_path === workspaceScope.project_path
+        && current.access_mode === workspaceScope.access_mode
+        ? null
+        : current
+    ));
+  }, [workspaceScope]);
   const [appliedHistoryVersion, setAppliedHistoryVersion] = useState(0);
   const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
   const pendingRecoveryResolveRef = useRef<PendingRecoveryResolve | null>(null);
@@ -2073,10 +2139,18 @@ export function ThreadShell({
     setLocalModelPreset(name);
     setLocalReasoning((current) => current?.chatId === chatId ? null : current);
     setReasoningUpdate((current) => current?.chatId === chatId ? null : current);
-    if (chatId) {
-      void client.sendSystemCommand(chatId, `/model ${name}`).catch(() => {});
-    }
-  }, [chatId, client]);
+    setNextTurnSettingsError(null);
+    if (!chatId) return;
+    const chat = chatId;
+    const operation = client.sendSystemCommand(chat, `/model ${name}`).then(() => undefined);
+    trackNextTurnSetting(chat, "model", operation);
+    void operation.catch((error: unknown) => {
+      setLocalModelPreset(null);
+      setNextTurnSettingsError(
+        error instanceof Error ? error.message : "model_preset_rejected",
+      );
+    });
+  }, [chatId, client, trackNextTurnSetting]);
   const reasoningPreset = modelPresetForBadge(settings, activeModelPreset);
   const reasoningOptions = reasoningPreset?.reasoning_effort_values?.filter(Boolean) ?? [];
   const selectedReasoning = localReasoning?.chatId === chatId && localReasoning.preset === activeModelPreset
@@ -2085,6 +2159,19 @@ export function ThreadShell({
   const reasoningEffort = selectedReasoning && reasoningOptions.includes(selectedReasoning)
     ? selectedReasoning : null;
   const reasoningPending = reasoningUpdate?.chatId === chatId && reasoningUpdate.pending;
+  useEffect(() => {
+    // A detached next-turn model/effort choice is what the picker shows after a
+    // revisit, while the admitted turn keeps its confirmed pair.
+    if (liveNextTurnRevision === null) return;
+    if (liveNextModelPreset) setLocalModelPreset(liveNextModelPreset);
+    if (liveNextReasoningEffort && liveNextModelPreset) {
+      setLocalReasoning({
+        chatId,
+        preset: liveNextModelPreset,
+        effort: liveNextReasoningEffort,
+      });
+    }
+  }, [chatId, liveNextModelPreset, liveNextReasoningEffort, liveNextTurnRevision]);
   const handleReasoningChange = (effort: string | null) => {
     if (reasoningPending || (effort && !reasoningOptions.includes(effort))) return;
     const selection = { chatId, preset: activeModelPreset, effort };
@@ -2094,10 +2181,14 @@ export function ThreadShell({
     }
     const update = { chatId, pending: true };
     setReasoningUpdate(update);
-    void client.sendSystemCommand(chatId, modelReasoningCommand(activeModelPreset, effort)).then(() => {
-      setLocalReasoning(selection);
-      setReasoningUpdate((current) => current === update ? null : current);
-    }).catch(() => {
+    const operation = client
+      .sendSystemCommand(chatId, modelReasoningCommand(activeModelPreset, effort))
+      .then(() => {
+        setLocalReasoning(selection);
+        setReasoningUpdate((current) => current === update ? null : current);
+      });
+    trackNextTurnSetting(chatId, "reasoning", operation);
+    void operation.catch(() => {
       setReasoningUpdate((current) => current === update ? { chatId, pending: false } : current);
     });
   };
@@ -2899,41 +2990,83 @@ export function ThreadShell({
     }
   }, [activeModelPreset, booting, client, draftNamespace, localModelPreset, onCreateChat, preparingFull, reasoningEffort, t, workspaceScope]);
 
+  const awaitNextTurnSettings = useCallback(async (): Promise<void> => {
+    if (!chatId) return;
+    try {
+      await nextTurnTrackerRef.current.pending(chatId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "next_turn_setting_failed";
+      setNextTurnSettingsError(reason);
+      throw error;
+    }
+  }, [chatId]);
+
+  const submitWithNextTurnSettings = useCallback((
+    chat: string,
+    submit: () => ReturnType<typeof send>,
+  ): ReturnType<typeof send> | Promise<ReturnType<typeof send>> => {
+    const tracker = nextTurnTrackerRef.current;
+    if (!tracker.hasPending(chat)) return submit();
+    // Order admission behind the latest setting acknowledgement. Stop and
+    // Steer never reach this path: they address the admitted turn directly.
+    return tracker.pending(chat).then(submit).catch((error: unknown) => {
+      const reason = error instanceof Error ? error.message : "next_turn_setting_failed";
+      setNextTurnSettingsError(reason);
+      // Never admit under the previous folder/model: the draft or queued row
+      // stays exactly as it was until the user retries. `null` means "not sent"
+      // for both the editor and a queued row.
+      return null;
+    });
+  }, []);
+
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
       if (options?.continueActiveTurn) {
+        // Steer addresses the admitted turn immediately; it never waits for a
+        // next-turn setting acknowledgement.
         if (!canonicalRunTurnId) return null;
         options = { ...options, steerTargetTurnId: canonicalRunTurnId };
       }
       setFallbackModelName(null);
-      const submitted = send(content, images, options);
-      if (submitted && viewingHistoricalWindow) {
-        void goToLatest();
-      }
-      if (
-        chatId
-        && submitted
-        && !submitted.sideChannel
-        && options?.continueActiveTurn !== true
-      ) {
-        if (workspaceAccessRequest) {
-          pendingRecoveryResolveRef.current = null;
-          pendingRecoveryInvalidationRef.current = {
-            kind: "input",
-            chatId,
-            turnId: submitted.turnId,
-            requestId: workspaceAccessRequest.access_request_id,
-            revision: workspaceAccessRequest.revision,
-          };
-          markWorkspaceAccessRequestStale();
+      const submit = () => send(content, images, options);
+      const settleSubmitted = (submitted: ReturnType<typeof send>) => {
+        if (submitted && viewingHistoricalWindow) {
+          void goToLatest();
         }
-        activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
-        setSubmittedViewportTurnId(submitted.turnId);
+        if (
+          chatId
+          && submitted
+          && !submitted.sideChannel
+          && options?.continueActiveTurn !== true
+        ) {
+          if (workspaceAccessRequest) {
+            pendingRecoveryResolveRef.current = null;
+            pendingRecoveryInvalidationRef.current = {
+              kind: "input",
+              chatId,
+              turnId: submitted.turnId,
+              requestId: workspaceAccessRequest.access_request_id,
+              revision: workspaceAccessRequest.revision,
+            };
+            markWorkspaceAccessRequestStale();
+          }
+          activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
+          setSubmittedViewportTurnId(submitted.turnId);
+        }
+        return submitted;
+      };
+      const outcome = chatId ? submitWithNextTurnSettings(chatId, submit) : submit();
+      if (outcome instanceof Promise) {
+        return outcome.then((submitted) => {
+          const settled = settleSubmitted(submitted);
+          return settled !== null;
+        });
       }
-      return submitted;
+      return settleSubmitted(outcome);
     },
     [canonicalRunTurnId, chatId, goToLatest, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef,
-      pendingRecoveryResolveRef, send, viewingHistoricalWindow, workspaceAccessRequest],
+      pendingRecoveryResolveRef, send, submitWithNextTurnSettings, viewingHistoricalWindow,
+      workspaceAccessRequest],
   );
 
   const handleAdmissionRejectedPromptRestored = useCallback((turnId: string) => {
@@ -2944,6 +3077,33 @@ export function ThreadShell({
   }, [dismissStreamError, setMessages]);
 
   const handleWorkspaceScopeChange = useCallback((scope: WorkspaceScopePayload) => {
+    if (turnActive && chatId && !temporary) {
+      const ownerChatId = chatId;
+      // The running turn keeps folder A. Persist B for the next turn through
+      // the detached preference owner; do not touch A's recovery card, Stop,
+      // Steer target, or the active scope projection.
+      setNextTurnScopeOverride(scope);
+      setNextTurnSettingsError(null);
+      const operation = client
+        .setNextTurnWorkspaceScope(ownerChatId, scope)
+        .then((ack) => {
+          if (ack.next_workspace_scope) {
+            setNextTurnScopeOverride(ack.next_workspace_scope);
+          }
+        })
+        .catch((error: unknown) => {
+          const reason = error instanceof Error ? error.message : "workspace_scope_rejected";
+          // Restore the confirmed display; the draft and queue are untouched.
+          setNextTurnScopeOverride(null);
+          setNextTurnSettingsError(reason);
+          throw error;
+        });
+      trackNextTurnSetting(ownerChatId, "workspace", operation);
+      void operation.catch(() => {
+        // The tracker and rejection already surfaced this refusal.
+      });
+      return;
+    }
     if (workspaceAccessRequest && chatId) {
       pendingRecoveryResolveRef.current = null;
       pendingRecoveryInvalidationRef.current = {
@@ -2955,7 +3115,9 @@ export function ThreadShell({
       markWorkspaceAccessRequestStale();
     }
     onWorkspaceScopeChange?.(scope);
-  }, [chatId, markWorkspaceAccessRequestStale, onWorkspaceScopeChange, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, workspaceAccessRequest]);
+  }, [chatId, client, markWorkspaceAccessRequestStale, onWorkspaceScopeChange,
+    pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, temporary, trackNextTurnSetting,
+    turnActive, workspaceAccessRequest]);
 
   const mutateWorkspaceAccessMode = useCallback(async (mode: WorkspaceAccessMode, retryRetirement = false) => {
     const ownerChatId = chatId;
@@ -3367,7 +3529,11 @@ export function ThreadShell({
         workspaceControls={workspaceControls}
         workspaces={workspaces}
         onRefreshWorkspaces={onRefreshWorkspaces}
-        workspaceScopeDisabled={workspaceScopeDisabled || turnActive || hasUnknownMessageSend}
+        workspaceScopeDisabled={workspaceScopeDisabled || hasUnknownMessageSend}
+        nextWorkspaceScope={nextWorkspaceScope}
+        nextTurnSettingsPending={nextTurnSettingsPending}
+        nextTurnSettingsError={nextTurnSettingsError}
+        onBeforeNewTurnSend={session || historyKey ? awaitNextTurnSettings : undefined}
         workspaceAccessModeUnknownBlocked={hasUnknownMessageSend}
         workspaceError={workspaceError}
         onPickWorkspaceFolder={

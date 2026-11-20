@@ -1838,6 +1838,14 @@ export type InboundEvent =
       recovery_state?: RecoveryState;
       usage?: TurnUsage;
       stop_target?: StopExpectation | null;
+      /** Confirmed active model/effort from the session projection. */
+      model_preset?: string | null;
+      reasoning_effort?: string | null;
+      /** Detached next-turn choices from the same session projection. */
+      next_workspace_scope?: WorkspaceScopePayload | null;
+      next_model_preset?: string | null;
+      next_reasoning_effort?: string | null;
+      next_turn_revision?: number | null;
     }
   | {
       event: "message_accepted";
@@ -2017,6 +2025,9 @@ export type InboundEvent =
       chat_id: string;
       scope?: "metadata" | "thread" | string;
       workspace_scope?: WorkspaceScopePayload;
+      /** Pending next-turn scope; the active turn keeps `workspace_scope`. */
+      next_workspace_scope?: WorkspaceScopePayload | null;
+      next_turn_revision?: number | null;
       /** Local authenticated UI projection; absent on generic/remote notifications. */
       workspace_access_request?: FolderAccessRequest;
       /** Local authenticated UI projection; absent on generic/remote notifications. */
@@ -2195,6 +2206,23 @@ export interface WebuiDelegatedChildrenPayload {
   stop_target?: StopExpectation | null;
 }
 
+/** Detached next-turn choices; they never describe the admitted active turn. */
+export interface NextTurnPreferencesPayload {
+  revision: number;
+  workspace_scope?: WorkspaceScopePayload;
+  model_preset?: string;
+  reasoning_effort?: string;
+  permission_mode?: string;
+}
+
+/** Correlated acknowledgement for one next-turn settings mutation. */
+export interface NextTurnSettingsAcknowledgement {
+  workspace_scope?: WorkspaceScopePayload;
+  next_workspace_scope?: WorkspaceScopePayload | null;
+  next_turn_revision?: number | null;
+  source_token?: string;
+}
+
 export interface WebuiThreadPersistedPayload {
   schemaVersion: number;
   sessionKey?: string;
@@ -2215,6 +2243,15 @@ export interface WebuiThreadPersistedPayload {
   source?: WebuiThreadSourcePayload | null;
   page?: WebuiThreadPagePayload;
   workspace_scope?: WorkspaceScopePayload;
+  /** Pending next-turn scope set while the active turn keeps its own scope. */
+  next_workspace_scope?: WorkspaceScopePayload | null;
+  next_model_preset?: string | null;
+  next_reasoning_effort?: string | null;
+  next_turn_revision?: number | null;
+  next_turn_preferences?: NextTurnPreferencesPayload | null;
+  /** Confirmed active model/effort; `next_*` fields describe the pending turn. */
+  model_preset?: string | null;
+  reasoning_effort?: string | null;
   /** Local authenticated UI projection; absent on remote/temporary reads. */
   workspace_access_request?: FolderAccessRequest | null;
   /** Local authenticated UI projection; absent on remote/temporary reads and old gateways. */
@@ -2223,7 +2260,18 @@ export interface WebuiThreadPersistedPayload {
 
 export type WebuiThreadControlsPayload = Pick<
   WebuiThreadPersistedPayload,
-  "sessionKey" | "stop_target" | "workspace_access_request" | "workspace_permissions" | "workspace_scope"
+  | "sessionKey"
+  | "stop_target"
+  | "workspace_access_request"
+  | "workspace_permissions"
+  | "workspace_scope"
+  | "next_workspace_scope"
+  | "next_model_preset"
+  | "next_reasoning_effort"
+  | "next_turn_revision"
+  | "next_turn_preferences"
+  | "model_preset"
+  | "reasoning_effort"
 >;
 
 export interface FilePreviewEntry {
@@ -2279,6 +2327,13 @@ export type Outbound =
   | { type: "set_sidebar_state"; state: SidebarStatePayload }
   | { type: "discard_temporary_chat"; chat_id: string }
   | { type: "set_workspace_scope"; chat_id: string; workspace_scope: WorkspaceScopePayload }
+  | {
+      /** Persist the choice for the next turn without changing the active turn. */
+      type: "set_workspace_scope";
+      chat_id: string;
+      next_turn: true;
+      next_workspace_scope: WorkspaceScopePayload;
+    }
   | { type: "transcribe_audio"; request_id: string; data_url: string; duration_ms?: number }
   | {
       type: "attachment";

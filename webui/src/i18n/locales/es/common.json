@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "Elegir carpeta del proyecto",
-      "clearProject": "Quitar carpeta del proyecto"
+      "clearProject": "Quitar carpeta del proyecto",
+      "nextTurn": "Siguiente turno: {{folder}}",
+      "nextTurnLabel": "Siguiente turno",
+      "nextTurnHint": "El turno en curso conserva su carpeta. Esta elección se aplica al siguiente turno.",
+      "nextTurnPending": "Guardando la siguiente carpeta…",
+      "nextTurnFailed": "El cambio de carpeta no se guardó. La elección anterior sigue en efecto; tu borrador está intacto."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",

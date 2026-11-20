@@ -1699,7 +1699,12 @@
     },
     "picker": {
       "chooseProject": "Pilih folder proyek",
-      "clearProject": "Hapus pilihan folder proyek"
+      "clearProject": "Hapus pilihan folder proyek",
+      "nextTurn": "Giliran berikutnya: {{folder}}",
+      "nextTurnLabel": "Giliran berikutnya",
+      "nextTurnHint": "Giliran yang berjalan tetap memakai foldernya. Pilihan ini berlaku untuk giliran berikutnya.",
+      "nextTurnPending": "Menyimpan folder berikutnya…",
+      "nextTurnFailed": "Perubahan folder tidak tersimpan. Pilihan sebelumnya tetap berlaku; draf Anda utuh."
     },
     "folders": {
       "saved": "Folder saved. The map and Sandbox rules are up to date.",
