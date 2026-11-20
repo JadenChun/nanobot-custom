@@ -64,6 +64,7 @@ from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.mcp_presets_api import normalize_mcp_preset_mentions
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_DISPLAY_ON_COMMIT_KEY,
     WEBUI_INSTALLATION_METADATA_KEY,
     WEBUI_REQUEST_INTENT_METADATA_KEY,
     WEBUI_SOURCE_TOKEN_METADATA_KEY,
@@ -1564,16 +1565,25 @@ class WebUICommandRouter:
                 if is_webui and (
                     temporary_policy is None or temporary_policy.persist_transcript
                 ):
-                    self._transcripts.append_user_message(
-                        chat_id,
-                        content,
-                        metadata=metadata,
-                        media_paths=media_paths or None,
-                        attachments=[record.to_dict() for record in media_records] or None,
-                        cli_apps=cli_apps or None,
-                        mcp_presets=mcp_presets or None,
-                        session_mentions=session_mentions or None,
-                    )
+                    sessions = self.gateway.session_manager
+                    if (
+                        sessions is not None and sessions.has_managed_authority
+                        and not is_user_shell and not content.lstrip().startswith("/")
+                    ):
+                        # Normal composer input (including Steer) gets a display
+                        # row only when its canonical append actually commits.
+                        metadata[WEBUI_DISPLAY_ON_COMMIT_KEY] = True
+                    else:
+                        self._transcripts.append_user_message(
+                            chat_id,
+                            content,
+                            metadata=metadata,
+                            media_paths=media_paths or None,
+                            attachments=[record.to_dict() for record in media_records] or None,
+                            cli_apps=cli_apps or None,
+                            mcp_presets=mcp_presets or None,
+                            session_mentions=session_mentions or None,
+                        )
                 if trusted_webui:
                     context_blocks: list[RuntimeContextBlock] = []
                     quote = webui_quote_runtime_context(

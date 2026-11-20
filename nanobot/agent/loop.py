@@ -121,6 +121,7 @@ from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 from nanobot.bus.events import (
     INBOUND_META_STOP_CLIENT,
     INBOUND_META_USER_SHELL,
+    CommittedUserInput,
     InboundMessage,
     OutboundMessage,
 )
@@ -246,6 +247,8 @@ from nanobot.utils.runtime import (
 )
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_DISPLAY_ON_COMMIT_KEY,
+    WEBUI_DISPLAY_SOURCE_KEY,
     WEBUI_REQUEST_INTENT_METADATA_KEY,
     WEBUI_TARGET_TURN_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
@@ -3520,6 +3523,7 @@ class AgentLoop:
         run_context: RunTurnContext | None = None,
         allow_pre_dispatch_recovery: bool = False,
         context_usage_hook: AgentHook | None = None,
+        delivery: TurnDelivery | None = None,
     ) -> AgentRunResult:
         """Run the agent iteration loop.
 
@@ -3727,7 +3731,16 @@ class AgentLoop:
                         self._retain_admitted_activity_for_republish(active_session_key, pending_msg)
                     raise
                 if binding is not None and active_session_key is not None:
-                    await self._publish_injection_committed(pending_msg, active_session_key)
+                    await self._publish_injection_committed(
+                        pending_msg, active_session_key,
+                        source=(
+                            source_writer.committed_state
+                            if source_writer is not None and isinstance(binding, SourceInjectionBinding)
+                            else None
+                        ),
+                        source_event_id=binding.event_id if isinstance(binding, SourceInjectionBinding) else None,
+                        delivery=delivery,
+                    )
                 return binding
 
             items: list[SourceInjectionBinding | dict[str, object]] = []
@@ -4372,11 +4385,8 @@ class AgentLoop:
         io = _AdmittedTurnIO(pending_queue=pending, delivery=delivery)
         current = asyncio.current_task()
         activity_admission = self._source_activity_admissions.get(key)
+        root_binding = self._active_root_bindings.get(current) if current is not None else None
         if activity_admission is not None:
-            root_binding = (
-                self._active_root_bindings.get(current)
-                if current is not None else None
-            )
             if (
                 current is None
                 or root_binding is None
@@ -4514,6 +4524,7 @@ class AgentLoop:
                 key,
                 enable_stream=True,
                 suppress_channel_output=suppress_channel_output,
+                admitted_source=root_binding.source_state if root_binding is not None else None,
             )
             io.delivery = delivery
             stage_entered = True
@@ -4726,14 +4737,37 @@ class AgentLoop:
         self,
         msg: InboundMessage,
         session_key: str,
+        *,
+        source: SourceState | None = None,
+        source_event_id: str | None = None,
+        delivery: TurnDelivery | None = None,
     ) -> None:
         """Announce queued guidance after it is part of the running turn."""
         if msg.channel != "websocket":
             return
         metadata = msg.metadata
-        if metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY) != "steer":
+        display_input = (
+            CommittedUserInput.from_message(msg, source_event_id)
+            if source_event_id is not None and metadata.get(WEBUI_DISPLAY_ON_COMMIT_KEY) is True
+            else None
+        )
+        if metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY) != "steer" and display_input is None:
             return
-        await self.runtime_event_publisher.injection_committed(msg, session_key)
+        if source is not None:
+            metadata = {**metadata, WEBUI_DISPLAY_SOURCE_KEY: source}
+        if display_input is not None and delivery is not None:
+            # A failed guidance write belongs to this active turn, not a new
+            # lifecycle for the guidance's own request ID.
+            owner = delivery.route.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
+            if isinstance(owner, str):
+                metadata = {**metadata, WEBSOCKET_TURN_OWNER_METADATA_KEY: owner}
+        await self.runtime_event_publisher.injection_committed(
+            msg, session_key,
+            metadata=metadata,
+            original_input=display_input,
+            publish=(delivery.publish_injection_after_stream
+                     if display_input is not None and delivery is not None else None),
+        )
 
     @staticmethod
     def _webui_steering_rejection(msg: InboundMessage) -> tuple[str, str] | None:
@@ -6300,7 +6334,10 @@ class AgentLoop:
         else:
             key = session_key or msg.session_key
         if delivery is None:
-            delivery = self.turn_delivery_factory.create(msg, key)
+            writer = run_context.source_writer if run_context is not None else None
+            delivery = self.turn_delivery_factory.create(
+                msg, key, admitted_source=writer.committed_state if writer is not None else None,
+            )
         elif delivery.session_key != key:
             raise ValueError("turn delivery session does not match the processing session")
         t0 = time.time()
@@ -6841,6 +6878,7 @@ class AgentLoop:
             admission = ctx.run_context.input_attempt_admission
             await ctx.delivery.input_committed(
                 input_attempt_proof=admission.proof if admission is not None else None,
+                source_event_id=ctx.run_context.source_input_event_id,
             )
         if pending_followup_id(ctx.msg) is not None:
             await self._publish_stop_target_for_session(ctx.session_key)
@@ -7012,6 +7050,7 @@ class AgentLoop:
                 run_context=ctx.run_context,
                 events=ctx.events,
                 context_usage_hook=ctx.delivery.context_usage_hook(),
+                delivery=ctx.delivery,
                 allow_pre_dispatch_recovery=bool(
                     self._trusted_foreground_inbound(ctx.msg)
                     and ctx.run_context is not None

@@ -21,13 +21,20 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from nanobot.attachments.context import media_paths_for_message
+from nanobot.bus.events import CommittedUserInput
 from nanobot.config.paths import get_webui_dir
 from nanobot.providers.base import ContextUsageSnapshot
 from nanobot.runtime_context import public_history_message
 from nanobot.session.automation_turns import is_automation_kind
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import SessionManager
-from nanobot.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN_METADATA_KEY
+from nanobot.session.mode_storage import SessionModeError
+from nanobot.session.source_store import SourceSnapshot, SourceState
+from nanobot.webui.metadata import (
+    WEBUI_DISPLAY_SOURCE_KEY,
+    WEBUI_MESSAGE_SOURCE_METADATA_KEY,
+    WEBUI_TURN_METADATA_KEY,
+)
 from nanobot.webui.session_identity import webui_chat_id, webui_session_key
 
 WEBUI_TRANSCRIPT_SCHEMA_VERSION = 3
@@ -50,6 +57,8 @@ _MAX_PENDING_TRANSCRIPT_DELETIONS = 256
 _NO_QUERY_TRANSCRIPT_PAGE_LIMIT = _MAX_TRANSCRIPT_PAGE_LIMIT
 _WEBUI_TURN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _WEBUI_REPLAY_IDENTITY_KEY = "_webui_replay_identity"
+_RECORD_ORIGIN = "_webui_source_origin"
+_PROMPT_SOURCE_EVENT = "_webui_source_prompt_id"
 _MARKDOWN_LOCAL_IMAGE_RE = re.compile(
     r"!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(\s+(?:\"[^\"]*\"|'[^']*'))?\)"
 )
@@ -1417,7 +1426,17 @@ def session_turn_index(
     }
 
 
-def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
+def _record_origin(state: SourceState) -> str:
+    parts = [state.store_identity, state.session_key, state.incarnation, state.generation]
+    return hashlib.sha256(json.dumps(parts, separators=(",", ":")).encode("ascii")).hexdigest()
+
+
+def read_transcript_lines(
+    session_key: str, *, expected_source: SourceState | None = None,
+) -> list[dict[str, Any]]:
+    """Read raw display rows, or only rows recorded by the qualified source."""
+    if expected_source is not None and expected_source.session_key != session_key:
+        return []
     _migrate_legacy_transcript(session_key)
     lines: list[dict[str, Any]] = []
     for chunk_id in _chunk_ids(session_key):
@@ -1425,6 +1444,9 @@ def read_transcript_lines(session_key: str) -> list[dict[str, Any]]:
             lines.extend(_read_transcript_file(active_transcript_path(session_key)))
         else:
             lines.extend(_read_transcript_file(_segment_file_path(session_key, chunk_id)))
+    if expected_source is not None:
+        origin = _record_origin(expected_source)
+        return [line for line in lines if line.get(_RECORD_ORIGIN) == origin]
     return lines
 
 
@@ -1541,8 +1563,11 @@ def webui_message_source(metadata: dict[str, Any] | None) -> dict[str, str] | No
 class WebUITranscriptRecorder:
     """Prepare and persist WebUI wire events without leaking UI rules into channels."""
 
-    def __init__(self, log: Any = logger) -> None:
+    def __init__(
+        self, log: Any = logger, *, sessions: SessionManager | None = None,
+    ) -> None:
         self._log = log
+        self._sessions = sessions
         self._turn_sequences: dict[tuple[str, str], int] = {}
 
     def client_turn_metadata(self, value: Any) -> dict[str, str]:
@@ -1581,7 +1606,7 @@ class WebUITranscriptRecorder:
         record = dict(event)
         if transcript_overrides:
             record.update(transcript_overrides)
-        return self.append(chat_id, record)
+        return self.append(chat_id, record, metadata=metadata)
 
     def prepare_and_append_stream_event(
         self,
@@ -1611,7 +1636,7 @@ class WebUITranscriptRecorder:
         record = dict(event)
         if completed_text is not None:
             record["text"] = completed_text
-        return self.append(chat_id, record)
+        return self.append(chat_id, record, metadata=metadata)
 
     def append_user_message(
         self,
@@ -1640,11 +1665,59 @@ class WebUITranscriptRecorder:
             return False
         return self.prepare_and_append(chat_id, payload, metadata=metadata, phase="user")
 
-    def append(self, chat_id: str, event: dict[str, Any]) -> bool:
+    def append_committed_user_message(
+        self,
+        chat_id: str,
+        user_input: CommittedUserInput,
+        metadata: dict[str, Any],
+    ) -> bool:
+        if not isinstance(metadata.get(WEBUI_DISPLAY_SOURCE_KEY), SourceState):
+            return False
+        payload = build_user_transcript_event(
+            chat_id,
+            user_input.content,
+            media_paths=list(user_input.media_paths),
+            attachments=[record.to_dict() for record in user_input.attachments],
+            cli_apps=metadata.get("cli_apps"),
+            mcp_presets=metadata.get("mcp_presets"),
+            session_mentions=metadata.get("session_mentions"),
+        )
+        if payload is None:
+            return False
+        payload["created_at_ms"] = user_input.created_at_ms
+        payload[_PROMPT_SOURCE_EVENT] = user_input.event_id
+        return self.prepare_and_append(chat_id, payload, metadata=metadata, phase="user")
+
+    def append(
+        self,
+        chat_id: str,
+        event: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         try:
-            dup = json.loads(json.dumps(event, ensure_ascii=False))
-            append_transcript_object(webui_session_key(chat_id), dup)
-        except (OSError, ValueError, TypeError) as e:
+            record: dict[str, Any] = json.loads(json.dumps(event, ensure_ascii=False))
+            session_key = webui_session_key(chat_id)
+            source = (metadata or {}).get(WEBUI_DISPLAY_SOURCE_KEY)
+            sessions = self._sessions
+            if isinstance(source, SourceState):
+                if source.session_key != session_key:
+                    return False
+                record[_RECORD_ORIGIN] = _record_origin(source)
+                # The lookup can reject late output but cannot supply its origin.
+                if sessions is not None and sessions.has_managed_authority:
+                    with sessions.locked_session_files():
+                        saved = sessions.read_saved_source_metadata(session_key)
+                        if saved is None or not saved.state.same_origin(source):
+                            # A retired turn does not own a failed write or
+                            # recovery marker in the replacement.
+                            return True
+                        append_transcript_object(session_key, record)
+                    return True
+            else:
+                record.pop(_RECORD_ORIGIN, None)
+            append_transcript_object(session_key, record)
+        except (OSError, ValueError, TypeError, SessionModeError) as e:
             self._log.warning("webui transcript append failed: {}", e)
             return False
         return True
@@ -1695,36 +1768,66 @@ def fork_transcript_before_user_index(
     ``before_user_index == user_count`` copies the full transcript prefix. WebUI
     uses that when forking from an assistant reply at the end of a chat.
     """
-    if before_user_index < 0:
+    copied = _fork_transcript_prefix(read_transcript_lines(source_key), before_user_index)
+    if copied is None:
         return False
-    lines = read_transcript_lines(source_key)
-    if not lines:
-        return False
-
     target_chat_id = _chat_id_from_session_key(target_key)
+    _write_transcript_lines(target_key, [
+        {**row, "chat_id": target_chat_id} if target_chat_id is not None else row
+        for row in copied
+    ])
+    return True
+
+
+def _fork_transcript_prefix(
+    lines: list[dict[str, Any]], before_user_index: int,
+) -> list[dict[str, Any]] | None:
+    if before_user_index < 0 or not lines:
+        return None
     copied: list[dict[str, Any]] = []
     user_index = 0
-    found_target = False
     for row in lines:
         if row.get("event") == WEBUI_FORK_MARKER_EVENT:
             continue
         if _is_user_transcript_row(row):
             if user_index == before_user_index:
-                found_target = True
                 break
             user_index += 1
-        dup = json.loads(json.dumps(row, ensure_ascii=False))
-        if target_chat_id is not None:
-            dup["chat_id"] = target_chat_id
-        copied.append(dup)
-    if user_index == before_user_index:
-        found_target = True
+        copied.append(row)
+    return copied if user_index == before_user_index else None
 
-    if not found_target:
-        return False
 
-    _write_transcript_lines(target_key, copied)
-    return True
+def write_managed_fork_transcript(
+    target: SourceState,
+    messages: list[dict[str, Any]],
+    *,
+    parent: SourceSnapshot | None,
+    before_user_index: int,
+) -> None:
+    """Publish a verified display prefix, or rebuild from the committed fork."""
+    prefix: list[dict[str, Any]] | None = None
+    if parent is not None:
+        records = read_transcript_lines(parent.state.session_key, expected_source=parent.state)
+        prompt_ids = [
+            row["_event_id"] for row in parent.events
+            if row.get("role") == "user" and not is_hidden_history_message(row)
+        ]
+        # Prompt IDs prove positions, not that every reply was published.
+        # Never copy a known-incomplete display prefix into a new lifetime.
+        if (
+            [row.get(_PROMPT_SOURCE_EVENT) for row in records if _is_user_transcript_row(row)] == prompt_ids
+            and not _needs_incomplete_turn_recovery(records)
+            and not _needs_unfinished_tail_repair(records)
+        ):
+            prefix = _fork_transcript_prefix(records, before_user_index)
+    if prefix is None:
+        prefix = _session_transcript_rows(target.session_key, messages)
+    target_chat_id = _chat_id_from_session_key(target.session_key)
+    origin = _record_origin(target)
+    _write_transcript_lines(target.session_key, [
+        {**row, "chat_id": target_chat_id, _RECORD_ORIGIN: origin}
+        for row in (*prefix, {"event": WEBUI_FORK_MARKER_EVENT})
+    ])
 
 
 def append_fork_marker(session_key: str) -> None:
@@ -1743,6 +1846,12 @@ def write_session_messages_as_transcript(
     messages: list[dict[str, Any]],
 ) -> None:
     """Write a minimal WebUI transcript from already-truncated session messages."""
+    _write_transcript_lines(target_key, _session_transcript_rows(target_key, messages))
+
+
+def _session_transcript_rows(
+    target_key: str, messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     target_chat_id = _chat_id_from_session_key(target_key)
     rows: list[dict[str, Any]] = []
     for msg in messages:
@@ -1754,6 +1863,10 @@ def write_session_messages_as_transcript(
         text = content if isinstance(content, str) else ""
         if role == "user":
             row: dict[str, Any] = {"event": "user", "chat_id": target_chat_id, "text": text}
+            if isinstance(msg.get("_event_id"), str):
+                row[_PROMPT_SOURCE_EVENT] = msg["_event_id"]
+            if isinstance(msg.get("attachments"), list):
+                row["attachments"] = msg["attachments"]
             media = msg.get("media")
             if isinstance(media, list) and media:
                 row["media_paths"] = [
@@ -1773,7 +1886,7 @@ def write_session_messages_as_transcript(
         else:
             continue
         rows.append(row)
-    _write_transcript_lines(target_key, rows)
+    return rows
 
 
 class TranscriptDeletionResult(NamedTuple):

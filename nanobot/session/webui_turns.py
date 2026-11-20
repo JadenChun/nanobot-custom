@@ -893,6 +893,7 @@ class WebuiTurnCoordinator:
                     session_incarnation=session.incarnation,
                     active_turn_id=websocket_turn_id(event.context.chat_id),
                     starts_turn=False,
+                    input=event.input,
                 ),
                 metadata=dict(metadata),
             )
@@ -925,6 +926,7 @@ class WebuiTurnCoordinator:
                     session_incarnation=session.incarnation,
                     active_turn_id=active_turn_id,
                     input_attempt_proof=event.input_attempt_proof,
+                    input=event.input,
                     starts_turn=(
                         not event.joined and event.context.metadata.get(WEBUI_REQUEST_INTENT_METADATA_KEY)
                         != "steer"

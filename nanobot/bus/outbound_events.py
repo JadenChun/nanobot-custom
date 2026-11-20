@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import CommittedUserInput, OutboundMessage
 from nanobot.events import AgentEvent
 from nanobot.events import ContextCompactionEvent as ContextCompactionEvent
 from nanobot.events import RecoveryStateEvent as RecoveryStateEvent
@@ -98,6 +98,7 @@ class MessageAdmittedEvent(AgentEvent):
     active_turn_id: str | None = None
     starts_turn: bool = True
     input_attempt_proof: InputAttemptProof | None = None
+    input: CommittedUserInput | None = None
 
 
 @dataclass(frozen=True)

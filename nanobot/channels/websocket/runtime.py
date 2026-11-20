@@ -62,6 +62,7 @@ from nanobot.webui.transcript import WEBUI_TRANSCRIPT_INCOMPLETE_KEY
 from nanobot.webui.websocket_logging import websockets_server_logger
 
 if TYPE_CHECKING:
+    from nanobot.bus.events import CommittedUserInput
     from nanobot.bus.outbound_events import ProgressEvent
     from nanobot.security.desktop_permissions import WorkspacePermissionProjection
     from nanobot.security.workspace_access import WorkspaceScope
@@ -1214,7 +1215,7 @@ class WebSocketChannel(BaseChannel):
         metadata: dict[str, Any] | None,
         phase: str,
     ) -> bool:
-        if not persisted and phase in {"answer", "complete"} and (metadata or {}).get("webui") is True:
+        if not persisted and phase in {"user", "answer", "complete"} and (metadata or {}).get("webui") is True:
             owner = (metadata or {}).get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
             mark_websocket_turn_transcript_persistence_failed(
                 chat_id,
@@ -1252,6 +1253,20 @@ class WebSocketChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         await self._outbound.send(msg)
+
+    def persist_committed_user_input(
+        self,
+        chat_id: str,
+        user_input: CommittedUserInput,
+        metadata: dict[str, Any],
+    ) -> None:
+        if self._temporary_chats.should_persist_transcript(chat_id):
+            self._retain_turn_on_transcript_failure(
+                chat_id,
+                persisted=self._transcripts.append_committed_user_message(chat_id, user_input, metadata),
+                metadata=metadata,
+                phase="user",
+            )
 
     def _media_workspace(self, chat_id: str) -> tuple[Path, bool]:
         """Resolve acknowledged chat focus and its temporary-chat grant ceiling."""

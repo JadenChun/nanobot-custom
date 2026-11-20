@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import CommittedUserInput, OutboundMessage
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
     DelegatedChildEvent,
@@ -51,6 +51,13 @@ class WebUIOutboundTransport(Protocol):
     """Wire operations required by the outbound application projector."""
 
     def webui_subscribers(self, chat_id: str) -> tuple[ServerConnection, ...]: ...
+
+    def persist_committed_user_input(
+        self,
+        chat_id: str,
+        user_input: CommittedUserInput,
+        metadata: dict[str, Any],
+    ) -> None: ...
 
     async def send_runtime_model_updated(
         self,
@@ -232,6 +239,8 @@ class WebUIOutboundProjector:
             )
             return
         if isinstance(event, MessageAdmittedEvent):
+            if event.input is not None:
+                self._transport.persist_committed_user_input(msg.chat_id, event.input, msg.metadata)
             if conns:
                 await self._transport.send_payload(
                     msg.chat_id,
