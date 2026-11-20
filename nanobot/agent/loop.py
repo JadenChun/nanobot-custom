@@ -4037,8 +4037,11 @@ class AgentLoop:
             # Fresh and source executions never own a resumable provider
             # continuation, including one left over from an earlier mode.
             session.provider_state = None
-        if result.stop_reason == "max_iterations":
-            logger.warning("Max iterations ({}) reached", self.max_iterations)
+        if result.stop_reason in {"max_iterations", "repeated_no_progress"}:
+            if result.stop_reason == "max_iterations":
+                logger.warning("Max iterations ({}) reached", self.max_iterations)
+            else:
+                logger.warning("Stopped: repeated tool call made no progress")
             should_stream = turn_continuation.should_stream_budget_response(
                 stop_reason=result.stop_reason,
                 pending_queue_available=pending_queue is not None and session is not None,
@@ -6073,6 +6076,7 @@ class AgentLoop:
                                     'folder_access_required': RunStatus.POLICY_BLOCKED,
                                     'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
                                     'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
+                                    'repeated_no_progress': RunStatus.REPEATED_NO_PROGRESS,
                                 }.get(runner.stop_reason, RunStatus.ERROR)
                                 policy_metadata = dict(runner.policy_metadata) if runner else {}
                                 if (

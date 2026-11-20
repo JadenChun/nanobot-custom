@@ -144,6 +144,20 @@ _TOOL_ERROR_RECOVERY_NOTE = (
     "Fix the arguments or choose a different approach. Do not repeat the same call "
     "unchanged. If the error is a permission or policy denial, do not try to bypass it."
 )
+# A successful call that returns the same result is invisible to the error
+# recovery above: nothing failed, but nothing advanced either. These notes make
+# that state explicit before the loop is broken.
+_NO_PROGRESS_NOTE = (
+    "The last tool call returned the same result as the previous attempt. This "
+    "call is not making progress. Change the approach, gather different evidence, "
+    "or tell the user what is blocking you. Do not repeat it unchanged."
+)
+_NO_PROGRESS_STOP_NOTE = (
+    "Stopped: the same tool call returned the same result repeatedly without "
+    "progress."
+)
+_MAX_NO_PROGRESS_REPEATS = 3
+_MAX_NO_PROGRESS_LIMIT = 5
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
@@ -186,6 +200,30 @@ def _tool_error_signature(
         return None
     return json.dumps(
         {"error": str(terminal.content or ""), "calls": error_calls},
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _no_progress_signature(
+    tool_calls: Sequence[ToolCallRequest],
+    results: Sequence[object],
+) -> str | None:
+    """Return a signature for a batch whose calls and results are both unchanged.
+
+    Unlike :func:`_tool_error_signature`, this covers *successful* calls. A call
+    that keeps returning identical output advances nothing even though no error
+    is raised, which is how a turn can spin indefinitely while looking healthy.
+    ``None`` means the batch carried no calls, so it cannot be a repeat.
+    """
+    if not tool_calls:
+        return None
+    calls = [
+        {"name": tool_call.name, "arguments": tool_call.arguments}
+        for tool_call in tool_calls
+    ]
+    return json.dumps(
+        {"calls": calls, "results": [str(result) for result in results]},
         sort_keys=True,
         default=str,
     )
@@ -905,6 +943,12 @@ class AgentRunner:
         pre_dispatch_denial_recovery_attempted = False
         tool_error_recoveries = 0
         tool_error_signatures: set[str] = set()
+        # A successful call that returns identical output is a no-op cycle, not
+        # an error. Track the run length of identical batches so the turn can
+        # name the stall and then stop instead of spinning.
+        no_progress_signature: str | None = None
+        no_progress_repeats = 0
+        no_progress_noted = False
         # Segments from one uninterrupted length-recovery chain. Tool work or
         # injected user input starts a new logical answer and clears the chain.
         length_recovery_parts: list[str] = []
@@ -1163,6 +1207,16 @@ class AgentRunner:
                     and not (spec.session_key or "").startswith("dream:")
                 )
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
+                # Detect a successful batch that changed nothing. This runs on
+                # every batch, not only on failures, because a no-op cycle
+                # raises no error while still making no progress.
+                batch_signature = _no_progress_signature(response.tool_calls, results)
+                if batch_signature is not None and batch_signature == no_progress_signature:
+                    no_progress_repeats += 1
+                else:
+                    no_progress_signature = batch_signature
+                    no_progress_repeats = 0
+                    no_progress_noted = False
                 public_events = [
                     {key: value for key, value in event.items() if not key.startswith("_")}
                     for event in new_events
@@ -1272,6 +1326,43 @@ class AgentRunner:
                         _internal_recovery_message(_TOOL_ERROR_RECOVERY_NOTE),
                         request_state.source,
                     )
+                if terminal is None and no_progress_repeats >= _MAX_NO_PROGRESS_REPEATS:
+                    if no_progress_repeats >= _MAX_NO_PROGRESS_LIMIT:
+                        # Name the stall as its own outcome instead of letting
+                        # the turn spin to max_iterations.
+                        stop_reason = "repeated_no_progress"
+                        final_content = _NO_PROGRESS_STOP_NOTE
+                        logger.warning(
+                            "Stopping turn: identical tool result repeated {} times",
+                            no_progress_repeats,
+                        )
+                        context.stop_reason = stop_reason
+                        context.final_content = final_content
+                        placeholder = build_assistant_message(final_content)
+                        entry = (
+                            spec.source_writer.append_message(placeholder)
+                            if spec.source_writer is not None else None
+                        )
+                        if request_state.source is None:
+                            self._append_final_message(messages, final_content)
+                        else:
+                            self._append_bound_message(
+                                messages, placeholder, request_state.source,
+                                entry['_event_id'] if entry is not None else None,
+                            )
+                        await hook.after_iteration(context)
+                        break
+                    if not no_progress_noted:
+                        no_progress_noted = True
+                        logger.info(
+                            "Tool batch repeated without progress ({}x)",
+                            no_progress_repeats,
+                        )
+                        self._append_bound_message(
+                            messages,
+                            _internal_recovery_message(_NO_PROGRESS_NOTE),
+                            request_state.source,
+                        )
                 if terminal is not None:
                     unknown_rejection = (
                         spec.fail_on_tool_error

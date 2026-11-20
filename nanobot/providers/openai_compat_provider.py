@@ -585,7 +585,13 @@ class OpenAICompatProvider(LLMProvider):
     """
 
     _native_compaction_available = True
-    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = 3
+    # A tool batch that returns images (for example a video tool's sampled
+    # review frames) is bounded by count and bytes so one call cannot flood the
+    # local vision context. The token budget still allows far more than this at
+    # ordinary frame sizes, so the previous value of 3 left a review of a 5 s
+    # clip mostly unseen. Six covers a short clip's sampled frames; the byte
+    # limit below remains the hard ceiling.
+    _MAX_LOCAL_TOOL_IMAGES_PER_BATCH = 6
     _MAX_LOCAL_TOOL_IMAGE_BATCH_BYTES = 8 * 1024 * 1024
 
     def __init__(

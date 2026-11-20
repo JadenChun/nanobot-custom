@@ -104,6 +104,9 @@ class RunStatus(StrEnum):
     POLICY_BLOCKED = "policy_blocked"
     TOOL_ERROR = "tool_error"
     MAX_ITERATIONS = "max_iterations"
+    # The same tool call returned the same result repeatedly. Named separately
+    # from MAX_ITERATIONS so a stall is distinguishable from a long task.
+    REPEATED_NO_PROGRESS = "repeated_no_progress"
     CANCELLED = "cancelled"
     ERROR = "error"
     COMMAND = "command"
