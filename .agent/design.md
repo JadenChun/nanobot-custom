@@ -35,3 +35,14 @@ Stable first-party dependencies must be typed where they are stored or passed. D
 ## Explicit over magical
 
 Configuration must be declared explicitly in `config/schema.py` Pydantic models. Error handling should raise clear exceptions rather than silently correcting bad input. Provider auto-detection exists, but every resolution path must be traceable from the factory to the concrete provider class.
+
+## Deferred design notes
+
+Decisions that are real but deliberately postponed live beside this file so the
+context survives. Read the note before reopening the topic.
+
+- [`session-storage-duplication.md`](session-storage-duplication.md) — the WebUI
+  keeps a derived second copy of every conversation (241 MB of display data vs
+  5.4 MB canonical in the staging workspace). Removing it is a persistence
+  migration across 12 production modules, deferred until the session-load
+  simplification (WI-1 … WI-8) has been measured.
