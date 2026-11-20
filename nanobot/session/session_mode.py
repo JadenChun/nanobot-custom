@@ -61,16 +61,20 @@ from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import JsonlSessionStore, Session, SessionStorageError
 from nanobot.session.mode_storage import (
     PinnedDirectoryPath,
+    PrivateFileVersion,
     SessionModeError,
     SessionModeOversizeError,
     SessionModeStorage,
 )
 from nanobot.session.source_store import (
+    SavedSourceMetadata,
+    SavedSourceProof,
     SourceSessionStore,
     SourceValidationError,
     select_legacy_source_event_upgrader,
     validate_source_session_bytes,
 )
+from nanobot.webui.session_identity import is_webui_session_key
 
 _upgrade_events = select_legacy_source_event_upgrader()
 
@@ -243,6 +247,7 @@ class _SourceInventory:
     source_size: int
     sidecar_name: str
     sidecar_bytes: bytes | None
+    saved_source: SavedSourceProof | None = None
 
     @property
     def readable(self) -> bool:
@@ -1088,8 +1093,9 @@ class SessionModeResolver:
             if only_key is not None and key != only_key:
                 continue
             source: bytes | None
+            version: PrivateFileVersion | None = None
             try:
-                source = self.storage.read(
+                source, version = self.storage.read_versioned(
                     source_name, limit=source_store.MAX_SOURCE_SERIALIZED_BYTES
                 )
             except SessionModeOversizeError:
@@ -1113,11 +1119,20 @@ class SessionModeResolver:
             if not isinstance(metadata, dict):
                 raise _fail()
             canonical = cast(dict[object, object], metadata).get("source_schema_version") == 1
+            saved_source: SavedSourceProof | None = None
             try:
                 if canonical:
                     if sidecar is not None:
                         raise _fail()
-                    validate_source_session_bytes(source, expected_key=key)
+                    header, events = validate_source_session_bytes(source, expected_key=key)
+                    if version is not None and is_webui_session_key(key):
+                        saved_source = SavedSourceProof(
+                            version,
+                            self.backend.source.describe_saved_source(
+                                header, event_count=len(events), expected_key=key,
+                            ),
+                            source_digest,
+                        )
                 else:
                     session = self.backend.parse_legacy_bytes(source, expected_key=key)
                     if sidecar is not None:
@@ -1134,6 +1149,7 @@ class SessionModeResolver:
                     source_size,
                     sidecar_name,
                     sidecar,
+                    saved_source,
                 )
             )
         return tuple(result)
@@ -1757,6 +1773,7 @@ class SessionModeResolver:
     def _validate_record(
         self, key: str, registry: dict[str, object],
         *, inventory: Mapping[str, _SourceInventory] | None = None,
+        for_browse: bool = False,
     ) -> dict[str, object] | None:
         name = self._record_name(key)
         sidecar_name = f"{self.backend.storage_key(key)}.checkpoint.json"
@@ -1838,7 +1855,30 @@ class SessionModeResolver:
         committed = [entry for entry in journal if entry["phase"] == "mode_committed"]
         if not committed or committed[-1].get("target_binding") != self._binding(record):
             raise _fail()
-        data = self.storage.read(f"{self.backend.storage_key(key)}.jsonl", limit=67_108_864)
+        source_name = f"{self.backend.storage_key(key)}.jsonl"
+        if for_browse:
+            if mode == "canonical":
+                proof = self.backend.saved_source_proof(key)
+                if (
+                    proof is None or self.storage.exists(sidecar_name)
+                    or self.storage.file_version(source_name) != proof.version
+                ):
+                    raise _fail("saved session source is unverified")
+                state = proof.metadata.state
+                if (
+                    state.session_key != key or state.incarnation != record["incarnation"]
+                    or state.generation != record["generation"]
+                    or state.revision < cast(int, record["transition_revision"])
+                    or (
+                        state.revision == record["transition_revision"]
+                        and proof.digest != record["transition_digest"]
+                    )
+                ):
+                    raise _fail("saved session source does not match its mode")
+            # This method's browse caller can consume only canonical proof.
+            # Execution, recovery and legacy readers still use the full check.
+            return record
+        data = self.storage.read(source_name, limit=67_108_864)
         header = self._read_header(key)
         metadata = header.get("metadata")
         if not isinstance(metadata, dict):
@@ -1856,10 +1896,11 @@ class SessionModeResolver:
             raise _fail()
         if revision == record["transition_revision"] and _digest(data) != record["transition_digest"]:
             raise _fail()
-        if inventory is None:
-            self._inventory_for_key(key)
-        elif key not in inventory:
+        item = self._inventory_for_key(key) if inventory is None else inventory.get(key)
+        if item is None:
             raise _fail()
+        if mode == "canonical" and item.saved_source is not None and item.source_bytes == data:
+            self.backend.remember_saved_source(key, item.saved_source)
         return record
 
     def require_export_stage(
@@ -2347,8 +2388,14 @@ class SessionModeResolver:
                 output_digest=cast(str | None, last["output_digest"]), output_size=cast(int | None, last["output_size"]),
                 rollback_name=cast(str | None, last["rollback_name"]))
 
-    def _assert_no_incomplete(self, key: str, registry: dict[str, object]) -> None:
-        for operation_id in self._journal_operation_ids():
+    def _assert_no_incomplete(
+        self, key: str, registry: dict[str, object], *, read_only: bool = False,
+    ) -> None:
+        operations = (
+            self.storage.list(".session-mode/journals")
+            if read_only else self._journal_operation_ids()
+        )
+        for operation_id in operations:
             if not self._hex32(operation_id):
                 raise _fail()
             journal = self._journal_records(operation_id)
@@ -2441,6 +2488,25 @@ class SessionModeResolver:
             return _digest(self.storage.read(self._record_name(key)))
         except (FileNotFoundError, SessionModeError):
             return None
+
+    @_locked_operation()
+    def read_saved_source(self, key: str) -> SavedSourceMetadata | None:
+        """Return only an already-proven canonical version, with no repair or body read."""
+        self._require_open()
+        registry = self._witnesses()
+        if registry is None:
+            if self.storage.exists(f"{self.backend.storage_key(key)}.jsonl") or self.storage.exists(
+                f"{self.backend.storage_key(key)}.checkpoint.json"
+            ):
+                raise _fail("session namespace requires explicit offline bootstrap")
+            return None
+        self._assert_no_incomplete(key, registry, read_only=True)
+        record = self._validate_record(key, registry, for_browse=True)
+        if record is None or record["state"] != "active" or record["mode"] != "canonical":
+            return None
+        proof = self.backend.saved_source_proof(key)
+        assert proof is not None  # The same file lock is held across lookup and projection.
+        return deepcopy(proof.metadata)
 
     @_locked_operation()
     def cached_resolution(
@@ -3990,6 +4056,7 @@ class SessionModeResolver:
         if fault_after == "source_deleted":
             raise RuntimeError("injected session-mode fault")
         self._append_journal(operation_id, phase="complete", **common)
+        self.backend.forget_saved_source(key)
         return True
 
 

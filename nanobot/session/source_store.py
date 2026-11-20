@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Generator, Protocol, cast
 
 from loguru import logger
 
+from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
 from nanobot.session.context_checkpoint import validate_context_checkpoint
 from nanobot.session.idle_compaction import (
     LAST_USER_ACTIVITY_AT_KEY,
@@ -80,6 +81,7 @@ if TYPE_CHECKING:
         IdlePolicyBinding,
     )
     from nanobot.session.manager import JsonlSessionStore, Session
+    from nanobot.session.mode_storage import PrivateFileVersion
     from nanobot.session.source_discovery import SourceDiscoveryCursor, SourceDiscoveryLimits
     from nanobot.session.source_root import SourceRootAuthority
 
@@ -129,6 +131,23 @@ class SourceState:
         return (self.store_identity, self.session_key, self.incarnation, self.generation) == (
             other.store_identity, other.session_key, other.incarnation, other.generation,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SavedSourceMetadata:
+    """Detached browse facts. These neither authorize execution nor contain events."""
+
+    state: SourceState
+    webui: bool
+    workspace_scope: object
+    workspace_scope_present: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SavedSourceProof:
+    version: PrivateFileVersion
+    metadata: SavedSourceMetadata
+    digest: str | None = None
 
 
 class SourceOriginMismatchError(RuntimeError):
@@ -240,18 +259,12 @@ def _object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _validate_source_records(
-    records: list[object],
+def _validate_source_header(
+    header: dict[str, Any],
     *,
     expected_key: str | None,
     require_source: bool,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Validate decoded JSONL records through the canonical source grammar."""
-    if not records or not isinstance(records[0], dict):
-        raise SourceValidationError("Invalid source header")
-    canonical_events(records)
-    # Canonical JSON validation above rejects non-string keys recursively.
-    header = cast(dict[str, Any], records[0])
+) -> bool:
     key = header.get("key")
     if (
         header.get("_type") != "metadata"
@@ -289,6 +302,29 @@ def _validate_source_records(
             datetime.fromisoformat(header[name])
         elif require_source:
             raise SourceValidationError("Missing source timestamp")
+    return source
+
+
+def _validate_archive_boundary(header: dict[str, Any], event_count: int) -> None:
+    for name in ("last_archived", "last_consolidated"):
+        if name in header and _counter(header[name]) > event_count:
+            raise SourceValidationError("Invalid source archive boundary")
+
+
+def _validate_source_records(
+    records: list[object],
+    *,
+    expected_key: str | None,
+    require_source: bool,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Validate decoded JSONL records through the canonical source grammar."""
+    if not records or not isinstance(records[0], dict):
+        raise SourceValidationError("Invalid source header")
+    canonical_events(records)
+    # Canonical JSON validation above rejects non-string keys recursively.
+    header = cast(dict[str, Any], records[0])
+    source = _validate_source_header(header, expected_key=expected_key, require_source=require_source)
+    schema = header["metadata"].get("source_schema_version")
     events: list[dict[str, Any]] = []
     for raw_record in records[1:]:
         if not isinstance(raw_record, dict):
@@ -303,9 +339,7 @@ def _validate_source_records(
         ):
             raise SourceValidationError("Invalid source event")
         events.append(record)
-    for name in ("last_archived", "last_consolidated"):
-        if name in header and _counter(header[name]) > len(events):
-            raise SourceValidationError("Invalid source archive boundary")
+    _validate_archive_boundary(header, len(events))
     if source:
         validate_event_ids(events)
         validate_execution_links(events)
@@ -344,9 +378,11 @@ def validate_source_session_bytes(
         text = data.decode("utf-8")
         if text.encode("utf-8") != data:
             raise SourceValidationError("Invalid source encoding")
+        # The writer delimits records with LF. Other Unicode line separators
+        # are legal message content and must not split a JSON record.
         records = [
             json.loads(line, object_pairs_hook=_object_pairs)
-            for line in text.splitlines()
+            for line in text.split("\n")
             if line.strip()
         ]
         header, events = _validate_source_records(
@@ -555,6 +591,19 @@ class SourceSessionStore:
 
     def _state(self, header: dict[str, Any]) -> SourceState:
         return _state(header, self._store_identity)
+
+    def describe_saved_source(
+        self, header: dict[str, Any], *, event_count: int, expected_key: str,
+    ) -> SavedSourceMetadata:
+        """Project only the validated header facts needed by saved-history readers."""
+        _validate_source_header(header, expected_key=expected_key, require_source=True)
+        _validate_archive_boundary(header, event_count)
+        metadata = header["metadata"]
+        return SavedSourceMetadata(
+            self._state(header), metadata.get("webui") is True,
+            deepcopy(cast(object, metadata.get(WORKSPACE_SCOPE_METADATA_KEY))),
+            WORKSPACE_SCOPE_METADATA_KEY in metadata,
+        )
 
     def _read_unlocked(
         self,

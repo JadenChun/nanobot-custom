@@ -79,7 +79,7 @@ from nanobot.workspace_access_recovery import (
 if TYPE_CHECKING:
     from nanobot.session.artifact_operator import CopiedArtifactReadOperations
     from nanobot.session.execution_owner import ExecutionOwner
-    from nanobot.session.mode_storage import ManagedNamespaceAccess
+    from nanobot.session.mode_storage import ManagedNamespaceAccess, PrivateFileVersion
     from nanobot.session.session_export import CanonicalExportOperations
     from nanobot.session.session_mode import (
         JournalArchiveReceipt,
@@ -88,7 +88,12 @@ if TYPE_CHECKING:
         SourceExtractionReceipt,
     )
     from nanobot.session.source_root import SourceRootAuthority
-    from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+    from nanobot.session.source_store import (
+        SavedSourceMetadata,
+        SavedSourceProof,
+        SourceSessionStore,
+        SourceSnapshot,
+    )
 
 
 SESSION_CACHE_MAX_SIZE = 128
@@ -1004,6 +1009,7 @@ class JsonlSessionStore:
             self.workspace = canonical_workspace
             self.sessions_root = root
             self._managed_namespace_access = _managed_access
+            self._saved_source_proofs: dict[str, SavedSourceProof] = {}
             self._migration_lock = FileLock(
                 str(root / ".workspace-migration.lock"),
                 timeout=_SESSION_MIGRATION_LOCK_TIMEOUT_SECONDS,
@@ -1043,6 +1049,17 @@ class JsonlSessionStore:
         from nanobot.session.source_store import SourceSessionStore
 
         return SourceSessionStore(self)
+
+    def saved_source_proof(self, key: str) -> "SavedSourceProof | None":
+        """Internal browse evidence; the resolver must recheck mode and file identity."""
+        return self._saved_source_proofs.get(key)
+
+    def remember_saved_source(self, key: str, proof: "SavedSourceProof") -> None:
+        """Retain only the browse projection for one validated or committed version."""
+        self._saved_source_proofs[key] = proof
+
+    def forget_saved_source(self, key: str) -> None:
+        self._saved_source_proofs.pop(key, None)
 
     @contextmanager
     def locked_session_files(self) -> Generator[Path, None, None]:
@@ -1167,7 +1184,7 @@ class JsonlSessionStore:
         observe_backend: Callable[[], "JsonlSessionStore"],
     ) -> "SourceSnapshot":
         """Prepare actual source records before either existing namespace commit path."""
-        from nanobot.session.source_store import SourceSessionStore
+        from nanobot.session.source_store import SavedSourceProof, SourceSessionStore
 
         prepared = SourceSessionStore.prepare_source_persistence(source, header, events)
         from nanobot.attachments._media import configured_custody
@@ -1179,19 +1196,46 @@ class JsonlSessionStore:
         # Both durable branches participate, including header-only followups.
         with media_store.publication([prepared.snapshot.header, *prepared.snapshot.events]):
             if root_authority is None:
-                observe_backend()._write_text_atomic(
-                    observe_backend().get_session_path(prepared.read_key()), prepared.text,
+                write = observe_backend()._write_text_atomic
+                backend = observe_backend()
+                version = write(
+                    backend.get_session_path(prepared.read_key()), prepared.text,
                 )
             else:
                 from nanobot.session.mode_storage import require_namespace_write_access
 
                 require_namespace_write_access(observe_backend())
                 root_authority.require_current(observe_backend())
-                root_authority.write_text_atomic(
-                    f"{observe_backend().storage_key(prepared.read_key())}.jsonl",
+                write_rooted = root_authority.write_text_atomic
+                backend = observe_backend()
+                version = write_rooted(
+                    f"{backend.storage_key(prepared.read_key())}.jsonl",
                     prepared.text,
                 )
-        return prepared.snapshot
+        snapshot = prepared.snapshot
+        key = snapshot.state.session_key
+        if (
+            version is not None and backend._managed_namespace_access is not None
+            and source.matches_backend(backend) and is_webui_session_key(key)
+        ):
+            from nanobot.session.mode_storage import MODE_JSON_LIMIT
+
+            # The prepared events have passed the source grammar. A header
+            # not suitable for a managed read must not mint browse evidence,
+            # even if a lower-level caller managed to publish those bytes.
+            end = prepared.text.find("\n", 0, MODE_JSON_LIMIT + 1)
+            if end < 0 or len(prepared.text[:end].encode("utf-8")) > MODE_JSON_LIMIT:
+                backend.forget_saved_source(key)
+                return snapshot
+            try:
+                metadata = source.describe_saved_source(
+                    snapshot.header, event_count=len(snapshot.events), expected_key=key,
+                )
+            except ValueError:
+                backend.forget_saved_source(key)
+            else:
+                backend.remember_saved_source(key, SavedSourceProof(version, metadata))
+        return snapshot
 
     @staticmethod
     def _fsync_directory(path: Path) -> None:
@@ -1206,17 +1250,38 @@ class JsonlSessionStore:
                 os.close(fd)
 
     @classmethod
-    def _write_text_atomic(cls, path: Path, content: str, *, mode: int = 0o600) -> None:
+    def _write_text_atomic(
+        cls, path: Path, content: str, *, mode: int = 0o600,
+    ) -> "PrivateFileVersion | None":
+        from nanobot.session.mode_storage import installed_file_version, private_file_version
+
         tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+        descriptor: int | None = None
+        version: PrivateFileVersion | None = None
         try:
             with open(tmp, "x", encoding="utf-8") as handle:
                 os.chmod(tmp, mode)
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
+                if path.suffix == ".jsonl" and os.name == "posix":
+                    # Retain the exact inode across replace without altering
+                    # the existing close/replace order of the writer.
+                    with suppress(OSError):
+                        version = private_file_version(os.fstat(handle.fileno()))
+                        if version is not None:
+                            descriptor = os.dup(handle.fileno())
             os.replace(tmp, path)
+            installed = (
+                installed_file_version(descriptor, version)
+                if descriptor is not None and version is not None else None
+            )
             cls._fsync_directory(path.parent)
+            return installed
         finally:
+            if descriptor is not None:
+                with suppress(OSError):
+                    os.close(descriptor)
             tmp.unlink(missing_ok=True)
 
     @classmethod
@@ -3107,6 +3172,20 @@ class SessionManager:
             if checked != actual:
                 raise SessionWriteConflict()
         return backend, snapshot
+
+    def read_saved_source_metadata(self, key: str) -> "SavedSourceMetadata | None":
+        """Read managed browse facts without building a runtime session or history."""
+        resolver = self._mode_resolver
+        if resolver is None or not is_webui_session_key(key):
+            return None
+        with self._jsonl_store.locked_session_files():
+            # get_cached would run canonical resolution to validate a runtime
+            # binding. Here only the local opt-out from persistence matters.
+            with self._cancellation_privacy_lock:
+                cached = self._cache.get(key) or self._overflow_cache.get(key)
+                if cached is not None and not cached.policy.persist:
+                    return None
+            return resolver.read_saved_source(key)
 
     def invalidate_workspace_access_request(self, key: str) -> bool:
         """Persist supersession for accepted ordinary input on an active source."""
