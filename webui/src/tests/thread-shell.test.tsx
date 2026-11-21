@@ -2771,7 +2771,6 @@ describe("ThreadShell", () => {
     await user.type(screen.getByLabelText("Message input"), draft);
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
 
     await waitFor(() => expect(onCreateChat).toHaveBeenCalledWith(
       workspaces.default_scope, draft, null, { fullAccess: true },
@@ -2815,7 +2814,6 @@ describe("ThreadShell", () => {
     await user.type(screen.getByLabelText("Message input"), draft);
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Access could not be updated");
     expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value).toBe(draft);

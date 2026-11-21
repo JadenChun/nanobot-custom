@@ -1537,14 +1537,9 @@ describe("ThreadComposer", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: /Workspace access mode/ }));
     await user.click(await screen.findByRole("menuitem", { name: /Full access/ }));
 
-    expect(await screen.findByRole("dialog", { name: "Enable Full access?" })).toBeInTheDocument();
-    expect(screen.getByText(/under your OS account permissions/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Enable Full access" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Enable Full access?" })).not.toBeInTheDocument();
     expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
-    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
+    await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
   });
 
   it("exposes acknowledged v2 full and compact workspace labels", () => {
@@ -1628,8 +1623,7 @@ describe("ThreadComposer", () => {
     await user.type(screen.getByPlaceholderText("Type your message..."), "Start in Full");
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("Enable Full access?");
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await waitFor(() => expect(onDraftFullAccess).toHaveBeenCalledWith("Start in Full"));
     expect(screen.queryByText(
@@ -5011,7 +5005,6 @@ describe("settings during a running turn", () => {
         await user.click(screen.getByRole("button", { name: "Return to Sandbox" }));
       } else {
         await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-        await user.click(screen.getByRole("button", { name: "Enable Full access" }));
       }
       await waitFor(() => expect(onModeChange).toHaveBeenCalledWith(mode === "full" ? "restricted" : "full"));
     },
@@ -5046,7 +5039,6 @@ describe("settings during a running turn", () => {
 
     await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
-    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
     await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
 
     await user.click(screen.getByRole("button", { name: "Choose project folder" }));

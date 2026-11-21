@@ -12,14 +12,6 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -790,7 +782,7 @@ export function WorkspacePermissionV2Control({
   const { t } = useTranslation();
   const mobile = isMobileRuntimeActive();
   const reasonId = useId();
-  const [confirmFull, setConfirmFull] = useState(false);
+  const [optimisticMode, setOptimisticMode] = useState<WorkspaceAccessMode | null>(null);
   const [pending, setPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
   const unavailableReason = permissions?.full_access_unavailable_reason;
@@ -806,18 +798,18 @@ export function WorkspacePermissionV2Control({
     && !error
     && !disabled;
   const fullAvailable = persistentChat ? canEnableFull : canRequestDraftFull;
-  const isFull = permissions?.mode === "full";
-  const isRetiring = isFull && permissions?.state === "retiring";
+  const isRetiring = permissions?.mode === "full" && permissions?.state === "retiring";
   const isRestrictedRetiring = enabled
     && permissions?.mode === "restricted"
     && permissions.state === "retiring";
   const draftRestricted = enabled && !permissions && !persistentChat && !loading && !error;
   const unavailable = !enabled || (!permissions && !draftRestricted) || error;
+  const isFull = !unavailable && !isRetiring
+    ? (optimisticMode ?? permissions?.mode) === "full"
+    : permissions?.mode === "full";
   const busy = loading || pending || disabled;
   const label = unavailable
     ? t("workspace.permissionV2.unavailable", { defaultValue: "Access unavailable" })
-    : draftRestricted
-      ? t("thread.composer.workspace.default", { defaultValue: "Sandbox" })
     : isRetiring
       ? t("workspace.permissionV2.fullEnding", { defaultValue: "Full access is ending" })
       : isRestrictedRetiring
@@ -878,6 +870,7 @@ export function WorkspacePermissionV2Control({
     .join(". ");
   const changeMode = async (mode: WorkspaceAccessMode) => {
     if (!permissions || !onModeChange || busy) return;
+    setOptimisticMode(mode);
     setPending(true);
     setActionFailed(false);
     try {
@@ -885,8 +878,28 @@ export function WorkspacePermissionV2Control({
     } catch {
       setActionFailed(true);
     } finally {
+      setOptimisticMode(null);
       setPending(false);
     }
+  };
+
+  const selectFullAccess = () => {
+    if (!fullAvailable || busy) return;
+    if (!persistentChat) {
+      if (onRequestFullAccess) {
+        setOptimisticMode("full");
+        setPending(true);
+        setActionFailed(false);
+        void Promise.resolve(onRequestFullAccess())
+          .catch(() => setActionFailed(true))
+          .finally(() => {
+            setOptimisticMode(null);
+            setPending(false);
+          });
+      }
+      return;
+    }
+    void changeMode("full");
   };
 
   return (
@@ -989,7 +1002,7 @@ export function WorkspacePermissionV2Control({
                 selected={false}
                 disabled={!fullAvailable || busy}
                 warning
-                onSelect={() => setConfirmFull(true)}
+                onSelect={selectFullAccess}
               />
               {isRestrictedRetiring ? (
                 <div role="status" className="space-y-1 rounded-control bg-muted/35 px-3 py-2">
@@ -1015,50 +1028,6 @@ export function WorkspacePermissionV2Control({
           {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}
         </span>
       ) : null}
-      <Dialog open={confirmFull} onOpenChange={setConfirmFull}>
-        <DialogContent className="w-[min(calc(100vw-2rem),32rem)]">
-          <DialogHeader className="text-left">
-            <DialogTitle>{t("workspace.permissionV2.confirmTitle", { defaultValue: "Enable Full access?" })}</DialogTitle>
-            <DialogDescription>
-              {t("workspace.permissionV2.confirmDescription", { defaultValue: "Kohaku can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Sandbox mode." })}
-            </DialogDescription>
-          </DialogHeader>
-          {!persistentChat && !draftFullAccess ? (
-            <p className="rounded-control bg-muted/35 px-3 py-2 text-[11.5px] text-muted-foreground">
-              {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}
-            </p>
-          ) : null}
-          {!canEnableFull && reasonCopy && persistentChat ? (
-            <p role="status" className="rounded-control bg-muted/35 px-3 py-2 text-[11.5px] text-muted-foreground">{reasonCopy}</p>
-          ) : null}
-          <DialogFooter className="flex-row justify-end gap-2 sm:justify-end">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setConfirmFull(false)} className="rounded-control">
-              {t("common.cancel", { defaultValue: "Cancel" })}
-            </Button>
-            <Button
-              type="button"
-              disabled={!fullAvailable || busy}
-              onClick={() => {
-                setConfirmFull(false);
-                if (!persistentChat) {
-                  if (onRequestFullAccess) {
-                    setPending(true);
-                    setActionFailed(false);
-                    void Promise.resolve(onRequestFullAccess())
-                      .catch(() => setActionFailed(true))
-                      .finally(() => setPending(false));
-                  }
-                  return;
-                }
-                void changeMode("full");
-              }}
-              className="rounded-control"
-            >
-              {t("workspace.permissionV2.enableFull", { defaultValue: "Enable Full access" })}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

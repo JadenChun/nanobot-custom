@@ -3030,8 +3030,10 @@ export function ThreadShell({
         }));
       } else {
         if (reasoningEffort) {
-          await client.sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort));
           setLocalReasoning({ chatId: newId, preset: activeModelPreset, effort: reasoningEffort });
+          void client
+            .sendSystemCommand(newId, modelReasoningCommand(activeModelPreset, reasoningEffort))
+            .catch(() => {});
         }
         handoffComposerDraft(draftNamespace, `websocket:${newId}`, snapshot, draftToTransfer);
         setPendingFullDraft(draftToTransfer ? { chatId: newId, text: draftToTransfer } : null);
@@ -3230,13 +3232,13 @@ export function ThreadShell({
       if (permissionOwnerChatIdRef.current !== ownerChatId || temporary) return;
       updateWorkspacePermissions(result.workspace_permissions);
       onWorkspaceScopeAcknowledged?.(result.workspace_scope);
-      await refreshWorkspaceAccessRequest().catch(() => null);
+      void refreshWorkspaceAccessRequest().catch(() => null);
     } catch (reason) {
       if (reason instanceof WorkspaceModeConflictError) {
         if (permissionOwnerChatIdRef.current === ownerChatId && !temporary) {
           updateWorkspacePermissions(reason.conflict.workspace_permissions);
           onWorkspaceScopeAcknowledged?.(reason.conflict.workspace_scope);
-          await refreshWorkspaceAccessRequest().catch(() => null);
+          void refreshWorkspaceAccessRequest().catch(() => null);
           return;
         }
       }
