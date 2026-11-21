@@ -108,8 +108,11 @@ interface ThreadViewportProps {
 }
 
 const NEAR_BOTTOM_PX = 48;
-const HISTORY_PREFETCH_MIN_PX = 160;
-const HISTORY_PREFETCH_MAX_PX = 480;
+// Prefetch several screens ahead so older pages arrive before the user can
+// reach the top; paging stays invisible during continuous scrolling.
+const HISTORY_PREFETCH_VIEWPORTS = 2.5;
+const HISTORY_PREFETCH_MIN_PX = 800;
+const HISTORY_PREFETCH_MAX_PX = 3200;
 const DEFAULT_SCROLL_BUTTON_BOTTOM_PX = 192;
 const EXTERNAL_COMPOSER_SCROLL_BUTTON_BOTTOM_PX = 16;
 const SCROLL_BUTTON_COMPOSER_GAP_PX = 16;
@@ -129,7 +132,7 @@ const THREAD_DISPLAY_UNIT_SELECTOR = "[data-thread-display-unit]";
 function historyPrefetchDistance(scroller: HTMLElement): number {
   return Math.min(
     HISTORY_PREFETCH_MAX_PX,
-    Math.max(HISTORY_PREFETCH_MIN_PX, scroller.clientHeight / 2),
+    Math.max(HISTORY_PREFETCH_MIN_PX, scroller.clientHeight * HISTORY_PREFETCH_VIEWPORTS),
   );
 }
 
@@ -549,6 +552,21 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     if (hiddenMessageCount <= 0 && !hasMoreBefore) return;
     loadEarlierMessages();
   }, [hasMessages, hasMoreBefore, hiddenMessageCount, loadEarlierMessages]);
+
+  // A page can land while the user is still inside the prefetch zone (short
+  // page, fast fling). No further scroll event would fire, so chain the next
+  // page here instead of leaving the user stuck at the top.
+  useEffect(() => {
+    if (loadingOlder || !hasMoreBefore || !onLoadOlder) return undefined;
+    const frame = window.requestAnimationFrame(() => maybeLoadEarlierFromScroll());
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    hasMoreBefore,
+    loadingOlder,
+    maybeLoadEarlierFromScroll,
+    messages.length,
+    onLoadOlder,
+  ]);
 
   const maybeLoadNewerFromScroll = useCallback(() => {
     const el = scrollRef.current;

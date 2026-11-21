@@ -1545,7 +1545,7 @@ describe("ThreadViewport", () => {
     expect(screen.getAllByText("message 299").length).toBeGreaterThan(0);
   });
 
-  it("prefetches earlier history within half a viewport of the top", () => {
+  it("prefetches earlier history several viewports before the top", () => {
     const { container } = render(
       <ThreadViewport
         messages={makeLongMessages(300)}
@@ -1556,9 +1556,9 @@ describe("ThreadViewport", () => {
 
     const scroller = getScroller(container);
     Object.defineProperties(scroller, {
-      scrollHeight: { configurable: true, value: 2400 },
+      scrollHeight: { configurable: true, value: 6000 },
       clientHeight: { configurable: true, value: 600 },
-      scrollTop: { configurable: true, writable: true, value: 301 },
+      scrollTop: { configurable: true, writable: true, value: 1501 },
     });
 
     act(() => {
@@ -1566,12 +1566,41 @@ describe("ThreadViewport", () => {
     });
     expect(screen.queryByText("message 139")).not.toBeInTheDocument();
 
-    scroller.scrollTop = 250;
+    scroller.scrollTop = 1400;
     act(() => {
       dispatchUserScroll(scroller);
     });
     expect(screen.getByText("message 20")).toBeInTheDocument();
     expect(screen.queryByText("message 19")).not.toBeInTheDocument();
+  });
+
+  it("requests the next older page after one lands while still near the top", async () => {
+    const onLoadOlder = vi.fn();
+    const props = {
+      isStreaming: false,
+      composer: <div />,
+      hasMoreBefore: true,
+      onLoadOlder,
+    };
+    const { container, rerender } = render(
+      <ThreadViewport {...props} messages={makeLongMessages(40)} />,
+    );
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 6000 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    });
+    act(() => {
+      dispatchUserScroll(scroller);
+    });
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+
+    // The page lands (messages grow) and the viewport is still in the
+    // prefetch zone: the next page must be requested without another scroll.
+    rerender(<ThreadViewport {...props} loadingOlder messages={makeLongMessages(60)} />);
+    rerender(<ThreadViewport {...props} messages={makeLongMessages(80)} />);
+    await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(2));
   });
 
   it("keeps the first visible history item fixed while deferred rows materialize", () => {
