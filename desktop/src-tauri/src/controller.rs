@@ -14,7 +14,7 @@ use std::{
 use serde::Serialize;
 #[cfg(target_os = "linux")]
 use tauri::{webview::WebviewWindowBuilder, WebviewUrl};
-use tauri::{menu::MenuItem, AppHandle, LogicalSize, Manager, Wry};
+use tauri::{menu::MenuItem, AppHandle, Manager, Wry};
 use url::{Host, Url};
 
 use crate::{
@@ -868,7 +868,6 @@ impl Controller {
             let app_for_reuse = self.app.clone();
             let _ = self.app.run_on_main_thread(move || {
                 let _ = existing.set_title("Kohaku");
-                let _ = existing.set_size(LogicalSize::new(1120.0, 780.0));
                 let _ = native::set_window_icon(&existing);
                 #[cfg(target_os = "linux")]
                 let policy = native::install_navigation_policy(

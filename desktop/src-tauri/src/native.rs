@@ -23,7 +23,7 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     webview::{NewWindowResponse, WebviewWindow},
-    AppHandle, LogicalSize, Manager, Wry,
+    AppHandle, Manager, Wry,
 };
 #[cfg(target_os = "linux")]
 use tauri_plugin_opener::OpenerExt;
@@ -366,7 +366,6 @@ pub fn show_setup(app: &AppHandle<Wry>, shared: &Shared) {
                     #[cfg(target_os = "macos")]
                     clear_gateway_origin(app);
                     let _ = window.navigate(setup_url);
-                    let _ = window.set_size(LogicalSize::new(650.0, 720.0));
                     let _ = window.set_title("Kohaku");
                 }
             }
@@ -382,7 +381,6 @@ pub fn return_to_setup(app: &AppHandle<Wry>, shared: &Shared) {
         if let Some(setup_url) = shared.setup_url() {
             let _ = window.navigate(setup_url);
         }
-        let _ = window.set_size(LogicalSize::new(650.0, 720.0));
         let _ = window.set_title("Kohaku");
         reveal_window(shared, &window);
     }
