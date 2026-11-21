@@ -382,4 +382,13 @@ describe("GeneratedAssetsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close generated assets" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("fills the docked inspector tabpanel width with flex-1 and min-w-0", async () => {
+    render(
+      <GeneratedAssetsPanel sessionKey="websocket:chat-1" token="tok" modal={false} active />,
+    );
+    const panel = await screen.findByTestId("generated-assets-panel");
+    expect(panel.className).toContain("flex-1");
+    expect(panel.className).toContain("min-w-0");
+  });
 });

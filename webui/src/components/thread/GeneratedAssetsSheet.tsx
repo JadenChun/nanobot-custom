@@ -181,7 +181,7 @@ export function GeneratedAssetsPanel({
 
   const Title = modal || dialogTitle ? Dialog.Title : "h2";
   const content = (
-    <div className="flex h-full min-h-0 flex-col" data-testid="generated-assets-panel">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col" data-testid="generated-assets-panel">
       {modal ? (
         <Dialog.Description className="sr-only">
           {t("thread.generatedAssets.title")}
@@ -450,7 +450,7 @@ function AssetGroupSection({
           ) : null}
         </div>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
         {group.assets.map((asset, index) => (
           <AssetThumbnail
             key={asset.id}
