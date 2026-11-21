@@ -719,3 +719,45 @@ def test_preindex_tail_only_before_cursor_rebuilds_and_pages_to_start(
         seen = batch + seen
         cursor = older.before_cursor
     assert seen == [f"Prompt {i}" for i in range(10)]
+
+
+def test_preupgrade_unbound_oversized_tail_opens_and_pages_for_gen0_only(
+    isolated_webui_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-origin-stamping chats with oversized tail rows must open and page backward."""
+    from nanobot.webui import transcript_index as ti
+    from nanobot.webui.transcript import build_webui_thread_response
+
+    orig_tail = ti.read_preindex_latest_tail
+    monkeypatch.setattr(
+        ti,
+        "read_preindex_latest_tail",
+        lambda *args, **kwargs: orig_tail(*args, max_tail_bytes=512, **kwargs),
+    )
+    for i in range(6):
+        append_transcript_object(KEY, {"event": "user", "chat_id": CHAT_ID, "text": f"Old {i}"})
+        body = ("X" * 1024) if i == 5 else f"Reply {i}"
+        append_transcript_object(KEY, {"event": "stream_end", "chat_id": CHAT_ID, "text": body})
+        append_transcript_object(KEY, {"event": "turn_end", "chat_id": CHAT_ID, "turn_id": f"t-{i}"})
+    assert delete_transcript_index(KEY)
+
+    gen0 = _source(generation=0)
+    latest = build_webui_thread_response(KEY, expected_source=gen0, limit=4, direction="latest")
+    assert latest is not None
+    assert latest["page"]["has_more_before"] is True
+    assert latest["page"]["before_cursor"] is not None
+
+    older = build_webui_thread_response(
+        KEY,
+        expected_source=gen0,
+        limit=4,
+        direction="before",
+        before=latest["page"]["before_cursor"],
+    )
+    assert older is not None
+    assert any(m["role"] == "user" and m["content"].startswith("Old ") for m in older["messages"])
+
+    # After reset (generation > 0), unbound pre-upgrade rows must NOT be adopted.
+    gen1 = _source(generation=1)
+    assert build_webui_thread_response(KEY, expected_source=gen1, limit=4, direction="latest") is None

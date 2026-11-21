@@ -1459,9 +1459,31 @@ def _has_only_unbound_preupgrade_rows(session_key: str) -> bool:
     from nanobot.webui.transcript_index import read_preindex_latest_tail
 
     tail = read_preindex_latest_tail(session_key, limit=2, expected_source=None)
-    if tail.status != "ok" or not tail.lines:
-        return False
-    return all(_RECORD_ORIGIN not in row for row in tail.lines)
+    if tail.status == "ok" and tail.lines:
+        return all(_RECORD_ORIGIN not in row for row in tail.lines)
+    if tail.status == "oversized_tail":
+        path = active_transcript_path(session_key)
+        if not path.is_file():
+            return False
+        saw_row = False
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(row, dict):
+                        saw_row = True
+                        if _RECORD_ORIGIN in row:
+                            return False
+        except OSError:
+            return False
+        return saw_row
+    return False
 
 
 def session_turn_index(
@@ -4323,8 +4345,12 @@ def _select_indexed_transcript_page(
     elif before is not None or direction == "before":
         if before is not None:
             _, is_v2 = decode_window_cursor(before, expected_origin=expected_origin)
-            if not is_v2 and _decode_page_cursor(before) is not None and expected_source is None:
-                return None
+            if not is_v2 and _decode_page_cursor(before) is not None:
+                if expected_source is None or (
+                    expected_source.generation == 0
+                    and _has_only_unbound_preupgrade_rows(session_key)
+                ):
+                    return None
         window_dir = "before"
         cursor = before
     else:
