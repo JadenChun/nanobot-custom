@@ -1011,6 +1011,28 @@ describe("ThreadComposer", () => {
     expect(onChange).toHaveBeenCalledWith("medium");
   });
 
+  it("lets users change reasoning effort via the slider click, drag, or keyboard", () => {
+    const { onChange } = renderReasoningComposer("low");
+
+    fireEvent.click(screen.getByRole("button", { name: "DeepSeek V4.1 Flash" }));
+    const picker = screen.getByRole("dialog", { name: "Switch model for this chat" });
+    const slider = within(picker).getByRole("slider", { name: "Reasoning effort" });
+    expect(slider).toHaveValue("1");
+
+    // Keyboard / non-pointer change commits immediately.
+    fireEvent.change(slider, { target: { value: "3" } });
+    expect(onChange).toHaveBeenCalledWith("high");
+
+    // Pointer drag previews without committing until pointerUp.
+    onChange.mockClear();
+    fireEvent.pointerDown(slider, { button: 0, pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "4" } });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(slider).toHaveAttribute("aria-valuetext", "Extra high");
+    fireEvent.pointerUp(slider, { pointerId: 1 });
+    expect(onChange).toHaveBeenCalledWith("xhigh");
+  });
+
   it("shows the effort tag on the closed composer pill only when it is not default", () => {
     renderReasoningComposer(null);
     expect(screen.queryByTestId("composer-model-effort-tag")).not.toBeInTheDocument();

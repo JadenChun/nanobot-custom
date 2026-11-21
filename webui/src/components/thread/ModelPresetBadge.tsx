@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -599,13 +600,31 @@ interface ReasoningEffortPillsProps {
  */
 function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) {
   const { t } = useTranslation();
+  const sliderId = useId();
+  const [preview, setPreview] = useState<number | null>(null);
+  const pointer = useRef<number | null>(null);
   const efforts: (string | null)[] = [null, ...control.options];
   const committed = Math.max(0, efforts.indexOf(control.value));
-  const valueText = efforts[committed]
-    ? labelFor(efforts[committed] as string)
+  const selected = preview ?? committed;
+  const last = efforts.length - 1;
+  const selectedEffort = efforts[selected];
+  const valueText = selectedEffort
+    ? labelFor(selectedEffort)
     : control.defaultValue
       ? `${t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" })} (${labelFor(control.defaultValue)})`
       : t("thread.composer.presetReasoningDefault", { defaultValue: "Preset default" });
+
+  const commit = (index: number) => {
+    if (index !== committed && index >= 0 && index <= last) {
+      control.onChange(efforts[index]);
+    }
+  };
+  const endPreview = (event: PointerEvent<HTMLInputElement>, apply: boolean) => {
+    if (pointer.current !== event.pointerId) return;
+    pointer.current = null;
+    setPreview(null);
+    if (apply) commit(event.currentTarget.valueAsNumber);
+  };
 
   return (
     <div
@@ -613,32 +632,57 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
       role="group"
       aria-label={t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })}
       aria-busy={control.pending}
-      className="space-y-1.5 border-t border-border/55 px-1 py-2"
+      className="space-y-1 border-t border-border/55 px-1.5 py-2"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 px-1.5">
-        <span className="text-xs font-medium text-muted-foreground">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 px-1">
+        <label htmlFor={sliderId} className="text-xs font-medium text-muted-foreground">
           {t("settings.models.reasoningEffort", { defaultValue: "Reasoning effort" })}
-        </span>
+        </label>
         <span className="text-xs font-medium text-foreground">{valueText}</span>
       </div>
-      <div className="flex flex-wrap gap-1 px-1">
+      <div className="px-1">
+        <input
+          id={sliderId}
+          type="range"
+          min={0}
+          max={last}
+          step={1}
+          value={selected}
+          aria-valuetext={valueText}
+          onChange={(event) => {
+            const index = event.target.valueAsNumber;
+            if (pointer.current === null) commit(index);
+            else setPreview(index);
+          }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) {
+              event.preventDefault();
+              return;
+            }
+            pointer.current = event.pointerId;
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+          }}
+          onPointerUp={(event) => endPreview(event, true)}
+          onPointerCancel={(event) => endPreview(event, false)}
+          onLostPointerCapture={(event) => endPreview(event, false)}
+          className="block h-6 w-full cursor-pointer touch-pan-y accent-foreground focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50"
+        />
+      </div>
+      <div className="flex items-center justify-between gap-0.5">
         {efforts.map((effort, index) => {
-          const active = index === committed;
+          const active = index === selected;
           return (
             <button
               key={effort ?? "default"}
               type="button"
-              aria-pressed={active}
-              onClick={() => {
-                if (active) return;
-                control.onChange(effort);
-              }}
+              aria-pressed={index === committed}
+              onClick={() => commit(index)}
               className={cn(
-                "min-h-7 flex-1 rounded-lg border px-1.5 text-[11.5px] font-medium transition-colors duration-150 motion-reduce:transition-none",
+                "min-h-6 rounded px-1 text-[11px] transition-colors duration-150 motion-reduce:transition-none",
                 "focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring/50",
                 active
-                  ? "border-foreground/25 bg-foreground text-background"
-                  : "border-border/55 bg-card text-muted-foreground hover:text-foreground",
+                  ? "font-semibold text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {effort ? labelFor(effort) : t("settings.values.default", { defaultValue: "Default" })}
@@ -647,7 +691,7 @@ function ReasoningEffortPills({ control, labelFor }: ReasoningEffortPillsProps) 
         })}
       </div>
       {control.failed ? (
-        <p role="status" className="px-1.5 text-xs text-red-500 dark:text-red-400">
+        <p role="status" className="px-1 text-xs text-red-500 dark:text-red-400">
           {t("thread.composer.reasoningEffortFailed", { defaultValue: "Could not update reasoning effort. Try again." })}
         </p>
       ) : null}
