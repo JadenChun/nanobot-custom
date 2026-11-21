@@ -401,10 +401,18 @@ def encode_window_cursor(*, origin: str | None, ordinal: int) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def encode_tail_window_cursor(*, origin: str | None, tail_turns: int) -> str:
+    """Origin-bound cursor for a pre-index ``tail_only`` window before index build."""
+    payload = {"v": _CURSOR_VERSION, "origin": origin or "", "tail_turns": tail_turns}
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
 def decode_window_cursor(
     value: str | None,
     *,
     expected_origin: str | None,
+    total_turns: int | None = None,
 ) -> tuple[int | None, bool]:
     """Return ``(ordinal, valid)``. ``(None, True)`` means no cursor supplied."""
     if not value:
@@ -420,15 +428,20 @@ def decode_window_cursor(
     if cursor.get("v") != _CURSOR_VERSION:
         return None, False
     origin = cursor.get("origin")
-    ordinal = cursor.get("ordinal")
-    if (
-        not isinstance(origin, str)
-        or origin != (expected_origin or "")
-        or type(ordinal) is not int
-        or ordinal < 0
-    ):
+    if not isinstance(origin, str) or origin != (expected_origin or ""):
         return None, False
-    return ordinal, True
+    ordinal = cursor.get("ordinal")
+    if type(ordinal) is int and ordinal >= 0:
+        return ordinal, True
+    tail_turns = cursor.get("tail_turns")
+    if (
+        type(tail_turns) is int
+        and tail_turns > 0
+        and total_turns is not None
+        and total_turns >= 0
+    ):
+        return max(0, total_turns - tail_turns), True
+    return None, False
 
 
 def encode_prompt_locator(
@@ -1798,7 +1811,11 @@ def read_preindex_latest_tail(
             total_turn_count=None,
             total_prompt_count=None,
             user_message_offset=None,
-            before_cursor=None,
+            before_cursor=(
+                encode_tail_window_cursor(origin=expected_origin, tail_turns=len(selected))
+                if has_more_before and selected
+                else None
+            ),
             after_cursor=None,
             has_more_before=has_more_before,
             has_more_after=False,
@@ -1927,7 +1944,11 @@ def read_history_window(
         return result if result is not None else _stale("unavailable")
 
     if direction == "before":
-        ordinal, valid = decode_window_cursor(cursor, expected_origin=expected_origin)
+        ordinal, valid = decode_window_cursor(
+            cursor,
+            expected_origin=expected_origin,
+            total_turns=head.total_turns,
+        )
         if not valid or ordinal is None or ordinal > head.total_turns:
             return _stale("stale_cursor")
         turns, pages_read = _select_indexed_turns_backward(

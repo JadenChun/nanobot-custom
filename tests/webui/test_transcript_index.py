@@ -678,3 +678,44 @@ async def test_gateway_http_history_and_turns_serve_bounded_windows_with_zero_ca
         assert stale_before is not None and stale_before.status_code == 409
     finally:
         await lease.close()
+
+
+def test_preindex_tail_only_before_cursor_rebuilds_and_pages_to_start(
+    isolated_webui_dir: Path,
+) -> None:
+    """Scrolling up from a pre-index tail_only window must page back cleanly."""
+    state = _source(generation=1)
+    _write_turns(KEY, 10, source=state)
+    assert delete_transcript_index(KEY)
+
+    tail = read_history_window(KEY, expected_source=state, limit=4, direction="latest")
+    assert tail.status == "ok"
+    assert tail.coverage == "tail_only"
+    assert tail.has_more_before is True
+    assert tail.before_cursor is not None
+    assert not transcript_index_dir(KEY).exists()
+
+    # Stale origin is still rejected fail-closed on a tail cursor.
+    stale = read_history_window(
+        KEY,
+        expected_source=_source(generation=2),
+        limit=4,
+        direction="before",
+        cursor=tail.before_cursor,
+    )
+    assert stale.status in {"stale_cursor", "unavailable"}
+
+    # Paging before the tail cursor builds the index once and returns turns 6..7, etc.
+    seen = [r["text"] for r in tail.lines if r.get("event") == "user"]
+    cursor = tail.before_cursor
+    while cursor is not None:
+        older = read_history_window(
+            KEY, expected_source=state, limit=4, direction="before", cursor=cursor,
+        )
+        assert older.status == "ok"
+        assert older.coverage == "indexed"
+        batch = [r["text"] for r in older.lines if r.get("event") == "user"]
+        assert batch
+        seen = batch + seen
+        cursor = older.before_cursor
+    assert seen == [f"Prompt {i}" for i in range(10)]

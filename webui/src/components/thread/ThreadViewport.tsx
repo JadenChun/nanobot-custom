@@ -917,6 +917,10 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
         canScrollInDirection(el, direction),
         direction === "forward",
       );
+      if (direction === "backward" && el.scrollTop <= historyPrefetchDistance(el)) {
+        threadMotionRef.current?.takeUserControl();
+        maybeLoadEarlierFromScroll();
+      }
     };
     const handleWheel = (event: WheelEvent) => {
       if (

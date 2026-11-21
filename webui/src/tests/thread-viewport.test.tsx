@@ -1674,6 +1674,33 @@ describe("ThreadViewport", () => {
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
   });
 
+  it("loads older transcript pages on upward wheel even when already at scrollTop 0", () => {
+    const onLoadOlder = vi.fn();
+
+    const { container } = render(
+      <ThreadViewport
+        messages={makeLongMessages(4)}
+        isStreaming={false}
+        composer={<div />}
+        hasMoreBefore
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+
+    const scroller = getScroller(container);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+
+    act(() => {
+      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
+    });
+
+    expect(onLoadOlder).toHaveBeenCalledTimes(1);
+  });
+
   it("renders a prompt rail that jumps to user messages", async () => {
     const navigateTo = vi.spyOn(ThreadCameraController.prototype, "navigateTo")
       .mockReturnValue("started");
