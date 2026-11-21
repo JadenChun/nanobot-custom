@@ -348,6 +348,11 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
   const [hasVerticalOverflow, setHasVerticalOverflow] = useState(false);
   const [visibleMessageCount, setVisibleMessageCount] =
     useState(INITIAL_HISTORY_WINDOW);
+  // One wheel notch reaches the viewport twice: the input handler fires first,
+  // then the browser reports the resulting geometry as a scroll event. Both
+  // paths would extend the window, moving the transcript twice for one gesture
+  // and reading as a flash. Coalesce them within a single frame.
+  const earlierLoadFrameRef = useRef<number | null>(null);
   const threadMotionRef = useRef<ThreadMotionCoordinator | null>(null);
   if (threadMotionRef.current === null) {
     const camera = new ThreadCameraController(() => scrollRef.current);
@@ -550,6 +555,12 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
     if (!threadMotionRef.current?.isBrowsingHistory()) return;
     if (el.scrollTop > historyPrefetchDistance(el)) return;
     if (hiddenMessageCount <= 0 && !hasMoreBefore) return;
+    // An input handler and the scroll event that follows it both land here for
+    // the same gesture. Only the first one in a frame extends the window.
+    if (earlierLoadFrameRef.current !== null) return;
+    earlierLoadFrameRef.current = window.requestAnimationFrame(() => {
+      earlierLoadFrameRef.current = null;
+    });
     loadEarlierMessages();
   }, [hasMessages, hasMoreBefore, hiddenMessageCount, loadEarlierMessages]);
 
