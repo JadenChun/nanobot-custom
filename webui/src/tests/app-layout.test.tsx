@@ -3100,9 +3100,11 @@ describe("App layout", () => {
     expect(screen.getByTestId("settings-section-transition")).toHaveClass(
       "animate-in",
       "fade-in-0",
-      "slide-in-from-bottom-1",
-      "duration-200",
+      "duration-150",
       "motion-reduce:animate-none",
+    );
+    expect(screen.getByTestId("settings-section-transition")).not.toHaveClass(
+      "slide-in-from-bottom-1",
     );
     expect(document.title).toBe("Apps · Kohaku");
 
