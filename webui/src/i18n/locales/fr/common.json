@@ -1117,10 +1117,6 @@
     "error": "Erreur de connexion"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "Traitement en cours",
-      "ariaLabel": "Étape en cours"
-    },
     "compaction": {
       "cancelled": "Compression du contexte annulée",
       "empty": "Aucun contexte à compresser.",

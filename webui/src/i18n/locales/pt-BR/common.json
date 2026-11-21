@@ -1117,10 +1117,6 @@
     "error": "Erro de conexão"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "Trabalhando",
-      "ariaLabel": "Etapa atual"
-    },
     "compaction": {
       "cancelled": "Compactação do contexto cancelada",
       "empty": "Não há contexto para compactar.",

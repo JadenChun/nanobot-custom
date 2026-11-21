@@ -321,8 +321,8 @@ describe("ThreadViewport", () => {
     expect(screen.getByTestId("thread-composer-dock")).not.toHaveClass("mt-auto");
   });
 
-  it("shows a persistent working bar above the composer only while streaming", () => {
-    const { rerender } = render(
+  it("does not render a working bar above the composer", () => {
+    render(
       <ThreadViewport
         messages={messages}
         isStreaming
@@ -331,27 +331,54 @@ describe("ThreadViewport", () => {
       />,
     );
 
-    const bar = screen.getByTestId("thread-working-bar");
-    expect(bar).toHaveAttribute("role", "status");
-    expect(screen.getByTestId("thread-working-bar-timer")).toHaveTextContent(/^\d+s$/);
-    // The bar docks with the composer, above its input, so it stays in view.
-    const dock = screen.getByTestId("thread-composer-dock");
-    expect(dock).toContainElement(bar);
-    const dockChildren = Array.from(dock.querySelectorAll("[data-testid]"))
-      .map((node) => node.getAttribute("data-testid"));
-    expect(dockChildren.indexOf("thread-working-bar")).toBeLessThan(
-      dockChildren.indexOf("thread-composer-motion"),
-    );
-
-    rerender(
-      <ThreadViewport
-        messages={messages}
-        isStreaming={false}
-        composer={<div>composer</div>}
-      />,
-    );
+    // Live progress belongs to the in-chat activity fold only.
     expect(screen.queryByTestId("thread-working-bar")).toBeNull();
     expect(screen.queryByTestId("thread-working-bar-slot")).toBeNull();
+  });
+
+  it("counts the live in-chat duration from the server run start, not the send time", () => {
+    vi.useFakeTimers();
+    try {
+      const sentAtMs = 1_800_000_000_000;
+      const serverRunStart = (sentAtMs + 48_000) / 1000;
+      vi.setSystemTime(sentAtMs + 60_000);
+
+      render(
+        <ThreadViewport
+          messages={[
+            {
+              id: "u-sent",
+              role: "user",
+              content: "do the task",
+              createdAt: sentAtMs,
+              turnId: "t-timer",
+              turnPhase: "user",
+              promptId: "p-timer",
+            },
+            {
+              id: "trace-timer",
+              role: "tool",
+              kind: "trace",
+              content: "search()",
+              traces: ["search()"],
+              createdAt: sentAtMs + 2_000,
+              turnId: "t-timer",
+              turnPhase: "activity",
+            },
+          ]}
+          isStreaming
+          activeTurnId="t-timer"
+          runStartedAt={serverRunStart}
+          composer={<div />}
+        />,
+      );
+
+      // 12s of model work elapsed; the user sent 60s ago.
+      expect(screen.getByText("Working · 12s")).toBeInTheDocument();
+      expect(screen.queryByText("Working · 60s")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("names the running MCP step and its live progress in the working bar", () => {
@@ -380,7 +407,8 @@ describe("ThreadViewport", () => {
         }],
       },
     ];
-    render(
+    // MCP progress now lives in the in-chat activity fold, not a composer bar.
+    const { container } = render(
       <ThreadViewport
         messages={streaming}
         isStreaming
@@ -390,10 +418,8 @@ describe("ThreadViewport", () => {
       />,
     );
 
-    const bar = screen.getByTestId("thread-working-bar");
-    expect(bar).toHaveTextContent("ComfyUI · Generating video · wan");
-    expect(bar).toHaveTextContent("ComfyUI is generating prompt...");
-    expect(bar).toHaveTextContent("62%");
+    expect(container).toHaveTextContent("ComfyUI is generating prompt...");
+    expect(container).toHaveTextContent("62%");
   });
 
   it("keeps the docked composer outside the message scrollport", () => {

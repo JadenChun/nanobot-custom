@@ -1117,10 +1117,6 @@
     "error": "연결 오류"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "작업 중",
-      "ariaLabel": "현재 단계"
-    },
     "compaction": {
       "cancelled": "컨텍스트 압축이 취소되었습니다",
       "empty": "압축할 컨텍스트가 없습니다.",

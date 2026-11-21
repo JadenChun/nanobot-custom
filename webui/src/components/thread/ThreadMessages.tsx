@@ -116,11 +116,17 @@ export function ThreadMessages({
     && (activeTurnId === null || promptUnit.message.turnId === activeTurnId)
     ? promptUnit.message
     : null;
-  const activeStartedAtMs = activePrompt
+  // The elapsed clock must measure model work, not the client's send path.
+  // The prompt row is stamped when the user sends; the server's run start is
+  // stamped when the gateway actually begins the turn. Prefer the server.
+  const promptStartedAtMs = activePrompt
     && activePrompt.timestampAvailable !== false
     && Number.isFinite(activePrompt.createdAt)
     ? activePrompt.createdAt
-    : runStartedAt != null ? runStartedAt * 1000 : undefined;
+    : undefined;
+  const activeStartedAtMs = runStartedAt != null
+    ? runStartedAt * 1000
+    : promptStartedAtMs;
   const showPendingActivity = isStreaming
     && liveActivityClusterIndices.size === 0
     && (activePrompt !== null || activeStartedAtMs !== undefined);

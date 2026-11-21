@@ -1117,10 +1117,6 @@
     "error": "Error de conexión"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "Trabajando",
-      "ariaLabel": "Paso actual"
-    },
     "compaction": {
       "cancelled": "Compresión de contexto cancelada",
       "empty": "No hay contexto que comprimir.",

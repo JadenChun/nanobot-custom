@@ -15,7 +15,6 @@ import { useTranslation } from "react-i18next";
 import { PromptRail } from "@/components/thread/PromptRail";
 import { ThreadComposerChromeHiddenProvider } from "@/components/thread/composerChrome";
 import { ThreadMessages } from "@/components/thread/ThreadMessages";
-import { WorkingStatusBar } from "@/components/thread/WorkingStatusBar";
 import { isAgentActivityMember } from "@/components/thread/AgentActivityCluster";
 import { ThreadCameraController } from "@/components/thread/thread-camera";
 import {
@@ -1148,17 +1147,6 @@ export const ThreadViewport = forwardRef<ThreadViewportHandle, ThreadViewportPro
                 dockedLayout ? "thread-composer-dock relative" : "relative self-center",
               )}
             >
-              <div
-                data-testid={isStreaming ? "thread-working-bar-slot" : undefined}
-              >
-                {isStreaming ? (
-                  <WorkingStatusBar
-                    messages={visibleMessages}
-                    runStartedAt={runStartedAt}
-                    mcpPresets={mcpPresets}
-                  />
-                ) : null}
-              </div>
               <div
                 className={cn(
                   dockedLayout

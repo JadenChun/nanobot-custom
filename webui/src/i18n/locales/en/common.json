@@ -1117,10 +1117,6 @@
     "error": "Connection error"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "Working",
-      "ariaLabel": "Current step"
-    },
     "compaction": {
       "cancelled": "Context compaction cancelled",
       "empty": "Nothing to compact.",

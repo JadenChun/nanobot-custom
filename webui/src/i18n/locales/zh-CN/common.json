@@ -1117,10 +1117,6 @@
     "error": "连接出错"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "处理中",
-      "ariaLabel": "当前步骤"
-    },
     "compaction": {
       "cancelled": "上下文压缩已取消",
       "empty": "无需压缩上下文",

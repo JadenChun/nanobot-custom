@@ -1117,10 +1117,6 @@
     "error": "Lỗi kết nối"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "Đang xử lý",
-      "ariaLabel": "Bước hiện tại"
-    },
     "compaction": {
       "cancelled": "Đã hủy nén ngữ cảnh",
       "empty": "Không có ngữ cảnh cần nén.",

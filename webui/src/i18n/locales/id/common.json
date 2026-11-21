@@ -1117,10 +1117,6 @@
     "error": "Kesalahan koneksi"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "Sedang bekerja",
-      "ariaLabel": "Langkah saat ini"
-    },
     "compaction": {
       "cancelled": "Pemadatan konteks dibatalkan",
       "empty": "Tidak ada konteks yang perlu dipadatkan.",

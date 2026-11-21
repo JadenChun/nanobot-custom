@@ -1117,10 +1117,6 @@
     "error": "連線錯誤"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "處理中",
-      "ariaLabel": "目前步驟"
-    },
     "compaction": {
       "cancelled": "上下文壓縮已取消",
       "empty": "無需壓縮上下文",

@@ -1117,10 +1117,6 @@
     "error": "接続エラー"
   },
   "thread": {
-    "workingBar": {
-      "defaultStep": "作業中",
-      "ariaLabel": "現在のステップ"
-    },
     "compaction": {
       "cancelled": "コンテキストの圧縮をキャンセルしました",
       "empty": "圧縮するコンテキストはありません。",
