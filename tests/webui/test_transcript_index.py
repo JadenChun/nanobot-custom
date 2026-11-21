@@ -761,3 +761,89 @@ def test_preupgrade_unbound_oversized_tail_opens_and_pages_for_gen0_only(
     # After reset (generation > 0), unbound pre-upgrade rows must NOT be adopted.
     gen1 = _source(generation=1)
     assert build_webui_thread_response(KEY, expected_source=gen1, limit=4, direction="latest") is None
+
+
+def _append_turn(index: int, *, origin: str | None) -> None:
+    extra = {tr.TRANSCRIPT_RECORD_ORIGIN_KEY: origin} if origin is not None else {}
+    append_transcript_object(
+        KEY, {"event": "user", "chat_id": CHAT_ID, "text": f"Prompt {index}", **extra},
+    )
+    append_transcript_object(
+        KEY, {"event": "stream_end", "chat_id": CHAT_ID, "text": f"Reply {index}", **extra},
+    )
+    append_transcript_object(
+        KEY, {"event": "turn_end", "chat_id": CHAT_ID, "turn_id": f"t-{index}", **extra},
+    )
+
+
+def test_mixed_preupgrade_and_stamped_history_shows_full_history_for_gen0(
+    isolated_webui_dir: Path,
+) -> None:
+    """Pre-upgrade unbound history must stay visible once stamped rows are appended."""
+    from nanobot.webui.transcript import build_webui_thread_response, session_turn_index
+
+    gen0 = _source(generation=0)
+    origin = tr._record_origin(gen0)
+    for i in range(8):
+        _append_turn(i, origin=None)
+    for i in range(8, 10):
+        _append_turn(i, origin=origin)
+    assert delete_transcript_index(KEY)
+
+    assert tr._legacy_display_rows_adoptable(KEY, gen0) is True
+    latest = build_webui_thread_response(KEY, expected_source=gen0, limit=4, direction="latest")
+    assert latest is not None
+    texts = [m["content"] for m in latest["messages"] if m["role"] == "user"]
+    assert "Prompt 9" in texts
+    assert latest["page"]["has_more_before"] is True
+
+    seen = set(texts)
+    cursor = latest["page"]["before_cursor"]
+    while cursor:
+        older = build_webui_thread_response(
+            KEY, expected_source=gen0, limit=4, direction="before", before=cursor,
+        )
+        assert older is not None
+        seen.update(m["content"] for m in older["messages"] if m["role"] == "user")
+        cursor = older["page"]["before_cursor"]
+    assert seen == {f"Prompt {i}" for i in range(10)}
+
+    index = session_turn_index(KEY, limit=50, expected_source=gen0)
+    assert index is not None and index["total_turn_count"] == 10
+
+
+def test_mixed_history_never_adopts_foreign_origin_or_reset_lifetime(
+    isolated_webui_dir: Path,
+) -> None:
+    from nanobot.webui.transcript import build_webui_thread_response
+
+    gen0 = _source(generation=0)
+    foreign = tr._record_origin(_source(generation=0, incarnation="inc-old"))
+    for i in range(3):
+        _append_turn(i, origin=None)
+    _append_turn(3, origin=foreign)
+    _append_turn(4, origin=tr._record_origin(gen0))
+    assert delete_transcript_index(KEY)
+    assert tr._legacy_display_rows_adoptable(KEY, gen0) is False
+    latest = build_webui_thread_response(KEY, expected_source=gen0, limit=10, direction="latest")
+    assert latest is not None
+    users = [m["content"] for m in latest["messages"] if m["role"] == "user"]
+    assert users == ["Prompt 4"]
+
+    # Reset lifetimes (generation > 0) never use the legacy reader.
+    assert tr._legacy_display_rows_adoptable(KEY, _source(generation=1)) is False
+
+
+def test_fully_stamped_history_stays_on_origin_bound_index(isolated_webui_dir: Path) -> None:
+    gen0 = _source(generation=0)
+    origin = tr._record_origin(gen0)
+    for i in range(3):
+        _append_turn(i, origin=origin)
+    assert tr._legacy_display_rows_adoptable(KEY, gen0) is False
+
+
+def test_unfinished_tail_check_reads_rotated_active_file(isolated_webui_dir: Path) -> None:
+    for i in range(2):
+        _append_turn(i, origin=None)
+    append_transcript_object(KEY, {"event": "delta", "chat_id": CHAT_ID, "text": "partial"})
+    assert tr.has_unfinished_transcript_tail(KEY) is True

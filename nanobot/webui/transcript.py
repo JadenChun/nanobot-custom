@@ -1454,36 +1454,76 @@ class HistoryWindowError(RuntimeError):
         self.detail = detail
 
 
-def _has_only_unbound_preupgrade_rows(session_key: str) -> bool:
-    """Detect a pre-origin-stamping display file without adopting prior lifetimes."""
-    from nanobot.webui.transcript_index import read_preindex_latest_tail
+_LEGACY_ADOPTION_CACHE: dict[tuple[Any, ...], bool] = {}
+_LEGACY_ADOPTION_CACHE_MAX = 256
 
-    tail = read_preindex_latest_tail(session_key, limit=2, expected_source=None)
-    if tail.status == "ok" and tail.lines:
-        return all(_RECORD_ORIGIN not in row for row in tail.lines)
-    if tail.status == "oversized_tail":
-        path = active_transcript_path(session_key)
-        if not path.is_file():
-            return False
-        saw_row = False
+
+def _legacy_display_rows_adoptable(
+    session_key: str, expected_source: SourceState | None,
+) -> bool:
+    """Whether a generation-0 display history starts with pre-stamping rows.
+
+    Sessions created before display rows were origin-stamped keep their whole
+    history unbound. Rows written after the upgrade (``/model`` replies, new
+    turns) are stamped with the current origin. The origin-bound index would
+    expose only the stamped suffix and hide the real history, so such a
+    history is served by the legacy reader instead. This is fail-closed:
+    any row stamped with a *different* origin (a prior deleted/reset
+    lifetime), or a first row that is already stamped, keeps the strict
+    origin-bound path. Scanning is read-only and cached per file signature.
+    """
+    if expected_source is None or expected_source.generation != 0:
+        return False
+    origin = _record_origin(expected_source)
+    paths = [_segment_file_path(session_key, seg) for seg in _read_segment_ids(session_key)]
+    paths.append(active_transcript_path(session_key))
+    signature: list[tuple[str, int, int, int]] = []
+    existing: list[Path] = []
+    for path in paths:
         try:
-            with path.open("r", encoding="utf-8") as handle:
-                for raw in handle:
-                    line = raw.strip()
-                    if not line:
-                        continue
-                    try:
-                        row = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(row, dict):
-                        saw_row = True
-                        if _RECORD_ORIGIN in row:
-                            return False
+            info = path.stat()
         except OSError:
-            return False
-        return saw_row
-    return False
+            continue
+        signature.append((str(path), info.st_ino, info.st_size, info.st_mtime_ns))
+        existing.append(path)
+    if not existing:
+        return False
+    cache_key = (origin, tuple(signature))
+    cached = _LEGACY_ADOPTION_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    marker = _RECORD_ORIGIN.encode("ascii")
+    origin_bytes = origin.encode("ascii")
+    saw_unbound = False
+    saw_row = False
+    result: bool | None = None
+    try:
+        for path in existing:
+            with path.open("rb") as handle:
+                for raw in handle:
+                    if not raw.strip():
+                        continue
+                    stamped = marker in raw
+                    if not saw_row:
+                        saw_row = True
+                        if stamped:
+                            result = False
+                            break
+                    if not stamped:
+                        saw_unbound = True
+                    elif origin_bytes not in raw:
+                        result = False
+                        break
+            if result is not None:
+                break
+    except OSError:
+        return False
+    if result is None:
+        result = saw_unbound
+    if len(_LEGACY_ADOPTION_CACHE) >= _LEGACY_ADOPTION_CACHE_MAX:
+        _LEGACY_ADOPTION_CACHE.clear()
+    _LEGACY_ADOPTION_CACHE[cache_key] = result
+    return result
 
 
 def session_turn_index(
@@ -1498,7 +1538,8 @@ def session_turn_index(
         1,
         min(_MAX_TRANSCRIPT_PAGE_LIMIT, int(limit) if limit is not None else _TURN_INDEX_DEFAULT_LIMIT),
     )
-    if expected_source is not None:
+    legacy_adoptable = _legacy_display_rows_adoptable(session_key, expected_source)
+    if expected_source is not None and not legacy_adoptable:
         from nanobot.webui.transcript_index import (
             encode_window_cursor,
             read_prompt_summary_range,
@@ -1552,15 +1593,9 @@ def session_turn_index(
                     "loaded_prompt_count": len(prompts_payload),
                 },
             }
-        # Only fall back to legacy compatibility for pre-upgrade generation-0
-        # chats whose display file has unbound rows only. Never adopt a prior
-        # deleted/reset lifetime's origin-tagged rows.
-        if (
-            expected_source.generation > 0
-            or before is not None
-            or not _has_only_unbound_preupgrade_rows(session_key)
-        ):
-            return None
+        # Legacy compatibility is handled above for pre-upgrade generation-0
+        # chats. Never adopt a prior deleted/reset lifetime's tagged rows.
+        return None
     turn_cache: dict[str, list[list[dict[str, Any]]]] = {}
     chunks = _chunk_turn_refs(session_key, turn_cache)
     total_turns = sum(chunk.turn_count for chunk in chunks)
@@ -4290,7 +4325,7 @@ def has_unfinished_transcript_tail(session_key: str) -> bool:
     """
     _migrate_legacy_transcript(session_key)
     return has_pending_tool_calls(
-        _read_transcript_file(webui_transcript_path(session_key))
+        _read_transcript_file(active_transcript_path(session_key))
     )
 
 
@@ -4335,6 +4370,19 @@ def _select_indexed_transcript_page(
 
     expected_origin = _record_origin(expected_source) if expected_source is not None else None
     page_limit = _coerce_page_limit(limit)
+    legacy_adoptable = (
+        after is None
+        and around is None
+        and prompt_id is None
+        and direction not in {"after", "around"}
+        and _legacy_display_rows_adoptable(session_key, expected_source)
+    )
+    if legacy_adoptable:
+        if before is None:
+            return None
+        _, v2_before = decode_window_cursor(before, expected_origin=expected_origin)
+        if not v2_before and _decode_page_cursor(before) is not None:
+            return None
 
     if around is not None or prompt_id is not None or direction == "around":
         window_dir: Literal["latest", "before", "after", "around"] = "around"
@@ -4346,9 +4394,8 @@ def _select_indexed_transcript_page(
         if before is not None:
             _, is_v2 = decode_window_cursor(before, expected_origin=expected_origin)
             if not is_v2 and _decode_page_cursor(before) is not None:
-                if expected_source is None or (
-                    expected_source.generation == 0
-                    and _has_only_unbound_preupgrade_rows(session_key)
+                if expected_source is None or _legacy_display_rows_adoptable(
+                    session_key, expected_source,
                 ):
                     return None
         window_dir = "before"
@@ -4386,9 +4433,8 @@ def _select_indexed_transcript_page(
     if window.status == "empty":
         if (
             expected_source is not None
-            and expected_source.generation == 0
             and window_dir == "latest"
-            and _has_only_unbound_preupgrade_rows(session_key)
+            and _legacy_display_rows_adoptable(session_key, expected_source)
         ):
             return None
         return [], {
