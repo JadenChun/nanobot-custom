@@ -16,6 +16,7 @@ if (!result.success) {
 }
 await copyFile(resolve(import.meta.dir, "src/index.html"), resolve(output, "index.html"));
 await copyFile(resolve(import.meta.dir, "src/style.css"), resolve(output, "style.css"));
+await copyFile(resolve(import.meta.dir, "../src-tauri/icons/icon.png"), resolve(output, "icon.png"));
 
 const html = await readFile(resolve(output, "index.html"), "utf8");
 const references = [...html.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/gi)]
