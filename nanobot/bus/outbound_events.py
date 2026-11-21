@@ -54,6 +54,7 @@ class StreamEndEvent(AgentEvent):
     stream_id: str | None = None
     resuming: bool = False
     merge_next: bool = False
+    source_event_id: str | None = None
 
 
 @dataclass(frozen=True)

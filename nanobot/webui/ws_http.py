@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -1963,6 +1963,23 @@ class GatewayHTTPHandler:
             False if is_child else websocket_turn_transcript_persistence_failed(chat_id)
         )
 
+        canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None
+        sessions = self.session_manager
+        if source_state is not None and sessions is not None:
+            bound_state = source_state
+            bound_sessions = sessions
+
+            def _load_canonical_events(
+                event_ids: Sequence[str],
+            ) -> dict[str, dict[str, Any]]:
+                return bound_sessions.read_canonical_events_by_ids(
+                    decoded_key,
+                    list(event_ids),
+                    expected_source=bound_state,
+                )
+
+            canonical_events_loader = _load_canonical_events
+
         def build_thread(limit_value: int | None) -> dict[str, Any] | None:
             return build_webui_thread_response(
                 decoded_key,
@@ -1993,6 +2010,7 @@ class GatewayHTTPHandler:
                 around=around,
                 prompt_id=prompt_id,
                 expected_source=source_state,
+                canonical_events_loader=canonical_events_loader,
             )
 
         try:

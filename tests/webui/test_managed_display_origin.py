@@ -25,6 +25,7 @@ from nanobot.session.webui_turns import WebuiTurnCoordinator
 from nanobot.webui.forking import create_webui_chat_fork
 from nanobot.webui.transcript import (
     append_transcript_object,
+    hydrate_consolidated_transcript_lines,
     read_transcript_lines,
     replay_transcript_to_ui_messages,
 )
@@ -36,6 +37,14 @@ from tests.webui.test_message_attempt_binding import _message_envelope
 
 KEY = "websocket:display-origin"
 CHAT_ID = "display-origin"
+
+
+def _hydrated(sessions, key, state):
+    rows = read_transcript_lines(key, expected_source=state)
+    return hydrate_consolidated_transcript_lines(
+        rows,
+        lambda ids: sessions.read_canonical_events_by_ids(key, list(ids), expected_source=state),
+    )
 
 
 @asynccontextmanager
@@ -99,11 +108,11 @@ async def test_first_display_input_depends_on_canonical_append(
         else:
             source = loop.sessions.read_saved_source_metadata(KEY)
             assert source is not None
-            qualified = read_transcript_lines(KEY, expected_source=source.state)
+            qualified = _hydrated(loop.sessions, KEY, source.state)
             assert qualified[0]["text"] == "First prompt"
             assert any(row.get("text") == "First answer" for row in qualified)
             assert qualified[-1]["event"] == "turn_end"
-            assert [row["text"] for row in prompts] == ["First prompt"]
+            assert [row["text"] for row in qualified if row.get("event") == "user"] == ["First prompt"]
             canonical = loop.sessions.read_existing_canonical_source(KEY)
             assert canonical is not None
             committed = next(row for row in canonical[1].events if row.get("role") == "user")
@@ -138,7 +147,7 @@ async def test_delayed_answer_is_not_rebound_to_replacement(engine_config, tmp_p
         assert current is not None
         assert any(
             row.get("text") == "New answer"
-            for row in read_transcript_lines(KEY, expected_source=current.state)
+            for row in _hydrated(loop.sessions, KEY, current.state)
         )
 
 
@@ -153,21 +162,24 @@ async def test_lifetime_check_does_not_adopt_prior_records_or_unbound_legacy(eng
         title_edit = loop.sessions.read_saved_source_metadata(KEY)
         assert title_edit is not None
         assert title_edit.state.revision > old.state.revision
-        assert [row["text"] for row in read_transcript_lines(KEY, expected_source=title_edit.state)
+        assert [row["text"] for row in _hydrated(loop.sessions, KEY, title_edit.state)
                 if row.get("event") == "user"] == ["Old prompt"]
         assert loop.sessions.delete_session(KEY)
         await _submit(channel, conn, "New prompt", turn_id="new-display-turn")
         await _dispatch_one(loop, channel)
         current = loop.sessions.read_saved_source_metadata(KEY)
         assert current is not None
-        assert [row["text"] for row in read_transcript_lines(KEY, expected_source=current.state)
+        assert [row["text"] for row in _hydrated(loop.sessions, KEY, current.state)
                 if row.get("event") == "user"] == ["New prompt"]
-        assert {row.get("text") for row in read_transcript_lines(KEY)} >= {"Unbound input", "Old prompt"}
+        assert {
+            row.get("text") or row.get("prompt_preview")
+            for row in read_transcript_lines(KEY)
+        } >= {"Unbound input", "Old prompt"}
 
     async with _gateway(engine_config, tmp_path) as (loop, _, _, _):
         current = loop.sessions.read_saved_source_metadata(KEY)
         assert current is not None
-        assert [row["text"] for row in read_transcript_lines(KEY, expected_source=current.state)
+        assert [row["text"] for row in _hydrated(loop.sessions, KEY, current.state)
                 if row.get("event") == "user"] == ["New prompt"]
 
 
@@ -197,7 +209,9 @@ async def test_steer_display_uses_the_committed_injection(engine_config, tmp_pat
         monkeypatch.setattr(loop, "_admit_pending_activity", observe_admission)
         if write_error:
             def refuse_guidance(session_key, row):
-                if row.get("event") == "user" and row.get("text") == "Guidance":
+                if row.get("event") == "user" and (
+                    row.get("text") == "Guidance" or row.get("prompt_preview") == "Guidance"
+                ):
                     raise OSError("display write failed")
                 append_transcript_object(session_key, row)
 
@@ -222,7 +236,7 @@ async def test_steer_display_uses_the_committed_injection(engine_config, tmp_pat
             assert canonical is not None
             events = canonical[1].events
             origin = canonical[1].state
-            rows = read_transcript_lines(KEY, expected_source=origin)
+            rows = _hydrated(loop.sessions, KEY, origin)
             texts = [row["content"] for row in replay_transcript_to_ui_messages(rows)
                      if row.get("content")]
             committed = next(row for row in events if row.get("content") == "Guidance")
@@ -286,7 +300,7 @@ async def test_fork_recovers_committed_answer_when_display_is_incomplete(
 ):
     async with _gateway(engine_config, tmp_path, "Committed answer") as (loop, channel, conn, _):
         def refuse_answer(session_key, row):
-            if session_key == KEY and row.get("text") == "Committed answer":
+            if session_key == KEY and row.get("event") == "stream_end":
                 raise OSError("display write failed")
             append_transcript_object(session_key, row)
 
@@ -391,7 +405,7 @@ async def test_managed_shell_and_slash_command_archive_only_after_canonical_comm
         await _dispatch_one(loop, channel)
         source = loop.sessions.read_saved_source_metadata(KEY)
         assert source is not None
-        qualified = read_transcript_lines(KEY, expected_source=source.state)
+        qualified = _hydrated(loop.sessions, KEY, source.state)
         all_rows = read_transcript_lines(KEY)
         assert len(qualified) == len(all_rows)
         prompts = [row for row in qualified if row.get("event") == "user"]
@@ -511,11 +525,14 @@ async def test_cross_session_input_archives_only_after_canonical_commit(
         await loop._dispatch(inbound)
         await _drain(loop, channel)
 
-        qualified = read_transcript_lines(KEY, expected_source=source.state)
+        qualified = _hydrated(loop.sessions, KEY, source.state)
         all_rows = read_transcript_lines(KEY)
         assert len(qualified) == len(all_rows)
         if failed:
-            assert not any(row.get("text") == "Please review" for row in all_rows)
+            assert not any(
+                (row.get("text") or row.get("prompt_preview")) == "Please review"
+                for row in all_rows
+            )
             return
 
         prompts = [row for row in qualified if row.get("event") == "user"]
@@ -578,7 +595,7 @@ async def test_cross_session_mid_turn_injection_orders_after_stream_with_origin(
 
         canonical = loop.sessions.read_existing_canonical_source(KEY)
         assert canonical is not None
-        qualified = read_transcript_lines(KEY, expected_source=canonical[1].state)
+        qualified = _hydrated(loop.sessions, KEY, canonical[1].state)
         texts = [
             row["content"] for row in replay_transcript_to_ui_messages(qualified)
             if row.get("content")

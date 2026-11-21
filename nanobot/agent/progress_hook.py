@@ -95,7 +95,13 @@ class AgentProgressHook(AgentHook):
         await self.emit_reasoning_end()
         if self._publish and self._streaming:
             await self._publish(StreamEndEvent(
-                resuming=resuming, merge_next=context.stream_continues_current_message,
+                resuming=resuming,
+                merge_next=context.stream_continues_current_message,
+                source_event_id=(
+                    context.source_event_id
+                    if not context.stream_continues_current_message
+                    else None
+                ),
             ))
         self._stream_buf = ""
         self._think_extractor.reset()

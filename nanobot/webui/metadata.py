@@ -14,3 +14,4 @@ WEBUI_INSTALLATION_METADATA_KEY = "webui_installation_id"
 # the source is set by the admitted turn's delivery, never by the request.
 WEBUI_DISPLAY_ON_COMMIT_KEY = "_webui_display_on_commit"
 WEBUI_DISPLAY_SOURCE_KEY = "_webui_display_source"
+WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY = "_webui_source_answer_id"

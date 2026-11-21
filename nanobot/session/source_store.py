@@ -22,6 +22,13 @@ from typing import TYPE_CHECKING, Any, Generator, Protocol, cast
 from loguru import logger
 
 from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+from nanobot.session.canonical_event_index import (
+    delete_event_index,
+    update_event_index_header,
+)
+from nanobot.session.canonical_event_index import (
+    read_canonical_events_by_ids as _read_canonical_events_by_ids,
+)
 from nanobot.session.context_checkpoint import validate_context_checkpoint
 from nanobot.session.idle_compaction import (
     LAST_USER_ACTIVITY_AT_KEY,
@@ -2046,6 +2053,14 @@ class SourceSessionStore:
                         body_offset=len(header_line),
                     ),
                 )
+                update_event_index_header(
+                    self._backend,
+                    key,
+                    state=state,
+                    old_version=proof.version,
+                    new_version=installed,
+                    new_body_offset=len(header_line),
+                )
         raw_checkpoint = header["metadata"].get("context_checkpoint")
         checkpoint: dict[str, Any] | None = (
             deepcopy(cast(dict[str, Any], raw_checkpoint))
@@ -2086,6 +2101,22 @@ class SourceSessionStore:
                 _invalidate_workspace_access_request(metadata)
             header["revision"] += 1
             return self._write(header, events)
+
+    def read_canonical_events_by_ids(
+        self,
+        key: str,
+        event_ids: list[str] | tuple[str, ...],
+        *,
+        expected_source: SourceState,
+    ) -> dict[str, dict[str, Any]]:
+        """Bounded ``os.pread`` lookup of specific canonical events; 0 full-body loads."""
+        with self._backend.locked_session_files():
+            return _read_canonical_events_by_ids(
+                self._backend,
+                key,
+                event_ids,
+                expected_source=expected_source,
+            )
 
     def read_next_turn_preferences(self, key: str) -> NextTurnPreferences | None:
         """Bounded read of the next-turn record; no event or body access."""
@@ -2145,3 +2176,4 @@ class SourceSessionStore:
 
         JsonlSessionStore.settle_source_deletion(owner, lambda: self._backend)
         pref.unlink(missing_ok=True)
+        delete_event_index(self._backend, key)

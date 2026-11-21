@@ -1263,10 +1263,15 @@ class ChannelManager:
                     kwargs["merge_next"] = True
             except (TypeError, ValueError):
                 pass
+        metadata = msg.metadata
+        if isinstance(event, StreamEndEvent) and event.source_event_id and not event.merge_next:
+            from nanobot.webui.metadata import WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY
+
+            metadata = {**(msg.metadata or {}), WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY: event.source_event_id}
         await channel.send_delta(
             msg.chat_id,
             msg.content,
-            msg.metadata,
+            metadata,
             **kwargs,
         )
 
@@ -1349,6 +1354,7 @@ class ChannelManager:
                         stream_id=next_stream_id,
                         resuming=next_event.resuming,
                         merge_next=next_event.merge_next,
+                        source_event_id=next_event.source_event_id,
                     )
                     # Stream ended - stop coalescing this stream
                     break

@@ -31,6 +31,7 @@ from nanobot.session.manager import SessionManager
 from nanobot.session.mode_storage import SessionModeError
 from nanobot.session.source_store import SourceSnapshot, SourceState
 from nanobot.webui.metadata import (
+    WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY,
     WEBUI_DISPLAY_SOURCE_KEY,
     WEBUI_MESSAGE_SOURCE_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
@@ -59,8 +60,11 @@ _WEBUI_TURN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _WEBUI_REPLAY_IDENTITY_KEY = "_webui_replay_identity"
 _RECORD_ORIGIN = "_webui_source_origin"
 _PROMPT_SOURCE_EVENT = "_webui_source_prompt_id"
+_TEXT_SOURCE_REF_KEY = "_webui_text_ref"
+_PROMPT_PREVIEW_KEY = "prompt_preview"
 TRANSCRIPT_RECORD_ORIGIN_KEY = _RECORD_ORIGIN
 TRANSCRIPT_PROMPT_SOURCE_EVENT_KEY = _PROMPT_SOURCE_EVENT
+TRANSCRIPT_TEXT_SOURCE_REF_KEY = _TEXT_SOURCE_REF_KEY
 TRANSCRIPT_SEGMENT_MANIFEST_VERSION = _TRANSCRIPT_SEGMENT_MANIFEST_VERSION
 LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION = _LEGACY_TRANSCRIPT_SEGMENT_MANIFEST_VERSION
 _MARKDOWN_LOCAL_IMAGE_RE = re.compile(
@@ -524,6 +528,12 @@ def validate_retained_transcript_record(row: dict[str, object]) -> None:
     for name in ("text", "content"):
         if name in row and not isinstance(row[name], (str, list)):
             raise ValueError("invalid retained display text")
+    if _TEXT_SOURCE_REF_KEY in row and (
+        not isinstance(row[_TEXT_SOURCE_REF_KEY], str) or not row[_TEXT_SOURCE_REF_KEY]
+    ):
+        raise ValueError("invalid retained canonical text reference")
+    if _PROMPT_PREVIEW_KEY in row and not isinstance(row[_PROMPT_PREVIEW_KEY], str):
+        raise ValueError("invalid retained prompt preview")
     for name in ("tool_events", "edits"):
         if name in row and (not isinstance(row[name], list)
                             or any(not isinstance(item, dict) for item in cast(list[object], row[name]))):
@@ -1364,10 +1374,68 @@ def _select_transcript_page(
 _TURN_INDEX_DEFAULT_LIMIT = 400
 
 
+def _prompt_preview_text(raw: str) -> str:
+    compact = " ".join(raw.split())
+    return compact if len(compact) <= 120 else f"{compact[:117]}..."
+
+
+def _canonical_event_text(event: Mapping[str, Any]) -> str | None:
+    content = event.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in cast(list[object], content):
+            if isinstance(item, dict):
+                item_dict = cast(dict[str, Any], item)
+                if item_dict.get("type") == "text":
+                    part = item_dict.get("text")
+                    if isinstance(part, str):
+                        parts.append(part)
+        return "".join(parts)
+    return None
+
+
+def hydrate_consolidated_transcript_lines(
+    lines: list[dict[str, Any]],
+    canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None,
+) -> list[dict[str, Any]]:
+    """Resolve ``_webui_text_ref`` rows from canonical events via bounded lookup."""
+    if not lines or canonical_events_loader is None:
+        return lines
+    needed: list[str] = []
+    for rec in lines:
+        if rec.get("text") is not None:
+            continue
+        ref = rec.get(_TEXT_SOURCE_REF_KEY)
+        if isinstance(ref, str) and ref:
+            needed.append(ref)
+    if not needed:
+        return lines
+    resolved = canonical_events_loader(list(dict.fromkeys(needed)))
+    if not resolved:
+        return lines
+    hydrated: list[dict[str, Any]] = []
+    for rec in lines:
+        if rec.get("text") is None:
+            ref = rec.get(_TEXT_SOURCE_REF_KEY)
+            if isinstance(ref, str) and ref in resolved:
+                text = _canonical_event_text(resolved[ref])
+                if text is not None:
+                    copy = dict(rec)
+                    copy["text"] = text
+                    hydrated.append(copy)
+                    continue
+        hydrated.append(rec)
+    return hydrated
+
+
 def _turn_label(record: dict[str, Any] | None, ordinal: int) -> str:
     text = ""
     if record is not None:
         raw = record.get("text")
+        if not isinstance(raw, str):
+            raw = record.get(_PROMPT_PREVIEW_KEY)
         if not isinstance(raw, str):
             raw = record.get("content")
         if isinstance(raw, str):
@@ -1904,6 +1972,36 @@ class WebUITranscriptRecorder:
                             # A retired turn does not own a failed write or
                             # recovery marker in the replacement.
                             return True
+                        canonical_ref: object = None
+                        if record.get("event") == "user":
+                            canonical_ref = record.get(_PROMPT_SOURCE_EVENT)
+                        elif (
+                            record.get("event") in {"stream_end", "message"}
+                            and not record.get("kind")
+                            and not record.get("merge_next")
+                        ):
+                            canonical_ref = (metadata or {}).get(WEBUI_DISPLAY_ANSWER_EVENT_ID_KEY)
+                        if (
+                            isinstance(canonical_ref, str)
+                            and canonical_ref
+                            and isinstance(record.get("text"), str)
+                        ):
+                            resolved = sessions.read_canonical_events_by_ids(
+                                session_key,
+                                [canonical_ref],
+                                expected_source=saved.state,
+                            )
+                            canonical_event = resolved.get(canonical_ref)
+                            if (
+                                canonical_event is not None
+                                and _canonical_event_text(canonical_event) == record["text"]
+                            ):
+                                record[_TEXT_SOURCE_REF_KEY] = canonical_ref
+                                if record.get("event") == "user" and record["text"]:
+                                    record[_PROMPT_PREVIEW_KEY] = _prompt_preview_text(
+                                        record["text"],
+                                    )
+                                record.pop("text", None)
                         append_transcript_object(session_key, record)
                     return True
             else:
@@ -2021,6 +2119,29 @@ def write_managed_fork_transcript(
             and not _needs_unfinished_tail_repair(records)
         ):
             prefix = _fork_transcript_prefix(records, before_user_index)
+            if prefix is not None:
+                parent_events_by_id = {
+                    str(ev["_event_id"]): ev
+                    for ev in parent.events
+                    if isinstance(ev.get("_event_id"), str) and ev.get("_event_id")
+                }
+
+                def _load_parent_events(
+                    ids: Sequence[str],
+                ) -> dict[str, dict[str, Any]]:
+                    return {
+                        eid: parent_events_by_id[eid]
+                        for eid in ids
+                        if eid in parent_events_by_id
+                    }
+
+                prefix = [
+                    {k: v for k, v in rec.items() if k != _TEXT_SOURCE_REF_KEY}
+                    for rec in hydrate_consolidated_transcript_lines(
+                        prefix,
+                        _load_parent_events,
+                    )
+                ]
     if prefix is None:
         prefix = _session_transcript_rows(target.session_key, messages)
     target_chat_id = _chat_id_from_session_key(target.session_key)
@@ -3766,6 +3887,12 @@ def replay_transcript_to_ui_messages(
 
         if ev == "stream_end":
             final_text = rec.get("text")
+            if (
+                final_text is None
+                and isinstance(rec.get(_TEXT_SOURCE_REF_KEY), str)
+                and rec[_TEXT_SOURCE_REF_KEY]
+            ):
+                final_text = ""
             turn_fields = _turn_fields(rec, "answer")
             merge_next = rec.get("resuming") is True and rec.get("merge_next") is True
             turn_id = turn_fields.get("turnId")
@@ -4295,6 +4422,7 @@ def build_webui_thread_response(
     around: str | None = None,
     prompt_id: str | None = None,
     expected_source: SourceState | None = None,
+    canonical_events_loader: Callable[[Sequence[str]], Mapping[str, Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any] | None:
     """Return a payload compatible with ``WebuiThreadPersistedPayload``."""
     paginated = (
@@ -4336,6 +4464,7 @@ def build_webui_thread_response(
         )
     if not lines and active_turn_started_at is None:
         return None
+    lines = hydrate_consolidated_transcript_lines(lines, canonical_events_loader)
     # A page that does not begin at the first turn starts with a continuation
     # whose prompt row lives before the window. That turn cannot be repaired
     # from this page, so it must not make the condition permanently true.

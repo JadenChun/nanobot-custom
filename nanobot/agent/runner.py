@@ -1005,6 +1005,7 @@ class AgentRunner:
                     logger.exception("follow-up request acknowledgment failed")
             response_owners.callback(recorded_response.release)
             response = recorded_response.response
+            context.source_event_id = recorded_response.source_event_id
             assert request_state.messages is not None
             messages_for_model = request_state.messages
             if request_state.compaction is not None:

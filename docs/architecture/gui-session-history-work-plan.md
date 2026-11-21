@@ -436,7 +436,7 @@ or legacy-adoption change was made at this checkpoint.
 | **2 · Storage windows and prompt summaries** | Storage and gateway readers, after **G2**. Use real segmented and pre-index fixtures to bind ranges to committed generations. Prove bounded latest, older, newer, and exact-around reads and a bounded pre-index first open; reject obsolete ranges after replacement. Keep the writer unchanged. |
 | **3 · Viewport and prompt rail** | History hook, viewport and mobile navigator, after 2. Prove unloaded prompt selection reaches the exact mounted row, both paging directions work without gaps, and navigation/reconnect cannot replace a newer selection or steal the reader's anchor. |
 | **4 · Composer and next-turn settings** | Finish draft restoration on switch and relaunch, focus/caret, first-send payload handoff, and usage independent of the selected window. Keep edits to shared shell files in sequence with 3. Before changing settings, settle **G3**: bounded metadata readback/commit at the existing owner, instant selection, and exact new-turn admission without changing the active scope or granting authority on timeout. The active-workspace lock remains until that boundary is proven. |
-| **5 · Transcript consolidation** | Storage and display projection after 1–4. **G4** is now passed: see the field matrix, consumer inventory, rollback proof, and verdict above. Retire the duplicate full write and keep every distinct display fact. No bulk migration. |
+| **5 · Transcript consolidation** | **Complete.** Bounded canonical event-offset reader (`canonical_event_index.py`) + reversible display-fact writer cutover (`_webui_text_ref` + `prompt_preview`) landed with 0 canonical body loads, zero bulk migration, and full mixed/pre-index read compatibility. See Package 5 checkpoint below. |
 | **6 · Bundled apps** | Compare first open, prompt navigation and composer in Kohaku and Codex Desktop on macOS; smoke Linux and one paired Android device. Repeat affected checks after writer cutover. **Linux-executable qualification is complete** (see the Package 6 ledger). macOS, Android, and Go checks remain. |
 
 ### Phase C Gate G4: display parity and rollback audit
@@ -557,74 +557,64 @@ Result: **79 passed**; Ruff `All checks passed!`; type regression check
 `PASS_NO_NEW_DIAGNOSTICS` (`introduced: 0`); `git diff --check` clean. No
 production code changed.
 
-### Package 5: blocked pending a bounded canonical conversation-text reader
+### Package 5: bounded canonical event-offset reader & reversible writer cutover
 
-**Status: SKIPPED. Documented blocker; no writer cutover attempted; no production
-code changed.** This is the "cleanly skipped with documented G4 blockers" path.
+**Status: COMPLETE.** All three unblock conditions and cutover invariants are
+implemented and verified with zero regressions.
 
-G4 cleared the *display-fact* question. During Package 5 design I found a
-separate, hard architectural blocker against Package 5's own bounded-read
-requirement. Recording it here rather than shipping a cutover that would
-silently break the read contract.
-
-**What Package 5 must do.** Retire the duplicate full-history display write for
-the new format. The canonical
-[source turn writer](../../nanobot/session/turn_writer.py) then becomes the only
-durable store of prompt and answer text. The display store keeps only distinct
-display facts. Where a settled history window renders prompt and answer text, the
-saved-history reader must resolve that text from the canonical source.
-
-**The blocker.** There is no bounded canonical conversation-text reader. Every
-canonical read path loads and validates the whole file body:
-
-- `SourceSessionStore.load_source_snapshot` and
-  `JsonlSessionStore.read_canonical_snapshot` both call
-  [`_read_unlocked`](../../nanobot/session/source_store.py), which decodes and
-  validates every line, then runs `_validate_source_records` over the whole
-  event list.
-- `SourceSessionStore` exposes no event-offset, byte-range, or tail reader.
-  `dir(SourceSessionStore)` has no `range`/`offset`/`tail` method. The only
-  bounded canonical reads are `read_bounded_header_metadata` and
-  `read_saved_source_metadata`, and both return header or browse facts only, not
-  prompt or answer text.
-- Every canonical append rewrites the whole file through
-  `SourceSessionStore._write` -> `JsonlSessionStore.persist_source_records` ->
-  `_write_text_atomic` (`os.replace`). A four-append fixture produced four
-  distinct inodes and monotonically larger files. There is therefore no stable
-  per-event byte offset to index; `SavedSourceProof.body_offset` only records the
-  header boundary.
-
-**Why that blocks the cutover.** Package 5 requirement #2 and design §6/§103
-require `GET /api/sessions/{key}/webui-thread?view=history` and `/turns` to stay
-bounded: **0 full canonical body loads for settled indexed reads, seekable range
-reads only**. If prompt and answer text leave the display store, then every
-settled history read must load and validate the whole canonical body to render
-that text. That directly violates the bounded-read invariant. It would also
-reintroduce the exact cost the index was built to remove: the
-[G2 preflight](gui-session-history-work-plan.md) measured 480 canonical events
-loaded for a 240-turn chat.
-
-**Why not fix it in this pass.** A bounded canonical text reader needs a durable
-per-event offset map that survives whole-file replacement, transactional
-publication bound to `(store_identity, incarnation, generation)`, and stale-offset
-rejection after every atomic replace. That is a core canonical-storage change
-across `source_store.py`, `manager.py`, and `source.py`. It cannot be proven
-restart/crash-safe in the remaining window, and it must not be attempted
-half-way. The current display store already carries this text bounded and
-origin-bound, which is the safe state.
-
-**Unblock conditions for the next Package 5 pass.**
-1. Land a bounded canonical event reader: a committed per-event location map
-   bound to the installed `PrivateFileVersion`, invalidated on every whole-file
-   replace, with transactional publication and stale-offset rejection.
-2. Prove, on 24- and 240-turn fixtures with and without segments, that a settled
-   `latest`/`before`/`after`/`around` window and `/turns` load **0** canonical
-   bodies and read only selected ranges.
-3. Re-run the G4 parity suite against the new reader. Keep every distinct display
-   fact in the matrix. Then cut over new writes only.
-
-Until then the duplicate display text write stays, and the readable-history
-contract stays bounded and correct.
+- **Bounded canonical event-offset index ([canonical_event_index.py](../../nanobot/session/canonical_event_index.py)):**
+  - Stores a rebuildable per-event byte-offset map under
+    `<sessions_dir>/.event-index/<storage_key>.json` (registered in
+    `mode_storage.py`, `session_mode.py`, and `attachments/_inventory.py`),
+    storing offsets relative to `body_offset` and bound to both
+    `(store_identity, session_key, incarnation, generation)` and the physical
+    `PrivateFileVersion` (device, inode, size, mtime_ns, uid, gid, mode, links,
+    ctime_ns).
+  - Maintained atomically on `JsonlSessionStore.persist_source_records`, updated
+    in O(1) on header-only `replace_header_atomic` without rescanning events,
+    deleted on `delete_source_session` and `SessionManager.delete_session`, and
+    rebuilt lazily via streaming `os.pread` scan if missing or stale (without
+    ever invoking `load_source_snapshot`).
+  - `SessionManager.read_canonical_events_by_ids` /
+    `SourceSessionStore.read_canonical_events_by_ids` open the canonical file,
+    verify `PrivateFileVersion` and bounded line-0 header origin fail-closed,
+    and read only the requested event lines via `os.pread` (**0 canonical body
+    loads**).
+- **Reversible consolidated display-fact writer & reader ([transcript.py](../../nanobot/webui/transcript.py), [ws_http.py](../../nanobot/webui/ws_http.py), [session_access.py](../../nanobot/webui/session_access.py), [runner.py](../../nanobot/agent/runner.py), [progress_hook.py](../../nanobot/agent/progress_hook.py), [channels/manager.py](../../nanobot/channels/manager.py)):**
+  - For managed sessions, `WebUITranscriptRecorder.append` verifies via O(1)
+    `read_canonical_events_by_ids` that a committed `"user"` prompt or
+    non-merged `"stream_end"`/`"message"` answer matches the canonical event's
+    content; when identical, it stores `_webui_text_ref` (plus bounded ≤120-char
+    `prompt_preview` for `/turns` and `PromptRail`) and omits the duplicated
+    full `"text"` body from the display store. When display copy intentionally
+    differs (e.g. `!cmd` vs `/__shell cmd`), inline `"text"` is preserved
+    losslessly.
+  - All distinct G4 display facts (settled `turn_end`, permitted reasoning,
+    bounded `toolEvents`/`traces`, approvals, `fileEdits`, compaction, usage,
+    delegated child rows, fork markers, `transcript_incomplete`, authorized
+    media refs) remain durable in the display store.
+  - `build_webui_thread_response` hydrates `_webui_text_ref` rows in the
+    selected bounded window via `canonical_events_loader` before replay;
+    `write_managed_fork_transcript` materializes consolidated parent prefixes
+    under the new fork origin; pre-cutover inline-text and pre-index transcripts
+    continue reading unchanged with zero bulk migration.
+  - Also registered rebuildable `<stem>.index` directories in
+    [attachments/_inventory.py](../../nanobot/attachments/_inventory.py) so media
+    retention maintenance stays complete alongside the transcript read index.
+- **Verification:**
+  - `tests/webui/test_package5_transcript_consolidation.py` -> **4 passed**
+    (including 24- and 240-turn rotated mixed/consolidated HTTP windows with 0
+    canonical body loads and dual-index delete/rebuild).
+  - Combined focused suite (`test_package5_transcript_consolidation.py`,
+    `test_g4_display_parity.py`, `test_package6_qualification.py`,
+    `test_managed_display_origin.py`, `test_transcript_index.py`,
+    `test_child_thread_route.py`, `test_recovery_startup_scan.py`,
+    `test_next_turn_preferences.py`, `tests/attachments/`) -> **286 passed**.
+  - `ruff check nanobot/ tests/webui/test_package5_transcript_consolidation.py`
+    -> `All checks passed!`.
+  - `basedpyright` + `scripts/check_type_regressions.py` ->
+    `PASS_NO_NEW_DIAGNOSTICS` (`764 -> 764`, `introduced: 0`).
+  - `git diff --check` -> clean.
 
 ### Package 6: Linux-executable qualification
 

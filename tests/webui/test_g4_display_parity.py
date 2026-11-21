@@ -1101,28 +1101,49 @@ async def test_live_turn_display_matches_canonical_then_survives_restart(
 
         rows = read_transcript_lines(chat_key, expected_source=saved.state)
         display_user = next(row for row in rows if row.get("event") == "user")
-        assert display_user["text"] == committed_user["content"] == "Canonical prompt"
         assert display_user["_webui_source_prompt_id"] == committed_user["_event_id"]
+        assert display_user["_webui_text_ref"] == committed_user["_event_id"]
+        assert "text" not in display_user
+
+        def _load_canonical(event_ids: list[str] | tuple[str, ...]) -> dict[str, dict[str, Any]]:
+            return loop.sessions.read_canonical_events_by_ids(
+                chat_key,
+                list(event_ids),
+                expected_source=saved.state,
+            )
 
         live = build_webui_thread_response(
-            chat_key, expected_source=saved.state, limit=10, direction="latest"
+            chat_key,
+            expected_source=saved.state,
+            canonical_events_loader=_load_canonical,
+            limit=10,
+            direction="latest",
         )
         assert live is not None
         assert [m["role"] for m in live["messages"]] == ["user", "assistant"]
+        assert live["messages"][0]["content"] == committed_user["content"] == "Canonical prompt"
         assert live["messages"][0]["promptId"] == committed_user["_event_id"]
         assert live["messages"][1]["content"] == committed_answer["content"] == "Canonical answer"
 
         # Simulate a restart: rebuild the reader from durable rows only.
         assert delete_transcript_index(chat_key)
         restarted = build_webui_thread_response(
-            chat_key, expected_source=saved.state, limit=10, direction="latest"
+            chat_key,
+            expected_source=saved.state,
+            canonical_events_loader=_load_canonical,
+            limit=10,
+            direction="latest",
         )
         assert restarted is not None
         assert restarted["messages"] == live["messages"]
         head = rebuild_transcript_index(chat_key, expected_source=saved.state)
         assert head is not None
         rebuilt = build_webui_thread_response(
-            chat_key, expected_source=saved.state, limit=10, direction="latest"
+            chat_key,
+            expected_source=saved.state,
+            canonical_events_loader=_load_canonical,
+            limit=10,
+            direction="latest",
         )
         assert rebuilt is not None
         assert rebuilt["messages"] == live["messages"]

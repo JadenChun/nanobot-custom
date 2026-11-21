@@ -1062,7 +1062,7 @@ class SessionModeResolver:
         names = self.storage.list_namespace()
         allowed = {
             ".workspace", ".session-files.lock", ".execution-locks", ".session-mode",
-            ".session-prefs",
+            ".session-prefs", ".event-index",
         }
         pairs: dict[str, dict[str, str]] = {}
         for name in names:

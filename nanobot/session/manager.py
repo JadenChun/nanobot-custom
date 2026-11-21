@@ -94,6 +94,7 @@ if TYPE_CHECKING:
         SavedSourceProof,
         SourceSessionStore,
         SourceSnapshot,
+        SourceState,
     )
 
 
@@ -1241,6 +1242,23 @@ class JsonlSessionStore:
                         header=deepcopy(snapshot.header),
                         event_count=len(snapshot.events),
                         body_offset=header_bytes_len + 1,
+                    ),
+                )
+                from nanobot.session.canonical_event_index import (
+                    build_event_offsets_from_bytes,
+                    write_event_index,
+                )
+
+                body_offset = header_bytes_len + 1
+                write_event_index(
+                    backend,
+                    key,
+                    state=snapshot.state,
+                    file_version=version,
+                    body_offset=body_offset,
+                    events=build_event_offsets_from_bytes(
+                        prepared.text.encode("utf-8"),
+                        body_offset=body_offset,
                     ),
                 )
         return snapshot
@@ -3343,6 +3361,24 @@ class SessionManager:
             cached = self._cache.get(key) or self._overflow_cache.get(key)
         return cached is None or cached.policy.persist
 
+    def read_canonical_events_by_ids(
+        self,
+        key: str,
+        event_ids: list[str] | tuple[str, ...],
+        *,
+        expected_source: "SourceState",
+    ) -> dict[str, dict[str, Any]]:
+        """Bounded ``os.pread`` lookup of specific canonical events; 0 full-body loads."""
+        if self._store is not self._jsonl_store:
+            return {}
+        if not self._persistent_locally(key):
+            return {}
+        return self._jsonl_store.source.read_canonical_events_by_ids(
+            key,
+            list(event_ids),
+            expected_source=expected_source,
+        )
+
     def read_next_turn_preferences(self, key: str) -> "NextTurnPreferences | None":
         """Bounded read of persisted next-turn choices (no history, no body)."""
         if self._store is not self._jsonl_store:
@@ -3606,10 +3642,12 @@ class SessionManager:
             deleted = self._mode_resolver.delete(key)
             if deleted:
                 self.invalidate(key)
+                from nanobot.session.canonical_event_index import delete_event_index
                 from nanobot.session.next_turn_preferences import remove_preferences
 
                 with self._jsonl_store.locked_session_files():
                     remove_preferences(self._jsonl_store, key)
+                    delete_event_index(self._jsonl_store, key)
             if self._delete_observer is not None:
                 self._delete_observer(key)
             return deleted
